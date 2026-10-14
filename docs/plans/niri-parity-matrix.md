@@ -1,0 +1,151 @@
+# niri parity matrix
+
+Fill as milestones land. Do not duplicate this list in the design doc.
+
+Pin: **niri-ipc 26.4.0**. Behaviour: niri **26.04**.
+
+Legend: `[ ]` missing · `[~]` partial · `[x]` done.
+
+## Requests (16)
+
+| Request | Status | Milestone |
+|---|---|---|
+| Version | [ ] | M2 |
+| Outputs | [ ] | M3 |
+| Workspaces | [ ] | M3 |
+| Windows | [ ] | M3 |
+| Layers | [ ] | M3 |
+| KeyboardLayouts | [ ] | M9 |
+| FocusedOutput | [ ] | M3 |
+| FocusedWindow | [ ] | M4 |
+| PickWindow | [ ] | M15 |
+| PickColor | [ ] | M15 |
+| Action | [ ] | M2 decode; per-action below |
+| Output | [ ] | M15 |
+| EventStream | [ ] | M3 |
+| ReturnError | [ ] | M2 |
+| OverviewState | [ ] | M7 |
+| Casts | [ ] | M12 |
+
+## Events (19)
+
+| Event | Status | Milestone |
+|---|---|---|
+| WorkspacesChanged | [ ] | M3 |
+| WorkspaceUrgencyChanged | [ ] | M6 |
+| WorkspaceActivated | [ ] | M3 |
+| WorkspaceActiveWindowChanged | [ ] | M4 |
+| WindowsChanged | [ ] | M4 |
+| WindowOpenedOrChanged | [ ] | M4 |
+| WindowClosed | [ ] | M4 |
+| WindowFocusChanged | [ ] | M4 |
+| WindowFocusTimestampChanged | [ ] | M4 |
+| WindowUrgencyChanged | [ ] | M6 |
+| WindowLayoutsChanged | [ ] | M5 |
+| KeyboardLayoutsChanged | [ ] | M9 |
+| KeyboardLayoutSwitched | [ ] | M9 |
+| OverviewOpenedOrClosed | [ ] | M7 |
+| ConfigLoaded | [ ] | M9 |
+| ScreenshotCaptured | [ ] | M11 |
+| CastsChanged | [ ] | M12 |
+| CastStartedOrChanged | [ ] | M12 |
+| CastStopped | [ ] | M12 |
+
+## Actions (141)
+
+Until implemented, decode and reply `Err` with `unimplemented: <Name>`. Tick when the action does what niri does.
+
+### Session
+
+| Action | Status | Milestone |
+|---|---|---|
+| Quit | [ ] | M2 |
+| PowerOffMonitors | [ ] | M15 |
+| PowerOnMonitors | [ ] | M15 |
+| Spawn | [ ] | M2 |
+| SpawnSh | [ ] | M2 |
+| DoScreenTransition | [ ] | M15 |
+| LoadConfigFile | [ ] | M9 |
+| ToggleKeyboardShortcutsInhibit | [ ] | M10 |
+| SwitchLayout | [ ] | M9 |
+| ShowHotkeyOverlay | [ ] | M11 |
+
+### Screenshot
+
+| Action | Status | Milestone |
+|---|---|---|
+| Screenshot | [ ] | M11 |
+| ScreenshotScreen | [ ] | M11 |
+| ScreenshotWindow | [ ] | M11 |
+
+### Window / column / workspace / monitor / floating / overview / cast / debug
+
+Track the rest against niri-ipc 26.4.0 `Action` as they are implemented in M4–M15. First landing of each group:
+
+- Window focus/close: M4
+- Columns + workspaces + core binds: M5
+- Consume/expel, tabs, floating, fullscreen, named workspaces, monitor moves: M6
+- Overview: M7
+- Cast: M12
+- Debug tint / opaque / damage: M15
+
+## Config sections
+
+| Section | Status | Milestone |
+|---|---|---|
+| input | [ ] | M5 (parse M3) |
+| output | [ ] | M3 parse, M15 apply full |
+| layout | [ ] | M5 |
+| binds | [ ] | M5 |
+| switch-events | [ ] | M9 |
+| window-rule | [ ] | M6 |
+| layer-rule | [ ] | M6 |
+| animations | [ ] | M8 |
+| gestures | [ ] | M7 |
+| overview | [ ] | M7 |
+| hotkey-overlay | [ ] | M11 |
+| environment | [ ] | M9 |
+| cursor | [ ] | M10 |
+| screenshot-path | [ ] | M11 |
+| prefer-no-csd | [ ] | M8 |
+| spawn-at-startup / spawn-sh-at-startup | [ ] | M2 |
+| workspace | [ ] | M6 |
+| xwayland-satellite | [ ] | M13 |
+| recent-windows | [ ] | M11 |
+| debug | [ ] | M15 |
+| include | [ ] | M9 |
+
+Acceptance file: `/home/nomadx/.config/niri/config.kdl` + `sysc-shell.kdl`. Parser must accept it at M3; unimplemented actions error at `niri validate` once the parser knows the name.
+
+## CLI
+
+| Command | Status | Milestone |
+|---|---|---|
+| `niri` / `sysc-compositor` no args / `--session` | [ ] | M0 binary; `--session` M9 |
+| `-c` / `--config` | [ ] | M2 |
+| `niri msg` / `sysc-compositor msg` | [ ] | M2 |
+| `niri validate` | [ ] | M3 |
+| `niri msg action spawn` | [ ] | M2 (sysc-launch L0) |
+| `niri msg action quit --skip-confirmation` | [ ] | M2 (sysc-greet) |
+
+## D-Bus
+
+| Name | Status | Milestone |
+|---|---|---|
+| org.gnome.Mutter.DisplayConfig | [ ] | M12 |
+| org.gnome.Mutter.ScreenCast | [ ] | M12 |
+| org.gnome.Shell.Screenshot | [ ] | M12 |
+| org.gnome.Shell.Introspect | [ ] | M12 |
+| org.freedesktop.ScreenSaver | [ ] | M10 |
+| org.freedesktop.a11y.KeyboardMonitor | [ ] | M14 |
+| locale1 client | [ ] | M9 |
+| login1 | [ ] | M9 |
+
+## Sibling (not this repo)
+
+| Work | Status | Plan |
+|---|---|---|
+| L0 sysc-launch compositor PATH | [ ] | `2026-10-02-sysc-launch.md` |
+| S0 sysc-shell go.mod bump | [ ] | orchestration Task 4 |
+| G0 sysc-greet installer copy | [ ] | after M2 |
+| W0 sysc-walls version detect | [ ] | after M2 (drop-in may suffice) |
