@@ -44,6 +44,15 @@ transfer copies the conclusion, not the citation.
 
 ## Where Tier 3 state lives
 
-The bd issues (`sysc-1208`, `sysc-1211`, `sysc-1212`, `sysc-1213`) and GitHub issues gh#262–gh#265 are
-tracked in sysc-shell, not here, so one graph holds every blocker across the family. This repository has
-no bd database. **bd state is not duplicated into these documents.**
+The bd issues stay in sysc-shell, not here, so one graph holds every blocker across the family. This
+repository has no bd database.
+
+| Item | bd | GitHub issue here | Was |
+|---|---|---|---|
+| Agent seat with compositor-enforced Stop | `sysc-1208` | #1 | gh#262 in sysc-shell |
+| Multi-seat input model | `sysc-1211` | #2 | gh#263 in sysc-shell |
+| WM-as-scene equivalent — *recommend against* | `sysc-1212` | #3 | gh#264 in sysc-shell |
+| Browser remote session — *recommend defer* | `sysc-1213` | #4 | gh#265 in sysc-shell |
+
+All four were transferred here on 2026-10-15 with `gh issue transfer`. **Tracked state is not duplicated
+into these documents** — bd is authoritative for whether work is done, in flight or gated.
