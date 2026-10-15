@@ -29,24 +29,33 @@ The other six items fail the plan gate's *"exact files"* requirement, not for wa
 
 ---
 
-## P1. Preconditions — re-checked 2026-10-15 after the transfer
+## P1. Preconditions — re-checked 2026-10-15, corrected after a bad probe
 
-**One precondition is now met and the two that block execution are not.**
+**Everything except the code is met.**
 
 | Precondition | State on 2026-10-15 |
 |---|---|
 | `sysc-compositor` is a git repository | **Met.** `main`, first commit `4e57b6c`, remote `Nomadcxx/sysc-compositor`. |
-| `internal/server` exists | **Not met.** M0 has not been written. `internal/server/` is a package-map line in the design (`:407`), not a directory. |
-| wlroots 0.20 shared library | **Not met.** `pkg-config --modversion wlroots` → *not found*. No `libwlroots*` on the library path. |
-| wlroots 0.20 headers | **Not met.** `/usr/include/wlr` exists and is **empty**. No `version.h`. |
-| `go.mod` | **Not met.** No module yet. |
+| `internal/server` exists | **Not met.** M0 has not been implemented. `internal/server/` is a package-map line in the design (`:407`), not a directory. |
+| wlroots 0.20 shared library | **Met.** `wlroots0.20 0.20.2-1`; `/usr/lib/libwlroots-0.20.so`, `/usr/lib/pkgconfig/wlroots-0.20.pc`. |
+| wlroots 0.20 headers | **Met.** `/usr/include/wlroots-0.20/wlr/` with `version.h` and the `backend/ types/ render/ util/ interfaces/` subdirectories. |
+| `go.mod` | **Not met.** No module yet — M0 Task 1 creates it. |
 | Go toolchain | Met. `go1.27.2`. |
-| A seat to attach a device to | Met at design level only — see P3.2. |
+| Wayland libraries | Met. `wayland-server` 1.26.0, `wayland-protocols` 1.49. |
+| A seat to attach a device to | Met at design level only — M0 creates the first real one. See P3.2. |
 
-**Consequence: this plan still cannot be executed, and the reason has moved.** It used to be "the
-repository does not exist"; it is now "the repository is empty and the wlroots toolchain is not
-installed." Three things must land first, in order: **M0 creates `internal/server` and the first seat**,
-**wlroots 0.20 is installed on this host**, and **a `go.mod` exists**.
+> **Correction, 2026-10-15.** An earlier revision of this table recorded the library and headers as
+> *Not met*. That was a bad probe, not a missing dependency: it asked `pkg-config --modversion wlroots`
+> (Arch installs the file as **`wlroots-0.20.pc`**, so the unversioned name resolves to nothing) and listed
+> `/usr/include/wlr` (Arch installs headers to **`/usr/include/wlroots-0.20/wlr/`**). Both reported absence
+> where the dependency was installed and working. Recorded here rather than silently corrected, because a
+> precondition table that is never re-checked against a real probe is exactly the failure mode that
+> invalidated the source ledger's `file:line` citations.
+
+**Consequence: this plan is now blocked on exactly one thing — the code.** M0 creates `internal/server`,
+the module, and the first seat; after M0 lands, this probe runs. Its dependency gate (P3.1) may still
+stop it short, and that is a legitimate outcome: if `go.wlroots.dev/wlroots` has no release over 0.20,
+the answer is recorded and reported rather than worked around.
 
 **Do not install wlroots into the shell's host environment to make this run.** A compositor toolchain is
 a compositor dependency; sysc-shell does not need one, and this probe does not belong in the shell.
