@@ -26,11 +26,28 @@ import "unsafe"
 // The client commits its own buffer afterwards; nothing else is needed for a
 // window to appear.
 func (c *Compositor) handleNewSurface(data unsafe.Pointer) {
-	xdgSurface := (*C.struct_wlr_xdg_surface)(data)
-	if C.sysc_scene_xdg_create(c.scene, xdgSurface) == nil {
-		return
+	c.ensureSceneTree((*C.struct_wlr_xdg_surface)(data))
+}
+
+func (c *Compositor) ensureSceneTree(xdgSurface *C.struct_wlr_xdg_surface) *C.struct_wlr_scene_tree {
+	key := unsafe.Pointer(xdgSurface)
+	if tree := c.sceneTrees[key]; tree != nil {
+		return tree
 	}
-	c.mapped[unsafe.Pointer(xdgSurface)] = true
+	tree := C.sysc_scene_xdg_create(c.scene, xdgSurface)
+	if tree == nil {
+		return nil
+	}
+	c.mapped[key] = true
+	c.sceneTrees[key] = tree
+	var destroy *Listener
+	destroy = AddListener(unsafe.Pointer(&xdgSurface.events.destroy), func(unsafe.Pointer) {
+		delete(c.mapped, key)
+		delete(c.sceneTrees, key)
+		destroy.Destroy()
+	})
+	c.listeners = append(c.listeners, destroy)
+	return tree
 }
 
 // Mapped reports whether an xdg_surface reached the scene graph. It exists so a
@@ -41,4 +58,8 @@ func (c *Compositor) Mapped() int { return len(c.mapped) }
 // ownership test to attach a listener to a real signal.
 func (c *Compositor) newSurfaceSignal() Signal {
 	return unsafe.Pointer(&(*C.struct_wlr_xdg_shell)(c.xdgShell).events.new_surface)
+}
+
+func (c *Compositor) newToplevelSignal() Signal {
+	return unsafe.Pointer(&(*C.struct_wlr_xdg_shell)(c.xdgShell).events.new_toplevel)
 }

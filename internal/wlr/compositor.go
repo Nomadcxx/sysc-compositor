@@ -23,6 +23,7 @@ package wlr
 #include <wlr/types/wlr_subcompositor.h>
 #include <wlr/types/wlr_viewporter.h>
 #include <wlr/types/wlr_xdg_shell.h>
+#include <wlr/types/wlr_xcursor_manager.h>
 
 // xdg_wm_base version advertised by this M0 compositor. Niri parity and client
 // compatibility both sit above 5; M0 needs no version-specific behaviour.
@@ -50,15 +51,28 @@ type Compositor struct {
 	socketName string
 	listeners  []*Listener
 
-	loop            *C.struct_wl_event_loop
-	cursor          *C.struct_wlr_cursor
-	xcursorManager  *C.struct_wlr_xcursor_manager
-	sceneOutputs    map[unsafe.Pointer]*C.struct_wlr_scene_output
-	frames          map[Signal]*C.struct_wlr_scene_output
-	mapped          map[unsafe.Pointer]bool
-	pointerDevices  map[unsafe.Pointer]bool
-	keyboardDevices map[unsafe.Pointer]bool
-	capabilities    int
+	loop                   *C.struct_wl_event_loop
+	cursor                 *C.struct_wlr_cursor
+	xcursorManager         *C.struct_wlr_xcursor_manager
+	sceneOutputs           map[unsafe.Pointer]*C.struct_wlr_scene_output
+	frames                 map[Signal]*C.struct_wlr_scene_output
+	mapped                 map[unsafe.Pointer]bool
+	sceneTrees             map[unsafe.Pointer]*C.struct_wlr_scene_tree
+	views                  map[unsafe.Pointer]*toplevelView
+	pointerDevices         map[unsafe.Pointer]bool
+	keyboardDevices        map[unsafe.Pointer]*C.struct_wlr_keyboard
+	keyboardListeners      map[unsafe.Pointer][]*Listener
+	inputDestroyListeners  map[unsafe.Pointer]*Listener
+	activeKeyboard         *C.struct_wlr_keyboard
+	modifiers              uint32
+	focusedView            *toplevelView
+	pointerGrab            *pointerGrab
+	grabView               *toplevelView
+	grabButton             uint32
+	pressedPointerButtons  map[uint32]bool
+	pointerSerialButtons   map[uint32]uint32
+	consumedPointerButtons map[uint32]bool
+	capabilities           int
 }
 
 // New creates the display, its nested socket, and the globals a client needs to
@@ -81,8 +95,15 @@ func New() (*Compositor, error) {
 	c.sceneOutputs = map[unsafe.Pointer]*C.struct_wlr_scene_output{}
 	c.frames = map[Signal]*C.struct_wlr_scene_output{}
 	c.mapped = map[unsafe.Pointer]bool{}
+	c.sceneTrees = map[unsafe.Pointer]*C.struct_wlr_scene_tree{}
+	c.views = map[unsafe.Pointer]*toplevelView{}
 	c.pointerDevices = map[unsafe.Pointer]bool{}
-	c.keyboardDevices = map[unsafe.Pointer]bool{}
+	c.keyboardDevices = map[unsafe.Pointer]*C.struct_wlr_keyboard{}
+	c.keyboardListeners = map[unsafe.Pointer][]*Listener{}
+	c.inputDestroyListeners = map[unsafe.Pointer]*Listener{}
+	c.pressedPointerButtons = map[uint32]bool{}
+	c.pointerSerialButtons = map[uint32]uint32{}
+	c.consumedPointerButtons = map[uint32]bool{}
 
 	c.backend = C.wlr_backend_autocreate(c.loop, nil)
 	if c.backend == nil {
@@ -133,6 +154,14 @@ func New() (*Compositor, error) {
 	c.listeners = append(c.listeners, AddListener(
 		unsafe.Pointer(&c.backend.events.new_input), c.handleNewInput))
 	c.listeners = append(c.listeners, AddListener(c.newSurfaceSignal(), c.handleNewSurface))
+	c.listeners = append(c.listeners, AddListener(c.newToplevelSignal(), c.handleNewToplevel))
+	c.listeners = append(c.listeners,
+		AddListener(unsafe.Pointer(&c.cursor.events.motion), c.handleCursorMotion),
+		AddListener(unsafe.Pointer(&c.cursor.events.motion_absolute), c.handleCursorMotionAbsolute),
+		AddListener(unsafe.Pointer(&c.cursor.events.button), c.handleCursorButton),
+		AddListener(unsafe.Pointer(&c.cursor.events.axis), c.handleCursorAxis),
+		AddListener(unsafe.Pointer(&c.cursor.events.frame), c.handleCursorFrame),
+	)
 
 	if !bool(C.wlr_backend_start(c.backend)) {
 		return nil, errors.New("wlr_backend_start failed")
@@ -147,7 +176,7 @@ func (c *Compositor) SocketName() string { return c.socketName }
 // Display exposes the wl_display for callers that must reach wlroots directly.
 func (c *Compositor) Display() unsafe.Pointer { return unsafe.Pointer(c.display) }
 
-// Seat returns the single seat created at New. M0 attaches no devices to it.
+// Seat returns the single seat created at New.
 func (c *Compositor) Seat() unsafe.Pointer { return unsafe.Pointer(c.seat) }
 
 // Scene returns the scene-graph root clients are mapped into.
@@ -173,8 +202,20 @@ func (c *Compositor) Destroy() {
 	c.sceneOutputs = nil
 	c.frames = nil
 	c.mapped = nil
+	c.sceneTrees = nil
+	c.views = nil
 	c.pointerDevices = nil
 	c.keyboardDevices = nil
+	c.keyboardListeners = nil
+	c.inputDestroyListeners = nil
+	if c.cursor != nil {
+		C.wlr_cursor_destroy(c.cursor)
+		c.cursor = nil
+	}
+	if c.xcursorManager != nil {
+		C.wlr_xcursor_manager_destroy(c.xcursorManager)
+		c.xcursorManager = nil
+	}
 	if c.display != nil {
 		C.wl_display_destroy(c.display)
 		c.display = nil

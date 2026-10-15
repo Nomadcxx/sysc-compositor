@@ -1,8 +1,13 @@
 package wlr
 
 import (
+	"bufio"
+	"os"
+	"os/exec"
 	"runtime"
+	"strings"
 	"testing"
+	"time"
 	"unsafe"
 )
 
@@ -53,5 +58,68 @@ func TestListenerTokensBalance(t *testing.T) {
 
 	if after := LiveHandles(); after != before {
 		t.Fatalf("LiveHandles() = %d, want %d: a listener token outlived its wl_signal", after, before)
+	}
+}
+
+func TestXDGInitialConfigureAfterInitialCommit(t *testing.T) {
+	terminal, err := exec.LookPath("weston-terminal")
+	if err != nil {
+		t.Skipf("weston-terminal unavailable: %v", err)
+	}
+	c := newNested(t)
+
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	configured := make(chan string, 1)
+	readerDone := make(chan struct{})
+	go func() {
+		defer close(readerDone)
+		scanner := bufio.NewScanner(reader)
+		for scanner.Scan() {
+			line := scanner.Text()
+			if strings.Contains(line, "xdg_surface#") && strings.Contains(line, ".configure(") {
+				configured <- line
+				c.Terminate()
+				return
+			}
+		}
+	}()
+
+	cmd := exec.Command(terminal)
+	cmd.Env = append(os.Environ(), "WAYLAND_DISPLAY="+c.SocketName(), "WAYLAND_DEBUG=client")
+	cmd.Stderr = writer
+	if err := cmd.Start(); err != nil {
+		writer.Close()
+		t.Fatal(err)
+	}
+	writer.Close()
+
+	stopTimeout := make(chan struct{})
+	timeoutDone := make(chan struct{})
+	go func() {
+		defer close(timeoutDone)
+		select {
+		case <-time.After(5 * time.Second):
+			c.Terminate()
+		case <-stopTimeout:
+		}
+	}()
+	if err := c.Run(); err != nil {
+		t.Fatal(err)
+	}
+	close(stopTimeout)
+	<-timeoutDone
+	_ = cmd.Process.Kill()
+	_ = cmd.Wait()
+	_ = reader.Close()
+	<-readerDone
+
+	select {
+	case line := <-configured:
+		t.Logf("received %s", line)
+	default:
+		t.Fatal("weston-terminal did not receive an initial xdg_surface.configure")
 	}
 }
