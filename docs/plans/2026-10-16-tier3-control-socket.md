@@ -168,3 +168,34 @@ Compositor tests follow the repository rules: one package, a named test, `GOMAXP
 - **sysc-1193:** the shell's presence display subscribes to these facts. That is its plan, in sysc-shell.
 - **`sysc-1260`:** inert under lock or blank.
 - **A spawn command and windows-the-agent-opened tracking**, if outline or placement needs them.
+
+## Execution record (2026-10-16)
+
+Commits:
+- `55051e7`, Task 1: `Post`;
+- `8b82d7c`, Task 2: socket, peer check, framing;
+- `5944b05`, Tasks 3 and 5: dispatcher, Stop, targets, facts;
+- `8e852a5`, Task 4: window list, seat adapter, server lifecycle.
+
+| Test | Proves | Desktop | Laptop |
+|---|---|---|---|
+| `TestPostRunsOnTheCompositorThread` | 400 functions from 4 goroutines run on the event-loop thread, each poster's order kept; `ErrClosed` after `Destroy`; handles balance | pass | pass |
+| `TestPeerDecision`, `TestSocketPath`, `TestSocketModeAndRoundTrip`, `TestListenRefusesALiveSocket` | uid rule, path rule, `0600` socket, ids echoed, malformed JSON kept, oversize line closed, `Disconnect` called, a live socket not taken over | pass (`-race`) | pass (`-race`) |
+| `TestEveryMutatingVerbRefusesAfterStop` | generated from the verb registry: after Stop every mutating verb answers `stopped-by-user` with no seat effect; reads still answer; no verb lifts Stop | pass (`-race`) | pass |
+| `TestStopReleasesHeldInput`, `TestAttachOwnership`, `TestTargetResolution`, `TestTypeUSText`, `TestFactsCoalesce`, `TestFactsFollowInput` | release on Stop and on the driver's disconnect; `busy` / `not-attached`; target table, with an unknown target having no effect; US typing refused whole; a stuck subscriber never blocks publishing and gets the latest value; facts track input | pass (`-race`) | pass |
+| `TestControlDrivesAClient` | weston-terminal over the real socket: `attach`, `point`, `button` and `type a` reach the injected keyboard only. After `stop`, `type b` answers `stopped-by-user` and no key reaches the client | pass, 3 of 3 | pass |
+
+**Mutation checks.** Removing the Stop gate fails 9 rows of the registry table and the end-to-end test.
+
+**Deviations from the plan:**
+- The thread id comes from `syscall.Gettid`; no new dependency was added.
+- Tasks 3 and 5 landed in one commit, because facts are published from the dispatcher.
+- The seat adapter lives in `internal/server`, which owns the lifetime, rather than `internal/wlr`, so that
+  `wlr` does not import `control`.
+- The control server is optional at startup. Without `XDG_RUNTIME_DIR` the compositor still serves
+  clients, logs why, and offers no injected input.
+
+**Open, carried in bd:**
+- the user-only Stop re-arm (M1 config);
+- `sysc-1260`, lock and blank;
+- `sysc-1193`, the shell's presence display reading these facts.

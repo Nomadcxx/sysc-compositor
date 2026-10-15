@@ -113,6 +113,8 @@ type toplevelView struct {
 	tree      *C.struct_wlr_scene_tree
 	listeners []*Listener
 	announced bool
+	id        uint64
+	touched   uint64
 }
 
 type pointerGeometry struct {
@@ -425,6 +427,7 @@ func (c *Compositor) focusView(view *toplevelView) {
 		c.focusedView = view
 		C.wlr_xdg_toplevel_set_activated(view.toplevel, true)
 	}
+	c.touch(view)
 	if changed && c.activeKeyboard != nil {
 		C.sysc_seat_keyboard_focus(c.seat,
 			view.toplevel.base.surface, c.activeKeyboard)
@@ -489,7 +492,8 @@ func (c *Compositor) handleNewToplevel(data unsafe.Pointer) {
 	if tree == nil {
 		return
 	}
-	view := &toplevelView{toplevel: toplevel, tree: tree}
+	c.nextViewID++
+	view := &toplevelView{toplevel: toplevel, tree: tree, id: c.nextViewID}
 	c.views[unsafe.Pointer(toplevel)] = view
 	add := func(signal Signal, fn func(unsafe.Pointer)) {
 		listener := AddListener(signal, fn)
@@ -558,6 +562,13 @@ func (c *Compositor) injectedFocus(name string) unsafe.Pointer {
 		return unsafe.Pointer(s.seat.keyboard_state.focused_surface)
 	}
 	return nil
+}
+
+// treePosition is a view's scene-tree origin in layout coordinates.
+func (v *toplevelView) treePosition() (int, int) {
+	var x, y C.int
+	C.sysc_scene_tree_position(v.tree, &x, &y)
+	return int(x), int(y)
 }
 
 // viewCenter is a mapped view's centre in layout coordinates.

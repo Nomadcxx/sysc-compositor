@@ -5,6 +5,7 @@ package wlr
 #include <stdint.h>
 
 extern void sysc_listener_fire(uintptr_t handle, void *data);
+extern void sysc_post_fire(uintptr_t token);
 */
 import "C"
 
@@ -21,6 +22,13 @@ import (
 //export sysc_listener_fire
 func sysc_listener_fire(handle C.uintptr_t, data unsafe.Pointer) {
 	cgo.Handle(uintptr(handle)).Value().(func(unsafe.Pointer))(data)
+}
+
+// sysc_post_fire is invoked when the post eventfd is readable.
+//
+//export sysc_post_fire
+func sysc_post_fire(token C.uintptr_t) {
+	cgo.Handle(uintptr(token)).Value().(func(unsafe.Pointer))(nil)
 }
 
 // liveHandles counts tokens Register has handed out and Unregister has not yet

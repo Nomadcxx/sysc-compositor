@@ -82,6 +82,14 @@ type Compositor struct {
 	// mapped and hit-testable. It is the hook tests use to act once a client
 	// is on screen.
 	viewMapped func(*toplevelView)
+
+	// post carries work from other goroutines onto the compositor thread.
+	post postQueue
+
+	// nextViewID and touchCount give windows stable ids and a
+	// most-recently-focused order for the control socket.
+	nextViewID uint64
+	touchCount uint64
 }
 
 // New creates the display, its nested socket, and the globals a client needs to
@@ -173,6 +181,9 @@ func New() (*Compositor, error) {
 		AddListener(unsafe.Pointer(&c.seat.events.request_set_cursor), c.handleRequestSetCursor),
 	)
 
+	if err := c.startPost(); err != nil {
+		return nil, err
+	}
 	if !bool(C.wlr_backend_start(c.backend)) {
 		return nil, errors.New("wlr_backend_start failed")
 	}
@@ -205,6 +216,7 @@ func (c *Compositor) Terminate() { C.wl_display_terminate(c.display) }
 // Destroy releases the compositor. Listeners added through AddListener are
 // removed first so no token outlives its wl_signal.
 func (c *Compositor) Destroy() {
+	c.stopPost()
 	for _, l := range c.listeners {
 		l.Destroy()
 	}
