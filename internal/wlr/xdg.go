@@ -44,9 +44,9 @@ func (c *Compositor) ensureSceneTree(xdgSurface *C.struct_wlr_xdg_surface) *C.st
 	destroy = AddListener(unsafe.Pointer(&xdgSurface.events.destroy), func(unsafe.Pointer) {
 		delete(c.mapped, key)
 		delete(c.sceneTrees, key)
-		destroy.Destroy()
+		c.drop(destroy)
 	})
-	c.listeners = append(c.listeners, destroy)
+	c.keep(destroy)
 	return tree
 }
 

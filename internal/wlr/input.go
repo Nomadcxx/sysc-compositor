@@ -205,7 +205,7 @@ func (c *Compositor) handleNewInput(data unsafe.Pointer) {
 		c.handleInputDestroy(deviceKey)
 	})
 	c.inputDestroyListeners[deviceKey] = destroy
-	c.listeners = append(c.listeners, destroy)
+	c.keep(destroy)
 	c.refreshCapabilities()
 }
 
@@ -219,12 +219,12 @@ func (c *Compositor) addKeyboardListeners(device unsafe.Pointer, keyboard *C.str
 		}),
 	}
 	c.keyboardListeners[device] = listeners
-	c.listeners = append(c.listeners, listeners...)
+	c.keep(listeners...)
 }
 
 func (c *Compositor) handleInputDestroy(device unsafe.Pointer) {
 	if listener := c.inputDestroyListeners[device]; listener != nil {
-		listener.Destroy()
+		c.drop(listener)
 		delete(c.inputDestroyListeners, device)
 	}
 	if c.pointerDevices[device] {
@@ -237,7 +237,7 @@ func (c *Compositor) handleInputDestroy(device unsafe.Pointer) {
 	}
 	if keyboard := c.keyboardDevices[device]; keyboard != nil {
 		for _, listener := range c.keyboardListeners[device] {
-			listener.Destroy()
+			c.drop(listener)
 		}
 		delete(c.keyboardListeners, device)
 		delete(c.keyboardDevices, device)
@@ -498,18 +498,18 @@ func (c *Compositor) handleNewToplevel(data unsafe.Pointer) {
 	add := func(signal Signal, fn func(unsafe.Pointer)) {
 		listener := AddListener(signal, fn)
 		view.listeners = append(view.listeners, listener)
-		c.listeners = append(c.listeners, listener)
+		c.keep(listener)
 	}
 	var initialCommit *Listener
 	initialCommit = AddListener(unsafe.Pointer(&toplevel.base.surface.events.commit), func(unsafe.Pointer) {
 		if !toplevel.base.initialized || !toplevel.base.initial_commit {
 			return
 		}
-		initialCommit.Destroy()
+		c.drop(initialCommit)
 		C.wlr_xdg_toplevel_set_size(toplevel, 0, 0)
 	})
 	view.listeners = append(view.listeners, initialCommit)
-	c.listeners = append(c.listeners, initialCommit)
+	c.keep(initialCommit)
 	add(unsafe.Pointer(&toplevel.events.request_move), func(data unsafe.Pointer) {
 		c.handleToplevelMove(view, data)
 	})
@@ -594,7 +594,7 @@ func (c *Compositor) handleToplevelDestroy(view *toplevelView) {
 	}
 	delete(c.views, unsafe.Pointer(view.toplevel))
 	for _, listener := range view.listeners {
-		listener.Destroy()
+		c.drop(listener)
 	}
 	view.listeners = nil
 }
