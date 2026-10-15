@@ -112,7 +112,7 @@ The user-visible consequence of getting it wrong is also concrete: an injected k
 
 ### D2.3 Owners and data flow
 
-Target package is `internal/server` (seat table) and `internal/wm` (focus asymmetry). This is compositor-owned end to end. **sysc-shell owns nothing in this item.**
+Target package is `internal/server` (seat table) and `internal/wm` (focus asymmetry). **Amended 2026-10-15:** M0 put every wlroots call and focus path in `internal/wlr` and `internal/wm` does not exist, so the seat table lands there (`2026-10-15-tier3-multi-seat.md` P0). This is compositor-owned end to end. sysc-shell owns nothing in this item beyond binding the first-advertised seat (`sysc-1254`, merged).
 
 sysc-shell already binds exactly one `wl_seat` as a client: `internal/platform/wayland/client.go` (`bindSingleton`) and `internal/platform/wayland/registry.go` (`bindVersion`). That single-seat client assumption is *why* the shell is unaffected, and it must not change. A second seat in the compositor is invisible to a client that binds one seat.
 
@@ -127,7 +127,7 @@ uinput / virtual-keyboard request
       no  → normal user-seat focus path
 ```
 
-The gate lives at the **seat-table lookup and the focus handler**, not at the virtual-keyboard call site. wlroots' virtual keyboard protocol does not carry a seat identity on its own; seat attachment is an explicit decision this design must state, because the ledger's risk note is right that *"virtual-keyboard/virtual-pointer are not per-seat isolation by themselves."*
+The gate lives at the **seat-table lookup and the focus handler**, not at the virtual-keyboard call site. the virtual-keyboard protocol names a seat on request, but wlroots attaches nothing itself (D8.6), and this design uses in-process devices rather than the protocol; seat attachment is an explicit decision this design must state, because the ledger's risk note is right that *"virtual-keyboard/virtual-pointer are not per-seat isolation by themselves."*
 
 ### D2.4 The isolation rules
 
