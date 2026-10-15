@@ -2,24 +2,26 @@
 
 **Kind:** plan (viability probe, **not** a milestone plan)
 **Date:** 2026-10-15 · transferred here from sysc-shell 2026-10-15
-**Answers:** `2026-10-15-tier3-session-domain-design.md` D8.6 — *"Verify before planning: can wlroots 0.20 attach a virtual device to a chosen seat?"*
-**Unblocks:** gh#262 (`sysc-1208`), gh#263 (`sysc-1211`) — **no other Tier 3 plan is writable until this returns an answer.**
+**Question:** `2026-10-15-tier3-session-domain-design.md` D8.6 — *"Can wlroots 0.20 attach a virtual device to a chosen seat?"*
+**Evidence so far:** commit `746afa6` proves multiple independent seat objects and per-seat capabilities. It does **not** test virtual-device attachment.
+**Resolution (2026-10-15):** answered by API inspection, not by this probe — see *Resolution* at the end. wlroots 0.20 attaches no virtual device itself; the compositor's handler does. This plan is **retired**: do not execute P2–P6. The routing proof moves to gh#263's TDD plan.
 **Target repo:** `sysc-compositor` — **this plan lives here.**
 
 > **Not scheduled work.** `2026-10-02-orchestration.md` Task 3 forbids pre-writing M1–M15 plans. This is
 > a viability probe, not a milestone, so recording it ahead of its milestone does not break that rule —
-> but it also is not queued. **Do not execute it until the owner schedules the Tier 3 milestones**, and
-> note that its subject (`internal/server`) does not exist until M0 does. M0 first.
+> but it also is not queued. M0 now exists. The implementation in `746afa6` is narrower than P2: it
+> tests seat objects and capabilities, not virtual-device attachment. Do not plan Tier 3 implementation
+> before the owner decision.
 
 ---
 
-## P0. Why this is the only plan in the tranche
+## P0. Why this was the only plan in the tranche at drafting
 
 The other six items fail the plan gate's *"exact files"* requirement, not for want of effort:
 
 | Item | Why no plan is writable |
 |---|---|
-| gh#262, gh#263 | **The repository has no code.** `internal/server` and `internal/wm` are *proposed* package paths in a design document, not directories; M0 has not been written. A plan naming exact files would be inventing them. |
+| gh#262, gh#263 | **At plan creation, the repository had no code.** `internal/server` and `internal/wm` were proposed package paths, not directories; M0 had not been written. |
 | gh#265 | Design says **recommend defer**, and an owner security model must precede code. A plan would commit to a threat model that has not been written. |
 | gh#264 | Design says **recommend against as a build item** — the residue is a documentation pass over an existing design. Planning work the design rejects is the trap the handover names. |
 | gh#266 | The deliverable *is* the decision. A plan presumes the decision has been made. |
@@ -29,9 +31,10 @@ The other six items fail the plan gate's *"exact files"* requirement, not for wa
 
 ---
 
-## P1. Preconditions — re-checked 2026-10-15, corrected after a bad probe
+## P1. Preconditions — re-checked at plan creation on 2026-10-15, corrected after a bad probe
 
-**Everything except the code is met.**
+**At that point, everything except the code was met.** M0 has since landed; the test that landed is
+narrower than this plan's P2 attachment test.
 
 | Precondition | State on 2026-10-15 |
 |---|---|
@@ -52,10 +55,9 @@ The other six items fail the plan gate's *"exact files"* requirement, not for wa
 > precondition table that is never re-checked against a real probe is exactly the failure mode that
 > invalidated the source ledger's `file:line` citations.
 
-**Consequence: this plan is now blocked on exactly one thing — the code.** M0 creates `internal/server`,
-the module, and the first seat; after M0 lands, this probe runs. Its dependency gate (P3.1) may still
-stop it short, and that is a legitimate outcome: if `go.wlroots.dev/wlroots` has no release over 0.20,
-the answer is recorded and reported rather than worked around.
+At drafting, this plan was blocked on M0 code and the binding gate. M0 now exists, but the landed test
+is narrower than P2: it creates independent seats and checks capabilities without attaching a virtual
+device. The original D8.6 device-routing question remains unanswered.
 
 **Do not install wlroots into the shell's host environment to make this run.** A compositor toolchain is
 a compositor dependency; sysc-shell does not need one, and this probe does not belong in the shell.
@@ -103,6 +105,10 @@ Proposed paths, matching `2026-10-02-sysc-compositor-design.md`:407-411, which a
 | **Package boundary** | Confined to `internal/server`. Nothing outside that package learns the answer. |
 | **Removal condition** | The probe is deleted once gh#263's real seat table lands — the test moves into it, the probe does not stay as a second implementation of the same question. |
 
+**Removal condition not met:** `internal/wlr/compositor.go` still has one production `seat` field.
+`ProbeSeats` creates temporary seats only for the test; it is not gh#263's seat table. Keep the probe
+until that real table lands.
+
 Stdlib-first holds: `SO_PEERCRED` and `syscall.GetsockoptUcred` come from the standard library, and are not part of this probe anyway.
 
 ### P3.2 The one thing that must not be faked
@@ -138,6 +144,10 @@ timeout 90s env GOMAXPROCS=2 go test -count=1 ./internal/server -run TestSeatAtt
 | `forced_to_seat0` | **Buildable, but the design moves.** Rules 1 and 2 relocate from the seat-table lookup to a hook above wlroots' dispatch. That is more code and a per-event cost — the cost D1.1.3 already attributes to per-seat cursor suppression. Re-estimate gh#262's Scope before planning it. |
 | `unsupported` | **gh#262 and gh#263 cannot be built on this substrate.** Both become parity exclusions, or the charter's wlroots pin is revisited. Record it either way — this is the outcome that makes the cost of finding out worth this plan. |
 
+These are the planned outcomes of P2's virtual-device test. Commit `746afa6` did not implement that
+test, so none of these rows has been reached. **Retired 2026-10-15:** `forced_to_seat0` and
+`unsupported` describe behaviour the 0.20 API has no place for (see *Resolution*).
+
 **No performance budget is set here.** The orchestration rule is *"record measurements before setting hard budgets"*, and a probe produces measurements, not budgets.
 
 ---
@@ -160,25 +170,46 @@ timeout 90s env GOMAXPROCS=2 go test -count=1 ./internal/server -run TestSeatAtt
 
 ---
 
-**Plan status: DONE. Outcome `attach_to_named_seat`.** Commit `746afa6`, 2026-10-15.
+## Evidence from commit `746afa6`, reviewed 2026-10-15
 
-This plan's own precondition table was wrong for one session and the correction is recorded in P1
-above: wlroots 0.20.2 with headers was installed the whole time, and only the probe was bad. That is
-worth stating plainly, because this document is the counter-example the source ledger needed — every
-precondition in a plan that gates other plans gets re-checked against a real probe, not trusted.
+`TestSeatTable` in `internal/wlr/seat_probe_test.go` creates three distinct `wl_seat` objects,
+assigns different capability masks, reads them back, and clears two while checking the first remains
+unchanged. It does not create a virtual keyboard, attach a device to a named seat, inject a key, or
+observe which seat receives input.
 
-**What ran.** `TestSeatTable` in `internal/wlr/seat_probe_test.go`, against the real nested
-compositor built in M0. All three rows of P2's table were reachable; two of them were written as
-legitimate outcomes before the answer was known, which is the only reason the `unsupported` row could
-have been taken seriously.
+On the laptop testbench, an archive of `b675926` passed the named test with
+`timeout 90s env GOMAXPROCS=2 go test -count=1 ./internal/wlr -run TestSeatTable`, against wlroots
+0.20.2 with Niri 26.04 live. This repeats the seat-object result on the second machine; it does not
+change the coverage of the test.
 
-**Result, in the plan's own vocabulary:**
-
-| Row | Reached | What it meant |
+| Planned outcome | Reached? | Evidence |
 |---|---|---|
-| `attach_to_named_seat` | **yes** | gh#262's seats and gh#263's per-seat capability isolation are buildable as designed |
-| `forced_to_seat0` | no | — |
-| `unsupported` | no | — |
+| `attach_to_named_seat` | **No** | No virtual device was attached or injected. |
+| `forced_to_seat0` | **No** | Unexercised; no result can be inferred. |
+| `unsupported` | **No** | Unexercised; no result can be inferred. |
+
+The test therefore answers only whether wlroots can hold distinct seats with independent capability
+state. It does not establish per-seat virtual-device routing or clear the corresponding D8.6 gate.
+
+## Architecture review of commit `746afa6`
+
+- **cgo boundary: pass.** wlroots calls and types stay in `internal/wlr` Go files. The test result is
+  plain Go data, and no `.c` or `.h` source was added. `newNested` locks the OS thread before creating
+  the compositor.
+- **Dynamic linkage: pass.** On the laptop, a build from a temporary archive of `b675926` completed;
+  `ldd` showed `libwlroots-0.20.so` and `libwayland-server.so.0`. `pkg-config` reports wlroots 0.20.2
+  and link flags `-lwlroots-0.20 -lwayland-server -lm`.
+- **Repository/package boundary: pass.** The separate `github.com/Nomadcxx/sysc-compositor` module
+  owns this code under `internal/wlr`; it does not move server or compositor code into sysc-wayland
+  or sysc-shell.
+- **Evidence correction: required.** `TestSeatTable` passed on the laptop under live Niri 26.04, but
+  it tests only independent seats and capability masks. `attach_to_named_seat`, `forced_to_seat0`, and
+  `unsupported` were not exercised. In particular, `forced_to_seat0` has no observed result.
+- **P3.1 removal condition: not met.** `Compositor` still has one production seat. `ProbeSeats` is a
+  temporary test probe, not gh#263's real seat table; retain it until that table lands.
+
+This review covers architecture and evidence only. It does not approve agent-seat or virtual-device
+implementation; those remain owner-gated.
 
 **Found while writing it, and not in the plan:**
 
@@ -198,10 +229,26 @@ have been taken seriously.
   device needs the v1 protocol XML, which the wlroots package does not ship. That is a separate
   probe and it was deliberately not written here.
 
-**This plan is complete and is not scheduled work.** Its removal condition (delete once gh#263's real
-seat table lands) still applies to the *probe*, which stays as evidence rather than being deleted
-mid-tranche — deleting the evidence that unblocked two issues would leave those issues resting on an
-unverifiable claim.
+The probe is test-only evidence, not a production seat table. Its P3.1 removal condition remains
+future until gh#263's real seat table lands. D8.6 records the seat-object result; virtual-device
+attachment remains open.
 
-D8.6 of the session-domain design records the answer and the corrected prediction.
+## Resolution — answered by API inspection, 2026-10-15
 
+Source: the Tier 3 ownership audit (`/home/nomadx/sysc-shell/docs/plans/2026-10-15-tier3-ownership-audit-report.md`,
+finding T3-1), read against the installed headers of `wlroots0.20 0.20.2-1`.
+
+- `wlr/interfaces/wlr_keyboard.h`:20 `wlr_keyboard_init` and `wlr/interfaces/wlr_pointer.h`:18
+  `wlr_pointer_init` are public under `WLR_USE_UNSTABLE`. A compositor creates in-process devices
+  without any protocol, which is what the control-socket design (session design D3.4) needs.
+- `struct wlr_virtual_keyboard_v1` carries the client-requested `seat`, and
+  `wlr_virtual_pointer_v1_new_pointer_event` carries `suggested_seat`. wlroots emits `new_virtual_*`
+  and attaches nothing. The compositor's handler chooses the seat.
+- Protocol XML is needed only for an external injector client. It is not in wayland-protocols 1.49
+  (bd `sysc-1242`).
+
+So `forced_to_seat0` and `unsupported` cannot occur in the library, and `attach_to_named_seat` is a
+property of this repository's own handler. **This plan is retired without being executed.** Its one
+useful test — a device on seat `agent` delivers to the agent seat and `seat0`'s client sees nothing —
+becomes the first failing test of gh#263's TDD plan, written when that milestone is commissioned.
+The `ProbeSeats` code from `746afa6` keeps its P3.1 removal condition.

@@ -18,29 +18,29 @@ The owner has since created `https://github.com/Nomadcxx/sysc-compositor`. **Thi
 canonical copy.** The sysc-shell file of the same name is a pointer, not a second source; if the two
 ever disagree, this one is right.
 
-**The gate that shaped the drafting is cleared. The gates that remain are narrower, and the reason
-nothing here is buildable has changed** — not "the repository is missing" but "the repository has no
-code and one wlroots answer is unknown."
+**The repository and M0 code gates have cleared.** Tier 3 remains owner-gated, and the probe has only
+answered D8.6: wlroots supports distinct seats with independent capabilities, and its API leaves
+virtual-device attachment to the compositor (D8.6).
 
 | Gate | State on 2026-10-15 |
 |---|---|
 | The repository exists | **Cleared.** `main`, first commit `4e57b6c`. |
 | The product contract exists | Cleared — `2026-10-02-sysc-compositor-design.md`. |
-| Code exists | **Not met.** M0 has not been started. `internal/server` and `internal/wm` are *proposed* package paths in a design, not directories. |
-| A secondary seat can take a virtual device | **Unknown.** `2026-10-15-tier3-seat-attachment-probe.md` exists to answer exactly this, and nothing downstream of it can be planned until it returns. |
-| The owner wants computer-use agents | Open — D8 records the question rather than answering it. |
+| Code exists | **Met in part.** M0 has a nested compositor with one production seat and cursor. Its pointer move/resize exit gate remains open. |
+| A secondary seat can take a virtual device | **Answered by API inspection (D8.6).** wlroots leaves attachment to the compositor and exposes `wlr_keyboard_init` / `wlr_pointer_init`; the routing is code this repository writes and tests. |
+| The owner wants computer-use agents | **Yes, 2026-10-15** (D8.2), and a non-user seat is acceptable (D8.4): one agent seat (D8.5). |
 
 Ordering against this repository's own schedule, from `2026-10-02-orchestration.md`: M0 builds one seat
-plus a cursor. Everything in D2–D4 is a **change to what M0 establishes**, so it cannot precede M0 —
-and M0 has not been written yet, because orchestration Task 3 says milestone plans are written when the
-milestone starts. **The first thing standing between this document and any code is M0.**
+plus a cursor. Everything in D2–D4 changes that base, so it must follow M0. The remaining gates are
+the M0 pointer interaction exit gate and a separate implementation commission; the owner decisions
+in D8 are answered, and none of this authorizes implementation by itself.
 
 ### What is already decided, and must not be re-litigated
 
 The owner's "Go doesn't make good compositors" concern is already answered by a charter on disk. `README.md`: *"Wayland compositor for the sysc desktop. **Go and cgo only** (no `.c` / `.h` here; gSlapper keeps the C). wlroots 0.20."* The design's own package map (`2026-10-02-sysc-compositor-design.md`:410) allocates `internal/ipc/` as *pure Go* for niri-ipc JSON. So:
 
 - **Do not** treat "is Go viable for a compositor" as an open question in any handover. It is a settled charter.
-- The open question is narrower and duller: **will the directory become a repository and get built at all.** It is docs-only today.
+- The open question was narrower and duller: **would the directory become a repository and get built at all.** It has: the repository exists and M0 code is on `main` (D0 table).
 
 `AGENTS.md` hard rules that any transferred design inherits: never `go test ./...`; never `-race`; one package and one named test via `timeout 90s env GOMAXPROCS=2 go test -count=1 <pkg> -run <Name>`; `runtime.LockOSThread()` before any wlroots call and never call wlroots off the compositor thread; listener trampolines in the cgo preamble of a `.go` file; **"sysc-wayland is a client. Do not turn it into the server."**
 
@@ -54,7 +54,7 @@ The owner's "Go doesn't make good compositors" concern is already answered by a 
 | gh#262 / int-01 agent seat + Stop | Conditional on owner pursuing computer-use agents | **Requirements and viability, held here since 2026-10-15.** Do not start before int-04 ships. |
 | gh#265 / int-06 browser remote session | Conditional on owner wanting browser remote access | **Requirements and viability, held here since 2026-10-15. Recommend defer.** Highest security surface, weakest case; see D4. |
 
-No item here is recommended against outright. Two are recommended **defer**. None is implementable now, and none may produce a TDD plan until its consumer decision (D8) is answered and the repository exists.
+No item here is recommended against outright. Two are recommended **defer**. None is implementable now. The repository exists; no item may produce a TDD plan until its consumer decision (D8) is answered and M0's exit gate has passed.
 
 ### D1.1 Viability note — the four questions this tranche owes an answer
 
@@ -64,11 +64,11 @@ The viability question here is **not** "is Go viable for a compositor". D0 settl
 
 Under the charter, all three items use primitives that exist in wlroots and are reachable from Go: `wl_seat` with explicit capabilities, `virtual-keyboard-unstable-v1` and `virtual-pointer-unstable-v1`, an event loop on a `runtime.LockOSThread`-pinned goroutine, and `SO_PEERCRED` on a Unix socket via the Go standard library (`syscall.GetsockoptUcred`). **Nothing in this tranche needs a capability Go lacks.** That is the whole of the "is Go enough" answer and it is a short one.
 
-What is **not** proven, and cannot be from a directory with no build: whether wlroots 0.20 attaches a virtual device to a *chosen* seat or silently routes it to `seat0`. D8.5 makes this a probe before any plan, and D2.9 makes it a stop condition.
+**Answered by API inspection (2026-10-15, D8.6):** wlroots 0.20 does not route virtual devices at all. It exposes the requested seat on the device and leaves attachment to the compositor's handler, and `wlr_keyboard_init` / `wlr_pointer_init` let the compositor create in-process devices with no protocol. Seat attachment is therefore code this repository writes, and its proof belongs in gh#263's TDD plan rather than in a pre-decision probe.
 
 #### D1.1.2 What carries real risk
 
-1. **Seat attachment semantics — the highest-risk unknown in the tranche.** If a virtual keyboard lands on `seat0` regardless of what it was attached to, every isolation rule in D2.4 is unenforceable at the wlroots layer and must be re-implemented as a seat-table lookup above it. The rules do not change; where they are enforced does.
+1. **Seat attachment semantics — resolved from a substrate risk into a code risk (D8.6).** wlroots attaches nothing itself, so a virtual device cannot be silently forced onto `seat0` by the library. The risk that remains is this repository's own routing: the handler that picks the seat, and the isolation rules in D2.4, which are hand-written and must be tested as such.
 2. **Focus asymmetry surviving a port.** wlroots has no concept of an agent seat. **There is one interesting seat and every other is decoration — corrected 2026-10-15: the seats are real and independently configurable (D8.6), but the *asymmetry between them* is entirely code this repository writes.** Nothing in wlroots enforces that an injected seat must not move the user's data-device focus or set the drawn cursor; both are compositor decisions. So all three rules in D2.4 are code this repository writes and maintains, not configuration it sets. They are exactly what a wlroots port loses, and the ledger is right that they are "easy to lose".
 3. **Capture sizing under gh#265.** `design`:298's exact-sized SHM-pool rule for screencopy consumers is a live constraint on a remote frame path that no test exercises until a second machine exists.
 
@@ -145,7 +145,7 @@ The seatd and libinput reality is not background; it decides which of the three 
 
 - **`seat0` is the logind-backed seat.** It holds the DRM master, it is the only seat that can switch VTs, and it is the only seat `seatd` — wlroots' session and seat management daemon — configures from logind. A secondary seat is created by the compositor itself and is **seatd-less**: no logind session, no DRM master, no VT switching, no libinput-logind association.
 - **Consequence for rule 3.** A seat with no DRM master *cannot* become a second session authority. sysc-lock's one-graphical-session-per-UID verification is therefore not merely respected by an injected seat — it is **structurally unreachable from one**. The rule holds for free at the substrate level. Keep it in the design anyway, because the way it would be lost is a future commit that grants the agent seat a DRM master or routes its devices through `seatd`.
-- **Consequence for rules 1 and 2.** A secondary `wl_seat` is **empty by default** — capabilities are not implied. Attaching `virtual-keyboard-unstable-v1` / `virtual-pointer-unstable-v1` to a chosen seat and setting `WL_SEAT_CAPABILITY_KEYBOARD` / `_POINTER` on it is an explicit act with an explicit failure mode. Good: the routing is visible in the diff. Bad: it is also the place a partial port gets it wrong, which is why D8.5 is a probe rather than an assumption.
+- **Consequence for rules 1 and 2.** A secondary `wl_seat` is **empty by default** — capabilities are not implied. Attaching `virtual-keyboard-unstable-v1` / `virtual-pointer-unstable-v1` to a chosen seat and setting `WL_SEAT_CAPABILITY_KEYBOARD` / `_POINTER` on it is an explicit act with an explicit failure mode. Good: the routing is visible in the diff. Bad: it is also the place a partial port gets it wrong, which is why D2.7 tests it rather than assuming it (D8.6).
 - **libinput.** Physical devices are assigned to a seat by the compositor's own libinput seat assignment. A keyboard physically on `seat0` stays there. **An injected seat must be fed by a virtual device, never by re-routing the user's hardware** — re-routing physical input would deliver the user's own keystrokes to the agent seat and invert every isolation rule in this section.
 - **What the substrate does not do.** logind's "active session" notion, `active-by-default`, VT switching and output blanking are all **`seat0`-scoped**. An injected seat has no idle state of its own and does not participate in blanking. That is convenient — agent activity will not keep the screen awake — but it means nothing in wlroots stops an injected seat when the session is locked or blank. That has to be answered explicitly, which is D2.6.1.
 
@@ -181,7 +181,7 @@ Automated, in the compositor repository, under its own test rules (one package, 
 - cursor: an injected pointer event does not set the drawn cursor.
 - a table test over seat/device assignments, because this is pure routing logic and belongs in a table.
 
-Live, and **unrunnable on this machine**: the seat model needs two seats, and Niri here has no runtime virtual output. Per the shell's standing note, every two-output check is unrunnable on this host; a second seat needs a real second input device or a virtual one wired through wlroots. **Until that fixture exists these tests have never run and no result may be claimed for them.**
+Live: **unrun, because nothing is built yet** — not for lack of hardware. A second seat needs no second output and no second physical device: an in-process `wlr_keyboard_init` / `wlr_pointer_init` device in the nested M0 compositor exercises it on this host. **Until that code and test exist no result may be claimed.**
 
 No performance budget is proposed. The orchestration rule is *"record measurements before setting hard budgets"* and there are no measurements.
 
@@ -197,7 +197,7 @@ No performance budget is proposed. The orchestration rule is *"record measuremen
 
 **Reconsider if** the owner declines both computer-use agents and browser remote access: there is no consumer, and the correct outcome is a recorded parity exclusion, not a seat table.
 
-**Reconsider the seat design itself** if wlroots 0.20 does not expose a usable per-seat virtual device attachment. That is a hard external dependency, unverified today because there is no code and no build. **Verify it before writing any plan**, with a minimal cgo probe, not with an assumption.
+**Reconsider the seat design itself** only if the D2.7 routing test cannot make an agent-seat device deliver to the agent seat alone. The wlroots API leaves attachment to the compositor (D8.6), so this is now a test of this repository's code, written first in gh#263's TDD plan.
 
 ---
 
@@ -256,7 +256,7 @@ Two readings are plausible and they are not the same feature:
 - **(i) agent seat + agent-dialog seat.** One seat carries the agent's ordinary input; a second exists so that dialogs the agent raises — a permission prompt, a confirmation — are themselves input-isolated, and the agent cannot answer a dialog addressed to the user. **This reading has a security purpose the one-seat model lacks.** If the agent and the user share a seat for dialogs, the agent can type *Allow* into the user's permission prompt, and gh#267's entire card is theatre. It also explains why the handover pairs "two extra seats" with "per-window targets/**dialogs**".
 - **(ii) one seat per agent**, with the seat table generalising from one to N. A multi-agent story, with N isolated cursors. Nothing in the ledger's text asks for N, and D2.4's rules are stated per seat rather than per agent.
 
-**Recommendation: (i), as the reading with a stated purpose.** It costs one more empty secondary seat — cheap, per D2.4.1 — and it closes a consent hole that (ii) leaves open too. But **this is a needs-verification against pleamar's `src/agent.rs`, not a settled decision.** Record it as an open question in the compositor design at transfer time; do not build a seat count before it is answered.
+**Correction 2026-10-15 (ownership audit, T3-2): pleamar implements (ii), not (i).** The gap dossiers record two symmetric agent seats, `cua-agent` and `cua-agent-2`, each with a US keyboard and a pointer, `CURSORS = 2`, and two drawn cursors (`research_notes/pleamar-gap-analysis/03-pleamar-sisters.md`:251-252, `17-domain-integ-session.md`:241-242; the two dossiers disagree on the `agent.rs` line anchors). Reading (i) is therefore a sysc proposal, not pleamar's design. Its consent argument is also weaker than stated: the shell binds one `wl_seat` (D6), so injected input on another seat never reaches a shell-drawn card at all, provided the shell binds the user seat by name (bd `sysc-1254`). **Owner decision 2026-10-15 (D8.5): one agent seat**, written as a table so a second is a row.
 
 **Either way, one seat is a floor, not a ceiling.** The seat table (D2.3) is written as a table, not a singleton, so a second seat is a row and not a refactor.
 
@@ -267,6 +267,8 @@ Two readings are plausible and they are not the same feature:
 After Stop, **every mutating verb answers `stopped-by-user`.** Read verbs may continue — otherwise the user cannot verify that Stop worked, and "no state changed" becomes indistinguishable from "nothing happened".
 
 pleamar-wm evidence: `src/agent.rs`:409-415, where mutating verbs answer `stopped-by-user` after Stop.
+
+**Deliberate divergence from pleamar.** pleamar's Stop lapses: mutating verbs refuse "until `done` or a minute" (`17-domain-integ-session.md`:245). Here Stop does not expire. Only the user lifts it, because a Stop that silently ends is a consent failure of the same kind as a faded capture indicator (D4.6.2).
 
 Note the vocabulary boundary (D6): `stopped-by-user` is **not** one of the shell's Tier 1 error codes. It belongs to the compositor's control socket. See D5.
 
@@ -298,7 +300,7 @@ Automated, in the compositor repository, under its rules:
 - target resolution: `pid:N`, `root:N`, `app-id` each resolve; an unknown target injects nothing.
 - an agent seat cannot move user data-device/primary-selection focus and cannot set the drawn cursor (inherited from D2.4, re-asserted per seat).
 
-Live, and **unrunnable on this machine**: this needs a second seat and a second input device. Niri here has no runtime virtual output, so every two-output check is unrunnable on this host. **No live result may be claimed for injection, Stop, or isolation until that fixture exists.**
+Live: **unrun, because nothing is built.** A second seat and its device can be created in process in the nested compositor (D2.7); no second output or device is needed. **No live result may be claimed for injection, Stop, or isolation until that code exists.**
 
 ### D3.9 Stop / reconsider condition
 
@@ -433,9 +435,9 @@ This tranche must **not** invent a second shell-side vocabulary, and must not ad
 
 ## D6. What the shell does, in total, across gh#262, gh#263, gh#265
 
-**Nothing.** That is the finding, not a gap.
+**Almost nothing, with one exception found 2026-10-15.**
 
-The shell binds one `wl_seat` as a client (`internal/platform/wayland/client.go` (`bindSingleton`) and `internal/platform/wayland/registry.go` (`bindVersion`)), which makes the compositor's internal seat count invisible to it. gh#262's and gh#263's enforcement lives where input is routed. gh#265 keeps its transport, auth and codecs session-side and explicitly bars the shell from acquiring a web stack.
+The shell binds one `wl_seat` as a client (`internal/platform/wayland/client.go` (`bindSingleton`) and `internal/platform/wayland/registry.go` (`bindVersion`)), which makes the compositor's internal seat count invisible to it. **The exception:** `registry.go`'s `addGlobal` keeps the *last* advertised `wl_seat`, so once this repository advertises an agent seat, a shell started while it exists can bind the agent's seat, and removing that seat can look like losing `wl_seat`. The shell must bind the user seat by name (`wl_seat.name`). Tracked as bd `sysc-1254`, gated on gh#262; the guarantee that agent input never reaches shell surfaces depends on it. gh#262's and gh#263's enforcement lives where input is routed. gh#265 keeps its transport, auth and codecs session-side and explicitly bars the shell from acquiring a web stack.
 
 The one shell-side consequence in this tranche is **reading agent presence facts**, which is gh#268, designed and gated separately in `2026-10-15-tier3-agent-experience-design.md`. It depends on D3.6's decision that facts arrive on the session-local socket rather than the niri event stream.
 
@@ -454,18 +456,18 @@ The one shell-side consequence in this tranche is **reading agent presence facts
 
 ## D8. Owner decisions this document records rather than makes
 
-1. ~~**Will `sysc-compositor` become a repository and get built?**~~ **Answered 2026-10-15: yes.** `github.com/Nomadcxx/sysc-compositor` exists, M0 has shipped code, and every other answer below now has somewhere to land.
-2. **Does sysc want computer-use agents?** If no, gh#262 closes as a parity exclusion. If yes, gh#262 proceeds after D2 ships.
+1. ~~**Will `sysc-compositor` become a repository and get built?**~~ **Answered 2026-10-15: yes.** `github.com/Nomadcxx/sysc-compositor` exists and M0 code is on `main`; M0's pointer move/resize exit gate is still open.
+2. ~~**Does sysc want computer-use agents?**~~ **Owner answered 2026-10-15: yes** (bd `sysc-1208`). gh#262 proceeds after D2 ships; this is a decision, not an implementation commission.
 3. **Does sysc want browser remote access?** If no, gh#265 closes as a parity exclusion. This document's own recommendation is *defer*.
-4. **Is a second non-user seat acceptable at all?** If no, gh#263 and gh#262 close together; they have no separate consumer.
-5. **How many agent seats?** The Cua model is described as **two** extra seats; the ledger's approach text describes one. This design recommends agent + agent-dialog (D3.4.1) and records it as needs-verification against pleamar, not as settled. Answer it before any seat count is built.
-6. ~~**Verify before planning:** can wlroots 0.20 attach a virtual device to a chosen seat?~~ **Answered 2026-10-15: yes for seats, see the residual below.** The probe in `2026-10-15-tier3-seat-attachment-probe.md` ran against wlroots 0.20.2 and returned `attach_to_named_seat`.
+4. ~~**Is a second non-user seat acceptable at all?**~~ **Owner answered 2026-10-15: yes** (bd `sysc-1208`, `sysc-1211`). gh#263 now has a consumer.
+5. ~~**How many agent seats?**~~ **Owner answered 2026-10-15: one** (bd `sysc-1208`). pleamar runs two symmetric agent seats (D3.4.1, corrected); sysc builds one, written as a table so a second is a row and not a refactor.
+6. ~~**Verify before planning:** can wlroots 0.20 attach a virtual device to a chosen seat?~~ **Answered by API inspection 2026-10-15** (D8.6): attachment is the compositor's own handler, so the question moves from feasibility into gh#263's TDD plan.
 
 ### D8.6. What the probe actually answered
 
-The probe was written before any assumption about wlroots' seat model, so it can fail as easily as
-pass. It did not fail. Recorded here because D1.1.3 predicted the opposite, and being wrong about a
-prediction is worth as much as being right.
+The test that landed was narrower than the original question. It answers whether a wlroots display
+can hold independent seat objects with independent capability state. It does not answer whether a
+virtual device can be attached to a chosen seat.
 
 **Proven by test** (`TestSeatTable` in `internal/wlr/seat_probe_test.go`):
 
@@ -476,9 +478,9 @@ prediction is worth as much as being right.
 - Clearing every seat but one **does not move the survivor's capabilities**. Seat capability state
   is not shared through any global the probe could reach.
 
-**So the seat table in D2 is buildable as designed, and D1.1.3's "wlroots has one interesting seat"
-was wrong about seat count.** It was right about pointer routing, which is a different claim and
-survives.
+**The seat-object part of D2 is buildable, and D1.1.3's "wlroots has one interesting seat" was wrong
+about seat count.** This does not prove the virtual-device path in D2. It was right about pointer
+routing, which is a different claim and survives.
 
 **The residual that does survive** — the asymmetry D1.1.3 identified is real, just narrower than
 predicted:
@@ -491,14 +493,31 @@ predicted:
   direct call.
 - `wlr_keyboard_create` and `wlr_pointer_create` are **internal in 0.20**. Creating one means
   instantiating a `wlr_virtual_keyboard_manager_v1` / `wlr_virtual_pointer_manager_v1`, and the
-  wlroots package **does not ship the protocol XML**, so a hand-rolled protocol client would be
-  required. The probe deliberately did not do this: it answers the seat question, and the virtual
-  device question is a separate one.
+  wlroots package **does not ship the protocol XML**. Commit `746afa6` deliberately did not do this:
+  virtual-device attachment remains a separate, untested question.
 
-**What this changes in the plan.** D2's seat table does not need a re-estimate, and gh#262's Scope L
-is **not** inflated by seat support — the load-bearing cost sits in `internal/wm` (target tracking,
-refusal, the socket) exactly as D1.1.4 priced it. D8.4 and D8.5 become live owner questions rather
-than feasibility ones.
+**Virtual devices, answered from the installed headers (wlroots0.20 0.20.2-1, 2026-10-15).** The
+protocol XML is not needed for the design in D3.4:
+
+- `wlr/interfaces/wlr_keyboard.h`:20 `wlr_keyboard_init` and `wlr/interfaces/wlr_pointer.h`:18
+  `wlr_pointer_init` are public under `WLR_USE_UNSTABLE`, which this package already sets. The
+  compositor can create an agent-seat keyboard and pointer in process and feed them from its control
+  socket, with no Wayland protocol involved.
+- `wlr_virtual_keyboard_manager_v1_create` and `wlr_virtual_pointer_manager_v1_create` include no
+  generated protocol header, so they are callable from cgo without XML. `struct wlr_virtual_keyboard_v1`
+  carries the client-requested `seat`, and `wlr_virtual_pointer_v1_new_pointer_event` a
+  `suggested_seat`. wlroots emits `new_virtual_*` and attaches nothing; the compositor's handler picks
+  the seat.
+- XML is needed only by an *external* client that injects over Wayland. It is not in
+  wayland-protocols 1.49; it would be vendored from wlroots / wlr-protocols (bd `sysc-1242`).
+
+So the probe's `forced_to_seat0` and `unsupported` outcomes have no place in the 0.20 API, and
+`attach_to_named_seat` is a property of code this repository will write. **D8.6 is closed as a
+feasibility question.** Proof of the routing and of D2.4's isolation rules is the first failing test
+in gh#263's TDD plan.
+
+**What this changes in the plan.** Neither D2 nor gh#262's Scope L needs a re-estimate. D8.2 and D8.4
+were answered yes and D8.5 answered one seat on 2026-10-15.
 
 ---
 
@@ -513,15 +532,16 @@ than feasibility ones.
 **Gate 1 has cleared** — the repository exists and these documents were transferred into it on
 2026-10-15. **Gates 2 and 3 do not apply to this document**: it contains no assistant surface, and it
 defines its own types rather than depending on another implementation's. What remains is not a gate
-but an ordering fact: M0 has to create `internal/server` and the first seat before any of this is
-buildable, and the seat-attachment probe has to say whether a second seat is possible at all.
+but an ordering fact: M0 now creates one production seat and cursor, and its pointer move/resize gate
+is still open. `TestSeatTable` proves that wlroots can hold multiple independent seats; virtual-device
+attachment remains untested.
 
-**Both conditions are met.** M0 shipped (nested compositor running on wlroots 0.20.2, foot mapping,
-no leaked listeners), and **D8.6 is answered: `attach_to_named_seat`**. gh#262 and gh#263 are no
-longer blocked on feasibility. They are blocked on the owner answering D8.2, D8.4 and D8.5 — wants
-agents, wants a second seat, wants how many — which are decisions, not unknowns.
+**M0 code exists, but its pointer move/resize exit gate remains open.** `TestSeatTable` confirms
+independent seat objects and capability state, and D8.6 is answered by API inspection. D8.2, D8.4
+and D8.5 were answered on 2026-10-15 (yes, yes, one seat). What gates a gh#263 / gh#262 TDD plan is
+M0's exit gate and a separate implementation commission.
 
-The remaining item, gh#265, stays a **defer** recommendation. It also now has the M12 capture work to
-attach to and nothing blocking it except the owner's security model.
+The remaining item, gh#265, stays a **defer** recommendation. Its capture side is planned for M12, which
+has not started; it needs that work, a built gh#263, and the owner's security model.
 
 No bd closure, and no milestone plan — this document still plans no code.

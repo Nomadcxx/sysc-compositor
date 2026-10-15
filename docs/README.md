@@ -27,7 +27,7 @@ executed until the owner schedules the milestone they belong to.
 | [plans/niri-parity-matrix.md](plans/niri-parity-matrix.md) | checklist | Remaining niri IPC and config parity. Fill this rather than expanding the design. |
 | [plans/2026-10-15-tier3-session-domain-design.md](plans/2026-10-15-tier3-session-domain-design.md) | design | **Transferred from sysc-shell 2026-10-15.** Multi-seat input model, agent seat with compositor-enforced Stop, browser remote access. |
 | [plans/2026-10-15-tier3-wm-scene-equivalent-design.md](plans/2026-10-15-tier3-wm-scene-equivalent-design.md) | design | **Transferred from sysc-shell 2026-10-15.** Verdict: recommend against as a build item; the authoring surface is already in the product contract. |
-| [plans/2026-10-15-tier3-seat-attachment-probe.md](plans/2026-10-15-tier3-seat-attachment-probe.md) | plan | **Transferred from sysc-shell 2026-10-15.** Viability probe, not a milestone plan. Answers whether wlroots 0.20 attaches a virtual device to a chosen seat. |
+| [plans/2026-10-15-tier3-seat-attachment-probe.md](plans/2026-10-15-tier3-seat-attachment-probe.md) | plan | **Transferred from sysc-shell 2026-10-15.** **Retired 2026-10-15 without execution.** The landed test proves three distinct, independently configurable `wl_seat` objects; the virtual-device question was answered by API inspection (wlroots attaches nothing itself, the compositor's handler does), so the routing proof moves to gh#263's TDD plan. |
 
 ## Source ledgers
 
