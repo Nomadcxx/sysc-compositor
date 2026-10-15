@@ -268,7 +268,7 @@ After Stop, **every mutating verb answers `stopped-by-user`.** Read verbs may co
 
 pleamar-wm evidence: `src/agent.rs`:409-415, where mutating verbs answer `stopped-by-user` after Stop.
 
-**Deliberate divergence from pleamar.** pleamar's Stop lapses: mutating verbs refuse "until `done` or a minute" (`17-domain-integ-session.md`:245). Here Stop does not expire. Only the user lifts it, because a Stop that silently ends is a consent failure of the same kind as a faded capture indicator (D4.6.2).
+**Deliberate divergence from pleamar.** pleamar's Stop lapses: mutating verbs refuse "until `done` or a minute" (`17-domain-integ-session.md`:245). Here Stop does not expire. Only the user lifts it, because a Stop that silently ends is a consent failure of the same kind as a faded capture indicator (D4.6.2). **Refined 2026-10-16:** the shell and an agent are the same uid, so the socket cannot tell who sent a request. Any connection may set Stop; nothing on the socket can lift it. It holds until the compositor restarts or a user-seat-only re-arm (a KDL bind, with config in M1) — `2026-10-16-tier3-control-socket.md` P1.3.
 
 Note the vocabulary boundary (D6): `stopped-by-user` is **not** one of the shell's Tier 1 error codes. It belongs to the compositor's control socket. See D5.
 
