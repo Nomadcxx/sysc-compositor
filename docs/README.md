@@ -31,6 +31,17 @@ executed until the owner schedules the milestone they belong to.
 | [plans/2026-10-15-tier3-multi-seat.md](plans/2026-10-15-tier3-multi-seat.md) | plan | **Tier 3 TDD plan, not a milestone plan.** gh#2 / `sysc-1211`: seat table in `internal/wlr`, one on-demand injected seat with in-process devices, isolation rules D2.4.1–2 as nested tests; retires `ProbeSeats`. Gates met (M0 merged, D8 answered); execution needs the owner's implementation commission. |
 | [plans/2026-10-16-tier3-control-socket.md](plans/2026-10-16-tier3-control-socket.md) | plan | **Tier 3 TDD plan.** gh#1 / `sysc-1208`: `0600` peer-verified JSON-lines control socket in a pure-Go `internal/control`, work posted to the compositor thread through an eventfd, Stop that anyone may set and nothing on the socket can lift, targets by id/pid/app-id, per-pointer facts for the shell's presence display. |
 
+## Reference sources (pinned 2026-10-16)
+
+Read-only checkouts outside every sysc repo, never built from. Milestone plans cite them by these commits.
+
+| Reference | Path | Pin | Use |
+|---|---|---|---|
+| Niri 26.04 (Rust, smithay) | `/home/nomadx/references/niri` | tag `v26.04`, `8ed0da44d974c32c6877d2f4630c314da0717ecb` | **Behaviour and contract target**: what each IPC request, config key and layout behaviour must do (`src/layout/`, `src/ipc/`, `src/handlers/`, `src/protocols/`, `niri-config/`). |
+| mangowm 0.18.0 (C, wlroots 0.20 + scenefx) | `/home/nomadx/references/mango` | tag `0.18.0`, `a21b10fcbe6156b76ea96178d1941de5cb36137f` | **wlroots 0.20 implementation reference**: same substrate as this repo, so its global creation (`src/main.c`), input and seat code show the wlroots calls directly. Not a source for layouts, tags or `mmsg` (orchestration "What not to schedule"). |
+
+Re-pin by recording a new row; do not silently move a checkout.
+
 ## Source ledgers
 
 Tier 3 items in this repository are derived from the pleamar improvement and gap ledgers, which stay in
