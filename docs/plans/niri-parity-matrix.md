@@ -141,6 +141,19 @@ Acceptance file: `/home/nomadx/.config/niri/config.kdl` + `sysc-shell.kdl`. Pars
 | locale1 client | [ ] | M9 |
 | login1 | [ ] | M9 |
 
+## Deliberate exclusions (recorded, not missing)
+
+Things this product will **not** match niri on, and why. A row here is a decision. A row in the tables
+above is a debt.
+
+| Exclusion | Decision | Reason | Item |
+|---|---|---|---|
+| A scene language for window motion and WM policy | Not built, permanently | The mechanism pleamar uses is Luau, and scripting languages are banned in this product. KDL binds, the 141-action table and per-kind springs in `animations{}` are the authoring surface, and they are already specified | gh#264 / sysc-1212 |
+
+**A future agent reading this should not "fix" it.** The exclusion was reached deliberately and
+re-checked after the repository was created: being in the right repository did not change it. If the
+constraint on scripting languages ever lifts, that is a new design, not a resumption of this one.
+
 ## Sibling (not this repo)
 
 | Work | Status | Plan |
