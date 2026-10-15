@@ -69,7 +69,7 @@ What is **not** proven, and cannot be from a directory with no build: whether wl
 #### D1.1.2 What carries real risk
 
 1. **Seat attachment semantics — the highest-risk unknown in the tranche.** If a virtual keyboard lands on `seat0` regardless of what it was attached to, every isolation rule in D2.4 is unenforceable at the wlroots layer and must be re-implemented as a seat-table lookup above it. The rules do not change; where they are enforced does.
-2. **Focus asymmetry surviving a port.** wlroots has no concept of an agent seat. There is one interesting seat and every other is decoration. So all three rules in D2.4 are code this repository writes and maintains, not configuration it sets. They are exactly what a wlroots port loses, and the ledger is right that they are "easy to lose".
+2. **Focus asymmetry surviving a port.** wlroots has no concept of an agent seat. **There is one interesting seat and every other is decoration — corrected 2026-10-15: the seats are real and independently configurable (D8.6), but the *asymmetry between them* is entirely code this repository writes.** Nothing in wlroots enforces that an injected seat must not move the user's data-device focus or set the drawn cursor; both are compositor decisions. So all three rules in D2.4 are code this repository writes and maintains, not configuration it sets. They are exactly what a wlroots port loses, and the ledger is right that they are "easy to lose".
 3. **Capture sizing under gh#265.** `design`:298's exact-sized SHM-pool rule for screencopy consumers is a live constraint on a remote frame path that no test exercises until a second machine exists.
 
 #### D1.1.3 pleamar behaviours with no cheap Go analogue
@@ -444,7 +444,7 @@ The one shell-side consequence in this tranche is **reading agent presence facts
 ## D7. Non-goals across the tranche
 
 - No product code in sysc-shell. This document produces none.
-- No `sysc-compositor` repository is created by this design.
+- No repository is created by this design. One was created by the owner; see D0.
 - No work in sysc-shell that blocks or depends on Tier 1 or Tier 2 branches.
 - No GUI toolkit, scene language or scripting language. The mechanism pleamar uses for WM policy is Luau and is banned outright (gh#264 covers this).
 - No new UI primitive in sysc-shell. There is no shell consumer in this tranche.
@@ -454,12 +454,51 @@ The one shell-side consequence in this tranche is **reading agent presence facts
 
 ## D8. Owner decisions this document records rather than makes
 
-1. **Will `sysc-compositor` become a repository and get built?** It is a docs-only directory today. Every other answer below is contingent on this one, and this document does not pre-empt it.
+1. ~~**Will `sysc-compositor` become a repository and get built?**~~ **Answered 2026-10-15: yes.** `github.com/Nomadcxx/sysc-compositor` exists, M0 has shipped code, and every other answer below now has somewhere to land.
 2. **Does sysc want computer-use agents?** If no, gh#262 closes as a parity exclusion. If yes, gh#262 proceeds after D2 ships.
 3. **Does sysc want browser remote access?** If no, gh#265 closes as a parity exclusion. This document's own recommendation is *defer*.
 4. **Is a second non-user seat acceptable at all?** If no, gh#263 and gh#262 close together; they have no separate consumer.
 5. **How many agent seats?** The Cua model is described as **two** extra seats; the ledger's approach text describes one. This design recommends agent + agent-dialog (D3.4.1) and records it as needs-verification against pleamar, not as settled. Answer it before any seat count is built.
-6. **Verify before planning:** can wlroots 0.20 attach a virtual device to a chosen seat? Unverified — there is no code and no build. A minimal cgo probe answers this; an assumption does not.
+6. ~~**Verify before planning:** can wlroots 0.20 attach a virtual device to a chosen seat?~~ **Answered 2026-10-15: yes for seats, see the residual below.** The probe in `2026-10-15-tier3-seat-attachment-probe.md` ran against wlroots 0.20.2 and returned `attach_to_named_seat`.
+
+### D8.6. What the probe actually answered
+
+The probe was written before any assumption about wlroots' seat model, so it can fail as easily as
+pass. It did not fail. Recorded here because D1.1.3 predicted the opposite, and being wrong about a
+prediction is worth as much as being right.
+
+**Proven by test** (`TestSeatTable` in `internal/wlr/seat_probe_test.go`):
+
+- A wlroots 0.20 `wl_display` holds **three simultaneously distinct seats**. `wlr_seat_create` is
+  per-display and there is no hidden singleton; the pointers differ and each is independently live.
+- `wlr_seat_set_capabilities` is **per seat**. Seats set to `keyboard`, `pointer` and
+  `keyboard|pointer` each read their own mask back.
+- Clearing every seat but one **does not move the survivor's capabilities**. Seat capability state
+  is not shared through any global the probe could reach.
+
+**So the seat table in D2 is buildable as designed, and D1.1.3's "wlroots has one interesting seat"
+was wrong about seat count.** It was right about pointer routing, which is a different claim and
+survives.
+
+**The residual that does survive** — the asymmetry D1.1.3 identified is real, just narrower than
+predicted:
+
+- There is **no `wlr_seat_set_pointer`**. A cursor attaches to input devices via
+  `wlr_cursor_attach_input_device`, and the compositor feeds the seat by calling
+  `wlr_seat_pointer_notify_*` itself. A per-seat cursor is therefore **compositor code, not a wlroots
+  call** — the routing decision lives where D2 says it should.
+- `wlr_seat_set_keyboard` *is* per seat, so the keyboard half of the isolation rule in D2.4.1 is a
+  direct call.
+- `wlr_keyboard_create` and `wlr_pointer_create` are **internal in 0.20**. Creating one means
+  instantiating a `wlr_virtual_keyboard_manager_v1` / `wlr_virtual_pointer_manager_v1`, and the
+  wlroots package **does not ship the protocol XML**, so a hand-rolled protocol client would be
+  required. The probe deliberately did not do this: it answers the seat question, and the virtual
+  device question is a separate one.
+
+**What this changes in the plan.** D2's seat table does not need a re-estimate, and gh#262's Scope L
+is **not** inflated by seat support — the load-bearing cost sits in `internal/wm` (target tracking,
+refusal, the socket) exactly as D1.1.4 priced it. D8.4 and D8.5 become live owner questions rather
+than feasibility ones.
 
 ---
 
@@ -476,5 +515,13 @@ The one shell-side consequence in this tranche is **reading agent presence facts
 defines its own types rather than depending on another implementation's. What remains is not a gate
 but an ordering fact: M0 has to create `internal/server` and the first seat before any of this is
 buildable, and the seat-attachment probe has to say whether a second seat is possible at all.
+
+**Both conditions are met.** M0 shipped (nested compositor running on wlroots 0.20.2, foot mapping,
+no leaked listeners), and **D8.6 is answered: `attach_to_named_seat`**. gh#262 and gh#263 are no
+longer blocked on feasibility. They are blocked on the owner answering D8.2, D8.4 and D8.5 — wants
+agents, wants a second seat, wants how many — which are decisions, not unknowns.
+
+The remaining item, gh#265, stays a **defer** recommendation. It also now has the M12 capture work to
+attach to and nothing blocking it except the owner's security model.
 
 No bd closure, and no milestone plan — this document still plans no code.

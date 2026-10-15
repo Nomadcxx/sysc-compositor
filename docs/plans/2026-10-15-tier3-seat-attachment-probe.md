@@ -152,12 +152,56 @@ timeout 90s env GOMAXPROCS=2 go test -count=1 ./internal/server -run TestSeatAtt
 
 ## P7. Non-goals
 
-- **No seat table, no control socket, no `Stop`, no `internal/wm` change.** The probe answers one question and is deleted (P3.1).
+- **No seat table, no control socket, no `Stop`, no `internal/wm` change.** The probe answers one question. The probe *code* stays as evidence — see the closing note — but it is not a seat table and nothing else was built on top of it.
 - **No shell work of any kind.** sysc-shell is a client and stays one; the compositor's `AGENTS.md` says so and this plan obeys it.
-- **No GH issue transfer.** gh#262 and gh#263 move to `sysc-compositor` when that repository exists, and not before.
+- **No GH issue transfer.** Already done, and done as a separate action: gh#262 and gh#263 were transferred to this repository on 2026-10-15, as #1 and #2, with their bodies corrected first so they did not arrive asserting this repository did not exist. This plan neither performed nor authorised that.
 - **No bd closure.** The seven Tier 3 issues stay open. This plan produces evidence, not a decision.
-- **No speculative infrastructure on any branch.** A probe that leaves a seat table and a half-built socket behind is the trap the handover names, and the removal condition exists to prevent exactly that.
+- **No speculative infrastructure on any branch.** A probe that leaves a seat table and a half-built socket behind is the trap the handover names. It did not: the probe's seats are never stored, so display teardown reclaims them and the probe cannot become owner of compositor state.
 
 ---
 
-**Plan status:** waiting. It cannot start until `sysc-compositor` exists as a repository with a wlroots 0.20 toolchain. Its answer is what makes gh#262 and gh#263 plannable — and until it returns, no other Tier 3 implementation plan exists to write.
+**Plan status: DONE. Outcome `attach_to_named_seat`.** Commit `746afa6`, 2026-10-15.
+
+This plan's own precondition table was wrong for one session and the correction is recorded in P1
+above: wlroots 0.20.2 with headers was installed the whole time, and only the probe was bad. That is
+worth stating plainly, because this document is the counter-example the source ledger needed — every
+precondition in a plan that gates other plans gets re-checked against a real probe, not trusted.
+
+**What ran.** `TestSeatTable` in `internal/wlr/seat_probe_test.go`, against the real nested
+compositor built in M0. All three rows of P2's table were reachable; two of them were written as
+legitimate outcomes before the answer was known, which is the only reason the `unsupported` row could
+have been taken seriously.
+
+**Result, in the plan's own vocabulary:**
+
+| Row | Reached | What it meant |
+|---|---|---|
+| `attach_to_named_seat` | **yes** | gh#262's seats and gh#263's per-seat capability isolation are buildable as designed |
+| `forced_to_seat0` | no | — |
+| `unsupported` | no | — |
+
+**Found while writing it, and not in the plan:**
+
+- **cgo does not work in `_test.go` files.** The first attempt put the cgo in the test and failed to
+  build. The probe therefore lives in `internal/wlr/seat_probe.go` and the test asserts on plain Go
+  data. The plan's P3 file list assumed otherwise; the split is better than what was planned, because
+  the exported result type carries no cgo type at all.
+- **`extra` has no default, deliberately.** A probe that picks its own seat count answers a question
+  nobody asked. The test supplies it.
+
+**Two things the probe does not decide, recorded so they are not assumed:**
+
+- **Pointer routing.** There is no `wlr_seat_set_pointer` in 0.20. A per-seat cursor is compositor
+  code — `wlr_cursor_attach_input_device` plus `wlr_seat_pointer_notify_*` — not a wlroots call.
+  Keyboard attachment *is* per seat.
+- **Virtual devices.** `wlr_keyboard_create` / `wlr_pointer_create` are internal in 0.20. A virtual
+  device needs the v1 protocol XML, which the wlroots package does not ship. That is a separate
+  probe and it was deliberately not written here.
+
+**This plan is complete and is not scheduled work.** Its removal condition (delete once gh#263's real
+seat table lands) still applies to the *probe*, which stays as evidence rather than being deleted
+mid-tranche — deleting the evidence that unblocked two issues would leave those issues resting on an
+unverifiable claim.
+
+D8.6 of the session-domain design records the answer and the corrected prediction.
+
