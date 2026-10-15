@@ -146,3 +146,42 @@ the parent Niri intercepts them.
   The shell runs on Niri today, so nothing in the shell waits on this plan.
 - **Consumer:** gh#1's plan (control socket, `SO_PEERCRED`, verbs, Stop) builds on `AddInjectedSeat` and the
   injection functions. Write it after this plan's Task 4 lands.
+
+## Execution record (2026-10-15/16)
+
+Commits: `d5f90f2` (Tasks 1, 2 and 4) and `4ad82a5` (Task 3).
+
+| Test | What it proves | Desktop (Niri 26.04, DP-1/DP-3) | Laptop (Niri 26.04, eDP-1) |
+|---|---|---|---|
+| `TestSeatTableOrder` | `seat0` is created first and advertised under a lower registry name than the injected seat; one injected seat only; `seat0` cannot be taken; removal leaves `seat0` | pass | pass |
+| `TestInjectedDevicesStayOnTheirSeat` | the injected seat has keyboard and pointer capabilities; the user seat's capabilities and the drawn pointer's position do not change; an unknown seat is refused | pass | pass |
+| `TestInjectedSeatIsolation` | weston-terminal binds both seats. After the user seat focuses the window, the injected seat points, clicks and types. The injected keyboard gets press and release of key A, the user keyboard gets none, and the user seat's keyboard and data device see nothing once injection starts. The user's focus and view are unchanged, the injected seat focuses the window, the client's request to change the image on the injected seat reaches no listener, and the drawn pointer does not move | pass, 3 of 3 runs | pass |
+| `TestInjectedSeatTeardown` | three create/use/remove cycles, then `Destroy` with a seat present: Go handles balance | pass | pass |
+
+**Mutation check.** Routing the injected keyboard through the user seat fails 7 assertions of
+`TestInjectedSeatIsolation`, so the test can fail.
+
+The client's own log confirms the ordering contract: `wl_registry.global(7, "wl_seat")` (`seat0`) arrives
+before `global(9, "wl_seat")` (`agent`).
+
+**Deviations from the plan, and why.**
+
+1. **No in-process pointer device.** The injected seat drives its pointer through its own
+   `wlr_seat_pointer_notify_*` calls, so a `wlr_pointer` would sit unused. Leaving it out makes "never
+   attached to the drawn pointer" true by construction rather than by care. The keyboard does need a
+   `wlr_keyboard`, for its keymap and modifier state.
+2. **Views are announced on the first commit after map, not on the map signal.** Map fires inside the
+   commit, before the scene attaches the buffer, so a view is not yet hit-testable at map time
+   (`viewMapped` hook, `internal/wlr/input.go`). gh#1's tracking of the windows the agent opens should use
+   the same moment.
+3. **The live check is the isolation test, run on the laptop bench.** P4 asked for a human-observed run with
+   the user typing at the same time. The test exercises the same path with a real client and checks the
+   protocol log, which a person watching the screen could not. No user-typing concurrency was observed.
+4. **Reading a seat's registry name needs a client.** `wl_global_get_name(global, NULL)` crashes, so the
+   ordering test creates a throwaway in-process `wl_client` over a socketpair.
+
+**Follow-ups:**
+- D2.6.1, keeping injected seats inert under lock and blank: no lock or idle path exists yet. The bd issue
+  is filed below.
+- gh#1, the control socket, verbs and Stop, builds on `AddInjectedSeat` / `InjectKey` /
+  `InjectPointerMotion` / `InjectPointerButton` and the `viewMapped` hook.
