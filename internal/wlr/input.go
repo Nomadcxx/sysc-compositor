@@ -58,6 +58,20 @@ static void sysc_scene_tree_set_position(struct wlr_scene_tree *tree, int x, int
 	wlr_scene_node_set_position(&tree->node, x, y);
 }
 
+// Only the user seat's focused client may change the drawn image (rule
+// D2.4.2); injected seats have no listener on this signal at all.
+static void sysc_set_cursor_from_seat(struct wlr_cursor *cursor, struct wlr_seat *seat,
+		struct wlr_seat_pointer_request_set_cursor_event *event) {
+	if (event->seat_client != seat->pointer_state.focused_client) {
+		return;
+	}
+	wlr_cursor_set_surface(cursor, event->surface, event->hotspot_x, event->hotspot_y);
+}
+
+static bool sysc_seat_has_set_cursor_listener(struct wlr_seat *seat) {
+	return !wl_list_empty(&seat->events.request_set_cursor.listener_list);
+}
+
 static void sysc_seat_keyboard_focus(struct wlr_seat *seat,
 		struct wlr_surface *surface, struct wlr_keyboard *keyboard) {
 	wlr_seat_keyboard_notify_enter(seat, surface, keyboard->keycodes,
@@ -98,6 +112,7 @@ type toplevelView struct {
 	toplevel  *C.struct_wlr_xdg_toplevel
 	tree      *C.struct_wlr_scene_tree
 	listeners []*Listener
+	announced bool
 }
 
 type pointerGeometry struct {
@@ -500,6 +515,58 @@ func (c *Compositor) handleNewToplevel(data unsafe.Pointer) {
 	add(unsafe.Pointer(&toplevel.events.destroy), func(unsafe.Pointer) {
 		c.handleToplevelDestroy(view)
 	})
+	// The map signal fires inside the commit, before the scene attaches the
+	// buffer, so a view is announced on its first commit after mapping: the
+	// moment it can be hit-tested. The scene's own commit listener was added
+	// first and runs first.
+	add(unsafe.Pointer(&toplevel.base.surface.events.commit), func(unsafe.Pointer) {
+		if view.announced || !bool(toplevel.base.surface.mapped) {
+			return
+		}
+		view.announced = true
+		if c.viewMapped != nil {
+			c.viewMapped(view)
+		}
+	})
+}
+
+// handleRequestSetCursor lets the user seat's focused client set the drawn
+// image. It is registered on the user seat only.
+func (c *Compositor) handleRequestSetCursor(data unsafe.Pointer) {
+	C.sysc_set_cursor_from_seat(c.cursor, c.seat,
+		(*C.struct_wlr_seat_pointer_request_set_cursor_event)(data))
+}
+
+// setCursorListeners reports, for the user seat and an injected seat, whether
+// anything listens for a client's request to change the drawn image.
+func (c *Compositor) setCursorListeners(injected string) (user, other bool) {
+	user = bool(C.sysc_seat_has_set_cursor_listener(c.seat))
+	if s := c.injectedSeat(injected); s != nil {
+		other = bool(C.sysc_seat_has_set_cursor_listener(s.seat))
+	}
+	return user, other
+}
+
+// userFocus is the user seat's keyboard focus and focused view, for tests.
+func (c *Compositor) userFocus() (unsafe.Pointer, *toplevelView) {
+	return unsafe.Pointer(c.seat.keyboard_state.focused_surface), c.focusedView
+}
+
+// injectedFocus is an injected seat's keyboard focus, for tests.
+func (c *Compositor) injectedFocus(name string) unsafe.Pointer {
+	if s := c.injectedSeat(name); s != nil {
+		return unsafe.Pointer(s.seat.keyboard_state.focused_surface)
+	}
+	return nil
+}
+
+// viewCenter is a mapped view's centre in layout coordinates.
+func (c *Compositor) viewCenter(view *toplevelView) (float64, float64) {
+	var x, y C.int
+	C.sysc_scene_tree_position(view.tree, &x, &y)
+	g := view.toplevel.base.geometry
+	return float64(x) + float64(g.x) + float64(g.width)/2,
+		float64(y) + float64(g.y) + float64(g.height)/2
 }
 
 func (c *Compositor) handleToplevelDestroy(view *toplevelView) {

@@ -77,6 +77,11 @@ type Compositor struct {
 	// injected is the table of seats fed by the compositor rather than the
 	// user's hardware, after the user seat (c.seat) in creation order.
 	injected []*injectedSeat
+
+	// viewMapped, when set, runs on the compositor thread once a toplevel is
+	// mapped and hit-testable. It is the hook tests use to act once a client
+	// is on screen.
+	viewMapped func(*toplevelView)
 }
 
 // New creates the display, its nested socket, and the globals a client needs to
@@ -165,6 +170,7 @@ func New() (*Compositor, error) {
 		AddListener(unsafe.Pointer(&c.cursor.events.button), c.handleCursorButton),
 		AddListener(unsafe.Pointer(&c.cursor.events.axis), c.handleCursorAxis),
 		AddListener(unsafe.Pointer(&c.cursor.events.frame), c.handleCursorFrame),
+		AddListener(unsafe.Pointer(&c.seat.events.request_set_cursor), c.handleRequestSetCursor),
 	)
 
 	if !bool(C.wlr_backend_start(c.backend)) {
