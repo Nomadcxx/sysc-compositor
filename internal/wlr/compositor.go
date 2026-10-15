@@ -85,6 +85,11 @@ type Compositor struct {
 
 	// post carries work from other goroutines onto the compositor thread.
 	post postQueue
+
+	// nextViewID and touchCount give windows stable ids and a
+	// most-recently-focused order for the control socket.
+	nextViewID uint64
+	touchCount uint64
 }
 
 // New creates the display, its nested socket, and the globals a client needs to

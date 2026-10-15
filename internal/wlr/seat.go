@@ -12,6 +12,7 @@ package wlr
 #include <wlr/types/wlr_compositor.h>
 #include <wlr/types/wlr_keyboard.h>
 #include <wlr/types/wlr_seat.h>
+#include <wlr/types/wlr_xdg_shell.h>
 
 static const struct wlr_keyboard_impl sysc_injected_keyboard_impl = {
 	.name = "sysc-injected-keyboard",
@@ -221,6 +222,7 @@ func (c *Compositor) InjectPointerButton(name string, button uint32, pressed boo
 		state = C.WL_POINTER_BUTTON_STATE_PRESSED
 		if surface, _, _ := c.surfaceAt(s.x, s.y); surface != nil {
 			C.sysc_injected_keyboard_enter(s.seat, surface, s.keyboard)
+			c.touch(c.viewForSurface(surface))
 		}
 	}
 	C.wlr_seat_pointer_notify_button(s.seat, nowMsec(), C.uint32_t(button), state)
@@ -273,6 +275,16 @@ func (c *Compositor) injectedCapabilities(name string) int {
 
 func (c *Compositor) cursorPosition() (float64, float64) {
 	return float64(c.cursor.x), float64(c.cursor.y)
+}
+
+// viewForSurface is the toplevel view a (sub)surface belongs to, or nil.
+func (c *Compositor) viewForSurface(surface *C.struct_wlr_surface) *toplevelView {
+	root := C.wlr_surface_get_root_surface(surface)
+	toplevel := C.wlr_xdg_toplevel_try_from_wlr_surface(root)
+	if toplevel == nil {
+		return nil
+	}
+	return c.views[unsafe.Pointer(toplevel)]
 }
 
 func nowMsec() C.uint32_t { return C.uint32_t(time.Now().UnixMilli()) }
