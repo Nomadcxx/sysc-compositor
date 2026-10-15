@@ -201,12 +201,34 @@ Do not implement `niri msg` here. M2 owns the CLI drop-in. M0 binary name is `sy
 
 ## Exit gate
 
-- [ ] `go build ./cmd/sysc-compositor` works with wlroots 0.20
-- [ ] Nested session: foot maps
-- [ ] Move / resize with pointer
-- [ ] Clean quit, no leaked listeners
-- [ ] No KDL, no IPC, no layer-shell yet (M1)
-- [ ] No `.c` / `.h` in the tree (`rg --glob '*.c' --glob '*.h' .` empty aside from nothing)
+- [x] `go build ./cmd/sysc-compositor` works with wlroots 0.20
+- [x] Nested session: foot maps
+- [x] Move / resize with pointer
+- [x] Clean quit, no leaked listeners
+- [x] No KDL, no IPC, no layer-shell yet (M1)
+- [x] No `.c` / `.h` in the tree (`rg --glob '*.c' --glob '*.h' .` empty aside from nothing)
+
+### Exit gate evidence (2026-10-15)
+
+- **Build:** `go build ./cmd/sysc-compositor` against wlroots 0.20.2 on the desktop and the laptop.
+- **Maps:** an xdg client maps into the scene in the nested session; `TestXDGInitialConfigureAfterInitialCommit`
+  covers the initial configure. Foot itself was confirmed by the earlier gate audit (bd `sysc-1243`); the
+  laptop has no foot, so its run used a test xdg client.
+- **Move / resize (laptop, Niri 26.04):** a test client driven through a virtual pointer received enter,
+  motion and button events. Its left-button `request_move` (serial 6) moved the scene tree to `(191,63)`; its
+  right-button `request_resize` (serial 8, bottom-right) was acknowledged from `811×607` to `895×663`.
+  Requests are accepted only with the serial of a currently pressed button. Super+drag is not evidence: the
+  parent Niri intercepts it.
+- **Clean quit:** Escape ends the nested display with exit status 0; `TestListenerTokensBalance` passes.
+- **Scope:** no KDL, IPC or layer-shell code (`rg -i 'kdl|layer.shell|niri-ipc|internal/ipc' --glob '*.go'` empty),
+  and no `.c` / `.h` files.
+- **Bounded tests, desktop:** `timeout 90s env GOMAXPROCS=2 go test -count=1 ./internal/wlr -run
+  'TestPointerGrabGeometry|TestXDGInitialConfigureAfterInitialCommit|TestListenerTokensBalance|TestOutputsEnabled|TestSeatTable'`
+  ok; `go vet ./...` and `gofmt` clean.
+
+Known follow-up, not a gate: destroyed per-surface and per-device listeners stay in `Compositor.listeners`
+until shutdown (their `Destroy` is idempotent), so that slice grows with client churn. Prune it before M1
+adds long-lived sessions.
 
 ## Machine rules
 
