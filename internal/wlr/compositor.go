@@ -73,6 +73,10 @@ type Compositor struct {
 	pointerSerialButtons   map[uint32]uint32
 	consumedPointerButtons map[uint32]bool
 	capabilities           int
+
+	// injected is the table of seats fed by the compositor rather than the
+	// user's hardware, after the user seat (c.seat) in creation order.
+	injected []*injectedSeat
 }
 
 // New creates the display, its nested socket, and the globals a client needs to
@@ -208,6 +212,7 @@ func (c *Compositor) Destroy() {
 	c.keyboardDevices = nil
 	c.keyboardListeners = nil
 	c.inputDestroyListeners = nil
+	c.destroyInjectedSeats()
 	if c.cursor != nil {
 		C.wlr_cursor_destroy(c.cursor)
 		c.cursor = nil

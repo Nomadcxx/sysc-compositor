@@ -377,6 +377,14 @@ func (c *Compositor) handleCursorFrame(unsafe.Pointer) {
 	C.wlr_seat_pointer_notify_frame(c.seat)
 }
 
+// surfaceAt is the client surface at layout coordinates, with the
+// surface-local position, or nil over empty space.
+func (c *Compositor) surfaceAt(x, y float64) (*C.struct_wlr_surface, C.double, C.double) {
+	var sx, sy C.double
+	surface := C.sysc_scene_surface_at(c.scene, C.double(x), C.double(y), &sx, &sy)
+	return surface, sx, sy
+}
+
 func (c *Compositor) viewAtCursor() *toplevelView {
 	var sx, sy C.double
 	surface := C.sysc_scene_surface_at(c.scene, c.cursor.x, c.cursor.y, &sx, &sy)
