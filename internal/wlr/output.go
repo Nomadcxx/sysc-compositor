@@ -97,7 +97,7 @@ func (c *Compositor) handleNewOutput(data unsafe.Pointer) {
 	// recovered from the callback argument. Key it by the listener instead.
 	frame := AddListener(unsafe.Pointer(&output.events.frame), c.handleOutputFrame)
 	c.frames[frame.Native()] = so
-	c.listeners = append(c.listeners, frame)
+	c.keep(frame)
 }
 
 // handleOutputFrame repaints an output and asks for the next one. wlroots

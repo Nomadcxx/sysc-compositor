@@ -49,7 +49,7 @@ type Compositor struct {
 	seat       *C.struct_wlr_seat
 	xdgShell   *C.struct_wlr_xdg_shell
 	socketName string
-	listeners  []*Listener
+	listeners  map[*Listener]struct{}
 
 	loop                   *C.struct_wl_event_loop
 	cursor                 *C.struct_wlr_cursor
@@ -109,6 +109,7 @@ func New() (*Compositor, error) {
 	c.socketName = C.GoString(name)
 
 	c.loop = C.wl_display_get_event_loop(c.display)
+	c.listeners = map[*Listener]struct{}{}
 	c.sceneOutputs = map[unsafe.Pointer]*C.struct_wlr_scene_output{}
 	c.frames = map[Signal]*C.struct_wlr_scene_output{}
 	c.mapped = map[unsafe.Pointer]bool{}
@@ -166,13 +167,11 @@ func New() (*Compositor, error) {
 
 	// wlroots 0.20 raises these itself; the compositor must listen before the
 	// backend starts, because wlr_backend_start announces outputs immediately.
-	c.listeners = append(c.listeners, AddListener(
-		unsafe.Pointer(&c.backend.events.new_output), c.handleNewOutput))
-	c.listeners = append(c.listeners, AddListener(
-		unsafe.Pointer(&c.backend.events.new_input), c.handleNewInput))
-	c.listeners = append(c.listeners, AddListener(c.newSurfaceSignal(), c.handleNewSurface))
-	c.listeners = append(c.listeners, AddListener(c.newToplevelSignal(), c.handleNewToplevel))
-	c.listeners = append(c.listeners,
+	c.keep(
+		AddListener(unsafe.Pointer(&c.backend.events.new_output), c.handleNewOutput),
+		AddListener(unsafe.Pointer(&c.backend.events.new_input), c.handleNewInput),
+		AddListener(c.newSurfaceSignal(), c.handleNewSurface),
+		AddListener(c.newToplevelSignal(), c.handleNewToplevel),
 		AddListener(unsafe.Pointer(&c.cursor.events.motion), c.handleCursorMotion),
 		AddListener(unsafe.Pointer(&c.cursor.events.motion_absolute), c.handleCursorMotionAbsolute),
 		AddListener(unsafe.Pointer(&c.cursor.events.button), c.handleCursorButton),
@@ -217,7 +216,7 @@ func (c *Compositor) Terminate() { C.wl_display_terminate(c.display) }
 // removed first so no token outlives its wl_signal.
 func (c *Compositor) Destroy() {
 	c.stopPost()
-	for _, l := range c.listeners {
+	for l := range c.listeners {
 		l.Destroy()
 	}
 	c.listeners = nil
@@ -246,3 +245,20 @@ func (c *Compositor) Destroy() {
 }
 
 func cCString(s string) *C.char { return C.CString(s) }
+
+// keep holds listeners until they are dropped or the compositor is destroyed.
+func (c *Compositor) keep(ls ...*Listener) {
+	for _, l := range ls {
+		c.listeners[l] = struct{}{}
+	}
+}
+
+// drop destroys a listener whose object has gone and forgets it, so windows
+// and devices that come and go leave nothing behind.
+func (c *Compositor) drop(l *Listener) {
+	l.Destroy()
+	delete(c.listeners, l)
+}
+
+// liveListeners is how many listeners the compositor holds, for tests.
+func (c *Compositor) liveListeners() int { return len(c.listeners) }
