@@ -76,6 +76,12 @@ func AddListener(signal Signal, fn func(unsafe.Pointer)) *Listener {
 	return &Listener{sl: C.sysc_listener_add((*C.struct_wl_signal)(signal), C.uintptr_t(token)), token: token}
 }
 
+// Native returns the listener's own pointer. The wayland notify contract hands
+// the callback this pointer, so it is the only stable key available when a
+// signal carries no payload of its own — wlroots' output frame signal passes
+// NULL, and a per-listener map is then the only way back to its subject.
+func (l *Listener) Native() Signal { return unsafe.Pointer(l.sl) }
+
 // Destroy unlinks the listener and releases its token. Safe to call once only.
 func (l *Listener) Destroy() {
 	if l.sl == nil {

@@ -11,6 +11,10 @@ package wlr
 #include <wlr/render/wlr_renderer.h>
 #include <wlr/types/wlr_compositor.h>
 #include <wlr/types/wlr_cursor.h>
+#include <wlr/types/wlr_input_device.h>
+#include <wlr/types/wlr_keyboard.h>
+#include <wlr/types/wlr_pointer.h>
+#include <wlr/types/wlr_cursor.h>
 #include <wlr/types/wlr_data_device.h>
 #include <wlr/types/wlr_output_layout.h>
 #include <wlr/types/wlr_scene.h>
@@ -45,6 +49,16 @@ type Compositor struct {
 	xdgShell   *C.struct_wlr_xdg_shell
 	socketName string
 	listeners  []*Listener
+
+	loop            *C.struct_wl_event_loop
+	cursor          *C.struct_wlr_cursor
+	xcursorManager  *C.struct_wlr_xcursor_manager
+	sceneOutputs    map[unsafe.Pointer]*C.struct_wlr_scene_output
+	frames          map[Signal]*C.struct_wlr_scene_output
+	mapped          map[unsafe.Pointer]bool
+	pointerDevices  map[unsafe.Pointer]bool
+	keyboardDevices map[unsafe.Pointer]bool
+	capabilities    int
 }
 
 // New creates the display, its nested socket, and the globals a client needs to
@@ -63,7 +77,14 @@ func New() (*Compositor, error) {
 	}
 	c.socketName = C.GoString(name)
 
-	c.backend = C.wlr_backend_autocreate(C.wl_display_get_event_loop(c.display), nil)
+	c.loop = C.wl_display_get_event_loop(c.display)
+	c.sceneOutputs = map[unsafe.Pointer]*C.struct_wlr_scene_output{}
+	c.frames = map[Signal]*C.struct_wlr_scene_output{}
+	c.mapped = map[unsafe.Pointer]bool{}
+	c.pointerDevices = map[unsafe.Pointer]bool{}
+	c.keyboardDevices = map[unsafe.Pointer]bool{}
+
+	c.backend = C.wlr_backend_autocreate(c.loop, nil)
 	if c.backend == nil {
 		return nil, errors.New("wlr_backend_autocreate failed")
 	}
@@ -99,6 +120,19 @@ func New() (*Compositor, error) {
 	if c.seat = C.wlr_seat_create(c.display, cCString("seat0")); c.seat == nil {
 		return nil, errors.New("wlr_seat_create failed")
 	}
+
+	if c.cursor = C.wlr_cursor_create(); c.cursor == nil {
+		return nil, errors.New("wlr_cursor_create failed")
+	}
+	C.wlr_cursor_attach_output_layout(c.cursor, c.layout)
+
+	// wlroots 0.20 raises these itself; the compositor must listen before the
+	// backend starts, because wlr_backend_start announces outputs immediately.
+	c.listeners = append(c.listeners, AddListener(
+		unsafe.Pointer(&c.backend.events.new_output), c.handleNewOutput))
+	c.listeners = append(c.listeners, AddListener(
+		unsafe.Pointer(&c.backend.events.new_input), c.handleNewInput))
+	c.listeners = append(c.listeners, AddListener(c.newSurfaceSignal(), c.handleNewSurface))
 
 	if !bool(C.wlr_backend_start(c.backend)) {
 		return nil, errors.New("wlr_backend_start failed")
@@ -136,6 +170,11 @@ func (c *Compositor) Destroy() {
 		l.Destroy()
 	}
 	c.listeners = nil
+	c.sceneOutputs = nil
+	c.frames = nil
+	c.mapped = nil
+	c.pointerDevices = nil
+	c.keyboardDevices = nil
 	if c.display != nil {
 		C.wl_display_destroy(c.display)
 		c.display = nil
