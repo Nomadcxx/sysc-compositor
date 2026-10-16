@@ -109,6 +109,12 @@ type Compositor struct {
 	pointerSerialButtons   map[uint32]uint32
 	consumedPointerButtons map[uint32]bool
 	capabilities           int
+	// drawnImage is the xcursor name the compositor last drew, or "" while
+	// a client's surface is the image. wlroots keeps its own copy private.
+	drawnImage string
+	// focusOriginX/Y is where the user seat's focused surface starts in
+	// layout coordinates, as of the last motion outside an implicit grab.
+	focusOriginX, focusOriginY C.double
 
 	// injected is the table of seats fed by the compositor rather than the
 	// user's hardware, after the user seat (c.seat) in creation order.

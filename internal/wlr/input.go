@@ -26,17 +26,11 @@ static int sysc_device_type(struct wlr_input_device *device) {
 	return (int)device->type;
 }
 
-// A cursor with no image is an invisible cursor, so the theme is loaded once
-// and the left_ptr image is what the seat draws.
-static bool sysc_load_cursor_image(struct wlr_cursor *cursor,
+// 0.20 takes the manager and a name, not a resolved xcursor, and returns at
+// once when that name is already drawn (types/wlr_cursor.c:657).
+static void sysc_default_image(struct wlr_cursor *cursor,
 		struct wlr_xcursor_manager *manager) {
-	if (!wlr_xcursor_manager_load(manager, 1.0f)) {
-		return false;
-	}
-	// 0.20 takes the manager and a name, not a resolved xcursor, and returns
-	// nothing; the load above is the only fallible step.
-	wlr_cursor_set_xcursor(cursor, manager, "left_ptr");
-	return true;
+	wlr_cursor_set_xcursor(cursor, manager, "default");
 }
 
 static struct wlr_surface *sysc_scene_surface_at(struct wlr_scene *scene,
@@ -60,12 +54,13 @@ static void sysc_scene_tree_set_position(struct wlr_scene_tree *tree, int x, int
 
 // Only the user seat's focused client may change the drawn image (rule
 // D2.4.2); injected seats have no listener on this signal at all.
-static void sysc_set_cursor_from_seat(struct wlr_cursor *cursor, struct wlr_seat *seat,
+static bool sysc_set_cursor_from_seat(struct wlr_cursor *cursor, struct wlr_seat *seat,
 		struct wlr_seat_pointer_request_set_cursor_event *event) {
 	if (event->seat_client != seat->pointer_state.focused_client) {
-		return;
+		return false;
 	}
 	wlr_cursor_set_surface(cursor, event->surface, event->hotspot_x, event->hotspot_y);
+	return true;
 }
 
 static bool sysc_seat_has_set_cursor_listener(struct wlr_seat *seat) {
@@ -185,7 +180,11 @@ func (c *Compositor) handleNewInput(data unsafe.Pointer) {
 		if c.xcursorManager == nil {
 			c.xcursorManager = C.sysc_xcursor_manager()
 			if c.xcursorManager != nil {
-				C.sysc_load_cursor_image(c.cursor, c.xcursorManager)
+				// A cursor with no image is an invisible cursor, so the
+				// theme is loaded once, here.
+				if C.wlr_xcursor_manager_load(c.xcursorManager, 1.0) {
+					c.showDefaultImage()
+				}
 			}
 		}
 		C.wlr_cursor_attach_input_device(c.cursor, device)
@@ -244,16 +243,47 @@ func (c *Compositor) processCursorMotion(time C.uint32_t) {
 		}
 		return
 	}
+	// Implicit grab: while any button is held, the pointer stays with the
+	// surface it was on, or with nothing, and motion is reported against that
+	// surface's origin. This is Smithay's click grab, which Niri uses.
+	if len(c.pressedPointerButtons) > 0 {
+		if c.seat.pointer_state.focused_surface != nil {
+			C.wlr_seat_pointer_notify_motion(c.seat, time,
+				c.cursor.x-c.focusOriginX, c.cursor.y-c.focusOriginY)
+		}
+		return
+	}
 	var sx, sy C.double
 	surface := C.sysc_scene_surface_at(c.scene, c.cursor.x, c.cursor.y, &sx, &sy)
 	if surface == nil {
 		C.wlr_seat_pointer_notify_clear_focus(c.seat)
+		c.showDefaultImage()
 		return
 	}
 	if !bool(C.wlr_seat_pointer_surface_has_focus(c.seat, surface)) {
 		C.wlr_seat_pointer_notify_enter(c.seat, surface, sx, sy)
 	}
+	c.focusOriginX, c.focusOriginY = c.cursor.x-sx, c.cursor.y-sy
 	C.wlr_seat_pointer_notify_motion(c.seat, time, sx, sy)
+}
+
+// refocusPointer gives pointer focus to the surface under the pointer once
+// no button or compositor grab holds it elsewhere.
+func (c *Compositor) refocusPointer(time C.uint32_t) {
+	if len(c.pressedPointerButtons) > 0 || c.pointerGrab != nil {
+		return
+	}
+	c.processCursorMotion(time)
+	C.wlr_seat_pointer_notify_frame(c.seat)
+}
+
+// showDefaultImage draws the theme's default image, as over empty space.
+func (c *Compositor) showDefaultImage() {
+	if c.xcursorManager == nil {
+		return
+	}
+	C.sysc_default_image(c.cursor, c.xcursorManager)
+	c.drawnImage = "default"
 }
 
 func (c *Compositor) handleCursorButton(data unsafe.Pointer) {
@@ -279,6 +309,7 @@ func (c *Compositor) handleCursorButton(data unsafe.Pointer) {
 				c.clearPointerGrab()
 			}
 			C.wlr_seat_pointer_notify_frame(c.seat)
+			c.refocusPointer(event.time_msec)
 			return
 		}
 		if c.pointerGrab != nil && (c.grabButton == 0 || c.grabButton == button) {
@@ -316,6 +347,9 @@ func (c *Compositor) handleCursorButton(data unsafe.Pointer) {
 		c.pointerSerialButtons[uint32(serial)] = button
 	}
 	C.wlr_seat_pointer_notify_frame(c.seat)
+	if !pressed {
+		c.refocusPointer(event.time_msec)
+	}
 }
 
 func (c *Compositor) handleCursorAxis(data unsafe.Pointer) {
@@ -338,16 +372,8 @@ func (c *Compositor) surfaceAt(x, y float64) (*C.struct_wlr_surface, C.double, C
 }
 
 func (c *Compositor) viewAtCursor() *toplevelView {
-	var sx, sy C.double
-	surface := C.sysc_scene_surface_at(c.scene, c.cursor.x, c.cursor.y, &sx, &sy)
-	if surface == nil {
-		return nil
-	}
-	toplevel := C.wlr_xdg_toplevel_try_from_wlr_surface(surface)
-	if toplevel == nil {
-		return nil
-	}
-	return c.views[unsafe.Pointer(toplevel)]
+	surface, _, _ := c.surfaceAt(float64(c.cursor.x), float64(c.cursor.y))
+	return c.viewForSurface(surface)
 }
 
 func (c *Compositor) focusView(view *toplevelView) {
@@ -389,6 +415,9 @@ func (c *Compositor) startPointerGrab(view *toplevelView, mode pointerGrabMode,
 	}
 	c.grabView = view
 	c.grabButton = button
+	// Niri starts its grabs with Focus::Clear: the window under the pointer
+	// gets a leave rather than an enter that stops moving.
+	C.wlr_seat_pointer_notify_clear_focus(c.seat)
 	return true
 }
 
@@ -450,6 +479,11 @@ func (c *Compositor) handleNewToplevel(data unsafe.Pointer) {
 	add(unsafe.Pointer(&toplevel.events.request_resize), func(data unsafe.Pointer) {
 		c.handleToplevelResize(view, data)
 	})
+	// wlroots clears a seat's pointer focus when the surface is destroyed,
+	// never on unmap, and a destroyed toplevel unmaps first.
+	add(unsafe.Pointer(&toplevel.base.surface.events.unmap), func(unsafe.Pointer) {
+		c.releaseView(view)
+	})
 	add(unsafe.Pointer(&toplevel.events.destroy), func(unsafe.Pointer) {
 		c.handleToplevelDestroy(view)
 	})
@@ -471,8 +505,10 @@ func (c *Compositor) handleNewToplevel(data unsafe.Pointer) {
 // handleRequestSetCursor lets the user seat's focused client set the drawn
 // image. It is registered on the user seat only.
 func (c *Compositor) handleRequestSetCursor(data unsafe.Pointer) {
-	C.sysc_set_cursor_from_seat(c.cursor, c.seat,
-		(*C.struct_wlr_seat_pointer_request_set_cursor_event)(data))
+	if C.sysc_set_cursor_from_seat(c.cursor, c.seat,
+		(*C.struct_wlr_seat_pointer_request_set_cursor_event)(data)) {
+		c.drawnImage = ""
+	}
 }
 
 // setCursorListeners reports, for the user seat and an injected seat, whether
@@ -496,6 +532,20 @@ func (c *Compositor) injectedFocus(name string) unsafe.Pointer {
 		return unsafe.Pointer(s.seat.keyboard_state.focused_surface)
 	}
 	return nil
+}
+
+// injectedPointerFocus is an injected seat's pointer focus, for tests.
+func (c *Compositor) injectedPointerFocus(name string) unsafe.Pointer {
+	if s := c.injectedSeat(name); s != nil {
+		return unsafe.Pointer(s.seat.pointer_state.focused_surface)
+	}
+	return nil
+}
+
+// unmapView unmaps a view's surface the way a client's null-buffer commit
+// does, for tests: no installed client unmaps without destroying its role.
+func (c *Compositor) unmapView(view *toplevelView) {
+	C.wlr_surface_unmap(view.toplevel.base.surface)
 }
 
 // treePosition is a view's scene-tree origin in layout coordinates.
@@ -527,18 +577,34 @@ func (c *Compositor) viewCenter(view *toplevelView) (float64, float64) {
 		float64(y) + float64(g.y) + float64(g.height)/2
 }
 
-func (c *Compositor) handleToplevelDestroy(view *toplevelView) {
-	if view == nil {
-		return
-	}
+// releaseView drops any compositor grab on view and every seat's keyboard and
+// pointer focus inside it. Which window is focused next is layout policy (M5).
+func (c *Compositor) releaseView(view *toplevelView) {
 	if c.grabView == view {
 		c.clearPointerGrab()
 	}
 	if c.focusedView == view {
 		c.focusedView = nil
-		C.wlr_seat_keyboard_notify_clear_focus(c.seat)
-		C.wlr_seat_pointer_notify_clear_focus(c.seat)
 	}
+	seats := []*C.struct_wlr_seat{c.seat}
+	for _, s := range c.injected {
+		seats = append(seats, s.seat)
+	}
+	for _, seat := range seats {
+		if c.viewForSurface(seat.keyboard_state.focused_surface) == view {
+			C.wlr_seat_keyboard_notify_clear_focus(seat)
+		}
+		if c.viewForSurface(seat.pointer_state.focused_surface) == view {
+			C.wlr_seat_pointer_notify_clear_focus(seat)
+		}
+	}
+}
+
+func (c *Compositor) handleToplevelDestroy(view *toplevelView) {
+	if view == nil {
+		return
+	}
+	c.releaseView(view)
 	delete(c.views, unsafe.Pointer(view.toplevel))
 	for _, listener := range view.listeners {
 		c.drop(listener)

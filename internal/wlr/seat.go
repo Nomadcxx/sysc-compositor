@@ -278,14 +278,4 @@ func (c *Compositor) cursorPosition() (float64, float64) {
 	return float64(c.cursor.x), float64(c.cursor.y)
 }
 
-// viewForSurface is the toplevel view a (sub)surface belongs to, or nil.
-func (c *Compositor) viewForSurface(surface *C.struct_wlr_surface) *toplevelView {
-	root := C.wlr_surface_get_root_surface(surface)
-	toplevel := C.wlr_xdg_toplevel_try_from_wlr_surface(root)
-	if toplevel == nil {
-		return nil
-	}
-	return c.views[unsafe.Pointer(toplevel)]
-}
-
 func nowMsec() C.uint32_t { return C.uint32_t(time.Now().UnixMilli()) }

@@ -47,6 +47,20 @@ static struct wlr_surface *sysc_popup_root(struct wlr_xdg_popup *popup) {
 	return surface;
 }
 
+// sysc_window_surface is the surface a subsurface or popup belongs to: the
+// root of its subsurface tree, then up popup parents, which are not
+// subsurfaces, until a toplevel or layer surface.
+static struct wlr_surface *sysc_window_surface(struct wlr_surface *surface) {
+	surface = wlr_surface_get_root_surface(surface);
+	struct wlr_xdg_surface *xdg;
+	while ((xdg = wlr_xdg_surface_try_from_wlr_surface(surface)) != NULL &&
+			xdg->role == WLR_XDG_SURFACE_ROLE_POPUP && xdg->popup != NULL &&
+			xdg->popup->parent != NULL) {
+		surface = wlr_surface_get_root_surface(xdg->popup->parent);
+	}
+	return surface;
+}
+
 // sysc_output_box is the box of the output at (x, y), or of the output nearest
 // to it when the point is on none.
 static bool sysc_output_box(struct wlr_output_layout *layout, double x, double y,
@@ -213,6 +227,19 @@ func (c *Compositor) surfaceOrigin(surface *C.struct_wlr_surface) (int, int, boo
 		y -= xdg.geometry.y
 	}
 	return int(x), int(y), true
+}
+
+// viewForSurface is the toplevel view a surface, subsurface or popup belongs
+// to, or nil.
+func (c *Compositor) viewForSurface(surface *C.struct_wlr_surface) *toplevelView {
+	if surface == nil {
+		return nil
+	}
+	toplevel := C.wlr_xdg_toplevel_try_from_wlr_surface(C.sysc_window_surface(surface))
+	if toplevel == nil {
+		return nil
+	}
+	return c.views[unsafe.Pointer(toplevel)]
 }
 
 // Mapped reports whether an xdg_surface reached the scene graph. It exists so a
