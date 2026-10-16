@@ -571,6 +571,19 @@ func (v *toplevelView) treePosition() (int, int) {
 	return int(x), int(y)
 }
 
+// placeView moves a view's window-geometry origin to (x, y) in layout
+// coordinates, for tests.
+func (c *Compositor) placeView(view *toplevelView, x, y int) {
+	C.sysc_scene_tree_set_position(view.tree, C.int(x), C.int(y))
+}
+
+// geometry is a view's window geometry: its offset inside the surface (the
+// client's shadow, for example) and its size.
+func (view *toplevelView) geometry() rect {
+	g := view.toplevel.base.geometry
+	return rect{int(g.x), int(g.y), int(g.width), int(g.height)}
+}
+
 // viewCenter is a mapped view's centre in layout coordinates.
 func (c *Compositor) viewCenter(view *toplevelView) (float64, float64) {
 	var x, y C.int

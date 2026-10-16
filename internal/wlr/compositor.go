@@ -86,6 +86,9 @@ type Compositor struct {
 	frames                 map[Signal]*C.struct_wlr_scene_output
 	mapped                 map[unsafe.Pointer]bool
 	sceneTrees             map[unsafe.Pointer]*C.struct_wlr_scene_tree
+	layerTrees             [layerCount]*C.struct_wlr_scene_tree
+	layerSurfaces          map[unsafe.Pointer]*layerSurface
+	popups                 map[*C.struct_wlr_xdg_popup]struct{}
 	views                  map[unsafe.Pointer]*toplevelView
 	pointerDevices         map[unsafe.Pointer]bool
 	keyboardDevices        map[unsafe.Pointer]*C.struct_wlr_keyboard
@@ -142,6 +145,8 @@ func New() (*Compositor, error) {
 	c.frames = map[Signal]*C.struct_wlr_scene_output{}
 	c.mapped = map[unsafe.Pointer]bool{}
 	c.sceneTrees = map[unsafe.Pointer]*C.struct_wlr_scene_tree{}
+	c.layerSurfaces = map[unsafe.Pointer]*layerSurface{}
+	c.popups = map[*C.struct_wlr_xdg_popup]struct{}{}
 	c.views = map[unsafe.Pointer]*toplevelView{}
 	c.pointerDevices = map[unsafe.Pointer]bool{}
 	c.keyboardDevices = map[unsafe.Pointer]*C.struct_wlr_keyboard{}
@@ -184,6 +189,9 @@ func New() (*Compositor, error) {
 	if c.scene = C.wlr_scene_create(); c.scene == nil {
 		return nil, errors.New("wlr_scene_create failed")
 	}
+	if !c.createLayerTrees() {
+		return nil, errors.New("wlr_scene_tree_create failed")
+	}
 	if c.layerShell = C.wlr_layer_shell_v1_create(c.display, C.sysc_layer_shell_version); c.layerShell == nil {
 		return nil, errors.New("wlr_layer_shell_v1_create failed")
 	}
@@ -207,7 +215,7 @@ func New() (*Compositor, error) {
 	c.keep(
 		AddListener(unsafe.Pointer(&c.backend.events.new_output), c.handleNewOutput),
 		AddListener(unsafe.Pointer(&c.backend.events.new_input), c.handleNewInput),
-		AddListener(c.newSurfaceSignal(), c.handleNewSurface),
+		AddListener(c.newPopupSignal(), c.handleNewPopup),
 		AddListener(c.newToplevelSignal(), c.handleNewToplevel),
 		AddListener(unsafe.Pointer(&c.cursor.events.motion), c.handleCursorMotion),
 		AddListener(unsafe.Pointer(&c.cursor.events.motion_absolute), c.handleCursorMotionAbsolute),
@@ -253,6 +261,9 @@ func (c *Compositor) Terminate() { C.wl_display_terminate(c.display) }
 // removed first so no token outlives its wl_signal.
 func (c *Compositor) Destroy() {
 	c.stopPost()
+	// Before any seat goes: wlroots frees a seat's popup grab twice when the
+	// seat is destroyed with the grab open (dismissGrabbedPopups).
+	c.dismissGrabbedPopups(nil)
 	for l := range c.listeners {
 		l.Destroy()
 	}
@@ -261,6 +272,8 @@ func (c *Compositor) Destroy() {
 	c.frames = nil
 	c.mapped = nil
 	c.sceneTrees = nil
+	c.layerSurfaces = nil
+	c.popups = nil
 	c.views = nil
 	c.pointerDevices = nil
 	c.keyboardDevices = nil
