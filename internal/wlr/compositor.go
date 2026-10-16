@@ -84,7 +84,6 @@ type Compositor struct {
 	cursor                 *C.struct_wlr_cursor
 	xcursorManager         *C.struct_wlr_xcursor_manager
 	sceneOutputs           map[unsafe.Pointer]*C.struct_wlr_scene_output
-	frames                 map[Signal]*C.struct_wlr_scene_output
 	mapped                 map[unsafe.Pointer]bool
 	sceneTrees             map[unsafe.Pointer]*C.struct_wlr_scene_tree
 	layerTrees             [layerCount]*C.struct_wlr_scene_tree
@@ -92,6 +91,7 @@ type Compositor struct {
 	layerOrder             []*layerSurface                  // creation order
 	usable                 map[unsafe.Pointer]rect          // per wlr_output, after exclusive zones
 	requested              rect                             // last host-requested output size, for tests
+	drawn                  int                              // frames that ran the scene commit, for tests
 	popups                 map[*C.struct_wlr_xdg_popup]struct{}
 	views                  map[unsafe.Pointer]*toplevelView
 	pointerDevices         map[unsafe.Pointer]bool
@@ -146,7 +146,6 @@ func New() (*Compositor, error) {
 	c.loop = C.wl_display_get_event_loop(c.display)
 	c.listeners = map[*Listener]struct{}{}
 	c.sceneOutputs = map[unsafe.Pointer]*C.struct_wlr_scene_output{}
-	c.frames = map[Signal]*C.struct_wlr_scene_output{}
 	c.mapped = map[unsafe.Pointer]bool{}
 	c.sceneTrees = map[unsafe.Pointer]*C.struct_wlr_scene_tree{}
 	c.layerSurfaces = map[unsafe.Pointer]*layerSurface{}
@@ -280,7 +279,6 @@ func (c *Compositor) Destroy() {
 	}
 	c.listeners = nil
 	c.sceneOutputs = nil
-	c.frames = nil
 	c.mapped = nil
 	c.sceneTrees = nil
 	c.layerSurfaces = nil

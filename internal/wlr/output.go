@@ -134,10 +134,14 @@ func (c *Compositor) handleNewOutput(data unsafe.Pointer) {
 	}
 	c.sceneOutputs[data] = so
 
-	// The frame signal carries no payload, so the scene output cannot be
-	// recovered from the callback argument. Key it by the listener instead.
-	frame := AddListener(unsafe.Pointer(&output.events.frame), c.handleOutputFrame)
-	c.frames[frame.Native()] = so
+	// The scene output is captured here. M0 keyed a map by the listener's
+	// own pointer, but callbacks receive the signal's payload, so no frame
+	// ever found its scene output and nothing was drawn.
+	frame := AddListener(unsafe.Pointer(&output.events.frame), func(unsafe.Pointer) {
+		if C.sysc_repaint_scene_output(so) {
+			c.drawn++
+		}
+	})
 	c.keep(frame)
 	c.arrangeLayers(data)
 
@@ -165,23 +169,12 @@ func (c *Compositor) handleNewOutput(data unsafe.Pointer) {
 		c.closeOutputLayers(data)
 		delete(c.sceneOutputs, data)
 		delete(c.usable, data)
-		delete(c.frames, frame.Native())
 		c.drop(frame)
 		c.drop(request)
 		c.drop(commit)
 		c.drop(destroy)
 	})
 	c.keep(destroy)
-}
-
-// handleOutputFrame repaints an output and asks for the next one. wlroots
-// drives the frame cadence; the compositor only has to commit.
-func (c *Compositor) handleOutputFrame(listener unsafe.Pointer) {
-	so := c.frames[listener]
-	if so == nil {
-		return
-	}
-	C.sysc_repaint_scene_output(so)
 }
 
 // EnabledOutputs reports how many backend outputs are up. It is the number a
@@ -213,3 +206,6 @@ func (c *Compositor) cursorLoadedAt(scale float64) bool {
 // requestedOutputSize is the size of the last state the host asked an output
 // to take, for tests.
 func (c *Compositor) requestedOutputSize() rect { return c.requested }
+
+// scenesDrawn is how many output frames ran the scene commit, for tests.
+func (c *Compositor) scenesDrawn() int { return c.drawn }

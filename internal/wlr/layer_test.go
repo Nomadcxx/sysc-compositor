@@ -141,3 +141,31 @@ func TestOutputFollowsHostResize(t *testing.T) {
 		t.Errorf("background surface %+v, want the resized output %+v", got, output)
 	}
 }
+
+// TestClientContentIsDrawn: once a client maps, the next output frame commits
+// the scene with it. M0 looked its scene output up by the wrong key, so no
+// frame ever drew the scene and the nested window stayed black.
+func TestClientContentIsDrawn(t *testing.T) {
+	c := newNested(t)
+	var before, after int
+	mappedAt := -1
+	pollThenStop(c, func() bool {
+		if mappedAt < 0 {
+			if mappedOn(c.layerPlacements(), layerBackground) == nil {
+				return false
+			}
+			mappedAt = c.scenesDrawn()
+			before = mappedAt
+			return false
+		}
+		after = c.scenesDrawn()
+		return after > before
+	})
+	runClient(t, c, []string{"swaybg", "-c", "#336699"}, nil, nil)
+	if mappedAt < 0 {
+		t.Fatal("swaybg never mapped")
+	}
+	if after <= before {
+		t.Fatalf("no scene was drawn after the background mapped (%d drawn before, %d after)", before, after)
+	}
+}
