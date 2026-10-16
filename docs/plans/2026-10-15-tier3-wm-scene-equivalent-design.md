@@ -156,3 +156,94 @@ Live, and **partly unrunnable here**: single-output spring timing on DP-1 scale 
 | gh#264 / sysc-1212 | REC-49 / REC-int-05 | D0, D1, D2, D3.1, D3.2, D7, D8, D9 | **Recommend against as a build item**; satisfied by the existing compositor design; default is a recorded parity exclusion |
 
 No bd closure, no GH transfer, no TDD plan.
+---
+
+## Owner briefing (2026-10-16)
+
+You asked to understand WM-as-scene before deciding on `sysc-1212`. This section explains it. It does
+not decide anything; the choice is at the end.
+
+### What pleamar does
+
+In pleamar, the window manager is a scene file, not compiled code.
+- `pleamar-wm` is the compositor. It hands the pleamar runtime a factory that starts the Wayland thread
+  (`pleamar-wm/src/main.rs:24-29`).
+- Everything the user sees as window management lives in one 8,548-line scene, `examples/session.plm`:
+  - layout: `screens: each max 4` and `windows win max 16` (`:52-53`), then leader share and carried-window
+    boxes as scene arithmetic (`:411-427`);
+  - five layouts — leader-left, columns, rows, grid, leader-right (`:387-395`);
+  - free-window title bars and buttons (`:6436`);
+  - an overview of pool cards (`:5087-5095`);
+  - a dock rising from the bottom edge (`:587-605`);
+  - live window previews (`:7432-7465`);
+  - a drag that shows every window's new box while you carry one (`:429-446`).
+- The compositor only obeys. It receives the scene's orders (`ToNest::Configure`, `Send`, `Pointer`,
+  `Key`; `src/nest.rs:974`) and refuses nonsense boxes (`:989-1010`).
+- Key bindings are events the scene declares (`keys.conf:15-20`), reloaded when the file changes
+  (`src/keys.rs:88-102`).
+- The scene is replaceable: `~/.config/pleamar/wm/session.plm` overrides the built-in one, and
+  `pleamar-wm scene DIR` exports it for editing (`src/main.rs:236`, `:245-282`).
+
+The appeal: someone can invent a new layout, decoration or overview by editing a file, with no rebuild.
+
+These citations come from the frozen trees in the gap dossiers
+(`/home/nomadx/sysc-shell/research_notes/pleamar-gap-analysis/17-domain-integ-session.md` §3.1 and
+`03-pleamar-sisters.md`). Pleamar is not pinned under `/home/nomadx/references`.
+
+### Why it cannot be ported
+
+The scene's logic is Luau. `AGENTS.md:6` in sysc-shell bans Lua and Luau, and this repository is Go plus
+cgo only. A scene language would also break the contract every sysc consumer relies on: Niri's KDL,
+JSON IPC and CLI (design §4–§6). This is a constraint, not an effort estimate (D1.1).
+
+### What Niri's surface already gives, and when
+
+| You want to change | Niri gives | Milestone |
+|---|---|---|
+| What a key or mouse button does | `binds { Mod+T { spawn "kitty"; } }`, any of the 141 actions, mouse and wheel triggers, `repeat=false`, `allow-when-locked` | M5 |
+| Layout shape | Scrollable columns; gaps, struts, preset column widths and window heights, centring, default widths | M5–M6 |
+| Per-application behaviour | `window-rule { match app-id=… open-floating true }`: size, opacity, rounding, floating, workspace, output, block-out-from; `layer-rule` for shell surfaces | M6 |
+| Motion | `animations {}`: off, `slowdown`, and per kind (workspace switch, window open, close, movement, resize, overview, …) a spring (`damping-ratio`, `stiffness`, `epsilon`) or an easing curve | M8 |
+| Open, close and resize visuals | `custom-shader` GLSL inside `window-open`, `window-close`, `window-resize` (`niri-config/src/animations.rs:385-437`) | after M8 (design §9: later parity item) |
+| Editing without a restart | Live reload on save, including binds and window rules | M9 (design §4, `:176`) |
+
+So binds, rules, timing and even custom open and close visuals are authorable in a file without a
+rebuild. What Niri does not give is a **new layout algorithm** or **new compositor-drawn UI** (title
+bars, a dock, a custom overview). Those are code.
+
+### What a sysc-native layer beyond Niri would require
+
+There are three shapes. Each keeps Luau out.
+
+1. **More KDL vocabulary.** New layout kinds as data (`layout { kind "grid" }`, master-stack ratios) parsed
+   in Go.
+   - Cost class: **L**.
+   - It is the least expressive: you get the layouts someone wrote in Go, with knobs.
+   - It also forks the dialect. `niri validate` rejects unknown nodes, so a config using them stops being
+     a Niri config.
+2. **An external layout process.** The compositor asks a supervised process for window boxes over a socket.
+   - River's layout protocol is the prior art.
+   - This matches `AGENTS.md`'s "third-party plugins run as supervised processes", and the process can be
+     written in any language.
+   - Cost class: **L–XL**. It needs a protocol and versioning, a deadline on every reply with a fallback
+     to the built-in layout, and a way to keep animations coherent when boxes come from outside.
+   - It covers layout, not drawn UI.
+3. **A declarative Go scene layer.** It would describe compositor-drawn UI and layout in data, evaluated
+   by Go.
+   - Cost class: **XL**. This is a second product: a language, a renderer contract and a test surface.
+   - D7 forbids reintroducing a scripting language, and a declarative layer drifts towards one.
+
+All three break parity in some way: a user's `config.kdl` would no longer be portable to Niri, or
+sysc-shell would need to know about non-Niri state. All three should wait until M9, when the Niri surface
+exists and a real gap can be pointed at rather than predicted.
+
+### The choice
+
+| Option | Meaning | Cost now |
+|---|---|---|
+| **Exclude** | Close `sysc-1212` as a recorded parity exclusion: the authoring surface is Niri's KDL, by choice. Add that row to `niri-parity-matrix.md`. | None |
+| **Keep open** | Leave `sysc-1212` open and revisit after M9 with the Niri surface in hand. (Current state.) | None |
+| **Future design** | Commission a design for option 1 or 2 above after M9, stating what it adds beyond the 141 actions and what parity it gives up. | A design document; build cost as above |
+
+The recommendation is unchanged from D8: exclude, or keep open until M9. Nothing in M1–M9 depends on the
+answer.
