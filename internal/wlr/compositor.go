@@ -2,7 +2,7 @@ package wlr
 
 /*
 #cgo pkg-config: wlroots-0.20 wayland-server
-#cgo CFLAGS: -DWLR_USE_UNSTABLE
+#cgo CFLAGS: -DWLR_USE_UNSTABLE -I${SRCDIR}/protocols
 
 #include <stdlib.h>
 
@@ -16,6 +16,9 @@ package wlr
 #include <wlr/types/wlr_pointer.h>
 #include <wlr/types/wlr_cursor.h>
 #include <wlr/types/wlr_data_device.h>
+#include <wlr/types/wlr_fractional_scale_v1.h>
+#include <wlr/types/wlr_layer_shell_v1.h>
+#include <wlr/types/wlr_linux_dmabuf_v1.h>
 #include <wlr/types/wlr_output_layout.h>
 #include <wlr/types/wlr_scene.h>
 #include <wlr/types/wlr_seat.h>
@@ -25,9 +28,33 @@ package wlr
 #include <wlr/types/wlr_xdg_shell.h>
 #include <wlr/types/wlr_xcursor_manager.h>
 
-// xdg_wm_base version advertised by this M0 compositor. Niri parity and client
-// compatibility both sit above 5; M0 needs no version-specific behaviour.
-const uint32_t sysc_xdg_version = 5;
+// Global versions match what Niri 26.04 advertises (wayland-info on the host,
+// 2026-10-16), capped by wlroots 0.20. sysc-shell needs layer-shell 4 at
+// least and binds no higher.
+const uint32_t sysc_compositor_version = 6;
+const uint32_t sysc_shm_version = 2;
+const uint32_t sysc_xdg_version = 7;
+const uint32_t sysc_layer_shell_version = 5;
+const uint32_t sysc_dmabuf_version = 5;
+
+// The scene sends each surface its output's fractional scale itself
+// (types/scene/surface.c in 0.20), so the manager needs nothing else.
+static bool sysc_fractional_scale_create(struct wl_display *display) {
+	return wlr_fractional_scale_manager_v1_create(display, 1) != NULL;
+}
+
+// dmabuf feedback comes from the scene: it tells clients which buffers can be
+// scanned out on the output they are on.
+static bool sysc_dmabuf_create(struct wl_display *display,
+		struct wlr_renderer *renderer, struct wlr_scene *scene) {
+	struct wlr_linux_dmabuf_v1 *dmabuf = wlr_linux_dmabuf_v1_create_with_renderer(
+			display, sysc_dmabuf_version, renderer);
+	if (dmabuf == NULL) {
+		return false;
+	}
+	wlr_scene_set_linux_dmabuf_v1(scene, dmabuf);
+	return true;
+}
 */
 import "C"
 
@@ -48,6 +75,7 @@ type Compositor struct {
 	scene      *C.struct_wlr_scene
 	seat       *C.struct_wlr_seat
 	xdgShell   *C.struct_wlr_xdg_shell
+	layerShell *C.struct_wlr_layer_shell_v1
 	socketName string
 	listeners  map[*Listener]struct{}
 
@@ -134,7 +162,7 @@ func New() (*Compositor, error) {
 	}
 
 	c.alloc = C.wlr_allocator_autocreate(c.backend, c.renderer)
-	if c.comp = C.wlr_compositor_create(c.display, 5, c.renderer); c.comp == nil {
+	if c.comp = C.wlr_compositor_create(c.display, C.sysc_compositor_version, c.renderer); c.comp == nil {
 		return nil, errors.New("wlr_compositor_create failed")
 	}
 	if c.alloc == nil {
@@ -144,7 +172,7 @@ func New() (*Compositor, error) {
 	C.wlr_subcompositor_create(c.display)
 	C.wlr_data_device_manager_create(c.display)
 	C.wlr_viewporter_create(c.display)
-	if C.wlr_shm_create_with_renderer(c.display, 1, c.renderer) == nil {
+	if C.wlr_shm_create_with_renderer(c.display, C.sysc_shm_version, c.renderer) == nil {
 		return nil, errors.New("wlr_shm_create_with_renderer failed")
 	}
 	if c.layout = C.wlr_output_layout_create(c.display); c.layout == nil {
@@ -155,6 +183,15 @@ func New() (*Compositor, error) {
 	}
 	if c.scene = C.wlr_scene_create(); c.scene == nil {
 		return nil, errors.New("wlr_scene_create failed")
+	}
+	if c.layerShell = C.wlr_layer_shell_v1_create(c.display, C.sysc_layer_shell_version); c.layerShell == nil {
+		return nil, errors.New("wlr_layer_shell_v1_create failed")
+	}
+	if !bool(C.sysc_fractional_scale_create(c.display)) {
+		return nil, errors.New("wlr_fractional_scale_manager_v1_create failed")
+	}
+	if !bool(C.sysc_dmabuf_create(c.display, c.renderer, c.scene)) {
+		return nil, errors.New("wlr_linux_dmabuf_v1_create_with_renderer failed: the renderer offers no dmabuf formats")
 	}
 	if c.seat = C.wlr_seat_create(c.display, cCString("seat0")); c.seat == nil {
 		return nil, errors.New("wlr_seat_create failed")

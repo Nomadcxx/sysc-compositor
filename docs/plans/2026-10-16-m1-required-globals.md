@@ -37,6 +37,8 @@ drawing is M3, not this gate.
 | Popups | tree under the parent's tree on the initial commit, then `wlr_xdg_popup_unconstrain_from_box` against the output's box, in parent-surface coordinates | Report X1; Mango `manage/layer.c:418-448`. Popups of layer surfaces use the same path. |
 | Popup grabs | not in M1 | A popup without its grab still draws and dismisses on the client's own terms. Grabs land with pointer correctness (`sysc-1296`). |
 
+| Protocol headers | `protocols/wlr-layer-shell-unstable-v1.xml` from the wlroots 0.20.0 tag; `go generate ./internal/wlr` writes the header into the gitignored `internal/wlr/protocols/` | `wlr_layer_shell_v1.h` includes a header wlroots does not install. Design §14 is amended; generated output is still never checked in. |
+
 **Test clients**, all installed here: `wayland-info` (globals), `swaybg` (a background layer anchored to
 every edge), `waybar` with a temporary config (a top layer with an exclusive zone), `foot` (fractional
 scale), `weston-simple-dmabuf-feedback` (dmabuf), and `weston-terminal`, whose right-click menu is an

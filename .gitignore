@@ -1,3 +1,4 @@
 /bin/
 *.test
 *.o
+internal/wlr/protocols/

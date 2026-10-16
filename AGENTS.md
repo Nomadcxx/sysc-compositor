@@ -14,6 +14,8 @@ Read `docs/README.md` before editing. Product contract: `docs/plans/2026-10-02-s
 
 - `runtime.LockOSThread()` before any wlroots call. Never call wlroots off the compositor thread.
 - **Go + cgo only.** No `.c` / `.h` in this tree. Listener trampolines go in the cgo preamble of a `.go` file. gSlapper is C and stays in its own repo.
+- After cloning, run `go generate ./internal/wlr` once: it writes the protocol headers wlroots does not
+  install (from `protocols/*.xml`) into the gitignored `internal/wlr/protocols/`. Never commit them.
 - sysc-wayland is a **client**. Do not turn it into the server.
 - Do not implement a bar, lock screen, wallpaper engine, notification server, or tray here.
 
