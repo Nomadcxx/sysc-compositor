@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unsafe"
 )
 
 const keyEsc = 1 // evdev KEY_ESC
@@ -100,5 +101,24 @@ func TestConfiguredKeyboardReachesClients(t *testing.T) {
 	})
 	if strings.Join(repeat, "/") != "40/400" {
 		t.Errorf("client repeat_info %v, want rate 40, delay 400", repeat)
+	}
+}
+
+// TestNewWindowTakesFocus: sysc-greet's kitty is typed into without a click.
+func TestNewWindowTakesFocus(t *testing.T) {
+	c := newNested(t)
+	var focused, surface unsafe.Pointer
+	var view, want *toplevelView
+	c.viewMapped = func(v *toplevelView) {
+		focused, view = c.userFocus()
+		surface, want = unsafe.Pointer(v.toplevel.base.surface), v
+		c.Terminate()
+	}
+	runClient(t, c, []string{"weston-terminal"}, nil, nil)
+	if want == nil {
+		t.Fatal("weston-terminal never mapped")
+	}
+	if focused != surface || view != want {
+		t.Errorf("keyboard focus %p (view %p) once mapped, want the new window %p", focused, view, surface)
 	}
 }

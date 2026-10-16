@@ -508,6 +508,10 @@ func (c *Compositor) handleNewToplevel(data unsafe.Pointer) {
 			return
 		}
 		view.announced = true
+		// Niri activates a new window (ActivateWindow::Smart); its
+		// heuristics for dialogs and activation tokens come with M5. A
+		// greeter that waits for a click cannot be used on a VT.
+		c.focusView(view)
 		if c.viewMapped != nil {
 			c.viewMapped(view)
 		}
