@@ -24,12 +24,12 @@ drawing is M3, not this gate.
 
 | Item | Choice | Why |
 |---|---|---|
-| `zwlr_layer_shell_v1` | version 4 | Design §7 and the shell's maximum. wlroots 0.20 allows 5, but nothing here needs it. |
-| `xdg_wm_base` | version 6, up from 5 | v6 is the `suspended` state Niri uses. v7 is not needed by any target client. |
+| `zwlr_layer_shell_v1` | version 5 | The host Niri advertises 5 (`wayland-info`, 2026-10-16); design §7's v4 is the minimum, and the shell binds at most 4. v5 adds `set_exclusive_edge`, which wlroots' scene configure honours. |
+| `xdg_wm_base` | version 7, up from 5 | The host Niri advertises 7, and wlroots 0.20's maximum is 7. |
 | `wl_compositor` | version 6, up from 5 | v6 is `preferred_buffer_scale`; the shell binds up to 6. |
 | `wp_fractional_scale_manager_v1` | version 1, and wlroots' scene sends the scale | `types/scene/surface.c:135` (0.20.0) calls `wlr_fractional_scale_v1_notify_scale` on output enter. |
 | `zwp_linux_dmabuf_v1` | version 5 with renderer formats, plus `wlr_scene_set_linux_dmabuf_v1` for feedback | Failure is an error from `New`, because the global is required. |
-| `wl_shm` | unchanged | `wlr_shm_create_with_renderer` always offers ARGB8888 and XRGB8888; the test pins it. |
+| `wl_shm` | version 2, up from 1 | Niri advertises 2 (`release`). `wlr_shm_create_with_renderer` always offers ARGB8888 and XRGB8888; the test pins it. |
 | Scene order | trees for background, bottom, windows, top and overlay, under the scene root | The layer protocol's stacking. Toplevels move from the root into `windows`. |
 | Layer arrangement | per output, `wlr_scene_layer_surface_v1_configure` with exclusive surfaces first, then the rest against the remaining usable area | The same as Mango and tinywl-derived compositors; the usable area is kept per output for M4/M5 window placement. |
 | Layer surface with no output | the output under the pointer, else the first; closed if there are none | The protocol lets the compositor choose. |
@@ -49,13 +49,13 @@ used.
 
 **RED:** `TestRequiredGlobalsAdvertised` runs `wayland-info` against the nested socket and requires:
 - `wl_compositor` ≥ 6, `wl_subcompositor`, `wl_shm` with format 0 (ARGB8888), `wl_seat`, `wl_output`;
-- `xdg_wm_base` ≥ 6, `zwlr_layer_shell_v1` = 4;
+- `xdg_wm_base` = 7, `zwlr_layer_shell_v1` = 5, `wl_shm` = 2;
 - `wp_fractional_scale_manager_v1`, `wp_viewporter`, `zwp_linux_dmabuf_v1` ≥ 4, `wl_data_device_manager`.
 
 **GREEN:**
 - a shared `runClient(t, c, argv, env, stop func(line string) bool)` helper in `client_test.go`;
 - the version bumps;
-- `wlr_layer_shell_v1_create(display, 4)`, `wlr_fractional_scale_manager_v1_create(display, 1)`,
+- `wlr_layer_shell_v1_create(display, 5)`, `wlr_fractional_scale_manager_v1_create(display, 1)`,
   `wlr_linux_dmabuf_v1_create_with_renderer(display, 5, renderer)` and `wlr_scene_set_linux_dmabuf_v1`.
 
 **Commit:** `feat(wlr): advertise the M1 globals`
