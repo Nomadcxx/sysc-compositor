@@ -91,6 +91,7 @@ type Compositor struct {
 	layerSurfaces          map[unsafe.Pointer]*layerSurface // by wlr_surface
 	layerOrder             []*layerSurface                  // creation order
 	usable                 map[unsafe.Pointer]rect          // per wlr_output, after exclusive zones
+	requested              rect                             // last host-requested output size, for tests
 	popups                 map[*C.struct_wlr_xdg_popup]struct{}
 	views                  map[unsafe.Pointer]*toplevelView
 	pointerDevices         map[unsafe.Pointer]bool

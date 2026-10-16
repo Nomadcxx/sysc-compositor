@@ -112,3 +112,32 @@ func TestExclusiveZoneShrinksUsableArea(t *testing.T) {
 		t.Errorf("usable area after the bar closed %+v, want the whole output %+v", closed, output)
 	}
 }
+
+// TestOutputFollowsHostResize: the host compositor sizes the nested window
+// (Niri tiles it) and asks the output to match. The output must take that
+// size, and a background layer must be configured to fill it; ignoring the
+// request left every frame after the first undrawn.
+func TestOutputFollowsHostResize(t *testing.T) {
+	c := newNested(t)
+	var (
+		requested rect
+		got       *layerPlacement
+		output    rect
+	)
+	pollThenStop(c, func() bool {
+		requested = c.requestedOutputSize()
+		output = c.layoutBox()
+		got = mappedOn(c.layerPlacements(), layerBackground)
+		return requested.w > 0 && got != nil && got.box == output && output.w == requested.w
+	})
+	runClient(t, c, []string{"swaybg", "-c", "#336699"}, nil, nil)
+	if requested.w == 0 {
+		t.Fatal("the host never asked the nested output to resize (Niri always sizes a new window)")
+	}
+	if output.w != requested.w || output.h != requested.h {
+		t.Errorf("output %dx%d, but the host asked for %dx%d", output.w, output.h, requested.w, requested.h)
+	}
+	if got == nil || got.box != output {
+		t.Errorf("background surface %+v, want the resized output %+v", got, output)
+	}
+}

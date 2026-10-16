@@ -16,6 +16,33 @@ package wlr
 #include <wlr/types/wlr_scene.h>
 #include <wlr/types/wlr_xcursor_manager.h>
 
+// sysc_apply_requested_state commits the state a backend asked for: the host
+// compositor resizing the nested window, for example. It reports the size the
+// request carried, or 0x0 when it carried no mode.
+static bool sysc_apply_requested_state(struct wlr_output_event_request_state *event,
+		int *width, int *height) {
+	const struct wlr_output_state *state = event->state;
+	*width = 0;
+	*height = 0;
+	if (state->committed & WLR_OUTPUT_STATE_MODE) {
+		if (state->mode_type == WLR_OUTPUT_STATE_MODE_CUSTOM) {
+			*width = state->custom_mode.width;
+			*height = state->custom_mode.height;
+		} else if (state->mode != NULL) {
+			*width = state->mode->width;
+			*height = state->mode->height;
+		}
+	}
+	return wlr_output_commit_state(event->output, state);
+}
+
+// sysc_commit_changed_geometry reports whether a commit changed what an output
+// covers in the layout.
+static bool sysc_commit_changed_geometry(struct wlr_output_event_commit *event) {
+	return (event->state->committed & (WLR_OUTPUT_STATE_MODE | WLR_OUTPUT_STATE_SCALE |
+		WLR_OUTPUT_STATE_TRANSFORM)) != 0;
+}
+
 static bool sysc_output_set_scale(struct wlr_output *output, float scale) {
 	struct wlr_output_state state;
 	wlr_output_state_init(&state);
@@ -114,6 +141,25 @@ func (c *Compositor) handleNewOutput(data unsafe.Pointer) {
 	c.keep(frame)
 	c.arrangeLayers(data)
 
+	// A nested output is sized by the host: Niri tiles the window and the
+	// backend asks for that size. Ignoring the request leaves the output at
+	// its first size and nothing after the first frames is drawn.
+	request := AddListener(unsafe.Pointer(&output.events.request_state), func(event unsafe.Pointer) {
+		var w, h C.int
+		C.sysc_apply_requested_state((*C.struct_wlr_output_event_request_state)(event), &w, &h)
+		if w > 0 {
+			c.requested = rect{0, 0, int(w), int(h)}
+		}
+	})
+	// The layout follows the output's commit first (its listener came
+	// first); layer surfaces then follow the new box.
+	commit := AddListener(unsafe.Pointer(&output.events.commit), func(event unsafe.Pointer) {
+		if bool(C.sysc_commit_changed_geometry((*C.struct_wlr_output_event_commit)(event))) {
+			c.arrangeLayers(data)
+		}
+	})
+	c.keep(request, commit)
+
 	var destroy *Listener
 	destroy = AddListener(unsafe.Pointer(&output.events.destroy), func(unsafe.Pointer) {
 		c.closeOutputLayers(data)
@@ -121,6 +167,8 @@ func (c *Compositor) handleNewOutput(data unsafe.Pointer) {
 		delete(c.usable, data)
 		delete(c.frames, frame.Native())
 		c.drop(frame)
+		c.drop(request)
+		c.drop(commit)
 		c.drop(destroy)
 	})
 	c.keep(destroy)
@@ -161,3 +209,7 @@ func (c *Compositor) cursorLoadedAt(scale float64) bool {
 	defer C.free(unsafe.Pointer(name))
 	return C.wlr_xcursor_manager_get_xcursor(c.xcursorManager, name, C.float(scale)) != nil
 }
+
+// requestedOutputSize is the size of the last state the host asked an output
+// to take, for tests.
+func (c *Compositor) requestedOutputSize() rect { return c.requested }
