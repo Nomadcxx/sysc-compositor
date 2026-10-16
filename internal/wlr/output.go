@@ -98,6 +98,18 @@ func (c *Compositor) handleNewOutput(data unsafe.Pointer) {
 	frame := AddListener(unsafe.Pointer(&output.events.frame), c.handleOutputFrame)
 	c.frames[frame.Native()] = so
 	c.keep(frame)
+	c.arrangeLayers(data)
+
+	var destroy *Listener
+	destroy = AddListener(unsafe.Pointer(&output.events.destroy), func(unsafe.Pointer) {
+		c.closeOutputLayers(data)
+		delete(c.sceneOutputs, data)
+		delete(c.usable, data)
+		delete(c.frames, frame.Native())
+		c.drop(frame)
+		c.drop(destroy)
+	})
+	c.keep(destroy)
 }
 
 // handleOutputFrame repaints an output and asks for the next one. wlroots

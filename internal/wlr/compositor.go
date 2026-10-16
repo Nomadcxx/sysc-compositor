@@ -25,6 +25,7 @@ package wlr
 #include <wlr/types/wlr_shm.h>
 #include <wlr/types/wlr_subcompositor.h>
 #include <wlr/types/wlr_viewporter.h>
+#include <wlr/types/wlr_xdg_output_v1.h>
 #include <wlr/types/wlr_xdg_shell.h>
 #include <wlr/types/wlr_xcursor_manager.h>
 
@@ -87,7 +88,9 @@ type Compositor struct {
 	mapped                 map[unsafe.Pointer]bool
 	sceneTrees             map[unsafe.Pointer]*C.struct_wlr_scene_tree
 	layerTrees             [layerCount]*C.struct_wlr_scene_tree
-	layerSurfaces          map[unsafe.Pointer]*layerSurface
+	layerSurfaces          map[unsafe.Pointer]*layerSurface // by wlr_surface
+	layerOrder             []*layerSurface                  // creation order
+	usable                 map[unsafe.Pointer]rect          // per wlr_output, after exclusive zones
 	popups                 map[*C.struct_wlr_xdg_popup]struct{}
 	views                  map[unsafe.Pointer]*toplevelView
 	pointerDevices         map[unsafe.Pointer]bool
@@ -146,6 +149,7 @@ func New() (*Compositor, error) {
 	c.mapped = map[unsafe.Pointer]bool{}
 	c.sceneTrees = map[unsafe.Pointer]*C.struct_wlr_scene_tree{}
 	c.layerSurfaces = map[unsafe.Pointer]*layerSurface{}
+	c.usable = map[unsafe.Pointer]rect{}
 	c.popups = map[*C.struct_wlr_xdg_popup]struct{}{}
 	c.views = map[unsafe.Pointer]*toplevelView{}
 	c.pointerDevices = map[unsafe.Pointer]bool{}
@@ -192,6 +196,11 @@ func New() (*Compositor, error) {
 	if !c.createLayerTrees() {
 		return nil, errors.New("wlr_scene_tree_create failed")
 	}
+	// xdg-output gives clients output names and logical geometry; waybar and
+	// grim refuse to start without it, and Niri advertises it.
+	if C.wlr_xdg_output_manager_v1_create(c.display, c.layout) == nil {
+		return nil, errors.New("wlr_xdg_output_manager_v1_create failed")
+	}
 	if c.layerShell = C.wlr_layer_shell_v1_create(c.display, C.sysc_layer_shell_version); c.layerShell == nil {
 		return nil, errors.New("wlr_layer_shell_v1_create failed")
 	}
@@ -216,6 +225,7 @@ func New() (*Compositor, error) {
 		AddListener(unsafe.Pointer(&c.backend.events.new_output), c.handleNewOutput),
 		AddListener(unsafe.Pointer(&c.backend.events.new_input), c.handleNewInput),
 		AddListener(c.newPopupSignal(), c.handleNewPopup),
+		AddListener(unsafe.Pointer(&c.layerShell.events.new_surface), c.handleNewLayerSurface),
 		AddListener(c.newToplevelSignal(), c.handleNewToplevel),
 		AddListener(unsafe.Pointer(&c.cursor.events.motion), c.handleCursorMotion),
 		AddListener(unsafe.Pointer(&c.cursor.events.motion_absolute), c.handleCursorMotionAbsolute),
@@ -273,6 +283,8 @@ func (c *Compositor) Destroy() {
 	c.mapped = nil
 	c.sceneTrees = nil
 	c.layerSurfaces = nil
+	c.layerOrder = nil
+	c.usable = nil
 	c.popups = nil
 	c.views = nil
 	c.pointerDevices = nil

@@ -115,6 +115,7 @@ func TestRequiredGlobalsAdvertised(t *testing.T) {
 		"wp_fractional_scale_manager_v1": 1,
 		"wp_viewporter":                  1,
 		"zwp_linux_dmabuf_v1":            4,
+		"zxdg_output_manager_v1":         3,
 	}
 	for iface, min := range want {
 		if got, ok := globals[iface]; !ok || got < min {

@@ -37,6 +37,7 @@ drawing is M3, not this gate.
 | Popups | tree under the parent's tree on the initial commit, then `wlr_xdg_popup_unconstrain_from_box` against the output's box, in parent-surface coordinates | Report X1; Mango `manage/layer.c:418-448`. Popups of layer surfaces use the same path. |
 | Popup grabs | not in M1 | A popup without its grab still draws and dismisses on the client's own terms. Grabs land with pointer correctness (`sysc-1296`). |
 
+| `zxdg_output_manager_v1` | version 3, added during execution | waybar refuses to start without it ("Failed to acquire required resources"), grim needs it, and the host Niri advertises v3. One wlroots call over the output layout. |
 | Protocol headers | `protocols/wlr-layer-shell-unstable-v1.xml` from the wlroots 0.20.0 tag; `go generate ./internal/wlr` writes the header into the gitignored `internal/wlr/protocols/` | `wlr_layer_shell_v1.h` includes a header wlroots does not install. Design §14 is amended; generated output is still never checked in. |
 
 **Test clients**, all installed here: `wayland-info` (globals), `swaybg` (a background layer anchored to
@@ -52,7 +53,8 @@ used.
 **RED:** `TestRequiredGlobalsAdvertised` runs `wayland-info` against the nested socket and requires:
 - `wl_compositor` ≥ 6, `wl_subcompositor`, `wl_shm` with format 0 (ARGB8888), `wl_seat`, `wl_output`;
 - `xdg_wm_base` = 7, `zwlr_layer_shell_v1` = 5, `wl_shm` = 2;
-- `wp_fractional_scale_manager_v1`, `wp_viewporter`, `zwp_linux_dmabuf_v1` ≥ 4, `wl_data_device_manager`.
+- `wp_fractional_scale_manager_v1`, `wp_viewporter`, `zwp_linux_dmabuf_v1` ≥ 4, `wl_data_device_manager`,
+  `zxdg_output_manager_v1` ≥ 3.
 
 **GREEN:**
 - a shared `runClient(t, c, argv, env, stop func(line string) bool)` helper in `client_test.go`;
