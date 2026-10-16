@@ -138,3 +138,80 @@ Stop at the exit gate. Not in M1:
 - popup grabs and pointer focus (`sysc-1296`, before M4);
 - window placement inside the usable area (M4/M5);
 - any IPC (M2).
+
+## Execution record (2026-10-16)
+
+Branch `milestone/m1-required-globals`. Tasks 1–4 landed as planned. Two fixes added during the live gate
+are the most important result.
+
+**Found and fixed:**
+
+1. **No frame ever drew the scene (an M0 bug).**
+   - The frame handler looked its scene output up by the listener's own pointer, but listener callbacks
+     receive the signal's payload. The lookup never matched.
+   - The nested window showed only the black of mode sets. M0's "foot maps" gate was a protocol proof,
+     never an on-screen one.
+   - Fix: the callback closes over its scene output, and `Listener.Native` is removed.
+   - Test: `TestClientContentIsDrawn`.
+2. **The host's resize request was ignored (an M0 bug).**
+   - Niri tiles the nested window, and the wayland backend asks the output to match (`request_state`).
+   - Fix: the request is committed, as tinywl does, and layers re-arrange on any mode, scale or transform
+     change.
+   - Test: `TestOutputFollowsHostResize`.
+3. **Popups never mapped (an M0 bug, stronger than report X1).**
+   - wlroots sends a popup no configure until the compositor schedules one.
+   - Fix: popups are now configured, parented and unconstrained.
+   - Test: `TestPopupDrawsBesideItsParent`.
+4. **A wlroots double free in popup grabs** (0.20.0 through master as of today).
+   - Destroying a seat while a popup grab is open frees the grab twice: `destroy_xdg_popup_grab` →
+     `wlr_xdg_popup_destroy` → `reset_xdg_popup` → `destroy_xdg_popup_grab`.
+   - `dismissGrabbedPopups` destroys grabbed popups first, on `RemoveInjectedSeat` and on `Destroy`.
+   - Mutation-checked: without it the test segfaults.
+
+**Deviations from the plan:**
+- **Versions:** `xdg_wm_base` 7, `zwlr_layer_shell_v1` 5 and `wl_shm` 2, matching what the host Niri
+  advertises rather than the plan's first numbers.
+- **`zxdg_output_manager_v1` v3 added:** waybar refuses to start without it.
+- **Protocol header:** `wlr_layer_shell_v1.h` includes a header wlroots does not install. The XML is
+  vendored from the wlroots 0.20.0 tag, and `go generate ./internal/wlr` writes the header into a
+  gitignored directory. Design §14 and `AGENTS.md` record the rule.
+- **Popup test:** weston-terminal's positioner sets no `constraint_adjustment`, so the protocol forbids
+  moving its menu.
+  - The test therefore asserts what the compositor owns: the constraint box is the output, measured from
+    the root window's surface origin (minus its geometry offset).
+  - wlroots' flip and slide is not exercised end to end; no installed client sets adjustments without real
+    input.
+- **Report C1 was overstated:** `wlr_cursor` loads the pointer theme at each output's scale itself. No code
+  was added; the 1.5-scale test keeps the guarantee.
+- **dmabuf test:** `weston-simple-dmabuf-feedback` asks for fullscreen (M6) and asserts on the 0×0 size, so
+  it proves the feedback only; `weston-simple-dmabuf-egl` proves a dmabuf window maps.
+- **Not added:** a re-arrange on layer destroy. wlroots unmaps first, and the unmap re-arranges; a mutation
+  showed the extra call was dead.
+
+**Gates:**
+- Desktop:
+  - every `internal/wlr` test, run by name;
+  - `internal/server`;
+  - the race test on `internal/control`;
+  - capped vet and `gofmt` all green.
+- Mutation checks:
+  - popups: parent tree, dismiss, geometry offset, configure;
+  - layers: map re-arrange, close, initial arrange;
+  - output: request state and frame lookup.
+- Laptop, from a `git archive` copy under its Niri: every `internal/wlr` test passes, except that
+  `TestFractionalScaleFollowsOutput` skipped because foot is not installed there. `internal/server` and
+  `internal/control` pass.
+- Live, on the laptop, with the real binary nested:
+  - `wayland-info` lists `wl_compositor` 6, `wl_shm` 2, `xdg_wm_base` 7, `zwlr_layer_shell_v1` 5,
+    `wp_fractional_scale_manager_v1` 1, `wp_viewporter` 1, `zwp_linux_dmabuf_v1` 5,
+    `zxdg_output_manager_v1` 3, `wl_seat` and `wl_output`;
+  - kitty receives `preferred_scale(120)`;
+  - the grim shot shows waybar's 30 px bar with its clock and kitty's prompt drawn inside the nested
+    window, which Niri tiled at 760×810;
+  - before the two output fixes, the same shot was solid black.
+- Not shown live: windows are not yet placed inside the usable area (M4/M5), so kitty sits under the bar.
+
+**Still open, by plan:**
+- layer keyboard interactivity (M3, noted on `sysc-1268`);
+- popup grabs and pointer focus (`sysc-1296`);
+- the keyboard keymap (`sysc-1295`, before M2).
