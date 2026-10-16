@@ -75,6 +75,11 @@ static bool sysc_output_box(struct wlr_output_layout *layout, double x, double y
 	return true;
 }
 
+static void sysc_output_layout_box(struct wlr_output_layout *layout,
+		struct wlr_output *output, struct wlr_box *box) {
+	wlr_output_layout_get_box(layout, output, box);
+}
+
 static void sysc_layout_box(struct wlr_output_layout *layout, struct wlr_box *box) {
 	wlr_output_layout_get_box(layout, NULL, box);
 }
@@ -240,6 +245,39 @@ func (c *Compositor) viewForSurface(surface *C.struct_wlr_surface) *toplevelView
 		return nil
 	}
 	return c.views[unsafe.Pointer(toplevel)]
+}
+
+// applyFullscreen answers a toplevel's fullscreen request. Fullscreen covers
+// the output the client named, else the default one, from its origin.
+// Leaving it hands the size back to the client. Restoring the old place and
+// size, windowed fullscreen and stacking above the top layer are M6.
+func (c *Compositor) applyFullscreen(view *toplevelView) {
+	toplevel := view.toplevel
+	if !bool(toplevel.requested.fullscreen) {
+		C.wlr_xdg_toplevel_set_fullscreen(toplevel, false)
+		C.wlr_xdg_toplevel_set_size(toplevel, 0, 0)
+		return
+	}
+	output := toplevel.requested.fullscreen_output
+	if output == nil {
+		output = c.defaultOutput()
+	}
+	C.wlr_xdg_toplevel_set_fullscreen(toplevel, true)
+	if output == nil {
+		return
+	}
+	var box C.struct_wlr_box
+	C.sysc_output_layout_box(c.layout, output, &box)
+	C.wlr_xdg_toplevel_set_size(toplevel, box.width, box.height)
+	c.placeView(view, int(box.x), int(box.y))
+}
+
+// fullscreenState is a view's acknowledged fullscreen state and window
+// geometry in layout coordinates, for tests.
+func (c *Compositor) fullscreenState(view *toplevelView) (bool, rect) {
+	x, y := view.treePosition()
+	g := view.geometry()
+	return bool(view.toplevel.current.fullscreen), rect{x, y, g.w, g.h}
 }
 
 // Mapped reports whether an xdg_surface reached the scene graph. It exists so a

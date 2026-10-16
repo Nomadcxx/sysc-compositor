@@ -49,9 +49,9 @@ func TestFractionalScaleFollowsOutput(t *testing.T) {
 
 // TestDmabufClientMaps: a client gets the scene's dmabuf feedback, and a
 // client that allocates its buffers on the GPU maps a window from them.
-// weston-simple-dmabuf-feedback asks for fullscreen and cannot draw at the
-// 0x0 size a compositor without fullscreen (M6) sends, so it only proves the
-// feedback; weston-simple-dmabuf-egl draws a fixed-size window.
+// weston-simple-dmabuf-feedback proves the feedback (its fullscreen mapping
+// is TestFullscreenRequestCoversItsOutput); weston-simple-dmabuf-egl draws a
+// fixed-size window.
 func TestDmabufClientMaps(t *testing.T) {
 	t.Run("feedback", func(t *testing.T) {
 		c := newNested(t)
@@ -90,4 +90,29 @@ func tail(lines []string, n int) string {
 		lines = lines[len(lines)-n:]
 	}
 	return strings.Join(lines, "\n")
+}
+
+// TestFullscreenRequestCoversItsOutput is how sysc-greet covers the screen:
+// kitty --start-as=fullscreen asks before its first commit. A client that
+// only draws fullscreen maps at its output's size and origin.
+func TestFullscreenRequestCoversItsOutput(t *testing.T) {
+	c := newNested(t)
+	var (
+		mapped     bool
+		fullscreen bool
+		got, want  rect
+	)
+	c.viewMapped = func(v *toplevelView) {
+		mapped = true
+		fullscreen, got = c.fullscreenState(v)
+		want = c.layoutBox()
+		c.Terminate()
+	}
+	lines := runClient(t, c, []string{"weston-simple-dmabuf-feedback"}, nil, nil)
+	if !mapped {
+		t.Fatalf("the fullscreen client never mapped:\n%s", tail(lines, 20))
+	}
+	if !fullscreen || got != want {
+		t.Errorf("fullscreen=%v at %+v, want fullscreen at the output %+v", fullscreen, got, want)
+	}
 }
