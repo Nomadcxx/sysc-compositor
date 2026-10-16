@@ -5,6 +5,7 @@ package wlr
 #cgo CFLAGS: -DWLR_USE_UNSTABLE
 
 #include <stdbool.h>
+#include <stdlib.h>
 #include <stdint.h>
 
 #include <wlr/backend.h>
@@ -13,6 +14,16 @@ package wlr
 #include <wlr/types/wlr_output.h>
 #include <wlr/types/wlr_output_layout.h>
 #include <wlr/types/wlr_scene.h>
+#include <wlr/types/wlr_xcursor_manager.h>
+
+static bool sysc_output_set_scale(struct wlr_output *output, float scale) {
+	struct wlr_output_state state;
+	wlr_output_state_init(&state);
+	wlr_output_state_set_scale(&state, scale);
+	bool ok = wlr_output_commit_state(output, &state);
+	wlr_output_state_finish(&state);
+	return ok;
+}
 
 // sysc_bring_output_up gives one backend output a renderer and turns it on at
 // its preferred mode.
@@ -78,7 +89,10 @@ static bool sysc_repaint_scene_output(struct wlr_scene_output *so) {
 */
 import "C"
 
-import "unsafe"
+import (
+	"errors"
+	"unsafe"
+)
 
 // handleNewOutput brings up an output the backend just announced and gives it a
 // scene output so clients paint into the nested session rather than nowhere.
@@ -125,3 +139,25 @@ func (c *Compositor) handleOutputFrame(listener unsafe.Pointer) {
 // EnabledOutputs reports how many backend outputs are up. It is the number a
 // client means by "monitors".
 func (c *Compositor) EnabledOutputs() int { return len(c.sceneOutputs) }
+
+// setOutputScale sets every output's scale, for tests.
+func (c *Compositor) setOutputScale(scale float64) error {
+	for out := range c.sceneOutputs {
+		if !bool(C.sysc_output_set_scale((*C.struct_wlr_output)(out), C.float(scale))) {
+			return errors.New("output scale commit failed")
+		}
+	}
+	return nil
+}
+
+// cursorLoadedAt reports whether the pointer theme is loaded at scale, for
+// tests. wlr_cursor loads the theme at each output's scale itself whenever the
+// image is a theme name, including after an output's scale changes.
+func (c *Compositor) cursorLoadedAt(scale float64) bool {
+	if c.xcursorManager == nil {
+		return false
+	}
+	name := C.CString("left_ptr")
+	defer C.free(unsafe.Pointer(name))
+	return C.wlr_xcursor_manager_get_xcursor(c.xcursorManager, name, C.float(scale)) != nil
+}
