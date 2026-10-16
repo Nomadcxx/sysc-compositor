@@ -7,6 +7,7 @@ package wlr
 #include <stdbool.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <time.h>
 
 #include <wlr/backend.h>
 #include <wlr/render/allocator.h>
@@ -103,11 +104,21 @@ static struct wlr_scene_output *sysc_place_in_layout(
 	return so;
 }
 
-// sysc_repaint_scene_output commits the scene for one output and asks for the
-// next frame. wlr_scene_output takes a state-options struct rather than a
-// timestamp, and M0 changes no options, so NULL is the honest argument.
+// sysc_repaint_scene_output commits the scene for one output, answers the
+// frame callbacks of every surface on it, and asks for the next frame.
+// wlr_scene_output takes a state-options struct rather than a timestamp, and
+// M0 changes no options, so NULL is the honest argument.
+//
+// The scene never answers wl_surface.frame by itself. Without the done
+// events a client that paces its drawing on them (kitty, weston-simple-shm)
+// stops repainting after its first frames. tinywl sends them here too, even
+// when the commit had nothing to draw.
 static bool sysc_repaint_scene_output(struct wlr_scene_output *so) {
-	if (!wlr_scene_output_commit(so, NULL)) {
+	bool committed = wlr_scene_output_commit(so, NULL);
+	struct timespec now;
+	clock_gettime(CLOCK_MONOTONIC, &now);
+	wlr_scene_output_send_frame_done(so, &now);
+	if (!committed) {
 		return false;
 	}
 	wlr_output_schedule_frame(so->output);
