@@ -1,0 +1,77 @@
+package wlr
+
+import (
+	"regexp"
+	"strings"
+	"testing"
+	"time"
+)
+
+const keyEsc = 1 // evdev KEY_ESC
+
+var (
+	reKeymap = regexp.MustCompile(`wl_keyboard#\d+\.keymap\((\d+),`)
+	reKey    = regexp.MustCompile(`wl_keyboard#\d+\.key\(\d+, \d+, (\d+), (\d+)\)`)
+)
+
+// TestUserKeyboardsShareOneKeymap is report K1–K3: clients on the user seat
+// get a real xkb keymap, keys from every attached keyboard reach them, and
+// Escape is an ordinary key rather than a way to end the session.
+func TestUserKeyboardsShareOneKeymap(t *testing.T) {
+	c := newNested(t)
+	var first, second *fakeKeyboard
+	t.Cleanup(func() {
+		for _, kb := range []*fakeKeyboard{first, second} {
+			if kb != nil {
+				kb.remove()
+			}
+		}
+	})
+	acted := false
+	c.viewMapped = func(v *toplevelView) {
+		if acted {
+			return
+		}
+		acted = true
+		first, second = c.addFakeKeyboard(), c.addFakeKeyboard()
+		if first == nil || second == nil {
+			t.Error("could not attach the test keyboards")
+			c.Terminate()
+			return
+		}
+		c.focusView(v)
+		first.key(keyEsc, true)
+		first.key(keyEsc, false)
+		// If Escape ended the session, this never runs.
+		go func() {
+			time.Sleep(100 * time.Millisecond)
+			_ = c.Post(func() {
+				second.key(keyA, true)
+				second.key(keyA, false)
+			})
+		}()
+	}
+	var keys []string
+	lines := runClient(t, c, []string{"weston-terminal"}, []string{"WAYLAND_DEBUG=client"}, func(line string) bool {
+		if m := reKey.FindStringSubmatch(line); m != nil {
+			keys = append(keys, m[1]+"/"+m[2])
+		}
+		return len(keys) == 4
+	})
+	if !acted {
+		t.Fatal("weston-terminal never mapped")
+	}
+	formats := []string{}
+	for _, line := range lines {
+		if m := reKeymap.FindStringSubmatch(line); m != nil {
+			formats = append(formats, m[1])
+		}
+	}
+	if len(formats) == 0 || formats[len(formats)-1] != "1" {
+		t.Errorf("keymap formats %v, want the last one xkb_v1 (1)", formats)
+	}
+	want := []string{"1/1", "1/0", "30/1", "30/0"}
+	if strings.Join(keys, " ") != strings.Join(want, " ") {
+		t.Errorf("client keys %v, want Escape then A from the two keyboards %v", keys, want)
+	}
+}

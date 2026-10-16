@@ -13,6 +13,7 @@ package wlr
 #include <wlr/types/wlr_cursor.h>
 #include <wlr/types/wlr_input_device.h>
 #include <wlr/types/wlr_keyboard.h>
+#include <wlr/types/wlr_keyboard_group.h>
 #include <wlr/types/wlr_pointer.h>
 #include <wlr/types/wlr_cursor.h>
 #include <wlr/types/wlr_data_device.h>
@@ -95,10 +96,10 @@ type Compositor struct {
 	popups                 map[*C.struct_wlr_xdg_popup]struct{}
 	views                  map[unsafe.Pointer]*toplevelView
 	pointerDevices         map[unsafe.Pointer]bool
-	keyboardDevices        map[unsafe.Pointer]*C.struct_wlr_keyboard
-	keyboardListeners      map[unsafe.Pointer][]*Listener
+	keyboardDevices        map[unsafe.Pointer]bool
+	keyboardGroup          *C.struct_wlr_keyboard_group
+	keyboard               *C.struct_wlr_keyboard // the group's, which the user seat hears
 	inputDestroyListeners  map[unsafe.Pointer]*Listener
-	activeKeyboard         *C.struct_wlr_keyboard
 	modifiers              uint32
 	focusedView            *toplevelView
 	pointerGrab            *pointerGrab
@@ -153,8 +154,7 @@ func New() (*Compositor, error) {
 	c.popups = map[*C.struct_wlr_xdg_popup]struct{}{}
 	c.views = map[unsafe.Pointer]*toplevelView{}
 	c.pointerDevices = map[unsafe.Pointer]bool{}
-	c.keyboardDevices = map[unsafe.Pointer]*C.struct_wlr_keyboard{}
-	c.keyboardListeners = map[unsafe.Pointer][]*Listener{}
+	c.keyboardDevices = map[unsafe.Pointer]bool{}
 	c.inputDestroyListeners = map[unsafe.Pointer]*Listener{}
 	c.pressedPointerButtons = map[uint32]bool{}
 	c.pointerSerialButtons = map[uint32]uint32{}
@@ -212,6 +212,9 @@ func New() (*Compositor, error) {
 	}
 	if c.seat = C.wlr_seat_create(c.display, cCString("seat0")); c.seat == nil {
 		return nil, errors.New("wlr_seat_create failed")
+	}
+	if err := c.startKeyboardGroup(); err != nil {
+		return nil, err
 	}
 
 	if c.cursor = C.wlr_cursor_create(); c.cursor == nil {
@@ -288,9 +291,9 @@ func (c *Compositor) Destroy() {
 	c.views = nil
 	c.pointerDevices = nil
 	c.keyboardDevices = nil
-	c.keyboardListeners = nil
 	c.inputDestroyListeners = nil
 	c.destroyInjectedSeats()
+	c.destroyKeyboardGroup()
 	if c.cursor != nil {
 		C.wlr_cursor_destroy(c.cursor)
 		c.cursor = nil

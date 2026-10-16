@@ -159,7 +159,7 @@ func (g pointerGrab) geometry(cursorX, cursorY float64) pointerGeometry {
 	return geometry
 }
 
-// handleNewInput assigns a backend input device to the single M0 seat.
+// handleNewInput assigns a backend input device to the user seat.
 //
 // wlroots 0.20 does not wire devices to a seat for you: the compositor reads
 // new_input and assigns by device type.
@@ -177,18 +177,10 @@ func (c *Compositor) handleNewInput(data unsafe.Pointer) {
 	switch C.sysc_device_type(device) {
 	case C.WLR_INPUT_DEVICE_KEYBOARD:
 		kb := C.wlr_keyboard_from_input_device(device)
-		if kb == nil {
+		if kb == nil || !c.addKeyboard(kb) {
 			return
 		}
-		C.wlr_seat_set_keyboard(c.seat, kb)
-		c.keyboardDevices[deviceKey] = kb
-		c.activeKeyboard = kb
-		c.modifiers = uint32(C.wlr_keyboard_get_modifiers(kb))
-		c.addKeyboardListeners(deviceKey, kb)
-		if c.focusedView != nil {
-			C.sysc_seat_keyboard_focus(c.seat,
-				c.focusedView.toplevel.base.surface, kb)
-		}
+		c.keyboardDevices[deviceKey] = true
 	case C.WLR_INPUT_DEVICE_POINTER:
 		if c.xcursorManager == nil {
 			c.xcursorManager = C.sysc_xcursor_manager()
@@ -209,19 +201,6 @@ func (c *Compositor) handleNewInput(data unsafe.Pointer) {
 	c.refreshCapabilities()
 }
 
-func (c *Compositor) addKeyboardListeners(device unsafe.Pointer, keyboard *C.struct_wlr_keyboard) {
-	listeners := []*Listener{
-		AddListener(unsafe.Pointer(&keyboard.events.key), func(data unsafe.Pointer) {
-			c.handleKeyboardKey(keyboard, data)
-		}),
-		AddListener(unsafe.Pointer(&keyboard.events.modifiers), func(unsafe.Pointer) {
-			c.handleKeyboardModifiers(keyboard)
-		}),
-	}
-	c.keyboardListeners[device] = listeners
-	c.keep(listeners...)
-}
-
 func (c *Compositor) handleInputDestroy(device unsafe.Pointer) {
 	if listener := c.inputDestroyListeners[device]; listener != nil {
 		c.drop(listener)
@@ -235,53 +214,9 @@ func (c *Compositor) handleInputDestroy(device unsafe.Pointer) {
 		clear(c.pointerSerialButtons)
 		clear(c.consumedPointerButtons)
 	}
-	if keyboard := c.keyboardDevices[device]; keyboard != nil {
-		for _, listener := range c.keyboardListeners[device] {
-			c.drop(listener)
-		}
-		delete(c.keyboardListeners, device)
-		delete(c.keyboardDevices, device)
-		if c.activeKeyboard == keyboard {
-			c.activeKeyboard = nil
-			for _, remaining := range c.keyboardDevices {
-				c.activeKeyboard = remaining
-				break
-			}
-			C.wlr_seat_set_keyboard(c.seat, c.activeKeyboard)
-			c.modifiers = 0
-			if c.activeKeyboard != nil {
-				c.modifiers = uint32(C.wlr_keyboard_get_modifiers(c.activeKeyboard))
-				if c.focusedView != nil {
-					C.sysc_seat_keyboard_focus(c.seat,
-						c.focusedView.toplevel.base.surface, c.activeKeyboard)
-				}
-			} else {
-				C.wlr_seat_keyboard_notify_clear_focus(c.seat)
-			}
-		}
-	}
+	// The keyboard group lets a destroyed keyboard go by itself.
+	delete(c.keyboardDevices, device)
 	c.refreshCapabilities()
-}
-
-func (c *Compositor) handleKeyboardKey(keyboard *C.struct_wlr_keyboard, data unsafe.Pointer) {
-	if keyboard != c.activeKeyboard {
-		return
-	}
-	event := (*C.struct_wlr_keyboard_key_event)(data)
-	if event.state == C.WL_KEYBOARD_KEY_STATE_PRESSED && event.keycode == C.KEY_ESC {
-		C.wl_display_terminate(c.display)
-		return
-	}
-	C.wlr_seat_keyboard_notify_key(c.seat, event.time_msec, event.keycode,
-		C.uint32_t(event.state))
-}
-
-func (c *Compositor) handleKeyboardModifiers(keyboard *C.struct_wlr_keyboard) {
-	if keyboard != c.activeKeyboard {
-		return
-	}
-	c.modifiers = uint32(C.wlr_keyboard_get_modifiers(keyboard))
-	C.wlr_seat_keyboard_notify_modifiers(c.seat, &keyboard.modifiers)
 }
 
 func (c *Compositor) handleCursorMotion(data unsafe.Pointer) {
@@ -428,9 +363,8 @@ func (c *Compositor) focusView(view *toplevelView) {
 		C.wlr_xdg_toplevel_set_activated(view.toplevel, true)
 	}
 	c.touch(view)
-	if changed && c.activeKeyboard != nil {
-		C.sysc_seat_keyboard_focus(c.seat,
-			view.toplevel.base.surface, c.activeKeyboard)
+	if changed {
+		C.sysc_seat_keyboard_focus(c.seat, view.toplevel.base.surface, c.keyboard)
 	}
 }
 
