@@ -1,0 +1,50 @@
+package ipc
+
+// Requests is every niri-ipc 26.4.0 Request variant, in niri-ipc's order.
+var Requests = []string{
+	"Version", "Outputs", "Workspaces", "Windows", "Layers", "KeyboardLayouts", "FocusedOutput",
+	"FocusedWindow", "PickWindow", "PickColor", "Action", "Output", "EventStream", "ReturnError",
+	"OverviewState", "Casts",
+}
+
+// Actions is every niri-ipc 26.4.0 Action variant, in niri-ipc's order.
+var Actions = []string{
+	"Quit", "PowerOffMonitors", "PowerOnMonitors", "Spawn", "SpawnSh", "DoScreenTransition",
+	"Screenshot", "ScreenshotScreen", "ScreenshotWindow", "ToggleKeyboardShortcutsInhibit",
+	"CloseWindow", "FullscreenWindow", "ToggleWindowedFullscreen", "FocusWindow",
+	"FocusWindowInColumn", "FocusWindowPrevious", "FocusColumnLeft", "FocusColumnRight",
+	"FocusColumnFirst", "FocusColumnLast", "FocusColumnRightOrFirst", "FocusColumnLeftOrLast",
+	"FocusColumn", "FocusWindowOrMonitorUp", "FocusWindowOrMonitorDown", "FocusColumnOrMonitorLeft",
+	"FocusColumnOrMonitorRight", "FocusWindowDown", "FocusWindowUp", "FocusWindowDownOrColumnLeft",
+	"FocusWindowDownOrColumnRight", "FocusWindowUpOrColumnLeft", "FocusWindowUpOrColumnRight",
+	"FocusWindowOrWorkspaceDown", "FocusWindowOrWorkspaceUp", "FocusWindowTop", "FocusWindowBottom",
+	"FocusWindowDownOrTop", "FocusWindowUpOrBottom", "MoveColumnLeft", "MoveColumnRight",
+	"MoveColumnToFirst", "MoveColumnToLast", "MoveColumnLeftOrToMonitorLeft",
+	"MoveColumnRightOrToMonitorRight", "MoveColumnToIndex", "MoveWindowDown", "MoveWindowUp",
+	"MoveWindowDownOrToWorkspaceDown", "MoveWindowUpOrToWorkspaceUp", "ConsumeOrExpelWindowLeft",
+	"ConsumeOrExpelWindowRight", "ConsumeWindowIntoColumn", "ExpelWindowFromColumn",
+	"SwapWindowRight", "SwapWindowLeft", "ToggleColumnTabbedDisplay", "SetColumnDisplay",
+	"CenterColumn", "CenterWindow", "CenterVisibleColumns", "FocusWorkspaceDown", "FocusWorkspaceUp",
+	"FocusWorkspace", "FocusWorkspacePrevious", "MoveWindowToWorkspaceDown", "MoveWindowToWorkspaceUp",
+	"MoveWindowToWorkspace", "MoveColumnToWorkspaceDown", "MoveColumnToWorkspaceUp",
+	"MoveColumnToWorkspace", "MoveWorkspaceDown", "MoveWorkspaceUp", "MoveWorkspaceToIndex",
+	"SetWorkspaceName", "UnsetWorkspaceName", "FocusMonitorLeft", "FocusMonitorRight",
+	"FocusMonitorDown", "FocusMonitorUp", "FocusMonitorPrevious", "FocusMonitorNext", "FocusMonitor",
+	"MoveWindowToMonitorLeft", "MoveWindowToMonitorRight", "MoveWindowToMonitorDown",
+	"MoveWindowToMonitorUp", "MoveWindowToMonitorPrevious", "MoveWindowToMonitorNext",
+	"MoveWindowToMonitor", "MoveColumnToMonitorLeft", "MoveColumnToMonitorRight",
+	"MoveColumnToMonitorDown", "MoveColumnToMonitorUp", "MoveColumnToMonitorPrevious",
+	"MoveColumnToMonitorNext", "MoveColumnToMonitor", "SetWindowWidth", "SetWindowHeight",
+	"ResetWindowHeight", "SwitchPresetColumnWidth", "SwitchPresetColumnWidthBack",
+	"SwitchPresetWindowWidth", "SwitchPresetWindowWidthBack", "SwitchPresetWindowHeight",
+	"SwitchPresetWindowHeightBack", "MaximizeColumn", "MaximizeWindowToEdges", "SetColumnWidth",
+	"ExpandColumnToAvailableWidth", "SwitchLayout", "ShowHotkeyOverlay", "MoveWorkspaceToMonitorLeft",
+	"MoveWorkspaceToMonitorRight", "MoveWorkspaceToMonitorDown", "MoveWorkspaceToMonitorUp",
+	"MoveWorkspaceToMonitorPrevious", "MoveWorkspaceToMonitorNext", "MoveWorkspaceToMonitor",
+	"ToggleDebugTint", "DebugToggleOpaqueRegions", "DebugToggleDamage", "ToggleWindowFloating",
+	"MoveWindowToFloating", "MoveWindowToTiling", "FocusFloating", "FocusTiling",
+	"SwitchFocusBetweenFloatingAndTiling", "MoveFloatingWindow", "ToggleWindowRuleOpacity",
+	"SetDynamicCastWindow", "SetDynamicCastMonitor", "ClearDynamicCastTarget", "StopCast",
+	"ToggleOverview", "OpenOverview", "CloseOverview", "ToggleWindowUrgent", "SetWindowUrgent",
+	"UnsetWindowUrgent", "LoadConfigFile",
+}

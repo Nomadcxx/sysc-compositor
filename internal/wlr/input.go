@@ -469,6 +469,11 @@ func (c *Compositor) handleNewToplevel(data unsafe.Pointer) {
 			return
 		}
 		c.drop(initialCommit)
+		// kitty --start-as=fullscreen asks before its first commit.
+		if bool(toplevel.requested.fullscreen) {
+			c.applyFullscreen(view)
+			return
+		}
 		C.wlr_xdg_toplevel_set_size(toplevel, 0, 0)
 	})
 	view.listeners = append(view.listeners, initialCommit)
@@ -478,6 +483,13 @@ func (c *Compositor) handleNewToplevel(data unsafe.Pointer) {
 	})
 	add(unsafe.Pointer(&toplevel.events.request_resize), func(data unsafe.Pointer) {
 		c.handleToplevelResize(view, data)
+	})
+	// A request before the initial commit is answered by that commit's
+	// configure; one sent before then is a protocol error.
+	add(unsafe.Pointer(&toplevel.events.request_fullscreen), func(unsafe.Pointer) {
+		if bool(toplevel.base.initialized) {
+			c.applyFullscreen(view)
+		}
 	})
 	// wlroots clears a seat's pointer focus when the surface is destroyed,
 	// never on unmap, and a destroyed toplevel unmaps first.
@@ -496,6 +508,10 @@ func (c *Compositor) handleNewToplevel(data unsafe.Pointer) {
 			return
 		}
 		view.announced = true
+		// Niri activates a new window (ActivateWindow::Smart); its
+		// heuristics for dialogs and activation tokens come with M5. A
+		// greeter that waits for a click cannot be used on a VT.
+		c.focusView(view)
 		if c.viewMapped != nil {
 			c.viewMapped(view)
 		}

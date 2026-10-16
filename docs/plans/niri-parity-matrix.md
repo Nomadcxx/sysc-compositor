@@ -10,7 +10,7 @@ Legend: `[ ]` missing · `[~]` partial · `[x]` done.
 
 | Request | Status | Milestone |
 |---|---|---|
-| Version | [ ] | M2 |
+| Version | [x] | M2 — `sysc-compositor <version> (niri-ipc 26.4.0)` |
 | Outputs | [ ] | M3 |
 | Workspaces | [ ] | M3 |
 | Windows | [ ] | M3 |
@@ -20,10 +20,10 @@ Legend: `[ ]` missing · `[~]` partial · `[x]` done.
 | FocusedWindow | [ ] | M4 |
 | PickWindow | [ ] | M15 |
 | PickColor | [ ] | M15 |
-| Action | [ ] | M2 decode; per-action below |
+| Action | [~] | M2: all 141 decode; per-action below |
 | Output | [ ] | M15 |
 | EventStream | [ ] | M3 |
-| ReturnError | [ ] | M2 |
+| ReturnError | [x] | M2 |
 | OverviewState | [ ] | M7 |
 | Casts | [ ] | M12 |
 
@@ -59,11 +59,11 @@ Until implemented, decode and reply `Err` with `unimplemented: <Name>`. Tick whe
 
 | Action | Status | Milestone |
 |---|---|---|
-| Quit | [ ] | M2 |
+| Quit | [~] | M2; no confirmation dialog yet, so it always quits (M11 overlay UI) |
 | PowerOffMonitors | [ ] | M15 |
 | PowerOnMonitors | [ ] | M15 |
-| Spawn | [ ] | M2 |
-| SpawnSh | [ ] | M2 |
+| Spawn | [~] | M2; no XDG_ACTIVATION_TOKEN until xdg-activation |
+| SpawnSh | [~] | M2; as Spawn |
 | DoScreenTransition | [ ] | M15 |
 | LoadConfigFile | [ ] | M9 |
 | ToggleKeyboardShortcutsInhibit | [ ] | M10 |
@@ -93,7 +93,7 @@ Track the rest against niri-ipc 26.4.0 `Action` as they are implemented in M4–
 
 | Section | Status | Milestone |
 |---|---|---|
-| input | [ ] | M5 (parse M3) |
+| input | [~] | M2 keyboard xkb + repeat; rest M5 (parse M3) |
 | output | [ ] | M3 parse, M15 apply full |
 | layout | [ ] | M5 |
 | binds | [ ] | M5 |
@@ -104,11 +104,11 @@ Track the rest against niri-ipc 26.4.0 `Action` as they are implemented in M4–
 | gestures | [ ] | M7 |
 | overview | [ ] | M7 |
 | hotkey-overlay | [ ] | M11 |
-| environment | [ ] | M9 |
+| environment | [x] | M2 (applied to spawns) |
 | cursor | [ ] | M10 |
 | screenshot-path | [ ] | M11 |
 | prefer-no-csd | [ ] | M8 |
-| spawn-at-startup / spawn-sh-at-startup | [ ] | M2 |
+| spawn-at-startup / spawn-sh-at-startup | [x] | M2 |
 | workspace | [ ] | M6 |
 | xwayland-satellite | [ ] | M13 |
 | recent-windows | [ ] | M11 |
@@ -122,11 +122,11 @@ Acceptance file: `/home/nomadx/.config/niri/config.kdl` + `sysc-shell.kdl`. Pars
 | Command | Status | Milestone |
 |---|---|---|
 | `niri` / `sysc-compositor` no args / `--session` | [ ] | M0 binary; `--session` M9 |
-| `-c` / `--config` | [ ] | M2 |
-| `niri msg` / `sysc-compositor msg` | [ ] | M2 |
+| `-c` / `--config` | [x] | M2 (+ `$NIRI_CONFIG`, XDG, `/etc/niri`) |
+| `niri msg` / `sysc-compositor msg` | [~] | M2: `version`, `request-error`, `action quit/spawn/spawn-sh`, `--json`; niri 26.04's own `niri msg` also works against our socket |
 | `niri validate` | [ ] | M3 |
-| `niri msg action spawn` | [ ] | M2 (sysc-launch L0) |
-| `niri msg action quit --skip-confirmation` | [ ] | M2 (sysc-greet) |
+| `niri msg action spawn` | [x] | M2 (sysc-launch L0) |
+| `niri msg action quit --skip-confirmation` | [x] | M2 (sysc-greet) |
 
 ## D-Bus
 

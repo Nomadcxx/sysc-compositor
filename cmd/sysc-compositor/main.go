@@ -1,40 +1,14 @@
-// Command sysc-compositor is a nested Wayland compositor for the sysc desktop.
-// It runs inside an existing session and serves its own socket.
+// Command sysc-compositor is a Wayland compositor for the sysc desktop. With
+// no subcommand it runs, nested inside an existing session; `msg` talks to a
+// running one over the niri-ipc socket.
 package main
 
 import (
 	"os"
-	"os/signal"
-	"runtime"
-	"syscall"
 
-	"github.com/Nomadcxx/sysc-compositor/internal/server"
+	"github.com/Nomadcxx/sysc-compositor/internal/cli"
 )
 
 func main() {
-	// wlroots objects belong to the thread that created them. Lock before any
-	// wlroots call and never hand one to another thread.
-	runtime.LockOSThread()
-
-	s, err := server.New()
-	if err != nil {
-		os.Stderr.WriteString("sysc-compositor: " + err.Error() + "\n")
-		os.Exit(1)
-	}
-	defer s.Destroy()
-
-	// The smoke script reads this line to spawn clients against the nested socket.
-	os.Stderr.WriteString("WAYLAND_DISPLAY=" + s.SocketName() + "\n")
-
-	ch := make(chan os.Signal, 1)
-	signal.Notify(ch, syscall.SIGINT, syscall.SIGTERM)
-	go func() {
-		<-ch
-		s.Terminate()
-	}()
-
-	if err := s.Run(); err != nil {
-		os.Stderr.WriteString("sysc-compositor: " + err.Error() + "\n")
-		os.Exit(1)
-	}
+	os.Exit(cli.Main("sysc-compositor", os.Args[1:], cli.Env{Getenv: os.Getenv, Stdout: os.Stdout, Stderr: os.Stderr}))
 }

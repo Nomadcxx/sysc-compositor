@@ -134,9 +134,19 @@ type Compositor struct {
 	touchCount uint64
 }
 
-// New creates the display, its nested socket, and the globals a client needs to
-// map an xdg toplevel. It does not start the event loop.
-func New() (*Compositor, error) {
+// Options are the settings a compositor starts with.
+type Options struct {
+	Keyboard Keyboard
+}
+
+// New is NewWith niri's defaults.
+func New() (*Compositor, error) { return NewWith(Options{}) }
+
+// NewWith creates the display, its nested socket, and the globals a client
+// needs to map an xdg toplevel. It does not start the event loop. The backend
+// starts here and announces its devices at once, so everything they need is
+// set before that.
+func NewWith(opts Options) (*Compositor, error) {
 	c := &Compositor{}
 
 	c.display = C.wl_display_create()
@@ -219,7 +229,7 @@ func New() (*Compositor, error) {
 	if c.seat = C.wlr_seat_create(c.display, cCString("seat0")); c.seat == nil {
 		return nil, errors.New("wlr_seat_create failed")
 	}
-	if err := c.startKeyboardGroup(); err != nil {
+	if err := c.startKeyboardGroup(opts.Keyboard); err != nil {
 		return nil, err
 	}
 

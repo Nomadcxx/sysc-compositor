@@ -2,14 +2,17 @@ package wlr
 
 import (
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
+	"unsafe"
 )
 
 const keyEsc = 1 // evdev KEY_ESC
 
 var (
+	reRepeat = regexp.MustCompile(`wl_keyboard#\d+\.repeat_info\((\d+), (\d+)\)`)
 	reKeymap = regexp.MustCompile(`wl_keyboard#\d+\.keymap\((\d+),`)
 	reKey    = regexp.MustCompile(`wl_keyboard#\d+\.key\(\d+, \d+, (\d+), (\d+)\)`)
 )
@@ -73,5 +76,49 @@ func TestUserKeyboardsShareOneKeymap(t *testing.T) {
 	want := []string{"1/1", "1/0", "30/1", "30/0"}
 	if strings.Join(keys, " ") != strings.Join(want, " ") {
 		t.Errorf("client keys %v, want Escape then A from the two keyboards %v", keys, want)
+	}
+}
+
+// TestConfiguredKeyboardReachesClients is the greeter's input.keyboard: the
+// xkb names build the seat's keymap and the repeat reaches clients.
+func TestConfiguredKeyboardReachesClients(t *testing.T) {
+	runtime.LockOSThread()
+	t.Cleanup(runtime.UnlockOSThread)
+	c, err := NewWith(Options{Keyboard: Keyboard{Layout: "de", RepeatDelay: 400, RepeatRate: 40}})
+	if err != nil {
+		t.Skipf("no nested wayland session available: %v", err)
+	}
+	t.Cleanup(c.Destroy)
+	if got := c.userLayout(); !strings.HasPrefix(got, "German") {
+		t.Errorf("seat layout %q, want German", got)
+	}
+	var repeat []string
+	runClient(t, c, []string{"weston-terminal"}, []string{"WAYLAND_DEBUG=client"}, func(line string) bool {
+		if m := reRepeat.FindStringSubmatch(line); m != nil {
+			repeat = m[1:]
+		}
+		return repeat != nil
+	})
+	if strings.Join(repeat, "/") != "40/400" {
+		t.Errorf("client repeat_info %v, want rate 40, delay 400", repeat)
+	}
+}
+
+// TestNewWindowTakesFocus: sysc-greet's kitty is typed into without a click.
+func TestNewWindowTakesFocus(t *testing.T) {
+	c := newNested(t)
+	var focused, surface unsafe.Pointer
+	var view, want *toplevelView
+	c.viewMapped = func(v *toplevelView) {
+		focused, view = c.userFocus()
+		surface, want = unsafe.Pointer(v.toplevel.base.surface), v
+		c.Terminate()
+	}
+	runClient(t, c, []string{"weston-terminal"}, nil, nil)
+	if want == nil {
+		t.Fatal("weston-terminal never mapped")
+	}
+	if focused != surface || view != want {
+		t.Errorf("keyboard focus %p (view %p) once mapped, want the new window %p", focused, view, surface)
 	}
 }

@@ -55,7 +55,7 @@ func TestControlDrivesAClient(t *testing.T) {
 	}
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
-	s, err := New()
+	s, err := New(nil)
 	if err != nil {
 		t.Skipf("no nested wayland session available: %v", err)
 	}
