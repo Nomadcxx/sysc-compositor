@@ -436,6 +436,12 @@ Never `go test ./...`, never `-race` on this machine.
 - Source is Go. Bindings are cgo. **Do not add `.c` or `.h` files.** gSlapper’s C stays in gSlapper.
 - Trampolines for wlroots `wl_listener.notify` live in the cgo comment of a `.go` file (`static void on_foo(...) { ... }`) or as `//export`. Same for any other C callback. If a helper needs more than a few lines of C, you are in the wrong layer — wrap less, call from Go more.
 - Do not check in wayland-scanner output. Include the headers wlroots already ships.
+  - **Amended 2026-10-16 (M1):** some wlroots headers include a protocol header that wlroots generates
+    while building but does not install (`wlr_layer_shell_v1.h` includes
+    `wlr-layer-shell-unstable-v1-protocol.h`; the other wlr-protocols types do the same). For those, the
+    protocol **XML** is vendored unchanged in `protocols/` from the wlroots tag the library was built
+    from, and `go generate ./internal/wlr` runs `wayland-scanner server-header` into the gitignored
+    `internal/wlr/protocols/`. Generated headers are still never checked in.
 - `runtime.LockOSThread()` before any wlr call
 - listener structs kept alive until `wl_list_remove`; `cgo.Handle` in C `data`
 - no Go pointers in C structs

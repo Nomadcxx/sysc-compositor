@@ -162,6 +162,7 @@ func (c *Compositor) RemoveInjectedSeat(name string) error {
 	for i, s := range c.injected {
 		if s.name == name {
 			c.injected = append(c.injected[:i], c.injected[i+1:]...)
+			c.dismissGrabbedPopups(s.seat)
 			s.destroy()
 			return nil
 		}

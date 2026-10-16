@@ -2,7 +2,7 @@ package wlr
 
 /*
 #cgo pkg-config: wlroots-0.20 wayland-server
-#cgo CFLAGS: -DWLR_USE_UNSTABLE
+#cgo CFLAGS: -DWLR_USE_UNSTABLE -I${SRCDIR}/protocols
 
 #include <stdlib.h>
 
@@ -16,18 +16,46 @@ package wlr
 #include <wlr/types/wlr_pointer.h>
 #include <wlr/types/wlr_cursor.h>
 #include <wlr/types/wlr_data_device.h>
+#include <wlr/types/wlr_fractional_scale_v1.h>
+#include <wlr/types/wlr_layer_shell_v1.h>
+#include <wlr/types/wlr_linux_dmabuf_v1.h>
 #include <wlr/types/wlr_output_layout.h>
 #include <wlr/types/wlr_scene.h>
 #include <wlr/types/wlr_seat.h>
 #include <wlr/types/wlr_shm.h>
 #include <wlr/types/wlr_subcompositor.h>
 #include <wlr/types/wlr_viewporter.h>
+#include <wlr/types/wlr_xdg_output_v1.h>
 #include <wlr/types/wlr_xdg_shell.h>
 #include <wlr/types/wlr_xcursor_manager.h>
 
-// xdg_wm_base version advertised by this M0 compositor. Niri parity and client
-// compatibility both sit above 5; M0 needs no version-specific behaviour.
-const uint32_t sysc_xdg_version = 5;
+// Global versions match what Niri 26.04 advertises (wayland-info on the host,
+// 2026-10-16), capped by wlroots 0.20. sysc-shell needs layer-shell 4 at
+// least and binds no higher.
+const uint32_t sysc_compositor_version = 6;
+const uint32_t sysc_shm_version = 2;
+const uint32_t sysc_xdg_version = 7;
+const uint32_t sysc_layer_shell_version = 5;
+const uint32_t sysc_dmabuf_version = 5;
+
+// The scene sends each surface its output's fractional scale itself
+// (types/scene/surface.c in 0.20), so the manager needs nothing else.
+static bool sysc_fractional_scale_create(struct wl_display *display) {
+	return wlr_fractional_scale_manager_v1_create(display, 1) != NULL;
+}
+
+// dmabuf feedback comes from the scene: it tells clients which buffers can be
+// scanned out on the output they are on.
+static bool sysc_dmabuf_create(struct wl_display *display,
+		struct wlr_renderer *renderer, struct wlr_scene *scene) {
+	struct wlr_linux_dmabuf_v1 *dmabuf = wlr_linux_dmabuf_v1_create_with_renderer(
+			display, sysc_dmabuf_version, renderer);
+	if (dmabuf == NULL) {
+		return false;
+	}
+	wlr_scene_set_linux_dmabuf_v1(scene, dmabuf);
+	return true;
+}
 */
 import "C"
 
@@ -48,6 +76,7 @@ type Compositor struct {
 	scene      *C.struct_wlr_scene
 	seat       *C.struct_wlr_seat
 	xdgShell   *C.struct_wlr_xdg_shell
+	layerShell *C.struct_wlr_layer_shell_v1
 	socketName string
 	listeners  map[*Listener]struct{}
 
@@ -55,9 +84,15 @@ type Compositor struct {
 	cursor                 *C.struct_wlr_cursor
 	xcursorManager         *C.struct_wlr_xcursor_manager
 	sceneOutputs           map[unsafe.Pointer]*C.struct_wlr_scene_output
-	frames                 map[Signal]*C.struct_wlr_scene_output
 	mapped                 map[unsafe.Pointer]bool
 	sceneTrees             map[unsafe.Pointer]*C.struct_wlr_scene_tree
+	layerTrees             [layerCount]*C.struct_wlr_scene_tree
+	layerSurfaces          map[unsafe.Pointer]*layerSurface // by wlr_surface
+	layerOrder             []*layerSurface                  // creation order
+	usable                 map[unsafe.Pointer]rect          // per wlr_output, after exclusive zones
+	requested              rect                             // last host-requested output size, for tests
+	drawn                  int                              // frames that ran the scene commit, for tests
+	popups                 map[*C.struct_wlr_xdg_popup]struct{}
 	views                  map[unsafe.Pointer]*toplevelView
 	pointerDevices         map[unsafe.Pointer]bool
 	keyboardDevices        map[unsafe.Pointer]*C.struct_wlr_keyboard
@@ -111,9 +146,11 @@ func New() (*Compositor, error) {
 	c.loop = C.wl_display_get_event_loop(c.display)
 	c.listeners = map[*Listener]struct{}{}
 	c.sceneOutputs = map[unsafe.Pointer]*C.struct_wlr_scene_output{}
-	c.frames = map[Signal]*C.struct_wlr_scene_output{}
 	c.mapped = map[unsafe.Pointer]bool{}
 	c.sceneTrees = map[unsafe.Pointer]*C.struct_wlr_scene_tree{}
+	c.layerSurfaces = map[unsafe.Pointer]*layerSurface{}
+	c.usable = map[unsafe.Pointer]rect{}
+	c.popups = map[*C.struct_wlr_xdg_popup]struct{}{}
 	c.views = map[unsafe.Pointer]*toplevelView{}
 	c.pointerDevices = map[unsafe.Pointer]bool{}
 	c.keyboardDevices = map[unsafe.Pointer]*C.struct_wlr_keyboard{}
@@ -134,7 +171,7 @@ func New() (*Compositor, error) {
 	}
 
 	c.alloc = C.wlr_allocator_autocreate(c.backend, c.renderer)
-	if c.comp = C.wlr_compositor_create(c.display, 5, c.renderer); c.comp == nil {
+	if c.comp = C.wlr_compositor_create(c.display, C.sysc_compositor_version, c.renderer); c.comp == nil {
 		return nil, errors.New("wlr_compositor_create failed")
 	}
 	if c.alloc == nil {
@@ -144,7 +181,7 @@ func New() (*Compositor, error) {
 	C.wlr_subcompositor_create(c.display)
 	C.wlr_data_device_manager_create(c.display)
 	C.wlr_viewporter_create(c.display)
-	if C.wlr_shm_create_with_renderer(c.display, 1, c.renderer) == nil {
+	if C.wlr_shm_create_with_renderer(c.display, C.sysc_shm_version, c.renderer) == nil {
 		return nil, errors.New("wlr_shm_create_with_renderer failed")
 	}
 	if c.layout = C.wlr_output_layout_create(c.display); c.layout == nil {
@@ -155,6 +192,23 @@ func New() (*Compositor, error) {
 	}
 	if c.scene = C.wlr_scene_create(); c.scene == nil {
 		return nil, errors.New("wlr_scene_create failed")
+	}
+	if !c.createLayerTrees() {
+		return nil, errors.New("wlr_scene_tree_create failed")
+	}
+	// xdg-output gives clients output names and logical geometry; waybar and
+	// grim refuse to start without it, and Niri advertises it.
+	if C.wlr_xdg_output_manager_v1_create(c.display, c.layout) == nil {
+		return nil, errors.New("wlr_xdg_output_manager_v1_create failed")
+	}
+	if c.layerShell = C.wlr_layer_shell_v1_create(c.display, C.sysc_layer_shell_version); c.layerShell == nil {
+		return nil, errors.New("wlr_layer_shell_v1_create failed")
+	}
+	if !bool(C.sysc_fractional_scale_create(c.display)) {
+		return nil, errors.New("wlr_fractional_scale_manager_v1_create failed")
+	}
+	if !bool(C.sysc_dmabuf_create(c.display, c.renderer, c.scene)) {
+		return nil, errors.New("wlr_linux_dmabuf_v1_create_with_renderer failed: the renderer offers no dmabuf formats")
 	}
 	if c.seat = C.wlr_seat_create(c.display, cCString("seat0")); c.seat == nil {
 		return nil, errors.New("wlr_seat_create failed")
@@ -170,7 +224,8 @@ func New() (*Compositor, error) {
 	c.keep(
 		AddListener(unsafe.Pointer(&c.backend.events.new_output), c.handleNewOutput),
 		AddListener(unsafe.Pointer(&c.backend.events.new_input), c.handleNewInput),
-		AddListener(c.newSurfaceSignal(), c.handleNewSurface),
+		AddListener(c.newPopupSignal(), c.handleNewPopup),
+		AddListener(unsafe.Pointer(&c.layerShell.events.new_surface), c.handleNewLayerSurface),
 		AddListener(c.newToplevelSignal(), c.handleNewToplevel),
 		AddListener(unsafe.Pointer(&c.cursor.events.motion), c.handleCursorMotion),
 		AddListener(unsafe.Pointer(&c.cursor.events.motion_absolute), c.handleCursorMotionAbsolute),
@@ -216,14 +271,20 @@ func (c *Compositor) Terminate() { C.wl_display_terminate(c.display) }
 // removed first so no token outlives its wl_signal.
 func (c *Compositor) Destroy() {
 	c.stopPost()
+	// Before any seat goes: wlroots frees a seat's popup grab twice when the
+	// seat is destroyed with the grab open (dismissGrabbedPopups).
+	c.dismissGrabbedPopups(nil)
 	for l := range c.listeners {
 		l.Destroy()
 	}
 	c.listeners = nil
 	c.sceneOutputs = nil
-	c.frames = nil
 	c.mapped = nil
 	c.sceneTrees = nil
+	c.layerSurfaces = nil
+	c.layerOrder = nil
+	c.usable = nil
+	c.popups = nil
 	c.views = nil
 	c.pointerDevices = nil
 	c.keyboardDevices = nil
