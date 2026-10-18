@@ -5,6 +5,7 @@ package cli
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -32,6 +33,8 @@ func Main(name string, args []string, env Env) int {
 		switch args[0] {
 		case "msg":
 			return msg(name, args[1:], env)
+		case "validate":
+			return validateConfig(name, args[1:], env)
 		case "-V", "--version":
 			fmt.Fprintln(env.Stdout, server.Version())
 			return 0
@@ -54,8 +57,39 @@ func Main(name string, args []string, env Env) int {
 }
 
 func usage(name string, env Env, problem string) int {
-	fmt.Fprintf(env.Stderr, "%s: %s\nusage: %s [-c CONFIG] | %s msg [--json] REQUEST\n", name, problem, name, name)
+	fmt.Fprintf(env.Stderr, "%s: %s\nusage: %s [-c CONFIG] | %s validate [-c CONFIG] | %s msg [--json] REQUEST\n", name, problem, name, name, name)
 	return 2
+}
+
+func validateConfig(name string, args []string, env Env) int {
+	flag := ""
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "-c", "--config":
+			if i+1 >= len(args) {
+				return usage(name, env, args[i]+" needs a path")
+			}
+			i++
+			flag = args[i]
+		default:
+			return usage(name, env, "unknown validate argument "+args[i])
+		}
+	}
+	path := config.Locate(flag, env.Getenv)
+	if path == "" {
+		fmt.Fprintf(env.Stdout, "%s: built-in configuration is valid\n", name)
+		return 0
+	}
+	cfg, err := config.Load(path)
+	if err != nil {
+		fmt.Fprintf(env.Stderr, "%s: config: %v\n", name, err)
+		return 1
+	}
+	for _, section := range cfg.Warnings {
+		fmt.Fprintf(env.Stderr, "%s: warning: config section `%s` is accepted but not applied yet\n", name, section)
+	}
+	fmt.Fprintf(env.Stdout, "%s: configuration is valid: %s\n", name, path)
+	return 0
 }
 
 // run starts the compositor. A config that fails to load is reported and the
@@ -103,6 +137,9 @@ func msg(name string, args []string, env Env) int {
 	if err != nil {
 		return usage(name, env, "msg: "+err.Error())
 	}
+	if req.Name == "EventStream" {
+		return streamEvents(name, env.Getenv("NIRI_SOCKET"), asJSON, env)
+	}
 	reply, err := send(env.Getenv("NIRI_SOCKET"), req)
 	if err != nil {
 		fmt.Fprintf(env.Stderr, "Error: error communicating with %s: %v\n", name, err)
@@ -132,8 +169,97 @@ func msg(name string, args []string, env Env) int {
 		} else {
 			fmt.Fprintf(env.Stdout, "Compositor version: %s\nCLI version:        %s\n", v.Version, server.Version())
 		}
+		return 0
+	}
+	if isStateQuery(req.Name) {
+		value, err := responseValue(reply.Ok, req.Name)
+		if err != nil {
+			fmt.Fprintf(env.Stderr, "Error: unexpected response: %v\n", err)
+			return 1
+		}
+		if asJSON {
+			fmt.Fprintln(env.Stdout, string(value))
+		} else {
+			var indented bytes.Buffer
+			if err := json.Indent(&indented, value, "", "  "); err != nil {
+				fmt.Fprintf(env.Stderr, "Error: formatting response: %v\n", err)
+				return 1
+			}
+			fmt.Fprintln(env.Stdout, indented.String())
+		}
 	}
 	return 0
+}
+
+func isStateQuery(name string) bool {
+	switch name {
+	case "Outputs", "Workspaces", "Windows", "Layers", "FocusedOutput":
+		return true
+	default:
+		return false
+	}
+}
+
+func responseValue(raw json.RawMessage, name string) (json.RawMessage, error) {
+	var response map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &response); err != nil {
+		return nil, err
+	}
+	value, ok := response[name]
+	if !ok || len(response) != 1 {
+		return nil, fmt.Errorf("expected %s, got %s", name, raw)
+	}
+	return value, nil
+}
+
+func streamEvents(name, socket string, asJSON bool, env Env) int {
+	if socket == "" {
+		fmt.Fprintf(env.Stderr, "Error: error communicating with %s: NIRI_SOCKET is not set, are you running this within niri?\n", name)
+		return 1
+	}
+	conn, err := net.Dial("unix", socket)
+	if err != nil {
+		fmt.Fprintf(env.Stderr, "Error: error communicating with %s: %v\n", name, err)
+		return 1
+	}
+	defer conn.Close()
+	if _, err := conn.Write(append(ipc.EncodeRequest(ipc.Request{Name: "EventStream"}), '\n')); err != nil {
+		fmt.Fprintf(env.Stderr, "Error: sending EventStream: %v\n", err)
+		return 1
+	}
+	reader := bufio.NewReaderSize(conn, ipc.MaxLine)
+	line, err := reader.ReadBytes('\n')
+	if err != nil {
+		fmt.Fprintf(env.Stderr, "Error: reading EventStream reply: %v\n", err)
+		return 1
+	}
+	var reply ipc.Reply
+	if err := json.Unmarshal(line, &reply); err != nil {
+		fmt.Fprintf(env.Stderr, "Error: parsing EventStream reply: %v\n", err)
+		return 1
+	}
+	if reply.Ok == nil {
+		fmt.Fprintf(env.Stderr, "Error: %s returned an error: %s\n", name, reply.Err)
+		return 1
+	}
+	if string(reply.Ok) != `"Handled"` {
+		fmt.Fprintf(env.Stderr, "Error: unexpected EventStream reply: %s\n", reply.Ok)
+		return 1
+	}
+	if !asJSON {
+		fmt.Fprintln(env.Stdout, "Started reading events.")
+	}
+	for {
+		line, err := reader.ReadBytes('\n')
+		if err != nil {
+			fmt.Fprintf(env.Stderr, "Error: error reading event from %s: %v\n", name, err)
+			return 1
+		}
+		if _, err := env.Stdout.Write(line); err != nil {
+			fmt.Fprintf(env.Stderr, "Error: writing event: %v\n", err)
+			return 1
+		}
+	}
 }
 
 var errNotBuilt = errors.New("not built yet")
@@ -145,6 +271,18 @@ func parseMsg(args []string) (ipc.Request, error) {
 	switch args[0] {
 	case "version":
 		return ipc.Request{Name: "Version"}, onlyArgs(args[1:])
+	case "outputs":
+		return ipc.Request{Name: "Outputs"}, onlyArgs(args[1:])
+	case "workspaces":
+		return ipc.Request{Name: "Workspaces"}, onlyArgs(args[1:])
+	case "windows":
+		return ipc.Request{Name: "Windows"}, onlyArgs(args[1:])
+	case "layers":
+		return ipc.Request{Name: "Layers"}, onlyArgs(args[1:])
+	case "focused-output":
+		return ipc.Request{Name: "FocusedOutput"}, onlyArgs(args[1:])
+	case "event-stream":
+		return ipc.Request{Name: "EventStream"}, onlyArgs(args[1:])
 	case "request-error":
 		return ipc.Request{Name: "ReturnError"}, onlyArgs(args[1:])
 	case "action":

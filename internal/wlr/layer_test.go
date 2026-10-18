@@ -8,6 +8,118 @@ import (
 	"time"
 )
 
+func TestLayerSnapshotWireMappings(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   int
+		want LayerKind
+	}{
+		{"background", layerBackground, LayerBackgroundKind},
+		{"bottom", layerBottom, LayerBottomKind},
+		{"top", layerTop, LayerTopKind},
+		{"overlay", layerOverlay, LayerOverlayKind},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := snapshotLayerKind(tc.in); got != tc.want {
+				t.Errorf("snapshotLayerKind(%d) = %v, want %v", tc.in, got, tc.want)
+			}
+		})
+	}
+
+	for _, tc := range []struct {
+		name string
+		in   int
+		want LayerKeyboardMode
+	}{
+		{"none", 0, LayerKeyboardNoneMode},
+		{"exclusive", 1, LayerKeyboardExclusiveMode},
+		{"on-demand", 2, LayerKeyboardOnDemandMode},
+	} {
+		t.Run("keyboard_"+tc.name, func(t *testing.T) {
+			if got := snapshotKeyboardMode(tc.in); got != tc.want {
+				t.Errorf("snapshotKeyboardMode(%d) = %v, want %v", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestLayerKeyboardFocusPriority(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		candidates []layerFocusCandidate
+		hasWindow  bool
+		want       int
+	}{
+		{
+			name: "overlay on-demand focus precedes top exclusive",
+			candidates: []layerFocusCandidate{
+				{index: 0, layer: layerTop, keyboard: LayerKeyboardExclusiveMode, mapped: true},
+				{index: 1, layer: layerOverlay, keyboard: LayerKeyboardOnDemandMode, mapped: true, onDemandFocused: true},
+			},
+			hasWindow: true, want: 1,
+		},
+		{
+			name: "top exclusive precedes focused window",
+			candidates: []layerFocusCandidate{
+				{index: 0, layer: layerTop, keyboard: LayerKeyboardExclusiveMode, mapped: true},
+			},
+			hasWindow: true, want: 0,
+		},
+		{
+			name: "mapped bottom on-demand precedes focused window",
+			candidates: []layerFocusCandidate{
+				{index: 0, layer: layerBottom, keyboard: LayerKeyboardOnDemandMode, mapped: true, onDemandFocused: true},
+			},
+			hasWindow: true, want: 0,
+		},
+		{
+			name: "keyboard none never receives focus",
+			candidates: []layerFocusCandidate{
+				{index: 0, layer: layerOverlay, keyboard: LayerKeyboardNoneMode, mapped: true},
+			},
+			want: -1,
+		},
+		{
+			name: "unmapped on-demand surface loses focus",
+			candidates: []layerFocusCandidate{
+				{index: 0, layer: layerOverlay, keyboard: LayerKeyboardOnDemandMode, onDemandFocused: true},
+			},
+			want: -1,
+		},
+		{
+			name: "destroyed surface is absent from focus candidates",
+			want: -1,
+		},
+		{
+			name: "focused window precedes bottom exclusive",
+			candidates: []layerFocusCandidate{
+				{index: 0, layer: layerBottom, keyboard: LayerKeyboardExclusiveMode, mapped: true},
+			},
+			hasWindow: true, want: -1,
+		},
+		{
+			name: "bottom exclusive takes focus without a window",
+			candidates: []layerFocusCandidate{
+				{index: 0, layer: layerBottom, keyboard: LayerKeyboardExclusiveMode, mapped: true},
+			},
+			want: 0,
+		},
+		{
+			name: "unmapped exclusive surface is ignored",
+			candidates: []layerFocusCandidate{
+				{index: 0, layer: layerOverlay, keyboard: LayerKeyboardExclusiveMode},
+			},
+			want: -1,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := chooseLayerKeyboardFocus(tc.candidates, tc.hasWindow); got != tc.want {
+				t.Errorf("chooseLayerKeyboardFocus() = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
 // pollThenStop runs check on the compositor thread every 20 ms until it
 // reports true or three seconds pass, then stops the compositor.
 func pollThenStop(c *Compositor, check func() bool) {
@@ -55,6 +167,33 @@ func TestLayerSurfaceFillsItsOutput(t *testing.T) {
 	}
 	if got.namespace != "wallpaper" {
 		t.Errorf("namespace %q, want swaybg's \"wallpaper\"", got.namespace)
+	}
+}
+
+func TestLayerSnapshotIncludesOnlyMappedSurface(t *testing.T) {
+	c := newNested(t)
+	var mapped, afterClose []LayerSnapshot
+	pollThenStop(c, func() bool {
+		mapped = c.LayerSnapshot()
+		if len(mapped) == 0 {
+			return false
+		}
+		c.closeLayerSurfaces()
+		afterClose = c.LayerSnapshot()
+		return true
+	})
+	runClient(t, c, []string{"swaybg", "-c", "#336699"}, nil, nil)
+	if len(mapped) != 1 {
+		t.Fatalf("mapped LayerSnapshot() = %+v, want one mapped surface", mapped)
+	}
+	if mapped[0].Namespace != "wallpaper" || mapped[0].Layer != LayerBackgroundKind || mapped[0].KeyboardInteractivity != LayerKeyboardNoneMode {
+		t.Errorf("mapped layer = %+v", mapped[0])
+	}
+	if mapped[0].Output == "" {
+		t.Error("mapped layer has no output name")
+	}
+	if len(afterClose) != 0 {
+		t.Errorf("LayerSnapshot() after close = %+v, want empty", afterClose)
 	}
 }
 

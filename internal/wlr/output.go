@@ -16,6 +16,48 @@ package wlr
 #include <wlr/types/wlr_output.h>
 #include <wlr/types/wlr_output_layout.h>
 #include <wlr/types/wlr_scene.h>
+#include <wayland-server-protocol.h>
+
+static size_t sysc_output_mode_count(struct wlr_output *output) {
+	size_t count = 0;
+	struct wlr_output_mode *mode;
+	wl_list_for_each(mode, &output->modes, link) {
+		count++;
+	}
+	return count;
+}
+
+static bool sysc_output_mode_at(struct wlr_output *output, size_t index,
+		int32_t *width, int32_t *height, int32_t *refresh,
+		int *preferred, int *current) {
+	struct wlr_output_mode *mode;
+	size_t i = 0;
+	wl_list_for_each(mode, &output->modes, link) {
+		if (i++ != index) {
+			continue;
+		}
+		*width = mode->width;
+		*height = mode->height;
+		*refresh = mode->refresh;
+		*preferred = mode->preferred;
+		*current = mode == output->current_mode;
+		return true;
+	}
+	return false;
+}
+
+static void sysc_output_logical(struct wlr_output_layout *layout,
+		struct wlr_output *output, int32_t *x, int32_t *y,
+		int32_t *width, int32_t *height, float *scale, uint32_t *transform) {
+	struct wlr_box box;
+	wlr_output_layout_get_box(layout, output, &box);
+	*x = box.x;
+	*y = box.y;
+	*width = box.width;
+	*height = box.height;
+	*scale = output->scale;
+	*transform = output->transform;
+}
 #include <wlr/types/wlr_xcursor_manager.h>
 
 // sysc_apply_requested_state commits the state a backend asked for: the host
@@ -130,8 +172,139 @@ import "C"
 
 import (
 	"errors"
+	"sort"
 	"unsafe"
 )
+
+type OutputModeSnapshot struct {
+	Width       uint16
+	Height      uint16
+	RefreshRate uint32
+	Preferred   bool
+}
+
+type LogicalOutputSnapshot struct {
+	X, Y          int32
+	Width, Height uint32
+	Scale         float64
+	Transform     uint32
+}
+
+type OutputSnapshot struct {
+	Name         string
+	Make         string
+	Model        string
+	Serial       *string
+	PhysicalSize *[2]uint32
+	Modes        []OutputModeSnapshot
+	CurrentMode  *uint32
+	IsCustomMode bool
+	VRRSupported bool
+	VRREnabled   bool
+	Logical      *LogicalOutputSnapshot
+}
+
+// OutputSnapshot copies the enabled outputs into plain Go values. Call it on
+// the compositor thread; IPC readers consume the resulting immutable copies.
+func (c *Compositor) OutputSnapshot() []OutputSnapshot {
+	out := make([]OutputSnapshot, 0, len(c.sceneOutputs))
+	for pointer := range c.sceneOutputs {
+		output := (*C.struct_wlr_output)(pointer)
+		vrrSupported := bool(output.adaptive_sync_supported)
+		info := OutputSnapshot{
+			Name: C.GoString(output.name), Make: cString(output.make), Model: cString(output.model),
+			Modes:        make([]OutputModeSnapshot, 0),
+			VRRSupported: vrrSupported,
+			VRREnabled:   vrrSupported && output.adaptive_sync_status == C.WLR_OUTPUT_ADAPTIVE_SYNC_ENABLED,
+		}
+		if output.serial != nil && C.GoString(output.serial) != "" {
+			serial := C.GoString(output.serial)
+			info.Serial = &serial
+		}
+		if output.phys_width > 0 && output.phys_height > 0 {
+			physical := [2]uint32{uint32(output.phys_width), uint32(output.phys_height)}
+			info.PhysicalSize = &physical
+		}
+		count := int(C.sysc_output_mode_count(output))
+		for i := 0; i < count; i++ {
+			var width, height, refresh C.int32_t
+			var preferred, current C.int
+			if !bool(C.sysc_output_mode_at(output, C.size_t(i), &width, &height, &refresh, &preferred, &current)) {
+				continue
+			}
+			info.Modes = append(info.Modes, OutputModeSnapshot{
+				Width: clampModeSize(width), Height: clampModeSize(height),
+				RefreshRate: uint32(max(0, int32(refresh))), Preferred: preferred != 0,
+			})
+			if current != 0 {
+				index := uint32(len(info.Modes) - 1)
+				info.CurrentMode = &index
+			}
+		}
+		if info.CurrentMode == nil && output.width > 0 && output.height > 0 {
+			width, height := clampModeSize(output.width), clampModeSize(output.height)
+			refresh := uint32(max(0, int32(output.refresh)))
+			if refresh == 0 {
+				refresh = 60_000
+			}
+			info.Modes = append(info.Modes, OutputModeSnapshot{
+				Width: width, Height: height, RefreshRate: refresh, Preferred: true,
+			})
+			index := uint32(len(info.Modes) - 1)
+			info.CurrentMode = &index
+			info.IsCustomMode = true
+		}
+		var x, y, width, height C.int32_t
+		var scale C.float
+		var transform C.uint32_t
+		C.sysc_output_logical(c.layout, output, &x, &y, &width, &height, &scale, &transform)
+		if width > 0 && height > 0 {
+			info.Logical = &LogicalOutputSnapshot{
+				X: int32(x), Y: int32(y), Width: uint32(width), Height: uint32(height),
+				Scale: float64(scale), Transform: uint32(transform),
+			}
+		}
+		out = append(out, info)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+// FocusedOutputName follows the output under the pointer, falling back to the
+// first connected output when the pointer is outside the layout.
+func (c *Compositor) FocusedOutputName() string {
+	if output := C.wlr_output_layout_output_at(c.layout, c.cursor.x, c.cursor.y); output != nil {
+		if _, enabled := c.sceneOutputs[unsafe.Pointer(output)]; enabled {
+			return C.GoString(output.name)
+		}
+	}
+	names := make([]string, 0, len(c.sceneOutputs))
+	for pointer := range c.sceneOutputs {
+		names = append(names, C.GoString((*C.struct_wlr_output)(pointer).name))
+	}
+	sort.Strings(names)
+	if len(names) == 0 {
+		return ""
+	}
+	return names[0]
+}
+
+func cString(s *C.char) string {
+	if s == nil {
+		return ""
+	}
+	return C.GoString(s)
+}
+
+func clampModeSize(v C.int32_t) uint16 {
+	if v <= 0 {
+		return 0
+	}
+	if v > 1<<16-1 {
+		return 1<<16 - 1
+	}
+	return uint16(v)
+}
 
 // handleNewOutput brings up an output the backend just announced and gives it a
 // scene output so clients paint into the nested session rather than nowhere.
@@ -172,6 +345,7 @@ func (c *Compositor) handleNewOutput(data unsafe.Pointer) {
 	commit := AddListener(unsafe.Pointer(&output.events.commit), func(event unsafe.Pointer) {
 		if bool(C.sysc_commit_changed_geometry((*C.struct_wlr_output_event_commit)(event))) {
 			c.arrangeLayers(data)
+			c.refreshState()
 		}
 	})
 	c.keep(request, commit)
@@ -181,6 +355,7 @@ func (c *Compositor) handleNewOutput(data unsafe.Pointer) {
 		c.closeOutputLayers(data)
 		delete(c.sceneOutputs, data)
 		delete(c.usable, data)
+		c.refreshState()
 		c.drop(frame)
 		c.drop(request)
 		c.drop(commit)
@@ -190,6 +365,7 @@ func (c *Compositor) handleNewOutput(data unsafe.Pointer) {
 		}
 	})
 	c.keep(destroy)
+	c.refreshState()
 }
 
 // destroyOutput asks the backend to destroy one output. The nested-session

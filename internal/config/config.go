@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/sblinch/kdl-go"
@@ -19,6 +20,7 @@ import (
 type Config struct {
 	SpawnAtStartup   [][]string
 	SpawnShAtStartup []string
+	Warnings         []string
 	// Environment is applied to spawned commands; a nil value unsets.
 	Environment map[string]*string
 	Keyboard    Keyboard
@@ -53,8 +55,21 @@ func Parse(name string, src []byte) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", name, err)
 	}
+	root, err := filepath.Abs(name)
+	if err != nil {
+		return nil, fmt.Errorf("%s: resolve config path: %w", name, err)
+	}
+	stack := map[string]bool{filepath.Clean(root): true}
+	nodes, err := expandIncludes(root, doc.Nodes, stack, 0)
+	if err != nil {
+		return nil, err
+	}
+	return decode(name, nodes)
+}
+
+func decode(name string, nodes []*document.Node) (*Config, error) {
 	c := Default()
-	for _, n := range doc.Nodes {
+	for _, n := range nodes {
 		node := nodeName(n)
 		if !topLevel[node] {
 			return nil, fmt.Errorf("%s: unexpected node `%s`", name, node)
@@ -62,9 +77,7 @@ func Parse(name string, src []byte) (*Config, error) {
 		var err error
 		switch node {
 		case "include":
-			// Niri merges includes positionally (design §4); that lands
-			// with live reload in M9. Ignoring one would drop its settings.
-			err = errors.New("include is not supported yet")
+			err = errors.New("include must be loaded from a config path")
 		case "spawn-at-startup":
 			var argv []string
 			if argv, err = stringArgs(n, 1, -1); err == nil {
@@ -79,12 +92,95 @@ func Parse(name string, src []byte) (*Config, error) {
 			err = c.environment(n)
 		case "input":
 			err = c.input(n)
+		default:
+			if !slices.Contains(c.Warnings, node) {
+				c.Warnings = append(c.Warnings, node)
+			}
 		}
 		if err != nil {
 			return nil, fmt.Errorf("%s: %s: %w", name, node, err)
 		}
 	}
 	return c, nil
+}
+
+const maxIncludeDepth = 255
+
+func expandIncludes(name string, nodes []*document.Node, stack map[string]bool, depth int) ([]*document.Node, error) {
+	var expanded []*document.Node
+	for _, node := range nodes {
+		if nodeName(node) != "include" {
+			expanded = append(expanded, node)
+			continue
+		}
+		paths, err := stringArgs(node, 1, 1)
+		if err != nil {
+			return nil, fmt.Errorf("%s: include: %w", name, err)
+		}
+		if len(node.Children) != 0 {
+			return nil, fmt.Errorf("%s: include: unexpected child node", name)
+		}
+		optional := false
+		for key, value := range node.Properties {
+			if key != "optional" {
+				return nil, fmt.Errorf("%s: include: unexpected property `%s`", name, key)
+			}
+			var ok bool
+			optional, ok = value.Value.(bool)
+			if !ok {
+				return nil, fmt.Errorf("%s: include: `optional` must be boolean", name)
+			}
+		}
+		path, err := resolveIncludePath(filepath.Dir(name), paths[0])
+		if err != nil {
+			return nil, fmt.Errorf("%s: include %q: %w", name, paths[0], err)
+		}
+		if depth >= maxIncludeDepth {
+			return nil, fmt.Errorf("%s: include %q: recursion limit (%d) reached", name, paths[0], maxIncludeDepth)
+		}
+		if stack[path] {
+			return nil, fmt.Errorf("%s: include %q: recursive include", name, paths[0])
+		}
+		content, err := os.ReadFile(path)
+		if err != nil {
+			if optional && errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return nil, fmt.Errorf("%s: include %q: read %s: %w", name, paths[0], path, err)
+		}
+		doc, err := kdl.Parse(strings.NewReader(string(content)))
+		if err != nil {
+			return nil, fmt.Errorf("%s: include %q: %w", name, paths[0], err)
+		}
+		stack[path] = true
+		children, expandErr := expandIncludes(path, doc.Nodes, stack, depth+1)
+		delete(stack, path)
+		if expandErr != nil {
+			return nil, expandErr
+		}
+		expanded = append(expanded, children...)
+	}
+	return expanded, nil
+}
+
+func resolveIncludePath(base, path string) (string, error) {
+	if path == "~" || strings.HasPrefix(path, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("expand home: %w", err)
+		}
+		rest := strings.TrimPrefix(path, "~")
+		rest = strings.TrimPrefix(rest, string(filepath.Separator))
+		path = filepath.Join(home, rest)
+	}
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(base, path)
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Clean(abs), nil
 }
 
 func (c *Config) environment(n *document.Node) error {

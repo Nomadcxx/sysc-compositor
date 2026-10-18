@@ -105,6 +105,7 @@ type Compositor struct {
 	inputDestroyListeners  map[unsafe.Pointer]*Listener
 	modifiers              uint32
 	focusedView            *toplevelView
+	onDemandLayerFocus     *layerSurface
 	pointerGrab            *pointerGrab
 	grabView               *toplevelView
 	grabButton             uint32
@@ -118,6 +119,8 @@ type Compositor struct {
 	// focusOriginX/Y is where the user seat's focused surface starts in
 	// layout coordinates, as of the last motion outside an implicit grab.
 	focusOriginX, focusOriginY C.double
+	focusedOutputName          string
+	stateChanged               func()
 
 	// injected is the table of seats fed by the compositor rather than the
 	// user's hardware, after the user seat (c.seat) in creation order.
@@ -270,6 +273,33 @@ func NewWith(opts Options) (*Compositor, error) {
 // SocketName is the nested Wayland socket this compositor serves. A smoke script
 // spawns clients against it; it is not the compositor's own WAYLAND_DISPLAY.
 func (c *Compositor) SocketName() string { return c.socketName }
+
+// SetStateChanged registers a compositor-thread callback for output, layer,
+// and focused-output changes. The callback may only copy state into Go-owned
+// values; it must not block or perform socket I/O.
+func (c *Compositor) SetStateChanged(fn func()) {
+	c.stateChanged = fn
+	c.refreshState()
+}
+
+func (c *Compositor) notifyStateChanged() {
+	if c.stateChanged != nil {
+		c.stateChanged()
+	}
+}
+
+func (c *Compositor) refreshState() {
+	c.focusedOutputName = c.FocusedOutputName()
+	c.notifyStateChanged()
+}
+
+func (c *Compositor) notifyFocusedOutputChanged() {
+	name := c.FocusedOutputName()
+	if name != c.focusedOutputName {
+		c.focusedOutputName = name
+		c.notifyStateChanged()
+	}
+}
 
 // Display exposes the wl_display for callers that must reach wlroots directly.
 func (c *Compositor) Display() unsafe.Pointer { return unsafe.Pointer(c.display) }

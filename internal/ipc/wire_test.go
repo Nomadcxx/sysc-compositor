@@ -104,6 +104,36 @@ func TestReplyWire(t *testing.T) {
 	}
 }
 
+func TestStateResponseWire(t *testing.T) {
+	output := Output{
+		Name: "DP-1", Make: "Dell Inc.", Model: "AW3423DWF", Modes: []Mode{},
+	}
+	window := Window{
+		ID:     9,
+		Layout: WindowLayout{TileSize: [2]float64{}, WindowSize: [2]int32{}, WindowOffsetInTile: [2]float64{}},
+	}
+	for _, tc := range []struct {
+		name  string
+		value any
+		want  string
+	}{
+		{"Outputs", map[string]Output{"DP-1": output}, `{"Ok":{"Outputs":{"DP-1":{"name":"DP-1","make":"Dell Inc.","model":"AW3423DWF","serial":null,"physical_size":null,"modes":[],"current_mode":null,"is_custom_mode":false,"vrr_supported":false,"vrr_enabled":false,"logical":null}}}}`},
+		{"Workspaces", []Workspace{{ID: 7, Idx: 1, Output: stringPtr("DP-1"), IsActive: true, IsFocused: true}}, `{"Ok":{"Workspaces":[{"id":7,"idx":1,"name":null,"output":"DP-1","is_urgent":false,"is_active":true,"is_focused":true,"active_window_id":null}]}}`},
+		{"Windows", []Window{window}, `{"Ok":{"Windows":[{"id":9,"title":null,"app_id":null,"pid":null,"workspace_id":null,"is_focused":false,"is_floating":false,"is_urgent":false,"layout":{"pos_in_scrolling_layout":null,"tile_size":[0,0],"window_size":[0,0],"tile_pos_in_workspace_view":null,"window_offset_in_tile":[0,0]},"focus_timestamp":null}]}}`},
+		{"Layers", []LayerSurface{{Namespace: "sysc-shell:bar", Output: "DP-1", Layer: LayerTop, KeyboardInteractivity: LayerKeyboardNone}}, `{"Ok":{"Layers":[{"namespace":"sysc-shell:bar","output":"DP-1","layer":"Top","keyboard_interactivity":"None"}]}}`},
+		{"FocusedOutput", (*Output)(nil), `{"Ok":{"FocusedOutput":null}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := json.Marshal(Reply{Ok: SuccessValue(tc.name, tc.value)})
+			if err != nil || string(out) != tc.want {
+				t.Fatalf("response = %s, %v; want %s", out, err, tc.want)
+			}
+		})
+	}
+}
+
+func stringPtr(s string) *string { return &s }
+
 // TestNamesMatchNiri compares the request and action tables with niri-ipc
 // 26.4.0 at the pinned reference checkout, when it is present.
 func TestNamesMatchNiri(t *testing.T) {

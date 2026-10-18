@@ -11,6 +11,21 @@ package wlr
 #include <wlr/types/wlr_keyboard_group.h>
 #include <wlr/types/wlr_seat.h>
 
+static size_t sysc_keyboard_layout_count(struct wlr_keyboard *keyboard) {
+	return keyboard == NULL || keyboard->keymap == NULL ? 0 :
+		xkb_keymap_num_layouts(keyboard->keymap);
+}
+
+static const char *sysc_keyboard_layout_name(struct wlr_keyboard *keyboard, uint32_t index) {
+	return keyboard == NULL || keyboard->keymap == NULL ? NULL :
+		xkb_keymap_layout_get_name(keyboard->keymap, index);
+}
+
+static uint32_t sysc_keyboard_active_layout(struct wlr_keyboard *keyboard) {
+	return keyboard == NULL || keyboard->xkb_state == NULL ? 0 :
+		xkb_state_serialize_layout(keyboard->xkb_state, XKB_STATE_LAYOUT_EFFECTIVE);
+}
+
 // Match Niri's hardcoded XF86Switch_VT keysyms. Under the standard XKB
 // keymap, Ctrl+Alt+F1 resolves to VT 1 without consulting bind config.
 static int sysc_switch_vt_for_key(struct wlr_keyboard *keyboard, uint32_t keycode) {
@@ -97,6 +112,33 @@ type Keyboard struct {
 	// File is a keymap file, already ~-expanded, read instead of the names.
 	File                    string
 	RepeatDelay, RepeatRate int
+}
+
+type KeyboardLayoutsSnapshot struct {
+	Names      []string
+	CurrentIdx uint8
+}
+
+// KeyboardLayoutsSnapshot copies configured layouts and the active index for
+// Niri's EventStream. Call it on the compositor thread.
+func (c *Compositor) KeyboardLayoutsSnapshot() *KeyboardLayoutsSnapshot {
+	count := int(C.sysc_keyboard_layout_count(c.keyboard))
+	if count == 0 {
+		return nil
+	}
+	names := make([]string, 0, count)
+	for i := 0; i < count; i++ {
+		name := C.sysc_keyboard_layout_name(c.keyboard, C.uint32_t(i))
+		if name != nil {
+			names = append(names, C.GoString(name))
+		}
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	return &KeyboardLayoutsSnapshot{
+		Names: names, CurrentIdx: uint8(C.sysc_keyboard_active_layout(c.keyboard)),
+	}
 }
 
 // Niri's defaults (niri-config input.rs): repeat after 600 ms, 25 per second.
@@ -202,6 +244,7 @@ func (c *Compositor) handleKeyboardKey(data unsafe.Pointer) {
 func (c *Compositor) handleKeyboardModifiers(unsafe.Pointer) {
 	c.modifiers = uint32(C.wlr_keyboard_get_modifiers(c.keyboard))
 	C.wlr_seat_keyboard_notify_modifiers(c.seat, &c.keyboard.modifiers)
+	c.notifyStateChanged()
 }
 
 // userLayout is the user seat's first xkb layout name, for tests.

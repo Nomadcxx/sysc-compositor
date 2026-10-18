@@ -233,6 +233,7 @@ func (c *Compositor) handleCursorMotionAbsolute(data unsafe.Pointer) {
 }
 
 func (c *Compositor) processCursorMotion(time C.uint32_t) {
+	c.notifyFocusedOutputChanged()
 	if c.pointerGrab != nil && c.grabView != nil && c.grabView.tree != nil {
 		geometry := c.pointerGrab.geometry(float64(c.cursor.x), float64(c.cursor.y))
 		C.sysc_scene_tree_set_position(c.grabView.tree,
@@ -337,9 +338,7 @@ func (c *Compositor) handleCursorButton(data unsafe.Pointer) {
 	}
 
 	if pressed {
-		if view := c.viewAtCursor(); view != nil {
-			c.focusView(view)
-		}
+		c.focusSurfaceAtCursor()
 	}
 	serial := C.wlr_seat_pointer_notify_button(c.seat,
 		event.time_msec, event.button, event.state)
@@ -382,15 +381,68 @@ func (c *Compositor) focusView(view *toplevelView) {
 	}
 	changed := c.focusedView != view
 	if changed {
-		if c.focusedView != nil && c.focusedView.toplevel != nil {
-			C.wlr_xdg_toplevel_set_activated(c.focusedView.toplevel, false)
-		}
 		c.focusedView = view
-		C.wlr_xdg_toplevel_set_activated(view.toplevel, true)
 	}
 	c.touch(view)
-	if changed {
-		C.sysc_seat_keyboard_focus(c.seat, view.toplevel.base.surface, c.keyboard)
+	c.onDemandLayerFocus = nil
+	c.updateKeyboardFocus()
+}
+
+func (c *Compositor) focusSurfaceAtCursor() {
+	surface, _, _ := c.surfaceAt(float64(c.cursor.x), float64(c.cursor.y))
+	if view := c.viewForSurface(surface); view != nil {
+		c.focusView(view)
+		return
+	}
+	c.focusLayerSurface(c.layerSurfaceForSurface(surface))
+}
+
+func (c *Compositor) focusLayerSurface(layer *layerSurface) {
+	if layer != nil && bool(layer.surface.surface.mapped) &&
+		snapshotKeyboardMode(int(layer.surface.current.keyboard_interactive)) == LayerKeyboardOnDemandMode {
+		c.onDemandLayerFocus = layer
+	} else {
+		c.onDemandLayerFocus = nil
+	}
+	c.updateKeyboardFocus()
+}
+
+func (c *Compositor) updateKeyboardFocus() {
+	if layer := c.onDemandLayerFocus; layer != nil &&
+		(!bool(layer.surface.surface.mapped) || snapshotKeyboardMode(int(layer.surface.current.keyboard_interactive)) != LayerKeyboardOnDemandMode) {
+		c.onDemandLayerFocus = nil
+	}
+
+	candidates := make([]layerFocusCandidate, len(c.layerOrder))
+	for i, layer := range c.layerOrder {
+		candidates[i] = layerFocusCandidate{
+			index: i, layer: layer.layer,
+			keyboard: snapshotKeyboardMode(int(layer.surface.current.keyboard_interactive)),
+			mapped:   bool(layer.surface.surface.mapped), onDemandFocused: c.onDemandLayerFocus == layer,
+		}
+	}
+	focusedLayerIndex := chooseLayerKeyboardFocus(candidates, c.focusedView != nil)
+	var focusedLayer *layerSurface
+	if focusedLayerIndex >= 0 && focusedLayerIndex < len(c.layerOrder) {
+		focusedLayer = c.layerOrder[focusedLayerIndex]
+	}
+
+	var surface *C.struct_wlr_surface
+	if focusedLayer != nil {
+		surface = focusedLayer.surface.surface
+	} else if c.focusedView != nil && c.focusedView.toplevel != nil {
+		surface = c.focusedView.toplevel.base.surface
+	}
+	if c.focusedView != nil && c.focusedView.toplevel != nil {
+		C.wlr_xdg_toplevel_set_activated(c.focusedView.toplevel, focusedLayer == nil)
+	}
+	if surface == nil {
+		C.wlr_seat_keyboard_notify_clear_focus(c.seat)
+		return
+	}
+	surface = C.wlr_surface_get_root_surface(surface)
+	if c.seat.keyboard_state.focused_surface != surface {
+		C.sysc_seat_keyboard_focus(c.seat, surface, c.keyboard)
 	}
 }
 
@@ -614,6 +666,7 @@ func (c *Compositor) releaseView(view *toplevelView) {
 			C.wlr_seat_pointer_notify_clear_focus(seat)
 		}
 	}
+	c.updateKeyboardFocus()
 }
 
 func (c *Compositor) handleToplevelDestroy(view *toplevelView) {

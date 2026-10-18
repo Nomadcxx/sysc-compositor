@@ -7,10 +7,12 @@ package server
 
 import (
 	"errors"
+	"net"
 	"os"
 
 	"github.com/Nomadcxx/sysc-compositor/internal/config"
 	"github.com/Nomadcxx/sysc-compositor/internal/control"
+	"github.com/Nomadcxx/sysc-compositor/internal/ipc"
 	"github.com/Nomadcxx/sysc-compositor/internal/unixsock"
 	"github.com/Nomadcxx/sysc-compositor/internal/wlr"
 )
@@ -22,6 +24,8 @@ type Server struct {
 	ctl      *control.Server
 	ctlPath  string
 	niri     *unixsock.Listener
+	state    *niriState
+	events   *eventHub
 	spawn    spawner
 	stopping chan struct{}
 }
@@ -40,7 +44,11 @@ func New(cfg *config.Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Server{c: c, cfg: cfg, stopping: make(chan struct{})}
+	s := &Server{
+		c: c, cfg: cfg, state: newNiriState(), events: newEventHub(),
+		stopping: make(chan struct{}),
+	}
+	c.SetStateChanged(s.refreshNiriState)
 	if err := s.startControl(); err != nil {
 		// The compositor still serves clients without the control socket;
 		// injected input is simply unavailable.
@@ -53,6 +61,37 @@ func New(cfg *config.Config) (*Server, error) {
 	}
 	s.spawn = newSpawner(c.SocketName(), s.NiriSocket(), cfg.Environment)
 	return s, nil
+}
+
+// refreshNiriState copies wlroots state on its owner thread before publishing
+// it to IPC readers.
+func (s *Server) refreshNiriState() {
+	before := s.state.snapshot()
+	outputs := make(map[string]ipc.Output)
+	var focused *ipc.Output
+	focusedName := s.c.FocusedOutputName()
+	for _, output := range s.c.OutputSnapshot() {
+		value := toNiriOutput(output)
+		outputs[value.Name] = value
+		if value.Name == focusedName {
+			copy := value
+			focused = &copy
+		}
+	}
+	layers := s.c.LayerSnapshot()
+	wireLayers := make([]ipc.LayerSurface, len(layers))
+	for i, layer := range layers {
+		wireLayers[i] = toNiriLayer(layer)
+	}
+	var keyboardLayouts *ipc.KeyboardLayouts
+	if layouts := s.c.KeyboardLayoutsSnapshot(); layouts != nil {
+		keyboardLayouts = &ipc.KeyboardLayouts{Names: layouts.Names, CurrentIdx: layouts.CurrentIdx}
+	}
+	s.state.replace(niriSnapshot{
+		outputs: outputs, windows: []ipc.Window{}, layers: wireLayers,
+		keyboardLayouts: keyboardLayouts, focusedOutput: focused,
+	})
+	s.events.publish(eventStreamChanges(before, s.state.snapshot()))
 }
 
 func (s *Server) startNiri() error {
@@ -103,7 +142,10 @@ func (s *Server) Run() error {
 		go s.ctl.Serve()
 	}
 	if s.niri != nil {
-		h := niriHandler{quit: s.c.Terminate, spawn: s.spawn}
+		h := niriHandler{
+			quit: s.c.Terminate, spawn: s.spawn, snapshot: s.state.snapshot,
+			stream: func(conn net.Conn) { s.state.serveEventStream(s.events, conn) },
+		}
 		go s.niri.Serve(h.serve)
 	}
 	// Niri runs spawn-at-startup, then spawn-sh-at-startup (src/main.rs).
@@ -127,6 +169,11 @@ func (s *Server) Terminate() { s.c.Terminate() }
 
 // Destroy releases the compositor and every listener it owns.
 func (s *Server) Destroy() {
+	if s.events != nil {
+		// EventStream handlers outlive the request half-close. Stop them before
+		// the Unix listener waits for its accepted connections to return.
+		s.events.close()
+	}
 	if s.niri != nil {
 		_ = s.niri.Close()
 		s.niri = nil
