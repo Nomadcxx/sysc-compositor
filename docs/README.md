@@ -34,6 +34,7 @@ executed until the owner schedules the milestone they belong to.
 | [plans/2026-10-16-m1-required-globals.md](plans/2026-10-16-m1-required-globals.md) | plan | **M1 milestone plan** (`sysc-1266`, with `sysc-1297`): layer-shell (v5, as Niri) with scene layers and usable area, fractional scale, dmabuf feedback, xdg-shell v7 popups parented and unconstrained; each proved with an installed client. |
 | [plans/2026-10-17-pointer-focus-correctness.md](plans/2026-10-17-pointer-focus-correctness.md) | plan | **Tier 3 TDD plan**, `sysc-1296`, gates M4: implicit grab while a button is held, `default` image over empty space, popup and subsurface hits resolve to their window, unmap releases focus and grabs, compositor grabs clear pointer focus. |
 | [plans/2026-10-17-m2-greeter.md](plans/2026-10-17-m2-greeter.md) | plan | **M2 milestone plan** (`sysc-1267`): KDL v1 config (greeter sections applied, the rest accepted), niri-ipc socket with Version, Spawn, SpawnSh and Quit, `msg` CLI as `sysc-compositor` and `niri`, fullscreen for the greeter; nested gate, then a greetd VT gate scheduled with the owner. |
+| [plans/2026-10-18-window-preview-capture-proposal.md](plans/2026-10-18-window-preview-capture-proposal.md) | gate check | `sysc-787`: standard Wayland per-window capture contract, privacy behavior, lifecycle, damage, and Go/cgo boundary. |
 
 ## Reference sources (pinned 2026-10-16)
 
