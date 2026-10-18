@@ -36,6 +36,43 @@ func TestOutputsEnabled(t *testing.T) {
 	}
 }
 
+func TestNestedSessionEndsWhenLastOutputCloses(t *testing.T) {
+	c := newNested(t)
+	if got := c.EnabledOutputs(); got == 0 {
+		t.Fatal("nested session started without an output")
+	}
+	var output unsafe.Pointer
+	for output = range c.sceneOutputs {
+		break
+	}
+
+	runFinished := make(chan struct{})
+	timedOut := make(chan struct{})
+	if err := c.Post(func() { destroyOutput(output) }); err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		select {
+		case <-runFinished:
+		case <-time.After(2 * time.Second):
+			close(timedOut)
+			c.Terminate()
+		}
+	}()
+	if err := c.Run(); err != nil {
+		t.Fatal(err)
+	}
+	close(runFinished)
+	select {
+	case <-timedOut:
+		t.Fatal("Run remained active after the nested backend's last output closed")
+	default:
+	}
+	if got := c.EnabledOutputs(); got != 0 {
+		t.Fatalf("EnabledOutputs() after output destroy = %d, want 0", got)
+	}
+}
+
 // TestListenerTokensBalance is the M0 exit gate for handle ownership: New
 // registers listeners, so if any token outlived its wl_signal the process would
 // leak a Go handle per run.

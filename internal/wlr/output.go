@@ -10,6 +10,7 @@ package wlr
 #include <time.h>
 
 #include <wlr/backend.h>
+#include <wlr/backend/wayland.h>
 #include <wlr/render/allocator.h>
 #include <wlr/render/wlr_renderer.h>
 #include <wlr/types/wlr_output.h>
@@ -184,8 +185,17 @@ func (c *Compositor) handleNewOutput(data unsafe.Pointer) {
 		c.drop(request)
 		c.drop(commit)
 		c.drop(destroy)
+		if bool(C.wlr_backend_is_wl(output.backend)) && len(c.sceneOutputs) == 0 {
+			c.Terminate()
+		}
 	})
 	c.keep(destroy)
+}
+
+// destroyOutput asks the backend to destroy one output. The nested-session
+// test uses it to simulate the host closing its Wayland output window.
+func destroyOutput(output unsafe.Pointer) {
+	C.wlr_output_destroy((*C.struct_wlr_output)(output))
 }
 
 // EnabledOutputs reports how many backend outputs are up. It is the number a
