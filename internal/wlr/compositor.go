@@ -326,10 +326,7 @@ func (c *Compositor) Destroy() {
 	if c.display != nil {
 		C.wl_display_destroy_clients(c.display)
 	}
-	if c.backend != nil {
-		C.wlr_backend_destroy(c.backend)
-		c.backend = nil
-	}
+	c.destroyBackend()
 	if c.session != nil {
 		C.wlr_session_destroy(c.session)
 		c.session = nil
@@ -337,6 +334,13 @@ func (c *Compositor) Destroy() {
 	if c.display != nil {
 		C.wl_display_destroy(c.display)
 		c.display = nil
+	}
+}
+
+func (c *Compositor) destroyBackend() {
+	if c.backend != nil {
+		C.wlr_backend_destroy(c.backend)
+		c.backend = nil
 	}
 }
 
