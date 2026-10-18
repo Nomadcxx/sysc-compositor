@@ -49,12 +49,13 @@ type niriHandler struct {
 
 // niriSnapshot contains only plain Go wire data, never wlroots objects.
 type niriSnapshot struct {
-	outputs         map[string]ipc.Output
-	workspaces      []ipc.Workspace
-	windows         []ipc.Window
-	layers          []ipc.LayerSurface
-	keyboardLayouts *ipc.KeyboardLayouts
-	focusedOutput   *ipc.Output
+	outputs          map[string]ipc.Output
+	workspaces       []ipc.Workspace
+	windows          []ipc.Window
+	layers           []ipc.LayerSurface
+	keyboardLayouts  *ipc.KeyboardLayouts
+	focusedOutput    *ipc.Output
+	configLoadFailed bool
 }
 
 // niriState publishes immutable Go snapshots to IPC goroutines. replace is
@@ -66,9 +67,11 @@ type niriState struct {
 	nextWorkspaceID uint64
 }
 
-func newNiriState() *niriState {
+func newNiriState(configLoadFailed bool) *niriState {
+	current := emptyNiriSnapshot()
+	current.configLoadFailed = configLoadFailed
 	return &niriState{
-		current:         emptyNiriSnapshot(),
+		current:         current,
 		workspaceIDs:    map[string]uint64{},
 		nextWorkspaceID: 1,
 	}
@@ -98,6 +101,7 @@ func (s *niriState) replace(next niriSnapshot) {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	next.configLoadFailed = s.current.configLoadFailed
 	for name := range s.workspaceIDs {
 		if _, connected := next.outputs[name]; !connected {
 			delete(s.workspaceIDs, name)

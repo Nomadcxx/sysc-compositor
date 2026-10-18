@@ -107,7 +107,7 @@ func TestNiriSocketPath(t *testing.T) {
 }
 
 func TestNiriWorkspaceIDsFollowOutputLifetimes(t *testing.T) {
-	state := newNiriState()
+	state := newNiriState(false)
 	output := ipc.Output{Name: "DP-1"}
 	focused := output
 	state.replace(niriSnapshot{outputs: map[string]ipc.Output{"DP-1": output}, focusedOutput: &focused})

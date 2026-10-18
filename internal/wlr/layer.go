@@ -78,12 +78,13 @@ func sceneLayer(layer C.enum_zwlr_layer_shell_v1_layer) int {
 
 // layerSurface is one layer-shell surface the compositor draws.
 type layerSurface struct {
-	surface   *C.struct_wlr_layer_surface_v1
-	scene     *C.struct_wlr_scene_layer_surface_v1
-	tree      *C.struct_wlr_scene_tree
-	layer     int
-	output    unsafe.Pointer // *wlr_output
-	listeners []*Listener
+	surface    *C.struct_wlr_layer_surface_v1
+	scene      *C.struct_wlr_scene_layer_surface_v1
+	tree       *C.struct_wlr_scene_tree
+	layer      int
+	output     unsafe.Pointer // *wlr_output
+	outputName string
+	listeners  []*Listener
 }
 
 type LayerKind uint8
@@ -137,16 +138,17 @@ func snapshotKeyboardMode(mode int) LayerKeyboardMode {
 type layerFocusCandidate struct {
 	index           int
 	layer           int
+	output          string
 	keyboard        LayerKeyboardMode
 	mapped          bool
 	onDemandFocused bool
 }
 
-func chooseLayerKeyboardFocus(candidates []layerFocusCandidate, hasWindow bool) int {
+func chooseLayerKeyboardFocus(candidates []layerFocusCandidate, activeOutput string, hasWindow bool) int {
 	find := func(layer int, mode LayerKeyboardMode, onDemand bool) int {
 		for i := len(candidates) - 1; i >= 0; i-- {
 			candidate := candidates[i]
-			if candidate.mapped && candidate.layer == layer && candidate.keyboard == mode &&
+			if candidate.mapped && candidate.output == activeOutput && candidate.layer == layer && candidate.keyboard == mode &&
 				(!onDemand || candidate.onDemandFocused) {
 				return candidate.index
 			}
@@ -224,11 +226,12 @@ func (c *Compositor) handleNewLayerSurface(data unsafe.Pointer) {
 		return
 	}
 	l := &layerSurface{
-		surface: surface,
-		scene:   scene,
-		tree:    scene.tree,
-		layer:   layer,
-		output:  unsafe.Pointer(surface.output),
+		surface:    surface,
+		scene:      scene,
+		tree:       scene.tree,
+		layer:      layer,
+		output:     unsafe.Pointer(surface.output),
+		outputName: C.GoString(surface.output.name),
 	}
 	key := unsafe.Pointer(surface.surface)
 	c.layerSurfaces[key] = l
@@ -260,6 +263,7 @@ func (c *Compositor) handleNewLayerSurface(data unsafe.Pointer) {
 		c.arrangeLayers(l.output)
 		if snapshotKeyboardMode(int(surface.current.keyboard_interactive)) == LayerKeyboardOnDemandMode {
 			c.onDemandLayerFocus = l
+			c.setActiveOutputName(l.outputName)
 		}
 		c.updateKeyboardFocus()
 		c.notifyStateChanged()
@@ -367,12 +371,8 @@ func (c *Compositor) LayerSnapshot() []LayerSnapshot {
 		if !bool(l.surface.surface.mapped) {
 			continue
 		}
-		output := ""
-		if l.surface.output != nil {
-			output = cString(l.surface.output.name)
-		}
 		out = append(out, LayerSnapshot{
-			Namespace: cString(l.surface.namespace), Output: output,
+			Namespace: cString(l.surface.namespace), Output: l.outputName,
 			Layer:                 snapshotLayerKind(l.layer),
 			KeyboardInteractivity: snapshotKeyboardMode(int(l.surface.current.keyboard_interactive)),
 		})

@@ -21,6 +21,7 @@ type Config struct {
 	SpawnAtStartup   [][]string
 	SpawnShAtStartup []string
 	Warnings         []string
+	UnappliedActions []string
 	// Environment is applied to spawned commands; a nil value unsets.
 	Environment map[string]*string
 	Keyboard    Keyboard
@@ -92,6 +93,18 @@ func decode(name string, nodes []*document.Node) (*Config, error) {
 			err = c.environment(n)
 		case "input":
 			err = c.input(n)
+		case "binds":
+			if !slices.Contains(c.Warnings, node) {
+				c.Warnings = append(c.Warnings, node)
+			}
+			for _, binding := range n.Children {
+				for _, action := range binding.Children {
+					name := nodeName(action)
+					if !slices.Contains(c.UnappliedActions, name) {
+						c.UnappliedActions = append(c.UnappliedActions, name)
+					}
+				}
+			}
 		default:
 			if !slices.Contains(c.Warnings, node) {
 				c.Warnings = append(c.Warnings, node)

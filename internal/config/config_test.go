@@ -60,6 +60,21 @@ binds { }
 	}
 }
 
+func TestParseReportsUnappliedBindActions(t *testing.T) {
+	cfg, err := Parse("bindings.kdl", []byte(`
+binds {
+    Mod+Q { close-window; spawn "kitty"; }
+    Mod+W { close-window; }
+}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(cfg.UnappliedActions, []string{"close-window", "spawn"}) {
+		t.Fatalf("unapplied actions = %q, want unique action names in source order", cfg.UnappliedActions)
+	}
+}
+
 func TestParseRejects(t *testing.T) {
 	for src, want := range map[string]string{
 		`frobnicate 1`:                                 "unexpected node `frobnicate`",

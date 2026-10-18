@@ -96,6 +96,10 @@ static bool sysc_output_set_scale(struct wlr_output *output, float scale) {
 	return ok;
 }
 
+static struct wlr_output *sysc_output_layout_at(struct wlr_output_layout *layout, double x, double y) {
+	return wlr_output_layout_output_at(layout, x, y);
+}
+
 // sysc_bring_output_up gives one backend output a renderer and turns it on at
 // its preferred mode.
 //
@@ -204,6 +208,49 @@ type OutputSnapshot struct {
 	Logical      *LogicalOutputSnapshot
 }
 
+func chooseActiveOutputName(current, focused string, outputs []string) string {
+	names := append([]string(nil), outputs...)
+	sort.Strings(names)
+	for _, name := range names {
+		if name == focused {
+			return focused
+		}
+	}
+	for _, name := range names {
+		if name == current {
+			return current
+		}
+	}
+	if len(names) != 0 {
+		return names[0]
+	}
+	return ""
+}
+
+func (c *Compositor) outputNameAt(x, y float64) string {
+	output := C.sysc_output_layout_at(c.layout, C.double(x), C.double(y))
+	if output == nil {
+		return ""
+	}
+	if _, enabled := c.sceneOutputs[unsafe.Pointer(output)]; !enabled {
+		return ""
+	}
+	return C.GoString(output.name)
+}
+
+func (c *Compositor) setActiveOutputName(focused string) {
+	names := make([]string, 0, len(c.sceneOutputs))
+	for pointer := range c.sceneOutputs {
+		names = append(names, C.GoString((*C.struct_wlr_output)(pointer).name))
+	}
+	name := chooseActiveOutputName(c.activeOutputName, focused, names)
+	if name == c.activeOutputName {
+		return
+	}
+	c.activeOutputName = name
+	c.notifyFocusedOutputChanged()
+}
+
 // OutputSnapshot copies the enabled outputs into plain Go values. Call it on
 // the compositor thread; IPC readers consume the resulting immutable copies.
 func (c *Compositor) OutputSnapshot() []OutputSnapshot {
@@ -270,23 +317,15 @@ func (c *Compositor) OutputSnapshot() []OutputSnapshot {
 	return out
 }
 
-// FocusedOutputName follows the output under the pointer, falling back to the
-// first connected output when the pointer is outside the layout.
+// FocusedOutputName reports the active output, falling back to the first
+// connected output when no active output is set or its output disconnects.
 func (c *Compositor) FocusedOutputName() string {
-	if output := C.wlr_output_layout_output_at(c.layout, c.cursor.x, c.cursor.y); output != nil {
-		if _, enabled := c.sceneOutputs[unsafe.Pointer(output)]; enabled {
-			return C.GoString(output.name)
-		}
-	}
 	names := make([]string, 0, len(c.sceneOutputs))
 	for pointer := range c.sceneOutputs {
 		names = append(names, C.GoString((*C.struct_wlr_output)(pointer).name))
 	}
-	sort.Strings(names)
-	if len(names) == 0 {
-		return ""
-	}
-	return names[0]
+	c.activeOutputName = chooseActiveOutputName(c.activeOutputName, "", names)
+	return c.activeOutputName
 }
 
 func cString(s *C.char) string {

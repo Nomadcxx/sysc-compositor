@@ -30,9 +30,10 @@ type Server struct {
 	stopping chan struct{}
 }
 
-// New builds the compositor from cfg (nil is niri's defaults). The caller must
-// already hold the compositor thread.
-func New(cfg *config.Config) (*Server, error) {
+// New builds the compositor from cfg (nil is niri's defaults) and records
+// whether loading the user's startup config failed. The caller must already
+// hold the compositor thread.
+func New(cfg *config.Config, configLoadFailed bool) (*Server, error) {
 	if cfg == nil {
 		cfg = config.Default()
 	}
@@ -45,7 +46,7 @@ func New(cfg *config.Config) (*Server, error) {
 		return nil, err
 	}
 	s := &Server{
-		c: c, cfg: cfg, state: newNiriState(), events: newEventHub(),
+		c: c, cfg: cfg, state: newNiriState(configLoadFailed), events: newEventHub(),
 		stopping: make(chan struct{}),
 	}
 	c.SetStateChanged(s.refreshNiriState)

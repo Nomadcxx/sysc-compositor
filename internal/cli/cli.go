@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"strings"
 	"syscall"
 
 	"github.com/Nomadcxx/sysc-compositor/internal/config"
@@ -88,6 +89,10 @@ func validateConfig(name string, args []string, env Env) int {
 	for _, section := range cfg.Warnings {
 		fmt.Fprintf(env.Stderr, "%s: warning: config section `%s` is accepted but not applied yet\n", name, section)
 	}
+	if len(cfg.UnappliedActions) > 0 {
+		fmt.Fprintf(env.Stderr, "%s: warning: bind actions are accepted but not applied yet: %s\n",
+			name, strings.Join(cfg.UnappliedActions, ", "))
+	}
 	fmt.Fprintf(env.Stdout, "%s: configuration is valid: %s\n", name, path)
 	return 0
 }
@@ -103,7 +108,7 @@ func run(name, configFlag string, env Env) int {
 		fmt.Fprintf(env.Stderr, "%s: config: %v; using the defaults\n", name, err)
 		cfg = config.Default()
 	}
-	s, err := server.New(cfg)
+	s, err := server.New(cfg, err != nil)
 	if err != nil {
 		fmt.Fprintf(env.Stderr, "%s: %v\n", name, err)
 		return 1

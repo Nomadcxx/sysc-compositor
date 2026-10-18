@@ -168,7 +168,7 @@ func initialEventLines(state niriSnapshot) [][]byte {
 		}{IsOpen: false}),
 		eventLine("ConfigLoaded", struct {
 			Failed bool `json:"failed"`
-		}{Failed: false}),
+		}{Failed: state.configLoadFailed}),
 		eventLine("CastsChanged", struct {
 			Casts []any `json:"casts"`
 		}{Casts: []any{}}),

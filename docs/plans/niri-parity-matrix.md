@@ -16,7 +16,7 @@ Legend: `[ ]` missing · `[~]` partial · `[x]` done.
 | Windows | [~] | M3 — empty response until mapped toplevels land in M4 |
 | Layers | [x] | M3 — mapped layer-shell surfaces |
 | KeyboardLayouts | [ ] | M9 |
-| FocusedOutput | [x] | M3 — pointer output, then first connected output |
+| FocusedOutput | [x] | M3 — active output follows keyboard focus; first connected output is the initial and disconnect fallback |
 | FocusedWindow | [ ] | M4 |
 | PickWindow | [ ] | M15 |
 | PickColor | [ ] | M15 |
@@ -45,7 +45,7 @@ Legend: `[ ]` missing · `[~]` partial · `[x]` done.
 | KeyboardLayoutsChanged | [~] | M3 — current XKB layout baseline; config support in M9 |
 | KeyboardLayoutSwitched | [~] | M3 — XKB layout changes; switch action in M9 |
 | OverviewOpenedOrClosed | [~] | M3 — initial closed state; overview in M7 |
-| ConfigLoaded | [~] | M3 — initial success state; reload in M9 |
+| ConfigLoaded | [~] | M3 — initial config-load result; reload in M9 |
 | ScreenshotCaptured | [ ] | M11 |
 | CastsChanged | [~] | M3 — initial empty baseline; casts in M12 |
 | CastStartedOrChanged | [ ] | M12 |

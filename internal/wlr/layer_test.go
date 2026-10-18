@@ -53,36 +53,36 @@ func TestLayerKeyboardFocusPriority(t *testing.T) {
 		{
 			name: "overlay on-demand focus precedes top exclusive",
 			candidates: []layerFocusCandidate{
-				{index: 0, layer: layerTop, keyboard: LayerKeyboardExclusiveMode, mapped: true},
-				{index: 1, layer: layerOverlay, keyboard: LayerKeyboardOnDemandMode, mapped: true, onDemandFocused: true},
+				{index: 0, layer: layerTop, output: "DP-1", keyboard: LayerKeyboardExclusiveMode, mapped: true},
+				{index: 1, layer: layerOverlay, output: "DP-1", keyboard: LayerKeyboardOnDemandMode, mapped: true, onDemandFocused: true},
 			},
 			hasWindow: true, want: 1,
 		},
 		{
 			name: "top exclusive precedes focused window",
 			candidates: []layerFocusCandidate{
-				{index: 0, layer: layerTop, keyboard: LayerKeyboardExclusiveMode, mapped: true},
+				{index: 0, layer: layerTop, output: "DP-1", keyboard: LayerKeyboardExclusiveMode, mapped: true},
 			},
 			hasWindow: true, want: 0,
 		},
 		{
 			name: "mapped bottom on-demand precedes focused window",
 			candidates: []layerFocusCandidate{
-				{index: 0, layer: layerBottom, keyboard: LayerKeyboardOnDemandMode, mapped: true, onDemandFocused: true},
+				{index: 0, layer: layerBottom, output: "DP-1", keyboard: LayerKeyboardOnDemandMode, mapped: true, onDemandFocused: true},
 			},
 			hasWindow: true, want: 0,
 		},
 		{
 			name: "keyboard none never receives focus",
 			candidates: []layerFocusCandidate{
-				{index: 0, layer: layerOverlay, keyboard: LayerKeyboardNoneMode, mapped: true},
+				{index: 0, layer: layerOverlay, output: "DP-1", keyboard: LayerKeyboardNoneMode, mapped: true},
 			},
 			want: -1,
 		},
 		{
 			name: "unmapped on-demand surface loses focus",
 			candidates: []layerFocusCandidate{
-				{index: 0, layer: layerOverlay, keyboard: LayerKeyboardOnDemandMode, onDemandFocused: true},
+				{index: 0, layer: layerOverlay, output: "DP-1", keyboard: LayerKeyboardOnDemandMode, onDemandFocused: true},
 			},
 			want: -1,
 		},
@@ -93,27 +93,35 @@ func TestLayerKeyboardFocusPriority(t *testing.T) {
 		{
 			name: "focused window precedes bottom exclusive",
 			candidates: []layerFocusCandidate{
-				{index: 0, layer: layerBottom, keyboard: LayerKeyboardExclusiveMode, mapped: true},
+				{index: 0, layer: layerBottom, output: "DP-1", keyboard: LayerKeyboardExclusiveMode, mapped: true},
 			},
 			hasWindow: true, want: -1,
 		},
 		{
 			name: "bottom exclusive takes focus without a window",
 			candidates: []layerFocusCandidate{
-				{index: 0, layer: layerBottom, keyboard: LayerKeyboardExclusiveMode, mapped: true},
+				{index: 0, layer: layerBottom, output: "DP-1", keyboard: LayerKeyboardExclusiveMode, mapped: true},
 			},
 			want: 0,
 		},
 		{
 			name: "unmapped exclusive surface is ignored",
 			candidates: []layerFocusCandidate{
-				{index: 0, layer: layerOverlay, keyboard: LayerKeyboardExclusiveMode},
+				{index: 0, layer: layerOverlay, output: "DP-1", keyboard: LayerKeyboardExclusiveMode},
 			},
 			want: -1,
 		},
+		{
+			name: "layer surface on another output cannot take focus",
+			candidates: []layerFocusCandidate{
+				{index: 0, layer: layerTop, output: "DP-1", keyboard: LayerKeyboardExclusiveMode, mapped: true},
+				{index: 1, layer: layerOverlay, output: "HDMI-A-1", keyboard: LayerKeyboardExclusiveMode, mapped: true},
+			},
+			hasWindow: true, want: 0,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := chooseLayerKeyboardFocus(tc.candidates, tc.hasWindow); got != tc.want {
+			if got := chooseLayerKeyboardFocus(tc.candidates, "DP-1", tc.hasWindow); got != tc.want {
 				t.Errorf("chooseLayerKeyboardFocus() = %d, want %d", got, tc.want)
 			}
 		})

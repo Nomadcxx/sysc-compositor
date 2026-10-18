@@ -120,6 +120,7 @@ type Compositor struct {
 	// layout coordinates, as of the last motion outside an implicit grab.
 	focusOriginX, focusOriginY C.double
 	focusedOutputName          string
+	activeOutputName           string
 	stateChanged               func()
 
 	// injected is the table of seats fed by the compositor rather than the

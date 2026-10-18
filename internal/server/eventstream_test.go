@@ -2,6 +2,7 @@ package server
 
 import (
 	"bufio"
+	"encoding/json"
 	"io"
 	"net"
 	"path/filepath"
@@ -15,7 +16,7 @@ import (
 )
 
 func TestEventStreamInitialStateOrderAndUpdates(t *testing.T) {
-	state := newNiriState()
+	state := newNiriState(false)
 	dp := ipc.Output{Name: "DP-1"}
 	state.replace(niriSnapshot{
 		outputs: map[string]ipc.Output{"DP-1": dp}, focusedOutput: &dp,
@@ -77,8 +78,31 @@ func TestEventStreamInitialStateOrderAndUpdates(t *testing.T) {
 	}
 }
 
+func TestEventStreamReportsRejectedStartupConfig(t *testing.T) {
+	state := newNiriState(true)
+	state.replace(niriSnapshot{})
+	lines := initialEventLines(state.snapshot())
+	var event struct {
+		ConfigLoaded struct {
+			Failed bool `json:"failed"`
+		} `json:"ConfigLoaded"`
+	}
+	for _, line := range lines {
+		if strings.Contains(string(line), `"ConfigLoaded"`) {
+			if err := json.Unmarshal(line, &event); err != nil {
+				t.Fatal(err)
+			}
+			if !event.ConfigLoaded.Failed {
+				t.Fatal("ConfigLoaded.failed = false after startup rejected the config")
+			}
+			return
+		}
+	}
+	t.Fatal("initial EventStream state omitted ConfigLoaded")
+}
+
 func TestEventStreamUsesWorkspaceActivatedForFocusChanges(t *testing.T) {
-	state := newNiriState()
+	state := newNiriState(false)
 	dp := ipc.Output{Name: "DP-1"}
 	hdmi := ipc.Output{Name: "HDMI-A-1"}
 	focused := dp
@@ -102,7 +126,7 @@ func TestEventStreamUsesWorkspaceActivatedForFocusChanges(t *testing.T) {
 }
 
 func TestDestroyStopsActiveEventStream(t *testing.T) {
-	state := newNiriState()
+	state := newNiriState(false)
 	hub := newEventHub()
 	listener, err := unixsock.Listen(filepath.Join(t.TempDir(), "niri.sock"))
 	if err != nil {
@@ -150,7 +174,7 @@ func TestDestroyStopsActiveEventStream(t *testing.T) {
 }
 
 func TestEventStreamDisconnectsSlowClientAndReconnectsWithFullState(t *testing.T) {
-	state := newNiriState()
+	state := newNiriState(false)
 	dp := ipc.Output{Name: "DP-1"}
 	state.replace(niriSnapshot{outputs: map[string]ipc.Output{"DP-1": dp}, focusedOutput: &dp})
 	hub := newEventHub()
