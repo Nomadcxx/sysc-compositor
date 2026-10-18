@@ -143,12 +143,14 @@ func TestVTSwitchChordIsConsumed(t *testing.T) {
 		c.focusView(v)
 		kb.key(29, true) // Left Ctrl
 		kb.key(56, true) // Left Alt
-		for _, keycode := range []uint32{59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 87, 88} {
-			kb.key(keycode, true) // F1 through F12
+		kb.key(59, true) // F1, whose release follows the modifier releases below
+		for _, keycode := range []uint32{60, 61, 62, 63, 64, 65, 66, 67, 68, 87, 88} {
+			kb.key(keycode, true) // F2 through F12
 			kb.key(keycode, false)
 		}
 		kb.key(56, false)
 		kb.key(29, false)
+		kb.key(59, false)
 		// F1 without Ctrl+Alt remains an ordinary client key.
 		kb.key(59, true)
 		kb.key(59, false)
