@@ -141,6 +141,8 @@ func TestVTSwitchChordIsConsumed(t *testing.T) {
 			return
 		}
 		c.focusView(v)
+		kb.key(60, true) // unrelated F2 input from the nested seat
+		kb.key(60, false)
 		kb.key(29, true) // Left Ctrl
 		kb.key(56, true) // Left Alt
 		kb.key(59, true) // F1, whose release follows the modifier releases below
@@ -154,12 +156,15 @@ func TestVTSwitchChordIsConsumed(t *testing.T) {
 		// F1 without Ctrl+Alt remains an ordinary client key.
 		kb.key(59, true)
 		kb.key(59, false)
+		kb.key(60, true)
+		kb.key(60, false)
 		go func() {
 			time.Sleep(100 * time.Millisecond)
 			c.Terminate()
 		}()
 	}
 	var keys []string
+	// Host keys can arrive before or after this synchronous injected block.
 	runClient(t, c, []string{"weston-terminal"}, []string{"WAYLAND_DEBUG=client"}, func(line string) bool {
 		if m := reKey.FindStringSubmatch(line); m != nil {
 			keys = append(keys, m[1]+"/"+m[2])
@@ -170,7 +175,15 @@ func TestVTSwitchChordIsConsumed(t *testing.T) {
 		t.Fatal("weston-terminal never mapped")
 	}
 	want := []string{"29/1", "56/1", "56/0", "29/0", "59/1", "59/0"}
-	if strings.Join(keys, " ") != strings.Join(want, " ") {
-		t.Errorf("client received key events %v, want the chord suppressed and bare F1 forwarded %v", keys, want)
+	wantSequence := strings.Join(want, " ")
+	found := false
+	for start := 0; start+len(want) <= len(keys); start++ {
+		if strings.Join(keys[start:start+len(want)], " ") == wantSequence {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("client key events %v, want contiguous injected sequence %v", keys, want)
 	}
 }

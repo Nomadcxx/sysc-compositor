@@ -11,8 +11,8 @@ package wlr
 #include <wlr/types/wlr_keyboard_group.h>
 #include <wlr/types/wlr_seat.h>
 
-// Match Niri's hardcoded XF86Switch_VT keysyms. XKB derives these from the
-// current modifiers, so Ctrl+Alt+F1 maps to VT 1 without consulting config.
+// Match Niri's hardcoded XF86Switch_VT keysyms. Under the standard XKB
+// keymap, Ctrl+Alt+F1 resolves to VT 1 without consulting bind config.
 static int sysc_switch_vt_for_key(struct wlr_keyboard *keyboard, uint32_t keycode) {
 	if (keyboard == NULL || keyboard->xkb_state == NULL) {
 		return 0;
