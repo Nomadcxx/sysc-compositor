@@ -7,6 +7,7 @@ package wlr
 #include <stdlib.h>
 
 #include <wlr/backend.h>
+#include <wlr/backend/session.h>
 #include <wlr/render/allocator.h>
 #include <wlr/render/wlr_renderer.h>
 #include <wlr/types/wlr_compositor.h>
@@ -70,6 +71,7 @@ import (
 type Compositor struct {
 	display    *C.struct_wl_display
 	backend    *C.struct_wlr_backend
+	session    *C.struct_wlr_session
 	renderer   *C.struct_wlr_renderer
 	alloc      *C.struct_wlr_allocator
 	comp       *C.struct_wlr_compositor
@@ -97,6 +99,7 @@ type Compositor struct {
 	views                  map[unsafe.Pointer]*toplevelView
 	pointerDevices         map[unsafe.Pointer]bool
 	keyboardDevices        map[unsafe.Pointer]bool
+	suppressedKeys         map[uint32]bool
 	keyboardGroup          *C.struct_wlr_keyboard_group
 	keyboard               *C.struct_wlr_keyboard // the group's, which the user seat hears
 	inputDestroyListeners  map[unsafe.Pointer]*Listener
@@ -171,12 +174,13 @@ func NewWith(opts Options) (*Compositor, error) {
 	c.views = map[unsafe.Pointer]*toplevelView{}
 	c.pointerDevices = map[unsafe.Pointer]bool{}
 	c.keyboardDevices = map[unsafe.Pointer]bool{}
+	c.suppressedKeys = map[uint32]bool{}
 	c.inputDestroyListeners = map[unsafe.Pointer]*Listener{}
 	c.pressedPointerButtons = map[uint32]bool{}
 	c.pointerSerialButtons = map[uint32]uint32{}
 	c.consumedPointerButtons = map[uint32]bool{}
 
-	c.backend = C.wlr_backend_autocreate(c.loop, nil)
+	c.backend = C.wlr_backend_autocreate(c.loop, &c.session)
 	if c.backend == nil {
 		return nil, errors.New("wlr_backend_autocreate failed")
 	}
@@ -307,6 +311,7 @@ func (c *Compositor) Destroy() {
 	c.views = nil
 	c.pointerDevices = nil
 	c.keyboardDevices = nil
+	c.suppressedKeys = nil
 	c.inputDestroyListeners = nil
 	c.destroyInjectedSeats()
 	c.destroyKeyboardGroup()
@@ -317,6 +322,17 @@ func (c *Compositor) Destroy() {
 	if c.xcursorManager != nil {
 		C.wlr_xcursor_manager_destroy(c.xcursorManager)
 		c.xcursorManager = nil
+	}
+	if c.display != nil {
+		C.wl_display_destroy_clients(c.display)
+	}
+	if c.backend != nil {
+		C.wlr_backend_destroy(c.backend)
+		c.backend = nil
+	}
+	if c.session != nil {
+		C.wlr_session_destroy(c.session)
+		c.session = nil
 	}
 	if c.display != nil {
 		C.wl_display_destroy(c.display)

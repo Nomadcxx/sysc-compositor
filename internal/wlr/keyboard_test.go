@@ -122,3 +122,53 @@ func TestNewWindowTakesFocus(t *testing.T) {
 		t.Errorf("keyboard focus %p (view %p) once mapped, want the new window %p", focused, view, surface)
 	}
 }
+
+// TestVTSwitchChordIsConsumed is M2's hardcoded VT action: it works even when
+// the config has no binds, and the switch key never reaches the focused client.
+func TestVTSwitchChordIsConsumed(t *testing.T) {
+	c := newNested(t)
+	var kb *fakeKeyboard
+	t.Cleanup(func() {
+		if kb != nil {
+			kb.remove()
+		}
+	})
+	c.viewMapped = func(v *toplevelView) {
+		kb = c.addFakeKeyboard()
+		if kb == nil {
+			t.Error("could not attach the test keyboard")
+			c.Terminate()
+			return
+		}
+		c.focusView(v)
+		kb.key(29, true) // Left Ctrl
+		kb.key(56, true) // Left Alt
+		for _, keycode := range []uint32{59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 87, 88} {
+			kb.key(keycode, true) // F1 through F12
+			kb.key(keycode, false)
+		}
+		kb.key(56, false)
+		kb.key(29, false)
+		// F1 without Ctrl+Alt remains an ordinary client key.
+		kb.key(59, true)
+		kb.key(59, false)
+		go func() {
+			time.Sleep(100 * time.Millisecond)
+			c.Terminate()
+		}()
+	}
+	var keys []string
+	runClient(t, c, []string{"weston-terminal"}, []string{"WAYLAND_DEBUG=client"}, func(line string) bool {
+		if m := reKey.FindStringSubmatch(line); m != nil {
+			keys = append(keys, m[1]+"/"+m[2])
+		}
+		return false
+	})
+	if kb == nil {
+		t.Fatal("weston-terminal never mapped")
+	}
+	want := []string{"29/1", "56/1", "56/0", "29/0", "59/1", "59/0"}
+	if strings.Join(keys, " ") != strings.Join(want, " ") {
+		t.Errorf("client received key events %v, want the chord suppressed and bare F1 forwarded %v", keys, want)
+	}
+}
