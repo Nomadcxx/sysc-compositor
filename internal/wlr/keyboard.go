@@ -5,9 +5,24 @@ package wlr
 #cgo CFLAGS: -DWLR_USE_UNSTABLE
 
 #include <xkbcommon/xkbcommon.h>
+#include <xkbcommon/xkbcommon-keysyms.h>
+#include <wlr/backend/session.h>
 #include <wlr/types/wlr_keyboard.h>
 #include <wlr/types/wlr_keyboard_group.h>
 #include <wlr/types/wlr_seat.h>
+
+// Match Niri's hardcoded XF86Switch_VT keysyms. Under the standard XKB
+// keymap, Ctrl+Alt+F1 resolves to VT 1 without consulting bind config.
+static int sysc_switch_vt_for_key(struct wlr_keyboard *keyboard, uint32_t keycode) {
+	if (keyboard == NULL || keyboard->xkb_state == NULL) {
+		return 0;
+	}
+	xkb_keysym_t keysym = xkb_state_key_get_one_sym(keyboard->xkb_state, keycode + 8);
+	if (keysym < XKB_KEY_XF86Switch_VT_1 || keysym > XKB_KEY_XF86Switch_VT_12) {
+		return 0;
+	}
+	return (int)(keysym - XKB_KEY_XF86Switch_VT_1 + 1);
+}
 
 #include <stdlib.h>
 
@@ -70,6 +85,7 @@ import "C"
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"unsafe"
 )
@@ -163,6 +179,22 @@ func (c *Compositor) addKeyboard(kb *C.struct_wlr_keyboard) bool {
 // handleKeyboardKey delivers a key from any keyboard to the user seat's focus.
 func (c *Compositor) handleKeyboardKey(data unsafe.Pointer) {
 	event := (*C.struct_wlr_keyboard_key_event)(data)
+	keycode := uint32(event.keycode)
+	if event.state == C.WL_KEYBOARD_KEY_STATE_PRESSED {
+		// A key may have been released while the session was inactive. A fresh
+		// press starts a new suppression lifetime for this evdev keycode.
+		delete(c.suppressedKeys, keycode)
+		if vt := int(C.sysc_switch_vt_for_key(c.keyboard, event.keycode)); vt != 0 {
+			c.suppressedKeys[keycode] = true
+			if c.session != nil && !bool(C.wlr_session_change_vt(c.session, C.uint(vt))) {
+				fmt.Fprintf(os.Stderr, "sysc-compositor: switching to VT %d failed\n", vt)
+			}
+			return
+		}
+	} else if c.suppressedKeys[keycode] {
+		delete(c.suppressedKeys, keycode)
+		return
+	}
 	C.wlr_seat_keyboard_notify_key(c.seat, event.time_msec, event.keycode,
 		C.uint32_t(event.state))
 }

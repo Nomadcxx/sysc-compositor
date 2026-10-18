@@ -122,3 +122,68 @@ func TestNewWindowTakesFocus(t *testing.T) {
 		t.Errorf("keyboard focus %p (view %p) once mapped, want the new window %p", focused, view, surface)
 	}
 }
+
+// TestVTSwitchChordIsConsumed is M2's hardcoded VT action: it works even when
+// the config has no binds, and the switch key never reaches the focused client.
+func TestVTSwitchChordIsConsumed(t *testing.T) {
+	c := newNested(t)
+	var kb *fakeKeyboard
+	t.Cleanup(func() {
+		if kb != nil {
+			kb.remove()
+		}
+	})
+	c.viewMapped = func(v *toplevelView) {
+		kb = c.addFakeKeyboard()
+		if kb == nil {
+			t.Error("could not attach the test keyboard")
+			c.Terminate()
+			return
+		}
+		c.focusView(v)
+		kb.key(60, true) // unrelated F2 input from the nested seat
+		kb.key(60, false)
+		kb.key(29, true) // Left Ctrl
+		kb.key(56, true) // Left Alt
+		kb.key(59, true) // F1, whose release follows the modifier releases below
+		for _, keycode := range []uint32{60, 61, 62, 63, 64, 65, 66, 67, 68, 87, 88} {
+			kb.key(keycode, true) // F2 through F12
+			kb.key(keycode, false)
+		}
+		kb.key(56, false)
+		kb.key(29, false)
+		kb.key(59, false)
+		// F1 without Ctrl+Alt remains an ordinary client key.
+		kb.key(59, true)
+		kb.key(59, false)
+		kb.key(60, true)
+		kb.key(60, false)
+		go func() {
+			time.Sleep(100 * time.Millisecond)
+			c.Terminate()
+		}()
+	}
+	var keys []string
+	// Host keys can arrive before or after this synchronous injected block.
+	runClient(t, c, []string{"weston-terminal"}, []string{"WAYLAND_DEBUG=client"}, func(line string) bool {
+		if m := reKey.FindStringSubmatch(line); m != nil {
+			keys = append(keys, m[1]+"/"+m[2])
+		}
+		return false
+	})
+	if kb == nil {
+		t.Fatal("weston-terminal never mapped")
+	}
+	want := []string{"29/1", "56/1", "56/0", "29/0", "59/1", "59/0"}
+	wantSequence := strings.Join(want, " ")
+	found := false
+	for start := 0; start+len(want) <= len(keys); start++ {
+		if strings.Join(keys[start:start+len(want)], " ") == wantSequence {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("client key events %v, want contiguous injected sequence %v", keys, want)
+	}
+}
