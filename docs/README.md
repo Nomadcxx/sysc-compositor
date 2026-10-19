@@ -39,6 +39,7 @@ executed until the owner schedules the milestone they belong to.
 | [plans/2026-10-19-niri-mango-pleamar-capability-research.md](plans/2026-10-19-niri-mango-pleamar-capability-research.md) | report | Niri remains the behavior/IPC shape; Mango supplies wlroots patterns; maps current Niri gaps, Pleamar-inspired capabilities, component ownership, and a pre-M5 design decision. |
 | [plans/2026-10-20-offscreen-focus-design.md](plans/2026-10-20-offscreen-focus-design.md) | design | `sysc-1436`: use the focused output when a mapped window center falls outside every output. |
 | [plans/2026-10-20-offscreen-focus.md](plans/2026-10-20-offscreen-focus.md) | plan | `sysc-1436`: regression-first fix for offscreen `FocusWindow` routing and output snapshots. |
+| [plans/2026-10-20-m5-layout.md](plans/2026-10-20-m5-layout.md) | plan | M5 implementation plan (`sysc-1270`): scrolling columns, per-output dynamic workspaces, core KDL binds, and nested laptop gate. |
 
 ## Reference sources (pinned 2026-10-16)
 
