@@ -208,7 +208,7 @@ func toNiriWindow(window wlr.WindowInfo, tile wm.WindowSnapshot, output ipc.Outp
 		ID: window.ID, Title: clonePointer(window.Title), AppID: clonePointer(window.AppID),
 		WorkspaceID: &workspaceID, IsFocused: window.IsFocused,
 		Layout: ipc.WindowLayout{
-			PosInScrollingLayout: &([2]uint32{tile.Column, 0}),
+			PosInScrollingLayout: &([2]uint32{tile.Column + 1, 1}),
 			TileSize:             [2]float64{float64(tile.Tile.Width), float64(tile.Tile.Height)},
 			WindowSize:           [2]int32{int32(window.Width), int32(window.Height)},
 		},

@@ -37,6 +37,47 @@ func TestApplyingEmptyWorkspaceActivationNotifiesState(t *testing.T) {
 	}
 }
 
+func TestOutputReconnectRestoresFocusToRemappedWindow(t *testing.T) {
+	c := newNested(t)
+	var mapped *toplevelView
+	c.viewMapped = func(view *toplevelView) {
+		mapped = view
+		name := c.FocusedOutputName()
+		if !c.model.FocusWorkspace(name, 2) {
+			t.Error("could not focus the trailing empty workspace")
+			c.Terminate()
+			return
+		}
+		c.applyWorkspaceModel()
+		c.activateWorkspaceFocus()
+		if c.focusedView != nil {
+			t.Error("focused view remained while the active workspace was empty")
+		}
+		for output, sceneOutput := range c.sceneOutputs {
+			delete(c.sceneOutputs, output)
+			delete(c.usable, output)
+			c.removeWorkspaceOutput(name)
+			if c.keyboardFocusedView() != nil {
+				t.Error("keyboard focus remained after removing the last output")
+			}
+
+			c.sceneOutputs[output] = sceneOutput
+			c.syncWorkspaceOutput(output)
+			if c.keyboardFocusedView() != view {
+				t.Errorf("keyboard focus after output reconnect = %p, want window %p", c.keyboardFocusedView(), view)
+			}
+			c.Terminate()
+			return
+		}
+		t.Error("nested compositor has no output")
+		c.Terminate()
+	}
+	runClient(t, c, []string{"weston-terminal"}, nil, nil)
+	if mapped == nil {
+		t.Fatal("window did not map")
+	}
+}
+
 func TestMappedWindowsUseScrollingColumnPlacements(t *testing.T) {
 	c := newNested(t)
 	var first, second *toplevelView

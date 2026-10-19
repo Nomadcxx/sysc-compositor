@@ -26,10 +26,15 @@ type windowState struct {
 	workspaceID uint64
 }
 
+type windowSize struct {
+	width, height int
+}
+
 // Model tracks M5's single-window columns and dynamic per-output workspaces.
 type Model struct {
 	outputs         map[string]*outputState
 	windows         map[uint64]windowState
+	resizedWindows  map[uint64]windowSize
 	focusedOutput   string
 	nextWorkspaceID uint64
 }
@@ -66,6 +71,7 @@ func New() *Model {
 	return &Model{
 		outputs:         map[string]*outputState{},
 		windows:         map[uint64]windowState{},
+		resizedWindows:  map[uint64]windowSize{},
 		nextWorkspaceID: 1,
 	}
 }
@@ -165,11 +171,17 @@ func (m *Model) mapWindow(id uint64, output string) {
 	workspace := out.workspaces[out.active]
 	workspace.strip.AddWindow(id)
 	m.windows[id] = windowState{output: output, workspaceID: workspace.id}
+	if size, ok := m.resizedWindows[id]; ok {
+		if placement, ok := workspace.strip.Placement(id); ok {
+			workspace.strip.ResizeWindow(id, placement.X, placement.Y, size.width, size.height)
+		}
+	}
 	m.reconcile(out)
 }
 
-// RemoveWindow removes a window from its workspace. It returns the new active
-// window on that workspace, when one remains.
+// RemoveWindow removes an unmapped window from its workspace but retains its
+// resized dimensions until DestroyWindow, while the stable toplevel ID lives.
+// It returns the new active window on that workspace, when one remains.
 func (m *Model) RemoveWindow(id uint64) (uint64, bool) {
 	state, ok := m.windows[id]
 	if !ok {
@@ -192,6 +204,12 @@ func (m *Model) RemoveWindow(id uint64) (uint64, bool) {
 		return 0, true
 	}
 	return 0, true
+}
+
+// DestroyWindow drops a window's retained resize after it has unmapped.
+func (m *Model) DestroyWindow(id uint64) {
+	m.RemoveWindow(id)
+	delete(m.resizedWindows, id)
 }
 
 // FocusWindow activates a window's output workspace and focuses its column.
@@ -228,7 +246,11 @@ func (m *Model) ResizeWindow(id uint64, x, y, width, height int) bool {
 	}
 	for _, workspace := range out.workspaces {
 		if workspace.id == state.workspaceID {
-			return workspace.strip.ResizeWindow(id, x, y, width, height)
+			if !workspace.strip.ResizeWindow(id, x, y, width, height) {
+				return false
+			}
+			m.resizedWindows[id] = windowSize{width: width, height: height}
+			return true
 		}
 	}
 	return false

@@ -190,3 +190,46 @@ func TestReconnectedOutputRemapsWindowsLeftWithoutAnOutput(t *testing.T) {
 		t.Fatalf("workspaces after remap = %+v, want a trailing empty workspace", snapshot.Workspaces)
 	}
 }
+
+func TestResizeRetainsTileSizeAcrossWindowUnmapAndRemap(t *testing.T) {
+	m := New()
+	m.AddOutput("DP-1", layout.Bounds{Width: 1000, Height: 800}, 500, 16)
+	if !m.MapWindow(1, "DP-1") {
+		t.Fatal("MapWindow() failed")
+	}
+	if !m.ResizeWindow(1, 16, 16, 560, 420) {
+		t.Fatal("ResizeWindow() failed")
+	}
+
+	m.RemoveWindow(1)
+	if snapshot := m.Snapshot(); len(snapshot.Windows) != 0 {
+		t.Fatalf("windows after unmap = %+v, want none", snapshot.Windows)
+	}
+	if !m.MapWindow(1, "DP-1") {
+		t.Fatal("MapWindow() after remap failed")
+	}
+
+	window := m.Snapshot().Windows[0]
+	if window.Tile.Width != 560 || window.Tile.Height != 420 {
+		t.Fatalf("remapped tile = %+v, want retained size 560x420", window.Tile)
+	}
+}
+
+func TestDestroyDropsRetainedResizeState(t *testing.T) {
+	m := New()
+	m.AddOutput("DP-1", layout.Bounds{Width: 1000, Height: 800}, 500, 16)
+	m.MapWindow(1, "DP-1")
+	if !m.ResizeWindow(1, 16, 16, 560, 420) {
+		t.Fatal("ResizeWindow() failed")
+	}
+	m.RemoveWindow(1)
+	m.DestroyWindow(1)
+	if !m.MapWindow(1, "DP-1") {
+		t.Fatal("MapWindow() after destroy failed")
+	}
+
+	window := m.Snapshot().Windows[0]
+	if window.Tile.Width != 500 || window.Tile.Height != 768 {
+		t.Fatalf("tile after destroyed ID was mapped again = %+v, want defaults 500x768", window.Tile)
+	}
+}

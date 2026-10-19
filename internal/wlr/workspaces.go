@@ -57,15 +57,16 @@ func (c *Compositor) syncWorkspaceOutput(output unsafe.Pointer) {
 	}
 	bounds := layout.Bounds{X: usable.x, Y: usable.y, Width: usable.w, Height: usable.h}
 	width := c.defaultColumnWidth(bounds.Width)
+	added := false
 	if !c.hasWorkspaceOutput(name) {
-		c.model.AddOutput(name, bounds, width, c.layoutOptions.Gaps)
-		if c.model.Snapshot().FocusedOutput == name {
-			c.setActiveOutputName(name)
-		}
+		added = c.model.AddOutput(name, bounds, width, c.layoutOptions.Gaps)
 	} else {
 		c.model.SetOutputGeometry(name, bounds, width, c.layoutOptions.Gaps)
 	}
 	c.applyWorkspaceModel()
+	if added && c.model.Snapshot().FocusedOutput == name {
+		c.activateWorkspaceFocus()
+	}
 }
 
 func (c *Compositor) removeWorkspaceOutput(name string) {
@@ -74,10 +75,7 @@ func (c *Compositor) removeWorkspaceOutput(name string) {
 	}
 	c.model.RemoveOutput(name)
 	c.applyWorkspaceModel()
-	if focused := c.model.Snapshot().FocusedOutput; focused != "" {
-		c.setActiveOutputName(focused)
-		c.activateWorkspaceFocus()
-	}
+	c.activateWorkspaceFocus()
 }
 
 func (c *Compositor) defaultColumnWidth(available int) int {

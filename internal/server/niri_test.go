@@ -74,7 +74,7 @@ func TestNiriWindowSnapshotConversion(t *testing.T) {
 	pid := int32(123)
 	focusTimestamp := &ipc.Timestamp{Secs: 8, Nanos: 23}
 	position := [2]float64{20, 40}
-	columnPosition := [2]uint32{3, 0}
+	columnPosition := [2]uint32{4, 1}
 	want := ipc.Window{
 		ID: 12, Title: &title, AppID: &appID, PID: &pid, WorkspaceID: &workspaceID,
 		IsFocused: true,

@@ -484,7 +484,7 @@ func (c *Compositor) updateKeyboardFocus() {
 	activeOutput := c.FocusedOutputName()
 	focusedView := c.focusedView
 	if focusedView != nil && focusedView.toplevel != nil {
-		if c.outputNameForView(focusedView) != activeOutput {
+		if activeOutput == "" || c.outputNameForView(focusedView) != activeOutput {
 			focusedView = nil
 		}
 	} else {
@@ -864,6 +864,9 @@ func (c *Compositor) releaseView(view *toplevelView) {
 func (c *Compositor) handleToplevelDestroy(view *toplevelView) {
 	if view == nil {
 		return
+	}
+	if c.model != nil {
+		c.model.DestroyWindow(view.id)
 	}
 	c.releaseView(view)
 	c.cancelPendingWindowFocus(view)
