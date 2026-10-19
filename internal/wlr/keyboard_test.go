@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 	"unsafe"
+
+	"github.com/Nomadcxx/sysc-compositor/internal/bind"
 )
 
 const keyEsc = 1 // evdev KEY_ESC
@@ -226,4 +228,40 @@ func TestVTSwitchChordIsConsumed(t *testing.T) {
 	if !found {
 		t.Errorf("client key events %v, want contiguous injected sequence %v", keys, want)
 	}
+}
+
+func TestCloseWindowBindSendsCloseAndConsumesKey(t *testing.T) {
+	c := newNestedWith(t, Options{Binds: []bind.Binding{
+		keyBind(t, "Mod+Q", bind.ActionCloseWindow),
+	}})
+	var keyboard *fakeKeyboard
+	t.Cleanup(func() {
+		if keyboard != nil {
+			keyboard.remove()
+		}
+	})
+	c.viewMapped = func(*toplevelView) {
+		keyboard = c.addFakeKeyboard()
+		if keyboard == nil {
+			t.Error("could not attach fake keyboard")
+			c.Terminate()
+			return
+		}
+		keyboard.key(56, true) // Left Alt is Mod in a nested Wayland backend.
+		keyboard.key(16, true) // Q.
+		if !c.suppressedKeys[16] {
+			t.Error("configured close bind key was not consumed")
+		}
+		keyboard.key(16, false)
+		keyboard.key(56, false)
+	}
+	lines := runClient(t, c, []string{"weston-terminal"}, []string{"WAYLAND_DEBUG=client"}, func(line string) bool {
+		return strings.Contains(line, ".close(")
+	})
+	for _, line := range lines {
+		if strings.Contains(line, ".close(") {
+			return
+		}
+	}
+	t.Fatal("close bind did not send xdg_toplevel.close")
 }

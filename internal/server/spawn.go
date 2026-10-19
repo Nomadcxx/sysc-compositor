@@ -4,7 +4,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+
+	"github.com/Nomadcxx/sysc-compositor/internal/config"
 )
 
 // spawner starts commands the way Niri does (src/utils/spawning.rs): stdio on
@@ -20,10 +23,12 @@ type spawner struct {
 // socket and the niri socket set, NOTIFY_SOCKET and DISPLAY removed (no
 // Xwayland yet), and the config's environment applied last. A nil value
 // removes a variable, as `NAME null` does in Niri's `environment {}`.
-func newSpawner(waylandDisplay, niriSocket string, configured map[string]*string) spawner {
+func newSpawner(waylandDisplay, niriSocket string, configured map[string]*string, cursor config.Cursor) spawner {
 	set := map[string]*string{}
 	str := func(v string) *string { return &v }
 	set["WAYLAND_DISPLAY"] = str(waylandDisplay)
+	set["XCURSOR_THEME"] = str(cursor.Theme)
+	set["XCURSOR_SIZE"] = str(strconv.Itoa(cursor.Size))
 	if niriSocket != "" {
 		set["NIRI_SOCKET"] = str(niriSocket)
 	}

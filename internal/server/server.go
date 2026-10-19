@@ -41,7 +41,12 @@ func New(cfg *config.Config, configLoadFailed bool) (*Server, error) {
 	c, err := wlr.NewWith(wlr.Options{Keyboard: wlr.Keyboard{
 		Rules: k.Rules, Model: k.Model, Layout: k.Layout, Variant: k.Variant, Options: k.Options,
 		File: expandHome(k.File), RepeatDelay: k.RepeatDelay, RepeatRate: k.RepeatRate,
-	}})
+	}, ModKey: cfg.Input.ModKey, ModKeyNested: cfg.Input.ModKeyNested,
+		Layout: &wlr.LayoutOptions{
+			Gaps: cfg.Layout.Gaps, ColumnWidthProportion: cfg.Layout.ColumnWidthProportion,
+			FixedColumnWidth: cfg.Layout.FixedColumnWidth,
+		}, CursorTheme: cfg.Cursor.Theme, CursorSize: cfg.Cursor.Size, Binds: cfg.Binds,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -60,7 +65,8 @@ func New(cfg *config.Config, configLoadFailed bool) (*Server, error) {
 		// still can.
 		os.Stderr.WriteString("sysc-compositor: niri socket: " + err.Error() + "\n")
 	}
-	s.spawn = newSpawner(c.SocketName(), s.NiriSocket(), cfg.Environment)
+	s.spawn = newSpawner(c.SocketName(), s.NiriSocket(), cfg.Environment, cfg.Cursor)
+	c.SetSpawnHandlers(s.spawn.spawn, s.spawn.spawnSh)
 	return s, nil
 }
 
@@ -74,11 +80,17 @@ func (s *Server) refreshNiriState() {
 	for _, output := range s.c.OutputSnapshot() {
 		value := toNiriOutput(output)
 		outputs[value.Name] = value
-		if value.Name == focusedName {
-			copy := value
-			focused = &copy
-		}
 	}
+	model := s.c.WorkspaceSnapshot()
+	focusedName = model.FocusedOutput
+	if _, connected := outputs[focusedName]; !connected {
+		focusedName = s.c.FocusedOutputName()
+	}
+	if output, connected := outputs[focusedName]; connected {
+		copy := output
+		focused = &copy
+	}
+	workspaces := toNiriWorkspaces(model)
 	layers := s.c.LayerSnapshot()
 	wireLayers := make([]ipc.LayerSurface, len(layers))
 	for i, layer := range layers {
@@ -88,19 +100,26 @@ func (s *Server) refreshNiriState() {
 	if layouts := s.c.KeyboardLayoutsSnapshot(); layouts != nil {
 		keyboardLayouts = &ipc.KeyboardLayouts{Names: layouts.Names, CurrentIdx: layouts.CurrentIdx}
 	}
-	windows := make([]ipc.Window, 0)
+	windowInfo := make(map[uint64]wlr.WindowInfo)
 	for _, window := range s.c.Windows() {
-		outputName := niriWindowOutputName(window.Output, focusedName, outputs)
+		windowInfo[window.ID] = window
+	}
+	windows := make([]ipc.Window, 0, len(model.Windows))
+	for _, tile := range model.Windows {
+		window, exists := windowInfo[tile.ID]
+		if !exists {
+			continue
+		}
+		outputName := niriWindowOutputName(tile.Output, focusedName, outputs)
 		output, connected := outputs[outputName]
 		if !connected {
 			continue
 		}
-		workspaceID := s.state.workspaceIDForOutput(outputName)
-		windows = append(windows, toNiriWindow(window, workspaceID, output))
+		windows = append(windows, toNiriWindow(window, tile, output))
 	}
 	s.state.replace(niriSnapshot{
 		outputs: outputs, windows: windows, layers: wireLayers,
-		keyboardLayouts: keyboardLayouts, focusedOutput: focused,
+		workspaces: workspaces, keyboardLayouts: keyboardLayouts, focusedOutput: focused,
 	})
 	s.events.publish(eventStreamChanges(before, s.state.snapshot()))
 }
@@ -169,7 +188,7 @@ func (s *Server) Run() error {
 		h := niriHandler{
 			quit: s.c.Terminate, spawn: s.spawn, snapshot: s.state.snapshot,
 			stream: func(conn net.Conn) { s.state.serveEventStream(s.events, conn) },
-			postAction: func(action ipc.Action, output string) error {
+			postAction: func(action ipc.Action, workspaceID uint64) error {
 				return s.c.Post(func() {
 					switch action.Name {
 					case "FocusWindow":
@@ -179,7 +198,7 @@ func (s *Server) Run() error {
 					case "CloseWindow":
 						s.c.CloseWindow(action.WindowID)
 					case "FocusWorkspace":
-						s.c.FocusWorkspaceOutput(output)
+						s.c.FocusWorkspaceID(workspaceID)
 					}
 				})
 			},

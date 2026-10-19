@@ -7,8 +7,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Nomadcxx/sysc-compositor/internal/config"
 	"github.com/Nomadcxx/sysc-compositor/internal/ipc"
+	"github.com/Nomadcxx/sysc-compositor/internal/layout"
 	"github.com/Nomadcxx/sysc-compositor/internal/wlr"
+	"github.com/Nomadcxx/sysc-compositor/internal/wm"
 )
 
 func TestNiriOutputSnapshotConversion(t *testing.T) {
@@ -60,20 +63,24 @@ func TestNiriLayerSnapshotConversion(t *testing.T) {
 func TestNiriWindowSnapshotConversion(t *testing.T) {
 	title, appID := "Terminal", "org.example.Terminal"
 	logical := &ipc.LogicalOutput{X: -1920, Y: 10}
+	placement := wm.WindowSnapshot{ID: 12, Output: "DP-1", WorkspaceID: 7, Column: 3,
+		Tile: layout.Placement{ID: 12, X: -1900, Y: 50, Width: 800, Height: 600}}
 	got := toNiriWindow(wlr.WindowInfo{
 		ID: 12, Title: &title, AppID: &appID, PID: 123,
 		X: -1900, Y: 50, Width: 800, Height: 600, Output: "DP-1", IsFocused: true,
 		FocusTimestamp: 8*time.Second + 23*time.Nanosecond, HasFocusTimestamp: true,
-	}, 7, ipc.Output{Name: "DP-1", Logical: logical})
+	}, placement, ipc.Output{Name: "DP-1", Logical: logical})
 	workspaceID := uint64(7)
 	pid := int32(123)
 	focusTimestamp := &ipc.Timestamp{Secs: 8, Nanos: 23}
 	position := [2]float64{20, 40}
+	columnPosition := [2]uint32{3, 0}
 	want := ipc.Window{
 		ID: 12, Title: &title, AppID: &appID, PID: &pid, WorkspaceID: &workspaceID,
-		IsFocused: true, IsFloating: true,
+		IsFocused: true,
 		Layout: ipc.WindowLayout{
-			TileSize: [2]float64{800, 600}, WindowSize: [2]int32{800, 600},
+			PosInScrollingLayout: &columnPosition,
+			TileSize:             [2]float64{800, 600}, WindowSize: [2]int32{800, 600},
 			TilePosInWorkspaceView: &position,
 		},
 		FocusTimestamp: focusTimestamp,
@@ -82,36 +89,33 @@ func TestNiriWindowSnapshotConversion(t *testing.T) {
 		t.Fatalf("toNiriWindow() = %+v, want %+v", got, want)
 	}
 
-	got = toNiriWindow(wlr.WindowInfo{ID: 13, Output: "DP-1"}, 7, ipc.Output{Name: "DP-1"})
+	got = toNiriWindow(wlr.WindowInfo{ID: 13, Output: "DP-1"}, wm.WindowSnapshot{ID: 13, WorkspaceID: 7}, ipc.Output{Name: "DP-1"})
 	if got.Title != nil || got.AppID != nil || got.PID != nil || got.FocusTimestamp != nil {
 		t.Fatalf("missing window metadata must stay null: %+v", got)
 	}
 }
 
-func TestWindowOutputFallsBackToFocusedOutputWhenCenterIsOffscreen(t *testing.T) {
-	outputs := map[string]ipc.Output{
-		"DP-1":     {Name: "DP-1"},
-		"HDMI-A-1": {Name: "HDMI-A-1"},
+func TestNiriWorkspaceSnapshotConversion(t *testing.T) {
+	output := "DP-1"
+	activeWindow := uint64(12)
+	got := toNiriWorkspaces(wm.Snapshot{Workspaces: []wm.WorkspaceSnapshot{
+		{ID: 41, Index: 1, Output: output},
+		{ID: 42, Index: 2, Output: output, IsActive: true, IsFocused: true, ActiveWindowID: &activeWindow},
+		{ID: 43, Index: 3, Output: output},
+	}})
+	want := []ipc.Workspace{
+		{ID: 41, Idx: 1, Output: &output},
+		{ID: 42, Idx: 2, Output: &output, IsActive: true, IsFocused: true, ActiveWindowID: &activeWindow},
+		{ID: 43, Idx: 3, Output: &output},
 	}
-	for _, tc := range []struct {
-		name, windowOutput, focusedOutput, want string
-	}{
-		{"on geometry output", "HDMI-A-1", "DP-1", "HDMI-A-1"},
-		{"offscreen center", "", "DP-1", "DP-1"},
-		{"disconnected geometry output", "gone", "HDMI-A-1", "HDMI-A-1"},
-		{"no connected fallback", "", "gone", ""},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := niriWindowOutputName(tc.windowOutput, tc.focusedOutput, outputs); got != tc.want {
-				t.Fatalf("niriWindowOutputName(%q, %q) = %q, want %q", tc.windowOutput, tc.focusedOutput, got, tc.want)
-			}
-		})
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("toNiriWorkspaces() = %+v, want %+v", got, want)
 	}
 }
 
 func TestNiriHandler(t *testing.T) {
 	quits := 0
-	h := niriHandler{quit: func() { quits++ }, spawn: newSpawner("w", "", nil)}
+	h := niriHandler{quit: func() { quits++ }, spawn: newSpawner("w", "", nil, config.Default().Cursor)}
 	for _, tc := range []struct {
 		line, want string
 		after      bool
@@ -182,8 +186,8 @@ func TestNiriWindowActionsArePosted(t *testing.T) {
 	focusedOutput := ipc.Output{Name: output1}
 	id1, id2 := uint64(7), uint64(8)
 	var posted []struct {
-		action ipc.Action
-		output string
+		action      ipc.Action
+		workspaceID uint64
 	}
 	h := niriHandler{
 		snapshot: func() niriSnapshot {
@@ -191,26 +195,29 @@ func TestNiriWindowActionsArePosted(t *testing.T) {
 				focusedOutput: &focusedOutput,
 				workspaces: []ipc.Workspace{
 					{ID: id1, Idx: 1, Output: &output1},
-					{ID: id2, Idx: 1, Output: &output2},
+					{ID: id2, Idx: 2, Output: &output1},
+					{ID: 9, Idx: 1, Output: &output2},
 				},
 			}
 		},
-		postAction: func(action ipc.Action, output string) error {
+		postAction: func(action ipc.Action, workspaceID uint64) error {
 			posted = append(posted, struct {
-				action ipc.Action
-				output string
-			}{action, output})
+				action      ipc.Action
+				workspaceID uint64
+			}{action, workspaceID})
 			return nil
 		},
 	}
 	for _, tc := range []struct {
-		line, name, output string
+		line, name  string
+		workspaceID uint64
 	}{
-		{`{"Action":{"FocusWindow":{"id":42}}}`, "FocusWindow", ""},
-		{`{"Action":{"CloseWindow":{"id":42}}}`, "CloseWindow", ""},
-		{`{"Action":{"CloseWindow":{"id":null}}}`, "CloseWindow", ""},
-		{`{"Action":{"FocusWorkspace":{"reference":{"Id":8}}}}`, "FocusWorkspace", output2},
-		{`{"Action":{"FocusWorkspace":{"reference":{"Index":1}}}}`, "FocusWorkspace", output1},
+		{`{"Action":{"FocusWindow":{"id":42}}}`, "FocusWindow", 0},
+		{`{"Action":{"CloseWindow":{"id":42}}}`, "CloseWindow", 0},
+		{`{"Action":{"CloseWindow":{"id":null}}}`, "CloseWindow", 0},
+		{`{"Action":{"FocusWorkspace":{"reference":{"Id":8}}}}`, "FocusWorkspace", 8},
+		{`{"Action":{"FocusWorkspace":{"reference":{"Index":2}}}}`, "FocusWorkspace", 8},
+		{`{"Action":{"FocusWorkspace":{"reference":{"Index":1}}}}`, "FocusWorkspace", 7},
 	} {
 		before := len(posted)
 		request, err := ipc.DecodeRequest([]byte(tc.line))
@@ -226,8 +233,8 @@ func TestNiriWindowActionsArePosted(t *testing.T) {
 		}
 		after()
 		got := posted[len(posted)-1]
-		if got.action.Name != tc.name || got.output != tc.output {
-			t.Errorf("posted = %+v, want action %s output %q", got, tc.name, tc.output)
+		if got.action.Name != tc.name || got.workspaceID != tc.workspaceID {
+			t.Errorf("posted = %+v, want action %s workspace ID %d", got, tc.name, tc.workspaceID)
 		}
 	}
 	request, err := ipc.DecodeRequest([]byte(`{"Action":{"FocusWorkspace":{"reference":{"Name":"missing"}}}}`))
@@ -235,7 +242,7 @@ func TestNiriWindowActionsArePosted(t *testing.T) {
 		t.Fatal(err)
 	}
 	reply, after := h.handle(request)
-	if string(reply.Ok) != string(ipc.Handled) || after != nil || len(posted) != 5 {
+	if string(reply.Ok) != string(ipc.Handled) || after != nil || len(posted) != 6 {
 		t.Fatalf("unmatched workspace = %+v, after %v, posted %d; want accepted no-op", reply, after != nil, len(posted))
 	}
 }
@@ -250,23 +257,22 @@ func TestNiriSocketPath(t *testing.T) {
 	}
 }
 
-func TestNiriWorkspaceIDsFollowOutputLifetimes(t *testing.T) {
+func TestNiriStatePreservesModelWorkspaces(t *testing.T) {
 	state := newNiriState(false)
 	output := ipc.Output{Name: "DP-1"}
 	focused := output
-	state.replace(niriSnapshot{outputs: map[string]ipc.Output{"DP-1": output}, focusedOutput: &focused})
-	first := state.snapshot().workspaces[0]
-	if first.ID == 0 || first.Idx != 1 || first.Output == nil || *first.Output != "DP-1" || !first.IsActive || !first.IsFocused {
-		t.Fatalf("initial workspace = %+v", first)
+	outputName := "DP-1"
+	active := uint64(12)
+	workspaces := []ipc.Workspace{
+		{ID: 41, Idx: 1, Output: &outputName},
+		{ID: 42, Idx: 2, Output: &outputName, IsActive: true, IsFocused: true, ActiveWindowID: &active},
+		{ID: 43, Idx: 3, Output: &outputName},
 	}
-	state.replace(niriSnapshot{outputs: map[string]ipc.Output{"DP-1": output}, focusedOutput: &focused})
-	if got := state.snapshot().workspaces[0].ID; got != first.ID {
-		t.Fatalf("workspace id changed while output remained connected: %d -> %d", first.ID, got)
-	}
-	state.replace(niriSnapshot{outputs: map[string]ipc.Output{}})
-	state.replace(niriSnapshot{outputs: map[string]ipc.Output{"DP-1": output}, focusedOutput: &focused})
-	if got := state.snapshot().workspaces[0].ID; got == first.ID {
-		t.Fatalf("workspace id reused after output disconnect: %d", got)
+	state.replace(niriSnapshot{
+		outputs: map[string]ipc.Output{"DP-1": output}, focusedOutput: &focused, workspaces: workspaces,
+	})
+	if got := state.snapshot().workspaces; !reflect.DeepEqual(got, workspaces) {
+		t.Fatalf("Niri workspaces = %+v, want compositor model %+v", got, workspaces)
 	}
 }
 
@@ -275,8 +281,11 @@ func TestNiriWorkspacesReportTheirMostRecentWindow(t *testing.T) {
 	output := ipc.Output{Name: "DP-1"}
 	focused := output
 	workspaceID := uint64(1)
+	outputName := "DP-1"
+	activeWindowID := uint64(12)
 	state.replace(niriSnapshot{
 		outputs: map[string]ipc.Output{"DP-1": output}, focusedOutput: &focused,
+		workspaces: []ipc.Workspace{{ID: workspaceID, Idx: 1, Output: &outputName, ActiveWindowID: &activeWindowID}},
 		windows: []ipc.Window{
 			{ID: 12, WorkspaceID: &workspaceID},
 			{ID: 11, WorkspaceID: &workspaceID},
@@ -284,9 +293,33 @@ func TestNiriWorkspacesReportTheirMostRecentWindow(t *testing.T) {
 	})
 	workspace := state.snapshot().workspaces[0]
 	if workspace.ActiveWindowID == nil || *workspace.ActiveWindowID != 12 {
-		t.Fatalf("active_window_id = %v, want most recent mapped window 12", workspace.ActiveWindowID)
+		t.Fatalf("active_window_id = %v, want model-selected window 12", workspace.ActiveWindowID)
 	}
 }
+
+func TestEventStreamReportsWindowLayoutChanges(t *testing.T) {
+	id, workspaceID := uint64(42), uint64(7)
+	before := niriSnapshot{windows: []ipc.Window{{
+		ID: id, WorkspaceID: &workspaceID,
+		Layout: ipc.WindowLayout{TileSize: [2]float64{600, 800}, TilePosInWorkspaceView: ptr([2]float64{0, 0})},
+	}}}
+	after := niriSnapshot{windows: []ipc.Window{{
+		ID: id, WorkspaceID: &workspaceID,
+		Layout: ipc.WindowLayout{TileSize: [2]float64{600, 800}, TilePosInWorkspaceView: ptr([2]float64{616, 0})},
+	}}}
+
+	var found bool
+	for _, line := range eventStreamChanges(before, after) {
+		if strings.Contains(string(line), `"WindowLayoutsChanged"`) && strings.Contains(string(line), `"changes":[[42,`) {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("eventStreamChanges() did not report the changed window tile position")
+	}
+}
+
+func ptr[T any](value T) *T { return &value }
 
 func TestNiriSnapshotsDoNotSharePointerFields(t *testing.T) {
 	state := newNiriState(false)
@@ -294,9 +327,11 @@ func TestNiriSnapshotsDoNotSharePointerFields(t *testing.T) {
 	title := "before"
 	workspaceID := uint64(1)
 	outputName := "DP-1"
+	activeWindowID := uint64(42)
 	state.replace(niriSnapshot{
-		outputs: map[string]ipc.Output{"DP-1": output},
-		windows: []ipc.Window{{ID: 42, Title: &title, WorkspaceID: &workspaceID}},
+		outputs:    map[string]ipc.Output{"DP-1": output},
+		workspaces: []ipc.Workspace{{ID: 1, Idx: 1, Output: &outputName, ActiveWindowID: &activeWindowID}},
+		windows:    []ipc.Window{{ID: 42, Title: &title, WorkspaceID: &workspaceID}},
 	})
 	// The state owns its committed snapshot, and each reader owns its copy.
 	*output.Logical = ipc.LogicalOutput{X: 99}

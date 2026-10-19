@@ -12,12 +12,19 @@ type Placement struct {
 	X, Y, Width, Height int
 }
 
+type columnState struct {
+	id            uint64
+	width, height int
+	yOffset       int
+}
+
 // Workspace is one horizontal strip of single-window columns.
+// ponytail: M5 keeps one window per column; add column tab groups with M6.
 type Workspace struct {
 	bounds      Bounds
 	columnWidth int
 	gap         int
-	columns     []uint64
+	columns     []columnState
 	focused     int
 	viewOffset  int
 }
@@ -40,9 +47,6 @@ func (w *Workspace) SetGeometry(bounds Bounds, columnWidth, gap int) {
 	if columnWidth < 0 {
 		columnWidth = 0
 	}
-	if columnWidth > bounds.Width && bounds.Width > 0 {
-		columnWidth = bounds.Width
-	}
 	if gap < 0 {
 		gap = 0
 	}
@@ -61,9 +65,9 @@ func (w *Workspace) AddWindow(id uint64) {
 	if w.focused >= 0 {
 		idx = w.focused + 1
 	}
-	w.columns = append(w.columns, 0)
+	w.columns = append(w.columns, columnState{})
 	copy(w.columns[idx+1:], w.columns[idx:])
-	w.columns[idx] = id
+	w.columns[idx] = columnState{id: id}
 	w.focused = idx
 	w.revealFocused()
 }
@@ -108,6 +112,25 @@ func (w *Workspace) FocusRight() bool {
 	return true
 }
 
+func (w *Workspace) FocusFirst() bool {
+	if w.focused <= 0 || len(w.columns) == 0 {
+		return false
+	}
+	w.focused = 0
+	w.revealFocused()
+	return true
+}
+
+func (w *Workspace) FocusLast() bool {
+	last := len(w.columns) - 1
+	if last < 0 || w.focused == last {
+		return false
+	}
+	w.focused = last
+	w.revealFocused()
+	return true
+}
+
 // MoveLeft swaps the focused column with the one to its left.
 func (w *Workspace) MoveLeft() bool {
 	if w.focused <= 0 {
@@ -130,15 +153,46 @@ func (w *Workspace) MoveRight() bool {
 	return true
 }
 
+func (w *Workspace) MoveFirst() bool {
+	if w.focused <= 0 {
+		return false
+	}
+	column := w.columns[w.focused]
+	copy(w.columns[1:w.focused+1], w.columns[:w.focused])
+	w.columns[0] = column
+	w.focused = 0
+	w.revealFocused()
+	return true
+}
+
+func (w *Workspace) MoveLast() bool {
+	last := len(w.columns) - 1
+	if w.focused < 0 || w.focused >= last {
+		return false
+	}
+	column := w.columns[w.focused]
+	copy(w.columns[w.focused:last], w.columns[w.focused+1:])
+	w.columns[last] = column
+	w.focused = last
+	w.revealFocused()
+	return true
+}
+
 // WindowOrder returns a copy of the strip's window order.
-func (w *Workspace) WindowOrder() []uint64 { return append([]uint64(nil), w.columns...) }
+func (w *Workspace) WindowOrder() []uint64 {
+	order := make([]uint64, len(w.columns))
+	for index, column := range w.columns {
+		order[index] = column.id
+	}
+	return order
+}
 
 // FocusedWindow returns the active column's window, if one exists.
 func (w *Workspace) FocusedWindow() (uint64, bool) {
 	if w.focused < 0 || w.focused >= len(w.columns) {
 		return 0, false
 	}
-	return w.columns[w.focused], true
+	return w.columns[w.focused].id, true
 }
 
 // FocusWindow focuses the column containing id.
@@ -152,33 +206,62 @@ func (w *Workspace) FocusWindow(id uint64) bool {
 	return true
 }
 
+// ResizeWindow retains a column's width and its window's height at the grabbed
+// position, matching pointer resize grabs.
+func (w *Workspace) ResizeWindow(id uint64, x, y, width, height int) bool {
+	idx := w.indexOf(id)
+	if idx < 0 || width < 1 || height < 1 {
+		return false
+	}
+	column := &w.columns[idx]
+	column.width = width
+	if width == w.columnWidth {
+		column.width = 0
+	}
+	column.height = height
+	if height == w.defaultWindowHeight() {
+		column.height = 0
+	}
+	column.yOffset = y - (w.bounds.Y + w.verticalInset())
+	w.viewOffset = w.bounds.X + w.columnStart(idx) - x
+	w.revealFocused()
+	return true
+}
+
 // Placement returns a window's current tile in output layout coordinates.
 func (w *Workspace) Placement(id uint64) (Placement, bool) {
 	idx := w.indexOf(id)
 	if idx < 0 {
 		return Placement{}, false
 	}
-	x := idx * (w.columnWidth + w.gap)
+	column := w.columns[idx]
+	inset := w.verticalInset()
 	return Placement{
-		ID: id, X: w.bounds.X + x - w.viewOffset, Y: w.bounds.Y,
-		Width: w.columnWidth, Height: w.bounds.Height,
+		ID: id, X: w.bounds.X + w.columnStart(idx) - w.viewOffset,
+		Y:     w.bounds.Y + inset + column.yOffset,
+		Width: w.columnWidthAt(idx), Height: w.windowHeightAt(idx),
 	}, true
 }
 
 // Placements returns tiles in column order.
 func (w *Workspace) Placements() []Placement {
 	placements := make([]Placement, 0, len(w.columns))
-	for _, id := range w.columns {
-		if p, ok := w.Placement(id); ok {
-			placements = append(placements, p)
-		}
+	inset := w.verticalInset()
+	for index, column := range w.columns {
+		placements = append(placements, Placement{
+			ID: column.id, X: w.bounds.X + w.columnStart(index) - w.viewOffset,
+			Y:     w.bounds.Y + inset + column.yOffset,
+			Width: w.columnWidthAt(index), Height: w.windowHeightAt(index),
+		})
 	}
 	return placements
 }
 
+// ponytail: keep order as the source of truth with O(n) ID lookups; add an
+// ID-to-index map only if measured workspace sizes make mutation scans costly.
 func (w *Workspace) indexOf(id uint64) int {
 	for i, candidate := range w.columns {
-		if candidate == id {
+		if candidate.id == id {
 			return i
 		}
 	}
@@ -190,14 +273,48 @@ func (w *Workspace) revealFocused() {
 		w.viewOffset = 0
 		return
 	}
-	left := w.focused * (w.columnWidth + w.gap)
-	right := left + w.columnWidth
-	if left < w.viewOffset {
+	left := w.columnStart(w.focused)
+	width := w.columnWidthAt(w.focused)
+	right := left + width
+	if width >= w.bounds.Width {
 		w.viewOffset = left
-	} else if right > w.viewOffset+w.bounds.Width {
-		w.viewOffset = right - w.bounds.Width
+		return
 	}
-	if w.viewOffset < 0 {
-		w.viewOffset = 0
+	padding := min(w.gap, (w.bounds.Width-width)/2)
+	if left-w.viewOffset < padding {
+		w.viewOffset = left - padding
+	} else if right-w.viewOffset > w.bounds.Width-padding {
+		w.viewOffset = right - (w.bounds.Width - padding)
 	}
+}
+
+func (w *Workspace) columnStart(index int) int {
+	start := 0
+	for i := 0; i < index; i++ {
+		start += w.columnWidthAt(i) + w.gap
+	}
+	return start
+}
+
+func (w *Workspace) columnWidthAt(index int) int {
+	if w.columns[index].width > 0 {
+		return w.columns[index].width
+	}
+	return w.columnWidth
+}
+
+func (w *Workspace) verticalInset() int {
+	return min(w.gap, max(0, (w.bounds.Height-1)/2))
+}
+
+func (w *Workspace) defaultWindowHeight() int {
+	inset := w.verticalInset()
+	return max(0, w.bounds.Height-2*inset)
+}
+
+func (w *Workspace) windowHeightAt(index int) int {
+	if w.columns[index].height > 0 {
+		return w.columns[index].height
+	}
+	return w.defaultWindowHeight()
 }

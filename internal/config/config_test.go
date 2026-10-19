@@ -64,14 +64,98 @@ func TestParseReportsUnappliedBindActions(t *testing.T) {
 	cfg, err := Parse("bindings.kdl", []byte(`
 binds {
     Mod+Q { close-window; spawn "kitty"; }
-    Mod+W { close-window; }
+    Mod+W { focus-workspace-down; }
 }
 `))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(cfg.UnappliedActions, []string{"close-window", "spawn"}) {
+	if !reflect.DeepEqual(cfg.UnappliedActions, []string{"focus-workspace-down"}) {
 		t.Fatalf("unapplied actions = %q, want unique action names in source order", cfg.UnappliedActions)
+	}
+	if len(cfg.Binds) != 1 || len(cfg.Binds[0].Actions) != 2 {
+		t.Fatalf("applied binds = %+v, want only the supported close and spawn actions", cfg.Binds)
+	}
+}
+
+func TestParseM5SettingsAndBinds(t *testing.T) {
+	cfg, err := Parse("m5.kdl", []byte(`
+input {
+    mod-key "Alt"
+    mod-key-nested "Super"
+    keyboard { xkb { layout "us"; }; }
+}
+layout {
+    gaps 16
+    default-column-width { proportion 0.5; }
+}
+cursor {
+    xcursor-theme "Adwaita"
+    xcursor-size 28
+}
+binds {
+    Mod+Q repeat=false { close-window; }
+    Mod+Return { spawn "kitty" "--class" "test"; }
+    Mod+Ctrl+L { move-column-right; }
+    Mod+1 { focus-workspace 1; }
+    Mod+O { toggle-overview; }
+}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Input.ModKey != "Alt" || cfg.Input.ModKeyNested != "Super" {
+		t.Errorf("input modifier keys = %+v", cfg.Input)
+	}
+	if cfg.Layout.Gaps != 16 || cfg.Layout.ColumnWidthProportion != 0.5 {
+		t.Errorf("layout sizing = %+v", cfg.Layout)
+	}
+	if cfg.Cursor.Theme != "Adwaita" || cfg.Cursor.Size != 28 {
+		t.Errorf("cursor = %+v", cfg.Cursor)
+	}
+	if len(cfg.Binds) != 4 || cfg.Binds[1].Actions[0].Args[0] != "kitty" || cfg.Binds[3].Actions[0].WorkspaceIndex != 1 {
+		t.Errorf("applied binds = %+v", cfg.Binds)
+	}
+	if !reflect.DeepEqual(cfg.UnappliedActions, []string{"toggle-overview"}) {
+		t.Errorf("unapplied actions = %q, want toggle-overview", cfg.UnappliedActions)
+	}
+}
+
+func TestParseRejectsMalformedM5Binds(t *testing.T) {
+	for src, want := range map[string]string{
+		`binds {
+    Mod+Bogus+H { close-window; }
+}`: "invalid modifier",
+		`binds {
+    Mod+Q { spawn; }
+}`: "spawn needs a command",
+		`input {
+    mod-key "Meta"
+}`: "invalid modifier",
+		`layout {
+    gaps -1
+}`: "from 0 to",
+		`cursor {
+    xcursor-size 256
+}`: "from 0 to 255",
+	} {
+		if _, err := Parse("m5-invalid.kdl", []byte(src)); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("Parse(%q) error = %v, want %q", src, err, want)
+		}
+	}
+}
+
+func TestParseKeepsSupportedActionsOnUnsupportedTriggersVisible(t *testing.T) {
+	cfg, err := Parse("scroll.kdl", []byte(`
+binds {
+    Mod+WheelScrollLeft { focus-column-left; }
+}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Binds) != 0 || !reflect.DeepEqual(cfg.UnappliedActions, []string{"focus-column-left"}) {
+		t.Fatalf("binds = %+v, unapplied = %q; want no applied wheel bind and a visible action warning", cfg.Binds, cfg.UnappliedActions)
 	}
 }
 

@@ -7,7 +7,9 @@ package wlr
 #include <stdlib.h>
 
 #include <wlr/backend.h>
+#include <wlr/backend/multi.h>
 #include <wlr/backend/session.h>
+#include <wlr/backend/wayland.h>
 #include <wlr/render/allocator.h>
 #include <wlr/render/wlr_renderer.h>
 #include <wlr/types/wlr_compositor.h>
@@ -40,6 +42,26 @@ const uint32_t sysc_xdg_version = 7;
 const uint32_t sysc_layer_shell_version = 5;
 const uint32_t sysc_dmabuf_version = 5;
 
+// The automatically selected backend can wrap a nested Wayland backend in a
+// multi-backend, so inspect its children before choosing the nested Mod key.
+static void sysc_backend_find_wayland(struct wlr_backend *backend, void *data) {
+	bool *nested = data;
+	if (*nested) {
+		return;
+	}
+	if (wlr_backend_is_wl(backend)) {
+		*nested = true;
+	} else if (wlr_backend_is_multi(backend)) {
+		wlr_multi_for_each_backend(backend, sysc_backend_find_wayland, data);
+	}
+}
+
+static bool sysc_backend_is_nested(struct wlr_backend *backend) {
+	bool nested = false;
+	sysc_backend_find_wayland(backend, &nested);
+	return nested;
+}
+
 // The scene sends each surface its output's fractional scale itself
 // (types/scene/surface.c in 0.20), so the manager needs nothing else.
 static bool sysc_fractional_scale_create(struct wl_display *display) {
@@ -65,6 +87,9 @@ import (
 	"errors"
 	"time"
 	"unsafe"
+
+	"github.com/Nomadcxx/sysc-compositor/internal/bind"
+	"github.com/Nomadcxx/sysc-compositor/internal/wm"
 )
 
 // Compositor holds the wlroots object graph for one running server. Every
@@ -116,7 +141,11 @@ type Compositor struct {
 	capabilities           int
 	// drawnImage is the xcursor name the compositor last drew, or "" while
 	// a client's surface is the image. wlroots keeps its own copy private.
-	drawnImage string
+	drawnImage                     string
+	cursorSurface                  *C.struct_wlr_surface
+	cursorHotspotX, cursorHotspotY int
+	cursorSurfaceDestroy           *Listener
+	cursorClientSet                bool
 	// focusOriginX/Y is where the user seat's focused surface starts in
 	// layout coordinates, as of the last motion outside an implicit grab.
 	focusOriginX, focusOriginY C.double
@@ -141,6 +170,15 @@ type Compositor struct {
 	// post carries work from other goroutines onto the compositor thread.
 	post postQueue
 
+	model         *wm.Model
+	bindings      []bind.Binding
+	modKey        bind.Modifier
+	layoutOptions LayoutOptions
+	cursorTheme   string
+	cursorSize    int
+	spawn         func([]string) error
+	spawnSh       func(string) error
+
 	// nextViewID and touchCount give windows stable ids and a
 	// most-recently-focused order for the control socket.
 	nextViewID uint64
@@ -149,7 +187,19 @@ type Compositor struct {
 
 // Options are the settings a compositor starts with.
 type Options struct {
-	Keyboard Keyboard
+	Keyboard     Keyboard
+	ModKey       string
+	ModKeyNested string
+	Layout       *LayoutOptions
+	CursorTheme  string
+	CursorSize   int
+	Binds        []bind.Binding
+}
+
+type LayoutOptions struct {
+	Gaps                  int
+	ColumnWidthProportion float64
+	FixedColumnWidth      int
 }
 
 // New is NewWith niri's defaults.
@@ -161,6 +211,18 @@ func New() (*Compositor, error) { return NewWith(Options{}) }
 // set before that.
 func NewWith(opts Options) (*Compositor, error) {
 	c := &Compositor{}
+	c.model = wm.New()
+	c.layoutOptions = LayoutOptions{Gaps: 16, ColumnWidthProportion: 0.5}
+	if opts.Layout != nil {
+		c.layoutOptions = *opts.Layout
+	}
+	c.cursorTheme, c.cursorSize = opts.CursorTheme, opts.CursorSize
+	if c.cursorTheme == "" {
+		c.cursorTheme = "default"
+	}
+	if c.cursorSize <= 0 {
+		c.cursorSize = 24
+	}
 
 	c.display = C.wl_display_create()
 	if c.display == nil {
@@ -193,6 +255,15 @@ func NewWith(opts Options) (*Compositor, error) {
 	c.backend = C.wlr_backend_autocreate(c.loop, &c.session)
 	if c.backend == nil {
 		return nil, errors.New("wlr_backend_autocreate failed")
+	}
+	var err error
+	c.modKey, err = bind.ResolveModKey(opts.ModKey, opts.ModKeyNested, bool(C.sysc_backend_is_nested(c.backend)))
+	if err != nil {
+		return nil, err
+	}
+	c.bindings = append([]bind.Binding(nil), opts.Binds...)
+	for i := range c.bindings {
+		c.bindings[i].Chord = c.bindings[i].Chord.ResolveMod(c.modKey)
 	}
 
 	c.renderer = C.wlr_renderer_autocreate(c.backend)
@@ -287,6 +358,21 @@ func (c *Compositor) SocketName() string { return c.socketName }
 func (c *Compositor) SetStateChanged(fn func()) {
 	c.stateChanged = fn
 	c.refreshState()
+}
+
+// SetSpawnHandlers runs KDL spawn actions through the server's child process
+// environment. The handlers run on the compositor thread.
+func (c *Compositor) SetSpawnHandlers(spawn func([]string) error, spawnSh func(string) error) {
+	c.spawn, c.spawnSh = spawn, spawnSh
+}
+
+// WorkspaceSnapshot copies model state to plain Go values on the compositor
+// thread, for the server's immutable IPC snapshots.
+func (c *Compositor) WorkspaceSnapshot() wm.Snapshot {
+	if c.model == nil {
+		return wm.Snapshot{}
+	}
+	return c.model.Snapshot()
 }
 
 func (c *Compositor) notifyStateChanged() {

@@ -327,6 +327,7 @@ func (c *Compositor) arrangeLayers(output unsafe.Pointer) {
 		}
 	}
 	c.usable[output] = rect{int(usable.x), int(usable.y), int(usable.width), int(usable.height)}
+	c.syncWorkspaceOutput(output)
 }
 
 // closeOutputLayers tells every layer surface on an output that is going away

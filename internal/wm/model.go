@@ -81,6 +81,16 @@ func (m *Model) AddOutput(name string, bounds layout.Bounds, columnWidth, gap in
 	if m.focusedOutput == "" {
 		m.focusedOutput = name
 	}
+	var orphaned []uint64
+	for id, state := range m.windows {
+		if state.workspaceID == 0 {
+			orphaned = append(orphaned, id)
+		}
+	}
+	slices.Sort(orphaned)
+	for _, id := range orphaned {
+		m.mapWindow(id, name)
+	}
 	return true
 }
 
@@ -206,6 +216,24 @@ func (m *Model) FocusWindow(id uint64) bool {
 	return false
 }
 
+// ResizeWindow retains a pointer-resized tile's geometry in its workspace.
+func (m *Model) ResizeWindow(id uint64, x, y, width, height int) bool {
+	state, ok := m.windows[id]
+	if !ok {
+		return false
+	}
+	out := m.outputs[state.output]
+	if out == nil {
+		return false
+	}
+	for _, workspace := range out.workspaces {
+		if workspace.id == state.workspaceID {
+			return workspace.strip.ResizeWindow(id, x, y, width, height)
+		}
+	}
+	return false
+}
+
 // FocusOutput selects which output owns the global keyboard focus.
 func (m *Model) FocusOutput(name string) bool {
 	if m.outputs[name] == nil {
@@ -238,17 +266,42 @@ func (m *Model) FocusWorkspace(output string, index uint8) bool {
 	return true
 }
 
+// FocusWorkspaceID activates a workspace resolved from the compositor's
+// stable workspace IDs, as used by Niri IPC actions.
+func (m *Model) FocusWorkspaceID(id uint64) bool {
+	for _, output := range m.outputs {
+		for index, workspace := range output.workspaces {
+			if workspace.id != id {
+				continue
+			}
+			output.active = index
+			m.focusedOutput = output.name
+			m.reconcile(output)
+			return true
+		}
+	}
+	return false
+}
+
 // FocusColumnLeft focuses the preceding column on the active workspace.
 func (m *Model) FocusColumnLeft() bool { return m.activeStripAction((*layout.Workspace).FocusLeft) }
 
 // FocusColumnRight focuses the following column on the active workspace.
 func (m *Model) FocusColumnRight() bool { return m.activeStripAction((*layout.Workspace).FocusRight) }
 
+func (m *Model) FocusColumnFirst() bool { return m.activeStripAction((*layout.Workspace).FocusFirst) }
+
+func (m *Model) FocusColumnLast() bool { return m.activeStripAction((*layout.Workspace).FocusLast) }
+
 // MoveColumnLeft moves the focused column before its left neighbor.
 func (m *Model) MoveColumnLeft() bool { return m.activeStripAction((*layout.Workspace).MoveLeft) }
 
 // MoveColumnRight moves the focused column after its right neighbor.
 func (m *Model) MoveColumnRight() bool { return m.activeStripAction((*layout.Workspace).MoveRight) }
+
+func (m *Model) MoveColumnToFirst() bool { return m.activeStripAction((*layout.Workspace).MoveFirst) }
+
+func (m *Model) MoveColumnToLast() bool { return m.activeStripAction((*layout.Workspace).MoveLast) }
 
 func (m *Model) activeStripAction(action func(*layout.Workspace) bool) bool {
 	out := m.outputs[m.focusedOutput]
@@ -274,9 +327,17 @@ func (m *Model) Snapshot() Snapshot {
 	for _, name := range names {
 		out := m.outputs[name]
 		for i, workspace := range out.workspaces {
-			windowIDs := workspace.strip.WindowOrder()
+			index := i + 1
+			if index > 255 {
+				index = 255
+			}
+			placements := workspace.strip.Placements()
+			windowIDs := make([]uint64, len(placements))
+			for column, placement := range placements {
+				windowIDs[column] = placement.ID
+			}
 			workspaceSnapshot := WorkspaceSnapshot{
-				ID: workspace.id, Index: uint8(i + 1), Output: name,
+				ID: workspace.id, Index: uint8(index), Output: name,
 				IsActive:  i == out.active,
 				IsFocused: name == m.focusedOutput && i == out.active,
 				WindowIDs: windowIDs,
@@ -285,13 +346,9 @@ func (m *Model) Snapshot() Snapshot {
 				workspaceSnapshot.ActiveWindowID = &id
 			}
 			snapshot.Workspaces = append(snapshot.Workspaces, workspaceSnapshot)
-			for column, id := range windowIDs {
-				placement, ok := workspace.strip.Placement(id)
-				if !ok {
-					continue
-				}
+			for column, placement := range placements {
 				snapshot.Windows = append(snapshot.Windows, WindowSnapshot{
-					ID: id, Output: name, WorkspaceID: workspace.id,
+					ID: placement.ID, Output: name, WorkspaceID: workspace.id,
 					Column: uint32(column), Tile: placement,
 				})
 			}

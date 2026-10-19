@@ -15,10 +15,14 @@ import (
 // Every test here reaches wlroots, so each one owns the OS thread the way
 // cmd/sysc-compositor does.
 func newNested(t *testing.T) *Compositor {
+	return newNestedWith(t, Options{})
+}
+
+func newNestedWith(t *testing.T, opts Options) *Compositor {
 	t.Helper()
 	runtime.LockOSThread()
 	t.Cleanup(runtime.UnlockOSThread)
-	c, err := New()
+	c, err := NewWith(opts)
 	if err != nil {
 		t.Skipf("no nested wayland session available: %v", err)
 	}

@@ -18,9 +18,10 @@ import (
 )
 
 var (
-	reSeatName = regexp.MustCompile(`wl_seat#(\d+)\.name\("([^"]+)"\)`)
-	reKeyboard = regexp.MustCompile(`wl_seat#(\d+)\.get_keyboard\(new id wl_keyboard#(\d+)\)`)
-	reKey      = regexp.MustCompile(`\} wl_keyboard#(\d+)\.key\(\d+, \d+, (\d+), (\d+)\)`)
+	reSeatName      = regexp.MustCompile(`wl_seat#(\d+)\.name\("([^"]+)"\)`)
+	reKeyboard      = regexp.MustCompile(`wl_seat#(\d+)\.get_keyboard\(new id wl_keyboard#(\d+)\)`)
+	reKeyboardEnter = regexp.MustCompile(`wl_keyboard#(\d+)\.enter\(`)
+	reKey           = regexp.MustCompile(`\} wl_keyboard#(\d+)\.key\(\d+, \d+, (\d+), (\d+)\)`)
 )
 
 // keysBySeat attributes each wl_keyboard.key event a client logged to the
@@ -74,16 +75,29 @@ func TestControlDrivesAClient(t *testing.T) {
 		lines []string
 	)
 	typed := make(chan struct{})
-	var once sync.Once
+	agentEntered := make(chan struct{})
+	var once, enteredOnce sync.Once
 	readerDone := make(chan struct{})
 	go func() {
 		defer close(readerDone)
 		scanner := bufio.NewScanner(reader)
+		seatNames, keyboardSeats := map[string]string{}, map[string]string{}
 		for scanner.Scan() {
+			line := scanner.Text()
 			mu.Lock()
-			lines = append(lines, scanner.Text())
+			lines = append(lines, line)
 			mu.Unlock()
-			if strings.Contains(scanner.Text(), ".key(") && strings.HasSuffix(scanner.Text(), ", 30, 0)") {
+			if match := reSeatName.FindStringSubmatch(line); match != nil {
+				seatNames[match[1]] = match[2]
+			}
+			if match := reKeyboard.FindStringSubmatch(line); match != nil {
+				keyboardSeats[match[2]] = match[1]
+			}
+			if match := reKeyboardEnter.FindStringSubmatch(line); match != nil &&
+				seatNames[keyboardSeats[match[1]]] == injectedSeatName {
+				enteredOnce.Do(func() { close(agentEntered) })
+			}
+			if strings.Contains(line, ".key(") && strings.HasSuffix(line, ", 30, 0)") {
 				once.Do(func() { close(typed) })
 			}
 		}
@@ -101,7 +115,7 @@ func TestControlDrivesAClient(t *testing.T) {
 	clientDone := make(chan error, 1)
 	go func() {
 		defer s.Terminate()
-		clientDone <- drive(path, typed, &steps)
+		clientDone <- drive(path, typed, agentEntered, &steps)
 	}()
 	watchdog := time.AfterFunc(10*time.Second, s.Terminate)
 	if err := s.Run(); err != nil {
@@ -114,7 +128,16 @@ func TestControlDrivesAClient(t *testing.T) {
 	<-readerDone
 
 	if err := <-clientDone; err != nil {
-		t.Fatalf("%v\nsteps: %v", err, steps)
+		mu.Lock()
+		observedKeys := keysBySeat(lines)
+		var keyboardEvents []string
+		for _, line := range lines {
+			if strings.Contains(line, "wl_keyboard#") {
+				keyboardEvents = append(keyboardEvents, line)
+			}
+		}
+		mu.Unlock()
+		t.Fatalf("%v\nsteps: %v\nkeys: %v\nkeyboard events: %v", err, steps, observedKeys, keyboardEvents)
 	}
 	mu.Lock()
 	keys := keysBySeat(lines)
@@ -127,8 +150,8 @@ func TestControlDrivesAClient(t *testing.T) {
 	}
 }
 
-// drive is the client side: it waits for the window, then drives it.
-func drive(path string, typed <-chan struct{}, steps *[]string) error {
+// drive waits for the window and injected keyboard focus before driving it.
+func drive(path string, typed, agentEntered <-chan struct{}, steps *[]string) error {
 	conn, err := net.Dial("unix", path)
 	if err != nil {
 		return err
@@ -168,16 +191,24 @@ func drive(path string, typed <-chan struct{}, steps *[]string) error {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
+	*steps = append(*steps, fmt.Sprintf("target=%+v", target))
 	for _, req := range []control.Request{
 		{Verb: "attach", Name: "test"},
 		{Verb: "point", Target: fmt.Sprintf("id:%d", target.ID), X: float64(target.Width / 2), Y: float64(target.Height / 2)},
 		{Verb: "button", Button: "left", Pressed: true},
 		{Verb: "button", Button: "left", Pressed: false},
-		{Verb: "type", Text: "a"},
 	} {
 		if rep, err := call(req); err != nil || !rep.OK {
 			return fmt.Errorf("%s: %+v %v", req.Verb, rep, err)
 		}
+	}
+	select {
+	case <-agentEntered:
+	case <-time.After(3 * time.Second):
+		return fmt.Errorf("the client never entered the agent keyboard")
+	}
+	if rep, err := call(control.Request{Verb: "type", Text: "a"}); err != nil || !rep.OK {
+		return fmt.Errorf("type: %+v %v", rep, err)
 	}
 	select {
 	case <-typed:
