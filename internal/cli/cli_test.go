@@ -103,6 +103,32 @@ func TestMsgSendsWhatNiriMsgSends(t *testing.T) {
 	}
 }
 
+func TestMsgSendsM4WindowActions(t *testing.T) {
+	socket, requests := fakeNiri(t)
+	for _, args := range [][]string{
+		{"action", "focus-window", "--id", "42"},
+		{"action", "close-window", "--id", "42"},
+		{"action", "close-window"},
+		{"action", "focus-workspace", "2"},
+		{"action", "focus-workspace", "main"},
+	} {
+		if code, _, stderr := runMsg(socket, args...); code != 0 {
+			t.Errorf("%v: exit %d: %s", args, code, stderr)
+		}
+	}
+	focusID, closeID, workspaceIndex, workspaceName := uint64(42), uint64(42), uint8(2), "main"
+	want := []ipc.Request{
+		{Name: "Action", Action: &ipc.Action{Name: "FocusWindow", WindowID: &focusID}},
+		{Name: "Action", Action: &ipc.Action{Name: "CloseWindow", WindowID: &closeID}},
+		{Name: "Action", Action: &ipc.Action{Name: "CloseWindow"}},
+		{Name: "Action", Action: &ipc.Action{Name: "FocusWorkspace", Workspace: &ipc.WorkspaceReference{Index: &workspaceIndex}}},
+		{Name: "Action", Action: &ipc.Action{Name: "FocusWorkspace", Workspace: &ipc.WorkspaceReference{Name: &workspaceName}}},
+	}
+	if got := requests(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("server saw %+v, want %+v", got, want)
+	}
+}
+
 func TestMsgVersionAndErrors(t *testing.T) {
 	socket, _ := fakeNiri(t)
 	if code, out, _ := runMsg(socket, "--json", "version"); code != 0 || !strings.Contains(out, `"compositor":"fake 1"`) {
@@ -115,7 +141,9 @@ func TestMsgVersionAndErrors(t *testing.T) {
 		t.Errorf("no socket: exit %d, %q", code, stderr)
 	}
 	for _, args := range [][]string{
-		{"outputs", "unexpected"}, {"action", "focus-workspace", "2"}, {"action", "spawn", "kitty"},
+		{"outputs", "unexpected"}, {"action", "focus-workspace"}, {"action", "focus-window"}, {"action", "spawn", "kitty"},
+		{"action", "focus-window", "--id", "bad"}, {"action", "focus-window", "--id", "42", "extra"},
+		{"action", "close-window", "--id", "bad"}, {"action", "focus-workspace", "256"},
 		{"action", "spawn-sh", "--", "a", "b"}, {"action", "quit", "--now"}, {},
 	} {
 		if code, _, _ := runMsg(socket, args...); code != 2 {

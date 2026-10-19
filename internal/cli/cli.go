@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -304,8 +305,7 @@ func onlyArgs(rest []string) error {
 	return nil
 }
 
-// parseAction follows niri's clap rules: spawn and spawn-sh take their
-// command after `--`; quit takes -s/--skip-confirmation.
+// parseAction follows niri's CLI shape for the actions built so far.
 func parseAction(args []string) (ipc.Action, error) {
 	if len(args) == 0 {
 		return ipc.Action{}, errors.New("an action is required")
@@ -338,8 +338,48 @@ func parseAction(args []string) (ipc.Action, error) {
 			return ipc.Action{}, err
 		}
 		return ipc.Action{Name: "SpawnSh", ShellCommand: command[0]}, nil
+	case "focus-window":
+		id, err := parseWindowID(args[1:], true)
+		return ipc.Action{Name: "FocusWindow", WindowID: id}, err
+	case "close-window":
+		id, err := parseWindowID(args[1:], false)
+		return ipc.Action{Name: "CloseWindow", WindowID: id}, err
+	case "focus-workspace":
+		if len(args) != 2 {
+			return ipc.Action{}, errors.New("focus-workspace needs an index or name")
+		}
+		reference, err := parseWorkspaceReference(args[1])
+		return ipc.Action{Name: "FocusWorkspace", Workspace: reference}, err
 	}
 	return ipc.Action{}, fmt.Errorf("action %s: %w", args[0], errNotBuilt)
+}
+
+func parseWindowID(args []string, required bool) (*uint64, error) {
+	if len(args) == 0 && !required {
+		return nil, nil
+	}
+	if len(args) != 2 || args[0] != "--id" {
+		return nil, errors.New("expected --id <window-id>")
+	}
+	id, err := strconv.ParseUint(args[1], 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("invalid window ID %q", args[1])
+	}
+	return &id, nil
+}
+
+func parseWorkspaceReference(value string) (*ipc.WorkspaceReference, error) {
+	if value == "" {
+		return nil, errors.New("workspace reference cannot be empty")
+	}
+	if index, err := strconv.ParseInt(value, 10, 32); err == nil {
+		if index < 0 || index > 255 {
+			return nil, errors.New("workspace index must be between 0 and 255")
+		}
+		value := uint8(index)
+		return &ipc.WorkspaceReference{Index: &value}, nil
+	}
+	return &ipc.WorkspaceReference{Name: &value}, nil
 }
 
 // send writes one request and reads its reply.

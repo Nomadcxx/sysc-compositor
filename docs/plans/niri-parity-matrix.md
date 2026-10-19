@@ -131,10 +131,11 @@ Acceptance file: `/home/nomadx/.config/niri/config.kdl` + `sysc-shell.kdl`. Pars
 |---|---|---|
 | `niri` / `sysc-compositor` no args / `--session` | [ ] | M0 binary; `--session` M9 |
 | `-c` / `--config` | [x] | M2 (+ `$NIRI_CONFIG`, XDG, `/etc/niri`) |
-| `niri msg` / `sysc-compositor msg` | [~] | M2: `version`, `request-error`, `action quit/spawn/spawn-sh`, `--json`; niri 26.04's own `niri msg` also works against our socket |
+| `niri msg` / `sysc-compositor msg` | [~] | M2: `version`, `request-error`, `action quit/spawn/spawn-sh`, `--json`; M4 adds `focus-window`, `close-window`, and `focus-workspace`; niri 26.04's own `niri msg` also works against our socket |
 | `niri validate` | [x] | M3 command and parser accept the laptop config; unapplied sections warn |
 | `niri msg action spawn` | [x] | M2 (sysc-launch L0) |
 | `niri msg action quit --skip-confirmation` | [x] | M2 (sysc-greet) |
+| `niri msg action focus-window --id`, `close-window [--id]`, `focus-workspace <index|name>` | [x] | M4; laptop-tested against mapped windows and the current output workspace |
 
 ## D-Bus
 
