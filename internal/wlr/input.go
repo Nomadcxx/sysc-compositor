@@ -578,27 +578,22 @@ func (c *Compositor) resizeEdgesAt(view *toplevelView) uint32 {
 	if view == nil || c.model == nil {
 		return 0
 	}
-	for _, window := range c.model.Snapshot().Windows {
-		if window.ID != view.id {
-			continue
-		}
-		bounds := window.Tile
-		x := (float64(c.cursor.x) - float64(bounds.X)) / float64(max(bounds.Width, 1))
-		y := (float64(c.cursor.y) - float64(bounds.Y)) / float64(max(bounds.Height, 1))
-		var edges uint32
-		if x < 1.0/3.0 {
-			edges |= edgeLeft
-		} else if x > 2.0/3.0 {
-			edges |= edgeRight
-		}
-		if y < 1.0/3.0 {
-			edges |= edgeTop
-		} else if y > 2.0/3.0 {
-			edges |= edgeBottom
-		}
-		return edges
+	x, y := view.treePosition()
+	geometry := view.geometry()
+	fx := (float64(c.cursor.x) - float64(x)) / float64(max(geometry.w, 1))
+	fy := (float64(c.cursor.y) - float64(y)) / float64(max(geometry.h, 1))
+	var edges uint32
+	if fx < 1.0/3.0 {
+		edges |= edgeLeft
+	} else if fx > 2.0/3.0 {
+		edges |= edgeRight
 	}
-	return 0
+	if fy < 1.0/3.0 {
+		edges |= edgeTop
+	} else if fy > 2.0/3.0 {
+		edges |= edgeBottom
+	}
+	return edges
 }
 
 func resizeCursorName(edges uint32) string {
@@ -727,6 +722,9 @@ func (c *Compositor) handleNewToplevel(data unsafe.Pointer) {
 			// Niri activates newly mapped windows (ActivateWindow::Smart); its
 			// dialog and activation-token heuristics come with M5.
 			c.focusView(view)
+		}
+		if c.syncWorkspaceWindowSizeHints(view) {
+			c.applyWorkspaceModel()
 		}
 		c.notifyWindowStateChanged()
 		if newlyMapped && c.viewMapped != nil {

@@ -15,6 +15,10 @@ type Placement struct {
 type columnState struct {
 	id            uint64
 	width, height int
+	minWidth      int
+	maxWidth      int
+	minHeight     int
+	maxHeight     int
 	yOffset       int
 }
 
@@ -206,6 +210,25 @@ func (w *Workspace) FocusWindow(id uint64) bool {
 	return true
 }
 
+// SetWindowSizeHints records the xdg-toplevel size bounds for one window.
+func (w *Workspace) SetWindowSizeHints(id uint64, minWidth, maxWidth, minHeight, maxHeight int) bool {
+	idx := w.indexOf(id)
+	if idx < 0 {
+		return false
+	}
+	column := &w.columns[idx]
+	minWidth, maxWidth = max(0, minWidth), max(0, maxWidth)
+	minHeight, maxHeight = max(0, minHeight), max(0, maxHeight)
+	if column.minWidth == minWidth && column.maxWidth == maxWidth &&
+		column.minHeight == minHeight && column.maxHeight == maxHeight {
+		return false
+	}
+	column.minWidth, column.maxWidth = minWidth, maxWidth
+	column.minHeight, column.maxHeight = minHeight, maxHeight
+	w.revealFocused()
+	return true
+}
+
 // ResizeWindow retains a column's width and its window's height at the grabbed
 // position, matching pointer resize grabs.
 func (w *Workspace) ResizeWindow(id uint64, x, y, width, height int) bool {
@@ -297,10 +320,12 @@ func (w *Workspace) columnStart(index int) int {
 }
 
 func (w *Workspace) columnWidthAt(index int) int {
-	if w.columns[index].width > 0 {
-		return w.columns[index].width
+	column := w.columns[index]
+	width := w.columnWidth
+	if column.width > 0 {
+		width = column.width
 	}
-	return w.columnWidth
+	return clampSizeHint(width, column.minWidth, column.maxWidth)
 }
 
 func (w *Workspace) verticalInset() int {
@@ -313,8 +338,25 @@ func (w *Workspace) defaultWindowHeight() int {
 }
 
 func (w *Workspace) windowHeightAt(index int) int {
-	if w.columns[index].height > 0 {
-		return w.columns[index].height
+	column := w.columns[index]
+	height := w.defaultWindowHeight()
+	if column.height > 0 {
+		height = column.height
 	}
-	return w.defaultWindowHeight()
+	return clampSizeHint(height, column.minHeight, column.maxHeight)
+}
+
+func clampSizeHint(size, minSize, maxSize int) int {
+	if minSize <= 0 && maxSize <= 0 {
+		return size
+	}
+	minSize = max(1, minSize)
+	if maxSize > 0 && maxSize < minSize {
+		maxSize = minSize
+	}
+	size = max(size, minSize)
+	if maxSize > 0 {
+		size = min(size, maxSize)
+	}
+	return size
 }

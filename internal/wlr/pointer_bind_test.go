@@ -74,10 +74,10 @@ func TestNestedModPointerGrabsUseEdgeResizeAndCursorImages(t *testing.T) {
 		if !c.modifierActive(c.modKey) {
 			t.Error("nested Alt is not active as the compositor Mod key")
 		}
-		placement := c.WorkspaceSnapshot().Windows[0].Tile
-		pointer.moveTo(float64(placement.X+1), float64(placement.Y+100))
+		x, y := view.treePosition()
+		pointer.moveTo(float64(x+1), float64(y+1))
 		if got := c.viewAtCursor(); got != view {
-			t.Errorf("view under pointer = %p, want %p at cursor (%f,%f), tile %+v", got, view, c.cursor.x, c.cursor.y, placement)
+			t.Errorf("view under pointer = %p, want %p at cursor (%f,%f)", got, view, c.cursor.x, c.cursor.y)
 		}
 		pointer.button(buttonRight, true)
 		if c.pointerGrab == nil || c.pointerGrab.mode != grabResize {
@@ -97,7 +97,7 @@ func TestNestedModPointerGrabsUseEdgeResizeAndCursorImages(t *testing.T) {
 		if c.drawnImage != "default" {
 			t.Errorf("cursor after resize = %q, want default", c.drawnImage)
 		}
-		pointer.moveTo(float64(placement.X+placement.Width/2), float64(placement.Y+100))
+		pointer.moveTo(c.viewCenter(view))
 		pointer.button(buttonLeft, true)
 		if c.pointerGrab == nil || c.pointerGrab.mode != grabMove || c.drawnImage != "grabbing" {
 			t.Errorf("Mod+LMB grab = (%+v, %q), want move and grabbing cursor", c.pointerGrab, c.drawnImage)

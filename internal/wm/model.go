@@ -30,11 +30,17 @@ type windowSize struct {
 	width, height int
 }
 
+type windowSizeHints struct {
+	minWidth, maxWidth   int
+	minHeight, maxHeight int
+}
+
 // Model tracks M5's single-window columns and dynamic per-output workspaces.
 type Model struct {
 	outputs         map[string]*outputState
 	windows         map[uint64]windowState
 	resizedWindows  map[uint64]windowSize
+	sizeHints       map[uint64]windowSizeHints
 	focusedOutput   string
 	nextWorkspaceID uint64
 }
@@ -72,6 +78,7 @@ func New() *Model {
 		outputs:         map[string]*outputState{},
 		windows:         map[uint64]windowState{},
 		resizedWindows:  map[uint64]windowSize{},
+		sizeHints:       map[uint64]windowSizeHints{},
 		nextWorkspaceID: 1,
 	}
 }
@@ -171,6 +178,9 @@ func (m *Model) mapWindow(id uint64, output string) {
 	workspace := out.workspaces[out.active]
 	workspace.strip.AddWindow(id)
 	m.windows[id] = windowState{output: output, workspaceID: workspace.id}
+	if hints, ok := m.sizeHints[id]; ok {
+		workspace.strip.SetWindowSizeHints(id, hints.minWidth, hints.maxWidth, hints.minHeight, hints.maxHeight)
+	}
 	if size, ok := m.resizedWindows[id]; ok {
 		if placement, ok := workspace.strip.Placement(id); ok {
 			workspace.strip.ResizeWindow(id, placement.X, placement.Y, size.width, size.height)
@@ -210,6 +220,32 @@ func (m *Model) RemoveWindow(id uint64) (uint64, bool) {
 func (m *Model) DestroyWindow(id uint64) {
 	m.RemoveWindow(id)
 	delete(m.resizedWindows, id)
+	delete(m.sizeHints, id)
+}
+
+// SetWindowSizeHints stores the client's min/max size for its tile.
+func (m *Model) SetWindowSizeHints(id uint64, minWidth, maxWidth, minHeight, maxHeight int) bool {
+	if _, ok := m.windows[id]; !ok {
+		return false
+	}
+	hints := windowSizeHints{
+		minWidth: max(0, minWidth), maxWidth: max(0, maxWidth),
+		minHeight: max(0, minHeight), maxHeight: max(0, maxHeight),
+	}
+	if current, ok := m.sizeHints[id]; ok && current == hints {
+		return false
+	}
+	m.sizeHints[id] = hints
+	state := m.windows[id]
+	if out := m.outputs[state.output]; out != nil {
+		for _, workspace := range out.workspaces {
+			if workspace.id == state.workspaceID {
+				workspace.strip.SetWindowSizeHints(id, hints.minWidth, hints.maxWidth, hints.minHeight, hints.maxHeight)
+				return true
+			}
+		}
+	}
+	return true
 }
 
 // FocusWindow activates a window's output workspace and focuses its column.

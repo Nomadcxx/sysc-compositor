@@ -37,6 +37,56 @@ func TestApplyingEmptyWorkspaceActivationNotifiesState(t *testing.T) {
 	}
 }
 
+func TestConstrainedToplevelSizeUpdatesTileAndWindowOffset(t *testing.T) {
+	c := newNested(t)
+	c.viewMapped = func(view *toplevelView) {
+		view.toplevel.current.min_width = 700
+		view.toplevel.current.max_width = 700
+		view.toplevel.current.min_height = 300
+		view.toplevel.current.max_height = 400
+		c.applyWorkspaceModel()
+
+		tile := c.WorkspaceSnapshot().Windows[0].Tile
+		if tile.Width != 700 || tile.Height != 400 {
+			t.Errorf("constrained tile = %dx%d, want 700x400", tile.Width, tile.Height)
+		}
+		if got := [2]int{int(view.toplevel.scheduled.width), int(view.toplevel.scheduled.height)}; got != [2]int{700, 400} {
+			t.Errorf("scheduled client size = %v, want [700 400]", got)
+		}
+		geometry := view.geometry()
+		wantX := tile.X + (tile.Width-geometry.w)/2
+		wantY := tile.Y + (tile.Height-geometry.h)/2
+		if x, y := view.treePosition(); x != wantX || y != wantY {
+			t.Errorf("constrained window position = (%d,%d), want centered (%d,%d)", x, y, wantX, wantY)
+		}
+		view.toplevel.current.max_width = 720
+		c.applyWorkspaceModel()
+		if !c.model.ResizeWindow(view.id, tile.X, tile.Y, 900, 200) {
+			t.Error("could not resize the constrained tile")
+		} else {
+			c.applyWorkspaceModel()
+			tile = c.WorkspaceSnapshot().Windows[0].Tile
+			if tile.Width != 720 || tile.Height != 300 {
+				t.Errorf("resized constrained tile = %dx%d, want 720x300", tile.Width, tile.Height)
+			}
+			if got := [2]int{int(view.toplevel.scheduled.width), int(view.toplevel.scheduled.height)}; got != [2]int{720, 300} {
+				t.Errorf("resized scheduled client size = %v, want [720 300]", got)
+			}
+		}
+		view.toplevel.current.min_width = 750
+		view.toplevel.current.max_width = 650
+		view.toplevel.current.min_height = 350
+		view.toplevel.current.max_height = 250
+		c.applyWorkspaceModel()
+		tile = c.WorkspaceSnapshot().Windows[0].Tile
+		if tile.Width != 750 || tile.Height != 350 {
+			t.Errorf("tile with inconsistent client bounds = %dx%d, want min bounds 750x350", tile.Width, tile.Height)
+		}
+		c.Terminate()
+	}
+	runClient(t, c, []string{"weston-terminal"}, nil, nil)
+}
+
 func TestOutputReconnectRestoresFocusToRemappedWindow(t *testing.T) {
 	c := newNested(t)
 	var mapped *toplevelView
@@ -105,11 +155,17 @@ func TestMappedWindowsUseScrollingColumnPlacements(t *testing.T) {
 			if left.Column != 0 || right.Column != 1 || right.Tile.X <= left.Tile.X {
 				t.Errorf("column placements = %+v and %+v, want ordered visible columns", left, right)
 			}
-			if x, y := first.treePosition(); x != left.Tile.X || y != left.Tile.Y {
-				t.Errorf("first scene position = (%d,%d), want (%d,%d)", x, y, left.Tile.X, left.Tile.Y)
+			firstGeometry := first.geometry()
+			firstX := left.Tile.X + (left.Tile.Width-firstGeometry.w)/2
+			firstY := left.Tile.Y + (left.Tile.Height-firstGeometry.h)/2
+			if x, y := first.treePosition(); x != firstX || y != firstY {
+				t.Errorf("first scene position = (%d,%d), want centered (%d,%d)", x, y, firstX, firstY)
 			}
-			if x, y := second.treePosition(); x != right.Tile.X || y != right.Tile.Y {
-				t.Errorf("second scene position = (%d,%d), want (%d,%d)", x, y, right.Tile.X, right.Tile.Y)
+			secondGeometry := second.geometry()
+			secondX := right.Tile.X + (right.Tile.Width-secondGeometry.w)/2
+			secondY := right.Tile.Y + (right.Tile.Height-secondGeometry.h)/2
+			if x, y := second.treePosition(); x != secondX || y != secondY {
+				t.Errorf("second scene position = (%d,%d), want centered (%d,%d)", x, y, secondX, secondY)
 			}
 		}
 		c.Terminate()
@@ -136,7 +192,7 @@ func TestPointerResizeSurvivesWorkspaceModelReapplication(t *testing.T) {
 			pointer.remove()
 		}
 	})
-	c.viewMapped = func(*toplevelView) {
+	c.viewMapped = func(view *toplevelView) {
 		keyboard = c.addFakeKeyboard()
 		pointer = c.addFakePointer()
 		if keyboard == nil || pointer == nil {
@@ -145,8 +201,8 @@ func TestPointerResizeSurvivesWorkspaceModelReapplication(t *testing.T) {
 			return
 		}
 		keyboard.key(56, true) // Left Alt is Mod in a nested Wayland backend.
-		placement := c.WorkspaceSnapshot().Windows[0].Tile
-		pointer.moveTo(float64(placement.X+1), float64(placement.Y+1))
+		x, y := view.treePosition()
+		pointer.moveTo(float64(x+1), float64(y+1))
 		pointer.button(buttonRight, true)
 		if c.pointerGrab == nil || c.pointerGrab.mode != grabResize {
 			t.Error("nested Mod+RMB did not begin a resize grab")

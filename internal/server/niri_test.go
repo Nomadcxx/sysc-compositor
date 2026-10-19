@@ -64,10 +64,10 @@ func TestNiriWindowSnapshotConversion(t *testing.T) {
 	title, appID := "Terminal", "org.example.Terminal"
 	logical := &ipc.LogicalOutput{X: -1920, Y: 10}
 	placement := wm.WindowSnapshot{ID: 12, Output: "DP-1", WorkspaceID: 7, Column: 3,
-		Tile: layout.Placement{ID: 12, X: -1900, Y: 50, Width: 800, Height: 600}}
+		Tile: layout.Placement{ID: 12, X: -1900, Y: 50, Width: 1000, Height: 800}}
 	got := toNiriWindow(wlr.WindowInfo{
 		ID: 12, Title: &title, AppID: &appID, PID: 123,
-		X: -1900, Y: 50, Width: 800, Height: 600, Output: "DP-1", IsFocused: true,
+		X: -1890, Y: 60, Width: 800, Height: 600, Output: "DP-1", IsFocused: true,
 		FocusTimestamp: 8*time.Second + 23*time.Nanosecond, HasFocusTimestamp: true,
 	}, placement, ipc.Output{Name: "DP-1", Logical: logical})
 	workspaceID := uint64(7)
@@ -80,8 +80,8 @@ func TestNiriWindowSnapshotConversion(t *testing.T) {
 		IsFocused: true,
 		Layout: ipc.WindowLayout{
 			PosInScrollingLayout: &columnPosition,
-			TileSize:             [2]float64{800, 600}, WindowSize: [2]int32{800, 600},
-			TilePosInWorkspaceView: &position,
+			TileSize:             [2]float64{1000, 800}, WindowSize: [2]int32{800, 600},
+			TilePosInWorkspaceView: &position, WindowOffsetInTile: [2]float64{10, 10},
 		},
 		FocusTimestamp: focusTimestamp,
 	}

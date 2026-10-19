@@ -97,6 +97,9 @@ func (c *Compositor) applyWorkspaceModel() {
 	if c.model == nil {
 		return
 	}
+	for _, view := range c.views {
+		c.syncWorkspaceWindowSizeHints(view)
+	}
 	snapshot := c.model.Snapshot()
 	activeWorkspace := make(map[uint64]bool, len(snapshot.Workspaces))
 	for _, workspace := range snapshot.Workspaces {
@@ -116,8 +119,14 @@ func (c *Compositor) applyWorkspaceModel() {
 			continue
 		}
 		C.sysc_workspace_set_enabled(view.tree, C.bool(activeWorkspace[window.WorkspaceID]))
+		if bool(view.toplevel.current.fullscreen) || bool(view.toplevel.requested.fullscreen) {
+			continue
+		}
 		placement := window.Tile
-		C.sysc_workspace_set_position(view.tree, C.int(placement.X), C.int(placement.Y))
+		geometry := view.geometry()
+		x := placement.X + (placement.Width-geometry.w)/2
+		y := placement.Y + (placement.Height-geometry.h)/2
+		C.sysc_workspace_set_position(view.tree, C.int(x), C.int(y))
 		if placement.Width > 0 && placement.Height > 0 {
 			C.sysc_workspace_set_size(view.toplevel, C.int(placement.Width), C.int(placement.Height))
 		}
@@ -125,6 +134,16 @@ func (c *Compositor) applyWorkspaceModel() {
 	// Workspace activation can change while the mapped-window snapshots stay
 	// identical, especially when switching between empty workspaces.
 	c.notifyStateChanged()
+}
+
+func (c *Compositor) syncWorkspaceWindowSizeHints(view *toplevelView) bool {
+	if c.model == nil || view == nil || view.toplevel == nil || !view.mapped {
+		return false
+	}
+	current := view.toplevel.current
+	return c.model.SetWindowSizeHints(view.id,
+		int(current.min_width), int(current.max_width),
+		int(current.min_height), int(current.max_height))
 }
 
 func (c *Compositor) activateWorkspaceFocus() {

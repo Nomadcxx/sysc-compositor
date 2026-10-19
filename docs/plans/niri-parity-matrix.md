@@ -107,7 +107,7 @@ M5 applies `Spawn`, `SpawnSh`, `CloseWindow`, `FocusColumnLeft/Right/First/Last`
 |---|---|---|
 | input | [~] | M2 keyboard xkb + repeat; M5 nested Mod defaults, core key binds, Mod+drag, and edge resize with tile dimensions retained across unmap/remap for the stable window ID; remaining input work is M6/M10 |
 | output | [~] | M3 accepted, M15 apply full |
-| layout | [~] | M5 gaps, default column width, scrolling columns, and retained pointer-resized column width/window height across focus, output geometry updates, and unmap/remap; remaining layout options later |
+| layout | [~] | M5 gaps, default column width, scrolling columns, client min/max size bounds, centered window offsets, and retained pointer-resized column width/window height across focus, output geometry updates, and unmap/remap; remaining layout options later |
 | binds | [~] | M5 core key subset; unsupported actions and mouse/scroll triggers warn |
 | switch-events | [ ] | M9 |
 | window-rule | [ ] | M6 |

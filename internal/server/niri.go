@@ -223,6 +223,9 @@ func toNiriWindow(window wlr.WindowInfo, tile wm.WindowSnapshot, output ipc.Outp
 		position[1] -= float64(output.Logical.Y)
 	}
 	result.Layout.TilePosInWorkspaceView = &position
+	result.Layout.WindowOffsetInTile = [2]float64{
+		float64(window.X - tile.Tile.X), float64(window.Y - tile.Tile.Y),
+	}
 	if window.HasFocusTimestamp {
 		result.FocusTimestamp = &ipc.Timestamp{
 			Secs:  uint64(window.FocusTimestamp / time.Second),
