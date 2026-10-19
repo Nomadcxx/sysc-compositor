@@ -141,6 +141,17 @@ func (w *Workspace) FocusedWindow() (uint64, bool) {
 	return w.columns[w.focused], true
 }
 
+// FocusWindow focuses the column containing id.
+func (w *Workspace) FocusWindow(id uint64) bool {
+	idx := w.indexOf(id)
+	if idx < 0 {
+		return false
+	}
+	w.focused = idx
+	w.revealFocused()
+	return true
+}
+
 // Placement returns a window's current tile in output layout coordinates.
 func (w *Workspace) Placement(id uint64) (Placement, bool) {
 	idx := w.indexOf(id)

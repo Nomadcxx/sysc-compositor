@@ -39,6 +39,20 @@ func TestMoveColumnKeepsWindowFocused(t *testing.T) {
 	}
 }
 
+func TestFocusWindowSelectsItsColumn(t *testing.T) {
+	ws := NewWorkspace(Bounds{Width: 1000, Height: 800}, 500, 16)
+	ws.AddWindow(1)
+	ws.AddWindow(2)
+	ws.FocusLeft()
+
+	if !ws.FocusWindow(2) {
+		t.Fatal("FocusWindow(2) = false, want true")
+	}
+	if got, ok := ws.FocusedWindow(); !ok || got != 2 {
+		t.Fatalf("FocusedWindow() = %d, %t, want 2, true", got, ok)
+	}
+}
+
 func TestFocusedColumnStaysInsideViewport(t *testing.T) {
 	ws := NewWorkspace(Bounds{Width: 1000, Height: 800}, 600, 20)
 	ws.AddWindow(1)
