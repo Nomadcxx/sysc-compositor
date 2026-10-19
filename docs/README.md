@@ -38,6 +38,7 @@ executed until the owner schedules the milestone they belong to.
 | [plans/2026-10-19-m4-window-ipc.md](plans/2026-10-19-m4-window-ipc.md) | plan | **M4 milestone plan** (`sysc-1269`): mapped xdg toplevel snapshots, Niri window events and actions, stable IDs for the M12 capture join, and the sysc-shell laptop gate. |
 | [plans/2026-10-19-niri-mango-pleamar-capability-research.md](plans/2026-10-19-niri-mango-pleamar-capability-research.md) | report | Niri remains the behavior/IPC shape; Mango supplies wlroots patterns; maps current Niri gaps, Pleamar-inspired capabilities, component ownership, and a pre-M5 design decision. |
 | [plans/2026-10-20-offscreen-focus-design.md](plans/2026-10-20-offscreen-focus-design.md) | design | `sysc-1436`: use the focused output when a mapped window center falls outside every output. |
+| [plans/2026-10-20-offscreen-focus.md](plans/2026-10-20-offscreen-focus.md) | plan | `sysc-1436`: regression-first fix for offscreen `FocusWindow` routing and output snapshots. |
 
 ## Reference sources (pinned 2026-10-16)
 
