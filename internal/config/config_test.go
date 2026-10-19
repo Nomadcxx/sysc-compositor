@@ -60,10 +60,24 @@ binds { }
 	}
 }
 
+func TestParseReportsUnappliedBindActions(t *testing.T) {
+	cfg, err := Parse("bindings.kdl", []byte(`
+binds {
+    Mod+Q { close-window; spawn "kitty"; }
+    Mod+W { close-window; }
+}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(cfg.UnappliedActions, []string{"close-window", "spawn"}) {
+		t.Fatalf("unapplied actions = %q, want unique action names in source order", cfg.UnappliedActions)
+	}
+}
+
 func TestParseRejects(t *testing.T) {
 	for src, want := range map[string]string{
 		`frobnicate 1`:                                 "unexpected node `frobnicate`",
-		`include "other.kdl"`:                          "include is not supported yet",
 		`spawn-at-startup`:                             "wrong number of arguments",
 		`spawn-sh-at-startup "a" "b"`:                  "wrong number of arguments",
 		`spawn-at-startup 1`:                           "not a string",
@@ -75,6 +89,56 @@ func TestParseRejects(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("%s: err %v, want it to mention %q", src, err, want)
 		}
+	}
+}
+
+func TestLoadMergesNestedIncludesAtTheirSourcePosition(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "config.kdl")
+	outer := filepath.Join(dir, "parts", "outer.kdl")
+	inner := filepath.Join(dir, "parts", "nested", "inner.kdl")
+	for path, content := range map[string]string{
+		root: `spawn-at-startup "root-before"
+include "parts/outer.kdl"
+include "missing-optional.kdl" optional=true
+spawn-at-startup "root-after"
+`,
+		outer: `spawn-at-startup "outer-before"
+include "nested/inner.kdl"
+spawn-at-startup "outer-after"
+`,
+		inner: `spawn-at-startup "inner"
+`,
+	} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := [][]string{{"root-before"}, {"outer-before"}, {"inner"}, {"outer-after"}, {"root-after"}}
+	if !reflect.DeepEqual(c.SpawnAtStartup, want) {
+		t.Errorf("spawn-at-startup = %q, want positional merge %q", c.SpawnAtStartup, want)
+	}
+}
+
+func TestLoadRejectsRecursiveIncludes(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root.kdl")
+	child := filepath.Join(dir, "child.kdl")
+	if err := os.WriteFile(root, []byte(`include "child.kdl"`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(child, []byte(`include "root.kdl"`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(root); err == nil || !strings.Contains(err.Error(), "recursive include") {
+		t.Fatalf("Load() error = %v, want recursive include", err)
 	}
 }
 

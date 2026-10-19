@@ -77,6 +77,7 @@ import "C"
 
 import (
 	"math"
+	"time"
 	"unsafe"
 )
 
@@ -104,12 +105,14 @@ type pointerGrab struct {
 }
 
 type toplevelView struct {
-	toplevel  *C.struct_wlr_xdg_toplevel
-	tree      *C.struct_wlr_scene_tree
-	listeners []*Listener
-	announced bool
-	id        uint64
-	touched   uint64
+	toplevel          *C.struct_wlr_xdg_toplevel
+	tree              *C.struct_wlr_scene_tree
+	listeners         []*Listener
+	mapped            bool
+	id                uint64
+	touched           uint64
+	focusTimestamp    time.Duration
+	hasFocusTimestamp bool
 }
 
 type pointerGeometry struct {
@@ -241,6 +244,7 @@ func (c *Compositor) processCursorMotion(time C.uint32_t) {
 			C.wlr_xdg_toplevel_set_size(c.grabView.toplevel,
 				C.int(geometry.width), C.int(geometry.height))
 		}
+		c.notifyWindowStateChanged()
 		return
 	}
 	// Implicit grab: while any button is held, the pointer stays with the
@@ -337,9 +341,7 @@ func (c *Compositor) handleCursorButton(data unsafe.Pointer) {
 	}
 
 	if pressed {
-		if view := c.viewAtCursor(); view != nil {
-			c.focusView(view)
-		}
+		c.focusSurfaceAtCursor()
 	}
 	serial := C.wlr_seat_pointer_notify_button(c.seat,
 		event.time_msec, event.button, event.state)
@@ -380,18 +382,109 @@ func (c *Compositor) focusView(view *toplevelView) {
 	if view == nil || view.toplevel == nil {
 		return
 	}
+	x, y := c.viewCenter(view)
+	c.setActiveOutputName(c.outputNameAt(x, y))
 	changed := c.focusedView != view
 	if changed {
-		if c.focusedView != nil && c.focusedView.toplevel != nil {
-			C.wlr_xdg_toplevel_set_activated(c.focusedView.toplevel, false)
+		if previous := c.focusedView; previous != nil && previous.toplevel != nil {
+			C.wlr_xdg_toplevel_set_activated(previous.toplevel, false)
 		}
 		c.focusedView = view
-		C.wlr_xdg_toplevel_set_activated(view.toplevel, true)
+		c.touch(view)
 	}
-	c.touch(view)
+	c.onDemandLayerFocus = nil
+	c.updateKeyboardFocus()
 	if changed {
-		C.sysc_seat_keyboard_focus(c.seat, view.toplevel.base.surface, c.keyboard)
+		// The layer surface may keep keyboard focus, but Niri's retained
+		// layout focus still changes the workspace's active window.
+		c.notifyWindowStateChanged()
 	}
+}
+
+func (c *Compositor) focusSurfaceAtCursor() {
+	c.setActiveOutputName(c.outputNameAt(float64(c.cursor.x), float64(c.cursor.y)))
+	surface, _, _ := c.surfaceAt(float64(c.cursor.x), float64(c.cursor.y))
+	if view := c.viewForSurface(surface); view != nil {
+		c.focusView(view)
+		return
+	}
+	c.focusLayerSurface(c.layerSurfaceForSurface(surface))
+}
+
+func (c *Compositor) focusLayerSurface(layer *layerSurface) {
+	if layer != nil && bool(layer.surface.surface.mapped) &&
+		snapshotKeyboardMode(int(layer.surface.current.keyboard_interactive)) == LayerKeyboardOnDemandMode {
+		c.onDemandLayerFocus = layer
+		c.setActiveOutputName(layer.outputName)
+	} else {
+		c.onDemandLayerFocus = nil
+	}
+	c.updateKeyboardFocus()
+}
+
+func (c *Compositor) updateKeyboardFocus() {
+	previousFocusedView := c.keyboardFocusedView()
+	if layer := c.onDemandLayerFocus; layer != nil &&
+		(!bool(layer.surface.surface.mapped) || snapshotKeyboardMode(int(layer.surface.current.keyboard_interactive)) != LayerKeyboardOnDemandMode) {
+		c.onDemandLayerFocus = nil
+	}
+
+	activeOutput := c.FocusedOutputName()
+	focusedView := c.focusedView
+	if focusedView != nil && focusedView.toplevel != nil {
+		// M3 has no per-view output assignment, so use the view's scene position.
+		x, y := c.viewCenter(focusedView)
+		if c.outputNameAt(x, y) != activeOutput {
+			focusedView = nil
+		}
+	} else {
+		focusedView = nil
+	}
+
+	candidates := make([]layerFocusCandidate, len(c.layerOrder))
+	for i, layer := range c.layerOrder {
+		candidates[i] = layerFocusCandidate{
+			index: i, layer: layer.layer, output: layer.outputName,
+			keyboard: snapshotKeyboardMode(int(layer.surface.current.keyboard_interactive)),
+			mapped:   bool(layer.surface.surface.mapped), onDemandFocused: c.onDemandLayerFocus == layer,
+		}
+	}
+	focusedLayerIndex := chooseLayerKeyboardFocus(candidates, activeOutput, focusedView != nil)
+	var focusedLayer *layerSurface
+	if focusedLayerIndex >= 0 && focusedLayerIndex < len(c.layerOrder) {
+		focusedLayer = c.layerOrder[focusedLayerIndex]
+	}
+
+	var surface *C.struct_wlr_surface
+	if focusedLayer != nil {
+		surface = focusedLayer.surface.surface
+	} else if focusedView != nil {
+		surface = focusedView.toplevel.base.surface
+	}
+	if c.focusedView != nil && c.focusedView.toplevel != nil {
+		C.wlr_xdg_toplevel_set_activated(c.focusedView.toplevel, focusedView == c.focusedView && focusedLayer == nil)
+	}
+	if surface == nil {
+		C.wlr_seat_keyboard_notify_clear_focus(c.seat)
+		c.keyboardFocusChanged(previousFocusedView)
+		return
+	}
+	surface = C.wlr_surface_get_root_surface(surface)
+	if c.seat.keyboard_state.focused_surface != surface {
+		C.sysc_seat_keyboard_focus(c.seat, surface, c.keyboard)
+	}
+	c.keyboardFocusChanged(previousFocusedView)
+}
+
+func (c *Compositor) keyboardFocusChanged(previous *toplevelView) {
+	current := c.keyboardFocusedView()
+	if current == previous {
+		return
+	}
+	if current != nil {
+		c.recordWindowFocus(current)
+	}
+	c.notifyWindowStateChanged()
 }
 
 func (c *Compositor) startPointerGrab(view *toplevelView, mode pointerGrabMode,
@@ -491,28 +584,39 @@ func (c *Compositor) handleNewToplevel(data unsafe.Pointer) {
 			c.applyFullscreen(view)
 		}
 	})
+	add(unsafe.Pointer(&toplevel.events.set_title), func(unsafe.Pointer) {
+		c.notifyWindowStateChanged()
+	})
+	add(unsafe.Pointer(&toplevel.events.set_app_id), func(unsafe.Pointer) {
+		c.notifyWindowStateChanged()
+	})
 	// wlroots clears a seat's pointer focus when the surface is destroyed,
 	// never on unmap, and a destroyed toplevel unmaps first.
 	add(unsafe.Pointer(&toplevel.base.surface.events.unmap), func(unsafe.Pointer) {
+		view.mapped = false
+		c.cancelPendingWindowFocus(view)
 		c.releaseView(view)
+		c.notifyWindowStateChanged()
 	})
 	add(unsafe.Pointer(&toplevel.events.destroy), func(unsafe.Pointer) {
 		c.handleToplevelDestroy(view)
 	})
 	// The map signal fires inside the commit, before the scene attaches the
-	// buffer, so a view is announced on its first commit after mapping: the
-	// moment it can be hit-tested. The scene's own commit listener was added
-	// first and runs first.
+	// buffer. This callback runs after the scene's commit listener, when the
+	// mapped view can be hit-tested.
 	add(unsafe.Pointer(&toplevel.base.surface.events.commit), func(unsafe.Pointer) {
-		if view.announced || !bool(toplevel.base.surface.mapped) {
+		if !bool(toplevel.base.surface.mapped) {
 			return
 		}
-		view.announced = true
-		// Niri activates a new window (ActivateWindow::Smart); its
-		// heuristics for dialogs and activation tokens come with M5. A
-		// greeter that waits for a click cannot be used on a VT.
-		c.focusView(view)
-		if c.viewMapped != nil {
+		newlyMapped := !view.mapped
+		view.mapped = true
+		if newlyMapped {
+			// Niri activates newly mapped windows (ActivateWindow::Smart); its
+			// dialog and activation-token heuristics come with M5.
+			c.focusView(view)
+		}
+		c.notifyWindowStateChanged()
+		if newlyMapped && c.viewMapped != nil {
 			c.viewMapped(view)
 		}
 	})
@@ -589,8 +693,7 @@ func (c *Compositor) viewCenter(view *toplevelView) (float64, float64) {
 	var x, y C.int
 	C.sysc_scene_tree_position(view.tree, &x, &y)
 	g := view.toplevel.base.geometry
-	return float64(x) + float64(g.x) + float64(g.width)/2,
-		float64(y) + float64(g.y) + float64(g.height)/2
+	return float64(x) + float64(g.width)/2, float64(y) + float64(g.height)/2
 }
 
 // releaseView drops any compositor grab on view and every seat's keyboard and
@@ -614,6 +717,7 @@ func (c *Compositor) releaseView(view *toplevelView) {
 			C.wlr_seat_pointer_notify_clear_focus(seat)
 		}
 	}
+	c.updateKeyboardFocus()
 }
 
 func (c *Compositor) handleToplevelDestroy(view *toplevelView) {
@@ -621,11 +725,13 @@ func (c *Compositor) handleToplevelDestroy(view *toplevelView) {
 		return
 	}
 	c.releaseView(view)
+	c.cancelPendingWindowFocus(view)
 	delete(c.views, unsafe.Pointer(view.toplevel))
 	for _, listener := range view.listeners {
 		c.drop(listener)
 	}
 	view.listeners = nil
+	c.notifyWindowStateChanged()
 }
 
 // refreshCapabilities advertises exactly what is attached. Advertising a

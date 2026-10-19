@@ -1,6 +1,8 @@
 package wlr
 
 import (
+	"os"
+	"os/exec"
 	"regexp"
 	"runtime"
 	"strings"
@@ -120,6 +122,44 @@ func TestNewWindowTakesFocus(t *testing.T) {
 	}
 	if focused != surface || view != want {
 		t.Errorf("keyboard focus %p (view %p) once mapped, want the new window %p", focused, view, surface)
+	}
+}
+
+func TestFocusingNewWindowDeactivatesPrevious(t *testing.T) {
+	c := newNested(t)
+	t.Cleanup(c.Destroy)
+	var first, second *toplevelView
+	var secondClient *exec.Cmd
+	c.viewMapped = func(view *toplevelView) {
+		if first == nil {
+			first = view
+			if !bool(first.toplevel.scheduled.activated) {
+				t.Error("first mapped window is not activated before the next window takes focus")
+			}
+			secondClient = exec.Command("weston-terminal")
+			secondClient.Env = append(os.Environ(), "WAYLAND_DISPLAY="+c.SocketName())
+			if err := secondClient.Start(); err != nil {
+				t.Errorf("start second terminal: %v", err)
+				c.Terminate()
+			}
+			return
+		}
+		second = view
+		if bool(first.toplevel.scheduled.activated) {
+			t.Error("previous window remains activated after the new window takes focus")
+		}
+		if !bool(second.toplevel.scheduled.activated) {
+			t.Error("newly focused window is not activated")
+		}
+		c.Terminate()
+	}
+	runClient(t, c, []string{"weston-terminal"}, nil, nil)
+	if secondClient != nil && secondClient.Process != nil {
+		_ = secondClient.Process.Kill()
+		_ = secondClient.Wait()
+	}
+	if first == nil || second == nil {
+		t.Fatalf("mapped windows = (%p, %p), want two", first, second)
 	}
 }
 

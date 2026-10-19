@@ -14,6 +14,72 @@ var (
 	rePointerLeave   = regexp.MustCompile(`wl_pointer#\d+\.leave\(`)
 )
 
+func TestClickingEmptyOtherOutputClearsKeyboardFocusFromPreviousOutput(t *testing.T) {
+	c := newNested(t)
+	headless, err := addHeadlessTestOutput(c, 800, 600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(headless.destroy)
+
+	var (
+		view                                      *toplevelView
+		focusedSurfaceBefore, focusedSurfaceAfter unsafe.Pointer
+		focusedViewBefore                         *toplevelView
+		targetOutput                              string
+		windowX, windowY, clickX, clickY          float64
+	)
+	pointerScene(t, c, func(v *toplevelView, p *fakePointer) []func() {
+		view = v
+		windowX, windowY = c.viewCenter(v)
+		windowOutput := c.outputNameAt(windowX, windowY)
+		for _, output := range c.OutputSnapshot() {
+			if output.Name == windowOutput || output.Logical == nil {
+				continue
+			}
+			for _, xFraction := range []float64{0.5, 0.9, 0.1} {
+				for _, yFraction := range []float64{0.5, 0.9, 0.1} {
+					x := float64(output.Logical.X) + float64(output.Logical.Width)*xFraction
+					y := float64(output.Logical.Y) + float64(output.Logical.Height)*yFraction
+					if c.outputNameAt(x, y) == output.Name {
+						if surface, _, _ := c.surfaceAt(x, y); surface == nil {
+							targetOutput, clickX, clickY = output.Name, x, y
+							return []func(){
+								func() {
+									p.moveTo(windowX, windowY)
+									p.button(btnLeft, true)
+									focusedSurfaceBefore, focusedViewBefore = c.userFocus()
+									p.button(btnLeft, false)
+								},
+								func() {
+									p.moveTo(clickX, clickY)
+									p.button(btnLeft, true)
+									focusedSurfaceAfter, _ = c.userFocus()
+									p.button(btnLeft, false)
+								},
+							}
+						}
+					}
+				}
+			}
+		}
+		t.Errorf("no empty point found on an output other than %q", windowOutput)
+		return nil
+	})
+	if focusedViewBefore != view || focusedSurfaceBefore == nil {
+		t.Fatalf("keyboard focus before moving outputs = (%p, %p), want the mapped view %p", focusedSurfaceBefore, focusedViewBefore, view)
+	}
+	if targetOutput == "" {
+		t.Fatal("test found no second output to click")
+	}
+	if focusedSurfaceAfter != nil {
+		t.Errorf("keyboard focus after clicking empty space on %q = %p, want no surface on that output", targetOutput, focusedSurfaceAfter)
+	}
+	if got := c.FocusedOutputName(); got != targetOutput {
+		t.Errorf("focused output after click = %q, want %q", got, targetOutput)
+	}
+}
+
 // pointerScene maps one weston-terminal in the layout's top-left corner,
 // gives the user seat an in-process pointer, and runs the steps scene returns
 // on the compositor thread with a pause before each and after the last, so the

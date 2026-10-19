@@ -11,18 +11,18 @@ Legend: `[ ]` missing · `[~]` partial · `[x]` done.
 | Request | Status | Milestone |
 |---|---|---|
 | Version | [x] | M2 — `sysc-compositor <version> (niri-ipc 26.4.0)` |
-| Outputs | [ ] | M3 |
-| Workspaces | [ ] | M3 |
-| Windows | [ ] | M3 |
-| Layers | [ ] | M3 |
+| Outputs | [x] | M3 — wlroots output snapshots |
+| Workspaces | [~] | M3 — one empty active workspace per output; dynamic layout lands later |
+| Windows | [x] | M4 — mapped toplevels with stable IDs and logical geometry; offscreen centers fall back to the focused output |
+| Layers | [x] | M3 — mapped layer-shell surfaces |
 | KeyboardLayouts | [ ] | M9 |
-| FocusedOutput | [ ] | M3 |
-| FocusedWindow | [ ] | M4 |
+| FocusedOutput | [x] | M3 — active output follows keyboard focus; first connected output is the initial and disconnect fallback |
+| FocusedWindow | [x] | M4 — actual keyboard-focused mapped window, otherwise null |
 | PickWindow | [ ] | M15 |
 | PickColor | [ ] | M15 |
 | Action | [~] | M2: all 141 decode; per-action below |
 | Output | [ ] | M15 |
-| EventStream | [ ] | M3 |
+| EventStream | [~] | M3 — initial baseline, workspace and keyboard updates; remaining events land with their owning milestones |
 | ReturnError | [x] | M2 |
 | OverviewState | [ ] | M7 |
 | Casts | [ ] | M12 |
@@ -31,23 +31,23 @@ Legend: `[ ]` missing · `[~]` partial · `[x]` done.
 
 | Event | Status | Milestone |
 |---|---|---|
-| WorkspacesChanged | [ ] | M3 |
+| WorkspacesChanged | [x] | M3 — workspace topology changes |
 | WorkspaceUrgencyChanged | [ ] | M6 |
-| WorkspaceActivated | [ ] | M3 |
-| WorkspaceActiveWindowChanged | [ ] | M4 |
-| WindowsChanged | [ ] | M4 |
-| WindowOpenedOrChanged | [ ] | M4 |
-| WindowClosed | [ ] | M4 |
-| WindowFocusChanged | [ ] | M4 |
-| WindowFocusTimestampChanged | [ ] | M4 |
+| WorkspaceActivated | [x] | M3 — focus and activation changes |
+| WorkspaceActiveWindowChanged | [x] | M4 — retained layout-focused window per output workspace, even while a layer owns keyboard focus |
+| WindowsChanged | [x] | M4 — populated initial EventStream snapshot |
+| WindowOpenedOrChanged | [x] | M4 — map and metadata changes |
+| WindowClosed | [x] | M4 — unmap/destroy |
+| WindowFocusChanged | [x] | M4 — focus changes and clear, following Niri event semantics |
+| WindowFocusTimestampChanged | [x] | M4 — monotonic timestamp after Niri's 750 ms debounce |
 | WindowUrgencyChanged | [ ] | M6 |
 | WindowLayoutsChanged | [ ] | M5 |
-| KeyboardLayoutsChanged | [ ] | M9 |
-| KeyboardLayoutSwitched | [ ] | M9 |
-| OverviewOpenedOrClosed | [ ] | M7 |
-| ConfigLoaded | [ ] | M9 |
+| KeyboardLayoutsChanged | [~] | M3 — current XKB layout baseline; config support in M9 |
+| KeyboardLayoutSwitched | [~] | M3 — XKB layout changes; switch action in M9 |
+| OverviewOpenedOrClosed | [~] | M3 — initial closed state; overview in M7 |
+| ConfigLoaded | [~] | M3 — initial config-load result; reload in M9 |
 | ScreenshotCaptured | [ ] | M11 |
-| CastsChanged | [ ] | M12 |
+| CastsChanged | [~] | M3 — initial empty baseline; casts in M12 |
 | CastStartedOrChanged | [ ] | M12 |
 | CastStopped | [ ] | M12 |
 
@@ -78,6 +78,14 @@ Until implemented, decode and reply `Err` with `unimplemented: <Name>`. Tick whe
 | ScreenshotScreen | [ ] | M11 |
 | ScreenshotWindow | [ ] | M11 |
 
+### Window focus and workspace
+
+| Action | Status | Milestone |
+|---|---|---|
+| FocusWindow | [x] | M4 — stable mapped-window ID |
+| CloseWindow | [x] | M4 — sends xdg-toplevel close for an explicit ID or the retained Niri layout focus |
+| FocusWorkspace | [~] | M4 — current output workspace by ID/index; named workspaces arrive with M6 |
+
 ### Window / column / workspace / monitor / floating / overview / cast / debug
 
 Track the rest against niri-ipc 26.4.0 `Action` as they are implemented in M4–M15. First landing of each group:
@@ -94,7 +102,7 @@ Track the rest against niri-ipc 26.4.0 `Action` as they are implemented in M4–
 | Section | Status | Milestone |
 |---|---|---|
 | input | [~] | M2 keyboard xkb + repeat; rest M5 (parse M3) |
-| output | [ ] | M3 parse, M15 apply full |
+| output | [~] | M3 accepted, M15 apply full |
 | layout | [ ] | M5 |
 | binds | [ ] | M5 |
 | switch-events | [ ] | M9 |
@@ -113,7 +121,7 @@ Track the rest against niri-ipc 26.4.0 `Action` as they are implemented in M4–
 | xwayland-satellite | [ ] | M13 |
 | recent-windows | [ ] | M11 |
 | debug | [ ] | M15 |
-| include | [ ] | M9 |
+| include | [x] | M3 positional merge |
 
 Acceptance file: `/home/nomadx/.config/niri/config.kdl` + `sysc-shell.kdl`. Parser must accept it at M3; unimplemented actions error at `niri validate` once the parser knows the name.
 
@@ -123,10 +131,11 @@ Acceptance file: `/home/nomadx/.config/niri/config.kdl` + `sysc-shell.kdl`. Pars
 |---|---|---|
 | `niri` / `sysc-compositor` no args / `--session` | [ ] | M0 binary; `--session` M9 |
 | `-c` / `--config` | [x] | M2 (+ `$NIRI_CONFIG`, XDG, `/etc/niri`) |
-| `niri msg` / `sysc-compositor msg` | [~] | M2: `version`, `request-error`, `action quit/spawn/spawn-sh`, `--json`; niri 26.04's own `niri msg` also works against our socket |
-| `niri validate` | [ ] | M3 |
+| `niri msg` / `sysc-compositor msg` | [~] | M2: `version`, `request-error`, `action quit/spawn/spawn-sh`, `--json`; M4 adds `focus-window`, `close-window`, and `focus-workspace`; niri 26.04's own `niri msg` also works against our socket |
+| `niri validate` | [x] | M3 command and parser accept the laptop config; unapplied sections warn |
 | `niri msg action spawn` | [x] | M2 (sysc-launch L0) |
 | `niri msg action quit --skip-confirmation` | [x] | M2 (sysc-greet) |
+| `niri msg action focus-window --id`, `close-window [--id]`, `focus-workspace <index|name>` | [x] | M4; laptop-tested against mapped windows and the current output workspace |
 
 ## D-Bus
 

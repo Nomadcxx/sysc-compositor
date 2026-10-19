@@ -1,0 +1,4 @@
+[Desktop Entry]
+Name=sysc-compositor
+Exec=/usr/local/bin/sysc-compositor
+Type=Application

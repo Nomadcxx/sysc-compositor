@@ -10,11 +10,54 @@ package wlr
 #include <time.h>
 
 #include <wlr/backend.h>
+#include <wlr/backend/wayland.h>
 #include <wlr/render/allocator.h>
 #include <wlr/render/wlr_renderer.h>
 #include <wlr/types/wlr_output.h>
 #include <wlr/types/wlr_output_layout.h>
 #include <wlr/types/wlr_scene.h>
+#include <wayland-server-protocol.h>
+
+static size_t sysc_output_mode_count(struct wlr_output *output) {
+	size_t count = 0;
+	struct wlr_output_mode *mode;
+	wl_list_for_each(mode, &output->modes, link) {
+		count++;
+	}
+	return count;
+}
+
+static bool sysc_output_mode_at(struct wlr_output *output, size_t index,
+		int32_t *width, int32_t *height, int32_t *refresh,
+		int *preferred, int *current) {
+	struct wlr_output_mode *mode;
+	size_t i = 0;
+	wl_list_for_each(mode, &output->modes, link) {
+		if (i++ != index) {
+			continue;
+		}
+		*width = mode->width;
+		*height = mode->height;
+		*refresh = mode->refresh;
+		*preferred = mode->preferred;
+		*current = mode == output->current_mode;
+		return true;
+	}
+	return false;
+}
+
+static void sysc_output_logical(struct wlr_output_layout *layout,
+		struct wlr_output *output, int32_t *x, int32_t *y,
+		int32_t *width, int32_t *height, float *scale, uint32_t *transform) {
+	struct wlr_box box;
+	wlr_output_layout_get_box(layout, output, &box);
+	*x = box.x;
+	*y = box.y;
+	*width = box.width;
+	*height = box.height;
+	*scale = output->scale;
+	*transform = output->transform;
+}
 #include <wlr/types/wlr_xcursor_manager.h>
 
 // sysc_apply_requested_state commits the state a backend asked for: the host
@@ -51,6 +94,10 @@ static bool sysc_output_set_scale(struct wlr_output *output, float scale) {
 	bool ok = wlr_output_commit_state(output, &state);
 	wlr_output_state_finish(&state);
 	return ok;
+}
+
+static struct wlr_output *sysc_output_layout_at(struct wlr_output_layout *layout, double x, double y) {
+	return wlr_output_layout_output_at(layout, x, y);
 }
 
 // sysc_bring_output_up gives one backend output a renderer and turns it on at
@@ -129,8 +176,174 @@ import "C"
 
 import (
 	"errors"
+	"sort"
 	"unsafe"
 )
+
+type OutputModeSnapshot struct {
+	Width       uint16
+	Height      uint16
+	RefreshRate uint32
+	Preferred   bool
+}
+
+type LogicalOutputSnapshot struct {
+	X, Y          int32
+	Width, Height uint32
+	Scale         float64
+	Transform     uint32
+}
+
+type OutputSnapshot struct {
+	Name         string
+	Make         string
+	Model        string
+	Serial       *string
+	PhysicalSize *[2]uint32
+	Modes        []OutputModeSnapshot
+	CurrentMode  *uint32
+	IsCustomMode bool
+	VRRSupported bool
+	VRREnabled   bool
+	Logical      *LogicalOutputSnapshot
+}
+
+func chooseActiveOutputName(current, focused string, outputs []string) string {
+	names := append([]string(nil), outputs...)
+	sort.Strings(names)
+	for _, name := range names {
+		if name == focused {
+			return focused
+		}
+	}
+	for _, name := range names {
+		if name == current {
+			return current
+		}
+	}
+	if len(names) != 0 {
+		return names[0]
+	}
+	return ""
+}
+
+func (c *Compositor) outputNameAt(x, y float64) string {
+	output := C.sysc_output_layout_at(c.layout, C.double(x), C.double(y))
+	if output == nil {
+		return ""
+	}
+	if _, enabled := c.sceneOutputs[unsafe.Pointer(output)]; !enabled {
+		return ""
+	}
+	return C.GoString(output.name)
+}
+
+func (c *Compositor) setActiveOutputName(focused string) {
+	names := make([]string, 0, len(c.sceneOutputs))
+	for pointer := range c.sceneOutputs {
+		names = append(names, C.GoString((*C.struct_wlr_output)(pointer).name))
+	}
+	name := chooseActiveOutputName(c.activeOutputName, focused, names)
+	if name == c.activeOutputName {
+		return
+	}
+	c.activeOutputName = name
+	c.notifyFocusedOutputChanged()
+}
+
+// OutputSnapshot copies the enabled outputs into plain Go values. Call it on
+// the compositor thread; IPC readers consume the resulting immutable copies.
+func (c *Compositor) OutputSnapshot() []OutputSnapshot {
+	out := make([]OutputSnapshot, 0, len(c.sceneOutputs))
+	for pointer := range c.sceneOutputs {
+		output := (*C.struct_wlr_output)(pointer)
+		vrrSupported := bool(output.adaptive_sync_supported)
+		info := OutputSnapshot{
+			Name: C.GoString(output.name), Make: cString(output.make), Model: cString(output.model),
+			Modes:        make([]OutputModeSnapshot, 0),
+			VRRSupported: vrrSupported,
+			VRREnabled:   vrrSupported && output.adaptive_sync_status == C.WLR_OUTPUT_ADAPTIVE_SYNC_ENABLED,
+		}
+		if output.serial != nil && C.GoString(output.serial) != "" {
+			serial := C.GoString(output.serial)
+			info.Serial = &serial
+		}
+		if output.phys_width > 0 && output.phys_height > 0 {
+			physical := [2]uint32{uint32(output.phys_width), uint32(output.phys_height)}
+			info.PhysicalSize = &physical
+		}
+		count := int(C.sysc_output_mode_count(output))
+		for i := 0; i < count; i++ {
+			var width, height, refresh C.int32_t
+			var preferred, current C.int
+			if !bool(C.sysc_output_mode_at(output, C.size_t(i), &width, &height, &refresh, &preferred, &current)) {
+				continue
+			}
+			info.Modes = append(info.Modes, OutputModeSnapshot{
+				Width: clampModeSize(width), Height: clampModeSize(height),
+				RefreshRate: uint32(max(0, int32(refresh))), Preferred: preferred != 0,
+			})
+			if current != 0 {
+				index := uint32(len(info.Modes) - 1)
+				info.CurrentMode = &index
+			}
+		}
+		if info.CurrentMode == nil && output.width > 0 && output.height > 0 {
+			width, height := clampModeSize(output.width), clampModeSize(output.height)
+			refresh := uint32(max(0, int32(output.refresh)))
+			if refresh == 0 {
+				refresh = 60_000
+			}
+			info.Modes = append(info.Modes, OutputModeSnapshot{
+				Width: width, Height: height, RefreshRate: refresh, Preferred: true,
+			})
+			index := uint32(len(info.Modes) - 1)
+			info.CurrentMode = &index
+			info.IsCustomMode = true
+		}
+		var x, y, width, height C.int32_t
+		var scale C.float
+		var transform C.uint32_t
+		C.sysc_output_logical(c.layout, output, &x, &y, &width, &height, &scale, &transform)
+		if width > 0 && height > 0 {
+			info.Logical = &LogicalOutputSnapshot{
+				X: int32(x), Y: int32(y), Width: uint32(width), Height: uint32(height),
+				Scale: float64(scale), Transform: uint32(transform),
+			}
+		}
+		out = append(out, info)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+// FocusedOutputName reports the active output, falling back to the first
+// connected output when no active output is set or its output disconnects.
+func (c *Compositor) FocusedOutputName() string {
+	names := make([]string, 0, len(c.sceneOutputs))
+	for pointer := range c.sceneOutputs {
+		names = append(names, C.GoString((*C.struct_wlr_output)(pointer).name))
+	}
+	c.activeOutputName = chooseActiveOutputName(c.activeOutputName, "", names)
+	return c.activeOutputName
+}
+
+func cString(s *C.char) string {
+	if s == nil {
+		return ""
+	}
+	return C.GoString(s)
+}
+
+func clampModeSize(v C.int32_t) uint16 {
+	if v <= 0 {
+		return 0
+	}
+	if v > 1<<16-1 {
+		return 1<<16 - 1
+	}
+	return uint16(v)
+}
 
 // handleNewOutput brings up an output the backend just announced and gives it a
 // scene output so clients paint into the nested session rather than nowhere.
@@ -171,6 +384,7 @@ func (c *Compositor) handleNewOutput(data unsafe.Pointer) {
 	commit := AddListener(unsafe.Pointer(&output.events.commit), func(event unsafe.Pointer) {
 		if bool(C.sysc_commit_changed_geometry((*C.struct_wlr_output_event_commit)(event))) {
 			c.arrangeLayers(data)
+			c.refreshState()
 		}
 	})
 	c.keep(request, commit)
@@ -180,12 +394,23 @@ func (c *Compositor) handleNewOutput(data unsafe.Pointer) {
 		c.closeOutputLayers(data)
 		delete(c.sceneOutputs, data)
 		delete(c.usable, data)
+		c.refreshState()
 		c.drop(frame)
 		c.drop(request)
 		c.drop(commit)
 		c.drop(destroy)
+		if bool(C.wlr_backend_is_wl(output.backend)) && len(c.sceneOutputs) == 0 {
+			c.Terminate()
+		}
 	})
 	c.keep(destroy)
+	c.refreshState()
+}
+
+// destroyOutput asks the backend to destroy one output. The nested-session
+// test uses it to simulate the host closing its Wayland output window.
+func destroyOutput(output unsafe.Pointer) {
+	C.wlr_output_destroy((*C.struct_wlr_output)(output))
 }
 
 // EnabledOutputs reports how many backend outputs are up. It is the number a

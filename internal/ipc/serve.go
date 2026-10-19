@@ -19,6 +19,16 @@ type Handler func(Request) (Reply, func())
 // ServeConn answers requests on one connection until it closes, any number
 // per connection, as Niri does (src/ipc/server.rs).
 func ServeConn(c net.Conn, h Handler) {
+	serveConn(c, h, nil)
+}
+
+// ServeConnWithStream switches an EventStream connection to stream after its
+// Handled reply; other requests retain ServeConn's line-oriented behavior.
+func ServeConnWithStream(c net.Conn, h Handler, stream func(net.Conn)) {
+	serveConn(c, h, stream)
+}
+
+func serveConn(c net.Conn, h Handler, stream func(net.Conn)) {
 	scanner := bufio.NewScanner(c)
 	scanner.Buffer(make([]byte, 4096), MaxLine)
 	for scanner.Scan() {
@@ -28,9 +38,11 @@ func ServeConn(c net.Conn, h Handler) {
 		}
 		var reply Reply
 		var after func()
+		isEventStream := false
 		if r, err := DecodeRequest(line); err != nil {
 			reply = Reply{Err: err.Error()}
 		} else {
+			isEventStream = r.Name == "EventStream"
 			reply, after = h(r)
 		}
 		out, _ := json.Marshal(reply)
@@ -39,6 +51,10 @@ func ServeConn(c net.Conn, h Handler) {
 		}
 		if after != nil {
 			after()
+		}
+		if isEventStream && stream != nil {
+			stream(c)
+			return
 		}
 	}
 }

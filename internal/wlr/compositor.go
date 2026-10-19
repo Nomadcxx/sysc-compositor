@@ -63,6 +63,7 @@ import "C"
 
 import (
 	"errors"
+	"time"
 	"unsafe"
 )
 
@@ -105,6 +106,7 @@ type Compositor struct {
 	inputDestroyListeners  map[unsafe.Pointer]*Listener
 	modifiers              uint32
 	focusedView            *toplevelView
+	onDemandLayerFocus     *layerSurface
 	pointerGrab            *pointerGrab
 	grabView               *toplevelView
 	grabButton             uint32
@@ -118,6 +120,14 @@ type Compositor struct {
 	// focusOriginX/Y is where the user seat's focused surface starts in
 	// layout coordinates, as of the last motion outside an implicit grab.
 	focusOriginX, focusOriginY C.double
+	focusedOutputName          string
+	activeOutputName           string
+	stateChanged               func()
+	lastWindowState            []WindowInfo
+	focusTimer                 *time.Timer
+	pendingFocus               *toplevelView
+	pendingFocusStamp          time.Duration
+	pendingFocusGeneration     uint64
 
 	// injected is the table of seats fed by the compositor rather than the
 	// user's hardware, after the user seat (c.seat) in creation order.
@@ -271,6 +281,33 @@ func NewWith(opts Options) (*Compositor, error) {
 // spawns clients against it; it is not the compositor's own WAYLAND_DISPLAY.
 func (c *Compositor) SocketName() string { return c.socketName }
 
+// SetStateChanged registers a compositor-thread callback for output, layer,
+// and focused-output changes. The callback may only copy state into Go-owned
+// values; it must not block or perform socket I/O.
+func (c *Compositor) SetStateChanged(fn func()) {
+	c.stateChanged = fn
+	c.refreshState()
+}
+
+func (c *Compositor) notifyStateChanged() {
+	if c.stateChanged != nil {
+		c.stateChanged()
+	}
+}
+
+func (c *Compositor) refreshState() {
+	c.focusedOutputName = c.FocusedOutputName()
+	c.notifyStateChanged()
+}
+
+func (c *Compositor) notifyFocusedOutputChanged() {
+	name := c.FocusedOutputName()
+	if name != c.focusedOutputName {
+		c.focusedOutputName = name
+		c.notifyStateChanged()
+	}
+}
+
 // Display exposes the wl_display for callers that must reach wlroots directly.
 func (c *Compositor) Display() unsafe.Pointer { return unsafe.Pointer(c.display) }
 
@@ -293,6 +330,10 @@ func (c *Compositor) Terminate() { C.wl_display_terminate(c.display) }
 // Destroy releases the compositor. Listeners added through AddListener are
 // removed first so no token outlives its wl_signal.
 func (c *Compositor) Destroy() {
+	if c.focusTimer != nil {
+		c.focusTimer.Stop()
+		c.focusTimer = nil
+	}
 	c.stopPost()
 	// Before any seat goes: wlroots frees a seat's popup grab twice when the
 	// seat is destroyed with the grab open (dismissGrabbedPopups).
@@ -326,10 +367,7 @@ func (c *Compositor) Destroy() {
 	if c.display != nil {
 		C.wl_display_destroy_clients(c.display)
 	}
-	if c.backend != nil {
-		C.wlr_backend_destroy(c.backend)
-		c.backend = nil
-	}
+	c.destroyBackend()
 	if c.session != nil {
 		C.wlr_session_destroy(c.session)
 		c.session = nil
@@ -337,6 +375,13 @@ func (c *Compositor) Destroy() {
 	if c.display != nil {
 		C.wl_display_destroy(c.display)
 		c.display = nil
+	}
+}
+
+func (c *Compositor) destroyBackend() {
+	if c.backend != nil {
+		C.wlr_backend_destroy(c.backend)
+		c.backend = nil
 	}
 }
 

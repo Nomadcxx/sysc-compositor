@@ -8,6 +8,7 @@ package wlr
 #include <stdlib.h>
 
 #include <wlr/types/wlr_layer_shell_v1.h>
+#include <wlr/types/wlr_compositor.h>
 #include <wlr/types/wlr_output.h>
 #include <wlr/types/wlr_output_layout.h>
 #include <wlr/types/wlr_scene.h>
@@ -77,12 +78,105 @@ func sceneLayer(layer C.enum_zwlr_layer_shell_v1_layer) int {
 
 // layerSurface is one layer-shell surface the compositor draws.
 type layerSurface struct {
-	surface   *C.struct_wlr_layer_surface_v1
-	scene     *C.struct_wlr_scene_layer_surface_v1
-	tree      *C.struct_wlr_scene_tree
-	layer     int
-	output    unsafe.Pointer // *wlr_output
-	listeners []*Listener
+	surface    *C.struct_wlr_layer_surface_v1
+	scene      *C.struct_wlr_scene_layer_surface_v1
+	tree       *C.struct_wlr_scene_tree
+	layer      int
+	output     unsafe.Pointer // *wlr_output
+	outputName string
+	listeners  []*Listener
+}
+
+type LayerKind uint8
+
+const (
+	LayerBackgroundKind LayerKind = iota
+	LayerBottomKind
+	LayerTopKind
+	LayerOverlayKind
+)
+
+type LayerKeyboardMode uint8
+
+const (
+	LayerKeyboardNoneMode LayerKeyboardMode = iota
+	LayerKeyboardExclusiveMode
+	LayerKeyboardOnDemandMode
+)
+
+type LayerSnapshot struct {
+	Namespace             string
+	Output                string
+	Layer                 LayerKind
+	KeyboardInteractivity LayerKeyboardMode
+}
+
+func snapshotLayerKind(layer int) LayerKind {
+	switch layer {
+	case layerBackground:
+		return LayerBackgroundKind
+	case layerBottom:
+		return LayerBottomKind
+	case layerTop:
+		return LayerTopKind
+	default:
+		return LayerOverlayKind
+	}
+}
+
+func snapshotKeyboardMode(mode int) LayerKeyboardMode {
+	switch mode {
+	case int(C.ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_EXCLUSIVE):
+		return LayerKeyboardExclusiveMode
+	case int(C.ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_ON_DEMAND):
+		return LayerKeyboardOnDemandMode
+	default:
+		return LayerKeyboardNoneMode
+	}
+}
+
+type layerFocusCandidate struct {
+	index           int
+	layer           int
+	output          string
+	keyboard        LayerKeyboardMode
+	mapped          bool
+	onDemandFocused bool
+}
+
+func chooseLayerKeyboardFocus(candidates []layerFocusCandidate, activeOutput string, hasWindow bool) int {
+	find := func(layer int, mode LayerKeyboardMode, onDemand bool) int {
+		for i := len(candidates) - 1; i >= 0; i-- {
+			candidate := candidates[i]
+			if candidate.mapped && candidate.output == activeOutput && candidate.layer == layer && candidate.keyboard == mode &&
+				(!onDemand || candidate.onDemandFocused) {
+				return candidate.index
+			}
+		}
+		return -1
+	}
+	for _, layer := range []int{layerOverlay, layerTop} {
+		if index := find(layer, LayerKeyboardExclusiveMode, false); index >= 0 {
+			return index
+		}
+		if index := find(layer, LayerKeyboardOnDemandMode, true); index >= 0 {
+			return index
+		}
+	}
+	for _, layer := range []int{layerBottom, layerBackground} {
+		if index := find(layer, LayerKeyboardOnDemandMode, true); index >= 0 {
+			return index
+		}
+	}
+	if hasWindow {
+		return -1
+	}
+	for _, layer := range []int{layerBottom, layerBackground} {
+		if index := find(layer, LayerKeyboardExclusiveMode, false); index >= 0 {
+			return index
+		}
+	}
+	return -1
 }
 
 // createLayerTrees makes one scene tree per stacking layer under the scene
@@ -102,6 +196,14 @@ func (c *Compositor) layerSurfaceTree(surface *C.struct_wlr_surface) *C.struct_w
 		return l.tree
 	}
 	return nil
+}
+
+func (c *Compositor) layerSurfaceForSurface(surface *C.struct_wlr_surface) *layerSurface {
+	if surface == nil {
+		return nil
+	}
+	root := C.wlr_surface_get_root_surface(surface)
+	return c.layerSurfaces[unsafe.Pointer(root)]
 }
 
 // handleNewLayerSurface gives a layer surface an output, when the client left
@@ -124,11 +226,12 @@ func (c *Compositor) handleNewLayerSurface(data unsafe.Pointer) {
 		return
 	}
 	l := &layerSurface{
-		surface: surface,
-		scene:   scene,
-		tree:    scene.tree,
-		layer:   layer,
-		output:  unsafe.Pointer(surface.output),
+		surface:    surface,
+		scene:      scene,
+		tree:       scene.tree,
+		layer:      layer,
+		output:     unsafe.Pointer(surface.output),
+		outputName: C.GoString(surface.output.name),
 	}
 	key := unsafe.Pointer(surface.surface)
 	c.layerSurfaces[key] = l
@@ -150,15 +253,28 @@ func (c *Compositor) handleNewLayerSurface(data unsafe.Pointer) {
 		if surface.current.committed != 0 || bool(surface.initial_commit) {
 			c.arrangeLayers(l.output)
 		}
+		c.updateKeyboardFocus()
+		c.notifyStateChanged()
 	})
 	// wlroots counts an exclusive zone only while the surface is mapped
 	// (types/scene/layer_shell_v1.c), and the commit that maps it usually
 	// changes no layer state, so map and unmap both re-arrange.
 	add(unsafe.Pointer(&surface.surface.events._map), func(unsafe.Pointer) {
 		c.arrangeLayers(l.output)
+		if snapshotKeyboardMode(int(surface.current.keyboard_interactive)) == LayerKeyboardOnDemandMode {
+			c.onDemandLayerFocus = l
+			c.setActiveOutputName(l.outputName)
+		}
+		c.updateKeyboardFocus()
+		c.notifyStateChanged()
 	})
 	add(unsafe.Pointer(&surface.surface.events.unmap), func(unsafe.Pointer) {
+		if c.onDemandLayerFocus == l {
+			c.onDemandLayerFocus = nil
+		}
 		c.arrangeLayers(l.output)
+		c.updateKeyboardFocus()
+		c.notifyStateChanged()
 	})
 	add(unsafe.Pointer(&surface.events.destroy), func(unsafe.Pointer) {
 		for _, listener := range l.listeners {
@@ -169,6 +285,11 @@ func (c *Compositor) handleNewLayerSurface(data unsafe.Pointer) {
 		// A mapped surface is unmapped, and re-arranged without, before
 		// this; an unmapped one never counted.
 		c.layerOrder = slices.DeleteFunc(c.layerOrder, func(o *layerSurface) bool { return o == l })
+		if c.onDemandLayerFocus == l {
+			c.onDemandLayerFocus = nil
+		}
+		c.updateKeyboardFocus()
+		c.notifyStateChanged()
 	})
 }
 
@@ -237,6 +358,23 @@ func (c *Compositor) layerPlacements() []layerPlacement {
 			mapped:    bool(l.surface.surface.mapped),
 			box: rect{int(x), int(y),
 				int(l.surface.current.actual_width), int(l.surface.current.actual_height)},
+		})
+	}
+	return out
+}
+
+// LayerSnapshot copies mapped layer-shell surfaces into plain Go values. Call
+// it on the compositor thread; IPC readers consume the immutable copies.
+func (c *Compositor) LayerSnapshot() []LayerSnapshot {
+	out := make([]LayerSnapshot, 0, len(c.layerOrder))
+	for _, l := range c.layerOrder {
+		if !bool(l.surface.surface.mapped) {
+			continue
+		}
+		out = append(out, LayerSnapshot{
+			Namespace: cString(l.surface.namespace), Output: l.outputName,
+			Layer:                 snapshotLayerKind(l.layer),
+			KeyboardInteractivity: snapshotKeyboardMode(int(l.surface.current.keyboard_interactive)),
 		})
 	}
 	return out
