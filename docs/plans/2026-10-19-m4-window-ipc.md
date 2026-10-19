@@ -59,7 +59,7 @@
 **Files:** `internal/ipc/wire.go`, `internal/ipc/wire_test.go`, `internal/server/niri.go`, `internal/server/niri_test.go`, `internal/server/server.go`, `internal/server/control.go`, `internal/wlr/input.go`, `internal/wlr/windows.go`, and focused tests.
 
 1. Add handler tests proving valid action requests decode, reach the compositor-thread operation, return `Handled`, and unknown mapped IDs are harmless no-ops as in Niri.
-2. Implement `FocusWindow`, `CloseWindow` (explicit ID or current keyboard-focused window), and `FocusWorkspace` through `Compositor.Post`; no IPC goroutine may call wlroots directly.
+2. Implement `FocusWindow`, `CloseWindow` (explicit ID or retained Niri layout focus, including when a layer owns keyboard focus), and `FocusWorkspace` through `Compositor.Post`; no IPC goroutine may call wlroots directly.
 3. Focus through the existing `focusView` path so activation, layer priority, active output, and state events remain consistent. Close with `wlr_xdg_toplevel_send_close`; do not destroy client-owned surfaces directly.
 4. Focus the output that owns an ID-targeted workspace while M4 has one active workspace per output. Validate the output still exists when the posted operation runs.
 5. Add real-socket action tests and focused wlroots tests showing the target window receives focus or a close request and the resulting snapshot/events update.
@@ -80,3 +80,12 @@
 - Run `gofmt -w .`, `test -z "$(gofmt -l .)"`, `go vet -p 2 ./...`, build both `cmd/sysc-compositor` and `cmd/niri`, and verify `git diff --exit-code -- go.mod go.sum`.
 - Run `go generate ./internal/wlr` once in the fresh worktree before its first build. Generated protocol headers remain gitignored.
 - Push the finished M4 branch. M5 must be able to use the M4 window IDs and snapshots without introducing a second identity model.
+
+## Execution record
+
+- Named `internal/wlr`, `internal/server`, and `internal/ipc` checks pass, including nested-client and real Niri-socket actions on the current host.
+- `go vet -p 2 ./...` and builds for `cmd/sysc-compositor` and `cmd/niri` pass.
+- sysc-shell built from a clean worktree at `origin/main` commit `2e81653b`; focused Niri stream and running-app tests pass.
+- Review follow-up: changing the retained layout focus now refreshes active-window state while a layer surface owns keyboard focus; ID-less `CloseWindow` targets that retained Niri focus; windows whose centers leave every output stay in IPC on the focused output; focus timestamp commits reject stale timer callbacks.
+- Focused regressions for those cases pass. The stable-ID lifecycle test still verifies identity through unmap; no existing nested test client remaps an xdg toplevel, and the ID remains on the retained `toplevelView` until destroy.
+- Laptop runtime qualification is pending. SSH to the saved `laptop` target (`192.168.0.64:7777`) returned `No route to host`; no laptop commands or session changes ran.

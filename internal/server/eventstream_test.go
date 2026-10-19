@@ -125,6 +125,125 @@ func TestEventStreamUsesWorkspaceActivatedForFocusChanges(t *testing.T) {
 	}
 }
 
+func TestEventStreamWindowMapAndMetadataUseIncrementalEvents(t *testing.T) {
+	id := uint64(4)
+	title := "Terminal"
+	before := niriSnapshot{workspaces: []ipc.Workspace{{ID: 1}}}
+	after := niriSnapshot{
+		workspaces: []ipc.Workspace{{ID: 1, ActiveWindowID: &id}},
+		windows:    []ipc.Window{{ID: id, Title: &title, IsFloating: true, IsFocused: true}},
+	}
+	want := [][]byte{
+		eventLine("WorkspaceActiveWindowChanged", struct {
+			WorkspaceID    uint64  `json:"workspace_id"`
+			ActiveWindowID *uint64 `json:"active_window_id"`
+		}{WorkspaceID: 1, ActiveWindowID: &id}),
+		eventLine("WindowOpenedOrChanged", struct {
+			Window ipc.Window `json:"window"`
+		}{Window: after.windows[0]}),
+	}
+	if got := eventStreamChanges(before, after); !reflect.DeepEqual(got, want) {
+		t.Fatalf("map events = %q, want %q", got, want)
+	}
+
+	changedTitle := "Terminal — file.txt"
+	updated := after
+	updated.windows = []ipc.Window{{ID: id, Title: &changedTitle, IsFloating: true, IsFocused: true}}
+	want = [][]byte{eventLine("WindowOpenedOrChanged", struct {
+		Window ipc.Window `json:"window"`
+	}{Window: updated.windows[0]})}
+	if got := eventStreamChanges(after, updated); !reflect.DeepEqual(got, want) {
+		t.Fatalf("metadata events = %q, want %q", got, want)
+	}
+}
+
+func TestEventStreamWindowFocusTimestampAndCloseEvents(t *testing.T) {
+	stamp := &ipc.Timestamp{Secs: 8, Nanos: 9}
+	before := niriSnapshot{windows: []ipc.Window{{ID: 7, IsFocused: true}}}
+	after := niriSnapshot{windows: []ipc.Window{{ID: 7, IsFocused: true, FocusTimestamp: stamp}}}
+	want := [][]byte{eventLine("WindowFocusTimestampChanged", struct {
+		ID             uint64         `json:"id"`
+		FocusTimestamp *ipc.Timestamp `json:"focus_timestamp"`
+	}{ID: 7, FocusTimestamp: stamp})}
+	if got := eventStreamChanges(before, after); !reflect.DeepEqual(got, want) {
+		t.Fatalf("timestamp events = %q, want %q", got, want)
+	}
+
+	closed := niriSnapshot{}
+	want = [][]byte{
+		eventLine("WindowClosed", struct {
+			ID uint64 `json:"id"`
+		}{ID: 7}),
+		eventLine("WindowFocusChanged", struct {
+			ID *uint64 `json:"id"`
+		}{}),
+	}
+	if got := eventStreamChanges(after, closed); !reflect.DeepEqual(got, want) {
+		t.Fatalf("close events = %q, want %q", got, want)
+	}
+}
+
+func TestEventStreamWindowFocusAndWorkspaceActiveWindowEvents(t *testing.T) {
+	first, second := uint64(7), uint64(8)
+	before := niriSnapshot{
+		workspaces: []ipc.Workspace{{ID: 1, ActiveWindowID: &first}},
+		windows: []ipc.Window{
+			{ID: first, IsFocused: true},
+			{ID: second},
+		},
+	}
+	after := niriSnapshot{
+		workspaces: []ipc.Workspace{{ID: 1, ActiveWindowID: &second}},
+		windows: []ipc.Window{
+			{ID: first},
+			{ID: second, IsFocused: true},
+		},
+	}
+	want := [][]byte{
+		eventLine("WorkspaceActiveWindowChanged", struct {
+			WorkspaceID    uint64  `json:"workspace_id"`
+			ActiveWindowID *uint64 `json:"active_window_id"`
+		}{WorkspaceID: 1, ActiveWindowID: &second}),
+		eventLine("WindowFocusChanged", struct {
+			ID *uint64 `json:"id"`
+		}{ID: &second}),
+	}
+	if got := eventStreamChanges(before, after); !reflect.DeepEqual(got, want) {
+		t.Fatalf("focus events = %q, want %q", got, want)
+	}
+
+	cleared := after
+	cleared.workspaces = []ipc.Workspace{{ID: 1}}
+	unfocusedSecond := after.windows[1]
+	unfocusedSecond.IsFocused = false
+	cleared.windows = []ipc.Window{{ID: first}, unfocusedSecond}
+	want = [][]byte{
+		eventLine("WorkspaceActiveWindowChanged", struct {
+			WorkspaceID    uint64  `json:"workspace_id"`
+			ActiveWindowID *uint64 `json:"active_window_id"`
+		}{WorkspaceID: 1}),
+		eventLine("WindowFocusChanged", struct {
+			ID *uint64 `json:"id"`
+		}{}),
+	}
+	if got := eventStreamChanges(after, cleared); !reflect.DeepEqual(got, want) {
+		t.Fatalf("focus clear events = %q, want %q", got, want)
+	}
+}
+
+func TestEventStreamChangedFocusedWindowCarriesFocusInWindowEvent(t *testing.T) {
+	first, second := uint64(7), uint64(8)
+	title := "changed while focused"
+	before := []ipc.Window{{ID: first, IsFocused: true}, {ID: second}}
+	after := []ipc.Window{{ID: first}, {ID: second, Title: &title, IsFocused: true}}
+	want := [][]byte{eventLine("WindowOpenedOrChanged", struct {
+		Window ipc.Window `json:"window"`
+	}{Window: after[1]})}
+	if got := eventStreamWindowChanges(before, after); !reflect.DeepEqual(got, want) {
+		t.Fatalf("changed focused-window events = %q, want %q", got, want)
+	}
+}
+
 func TestDestroyStopsActiveEventStream(t *testing.T) {
 	state := newNiriState(false)
 	hub := newEventHub()

@@ -9,6 +9,7 @@ import (
 	"runtime/debug"
 	"slices"
 	"sync"
+	"time"
 
 	"github.com/Nomadcxx/sysc-compositor/internal/ipc"
 	"github.com/Nomadcxx/sysc-compositor/internal/wlr"
@@ -41,10 +42,11 @@ func Version() string {
 // niriHandler answers the niri-ipc requests M2 builds; every other request
 // and action decodes and replies that it is not built yet.
 type niriHandler struct {
-	quit     func()
-	spawn    spawner
-	snapshot func() niriSnapshot
-	stream   func(net.Conn)
+	quit       func()
+	spawn      spawner
+	snapshot   func() niriSnapshot
+	stream     func(net.Conn)
+	postAction func(ipc.Action, string) error
 }
 
 // niriSnapshot contains only plain Go wire data, never wlroots objects.
@@ -118,6 +120,15 @@ func (s *niriState) replace(next niriSnapshot) {
 	if next.focusedOutput != nil {
 		focusedName = next.focusedOutput.Name
 	}
+	activeWindowByWorkspace := make(map[uint64]uint64, len(next.windows))
+	for _, window := range next.windows {
+		if window.WorkspaceID == nil {
+			continue
+		}
+		if _, exists := activeWindowByWorkspace[*window.WorkspaceID]; !exists {
+			activeWindowByWorkspace[*window.WorkspaceID] = window.ID
+		}
+	}
 	next.workspaces = make([]ipc.Workspace, 0, len(names))
 	for _, name := range names {
 		id, ok := s.workspaceIDs[name]
@@ -127,15 +138,19 @@ func (s *niriState) replace(next niriSnapshot) {
 			s.workspaceIDs[name] = id
 		}
 		outputName := name
-		next.workspaces = append(next.workspaces, ipc.Workspace{
+		workspace := ipc.Workspace{
 			ID: id, Idx: 1, Output: &outputName,
 			IsActive: true, IsFocused: name == focusedName,
-		})
+		}
+		if windowID, exists := activeWindowByWorkspace[id]; exists {
+			workspace.ActiveWindowID = &windowID
+		}
+		next.workspaces = append(next.workspaces, workspace)
 	}
 	if _, connected := next.outputs[focusedName]; !connected {
 		next.focusedOutput = nil
 	}
-	s.current = next
+	s.current = cloneNiriSnapshot(next)
 }
 
 func (s *niriState) snapshot() niriSnapshot {
@@ -144,14 +159,41 @@ func (s *niriState) snapshot() niriSnapshot {
 	return cloneNiriSnapshot(s.current)
 }
 
+func (s *niriState) workspaceIDForOutput(name string) uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if id, exists := s.workspaceIDs[name]; exists {
+		return id
+	}
+	id := s.nextWorkspaceID
+	s.nextWorkspaceID++
+	s.workspaceIDs[name] = id
+	return id
+}
+
 func cloneNiriSnapshot(current niriSnapshot) niriSnapshot {
 	state := current
 	state.outputs = make(map[string]ipc.Output, len(current.outputs))
 	for name, output := range current.outputs {
-		state.outputs[name] = output
+		state.outputs[name] = cloneNiriOutput(output)
 	}
 	state.workspaces = slices.Clone(current.workspaces)
+	for i := range state.workspaces {
+		state.workspaces[i].Name = clonePointer(state.workspaces[i].Name)
+		state.workspaces[i].Output = clonePointer(state.workspaces[i].Output)
+		state.workspaces[i].ActiveWindowID = clonePointer(state.workspaces[i].ActiveWindowID)
+	}
 	state.windows = slices.Clone(current.windows)
+	for i := range state.windows {
+		window := &state.windows[i]
+		window.Title = clonePointer(window.Title)
+		window.AppID = clonePointer(window.AppID)
+		window.PID = clonePointer(window.PID)
+		window.WorkspaceID = clonePointer(window.WorkspaceID)
+		window.Layout.PosInScrollingLayout = clonePointer(window.Layout.PosInScrollingLayout)
+		window.Layout.TilePosInWorkspaceView = clonePointer(window.Layout.TilePosInWorkspaceView)
+		window.FocusTimestamp = clonePointer(window.FocusTimestamp)
+	}
 	state.layers = slices.Clone(current.layers)
 	if current.keyboardLayouts != nil {
 		layouts := *current.keyboardLayouts
@@ -159,10 +201,27 @@ func cloneNiriSnapshot(current niriSnapshot) niriSnapshot {
 		state.keyboardLayouts = &layouts
 	}
 	if current.focusedOutput != nil {
-		focused := *current.focusedOutput
+		focused := cloneNiriOutput(*current.focusedOutput)
 		state.focusedOutput = &focused
 	}
 	return state
+}
+
+func cloneNiriOutput(output ipc.Output) ipc.Output {
+	output.Serial = clonePointer(output.Serial)
+	output.PhysicalSize = clonePointer(output.PhysicalSize)
+	output.Modes = slices.Clone(output.Modes)
+	output.CurrentMode = clonePointer(output.CurrentMode)
+	output.Logical = clonePointer(output.Logical)
+	return output
+}
+
+func clonePointer[T any](value *T) *T {
+	if value == nil {
+		return nil
+	}
+	copy := *value
+	return &copy
 }
 
 func (h niriHandler) currentState() niriSnapshot {
@@ -194,6 +253,34 @@ func toNiriOutput(output wlr.OutputSnapshot) ipc.Output {
 		Modes: modes, CurrentMode: output.CurrentMode, IsCustomMode: output.IsCustomMode,
 		VrrSupported: output.VRRSupported, VrrEnabled: output.VRREnabled, Logical: logical,
 	}
+}
+
+func toNiriWindow(window wlr.WindowInfo, workspaceID uint64, output ipc.Output) ipc.Window {
+	result := ipc.Window{
+		ID: window.ID, Title: clonePointer(window.Title), AppID: clonePointer(window.AppID),
+		WorkspaceID: &workspaceID, IsFocused: window.IsFocused, IsFloating: true,
+		Layout: ipc.WindowLayout{
+			TileSize:   [2]float64{float64(window.Width), float64(window.Height)},
+			WindowSize: [2]int32{int32(window.Width), int32(window.Height)},
+		},
+	}
+	if window.PID > 0 {
+		pid := int32(window.PID)
+		result.PID = &pid
+	}
+	position := [2]float64{float64(window.X), float64(window.Y)}
+	if output.Logical != nil {
+		position[0] -= float64(output.Logical.X)
+		position[1] -= float64(output.Logical.Y)
+	}
+	result.Layout.TilePosInWorkspaceView = &position
+	if window.HasFocusTimestamp {
+		result.FocusTimestamp = &ipc.Timestamp{
+			Secs:  uint64(window.FocusTimestamp / time.Second),
+			Nanos: uint32(window.FocusTimestamp % time.Second),
+		}
+	}
+	return result
 }
 
 func niriTransform(transform uint32) ipc.Transform {
@@ -271,6 +358,16 @@ func (h niriHandler) handle(r ipc.Request) (ipc.Reply, func()) {
 			layers = []ipc.LayerSurface{}
 		}
 		return ipc.Reply{Ok: ipc.SuccessValue("Layers", layers)}, nil
+	case "FocusedWindow":
+		var focused *ipc.Window
+		for _, window := range h.currentState().windows {
+			if window.IsFocused {
+				copy := window
+				focused = &copy
+				break
+			}
+		}
+		return ipc.Reply{Ok: ipc.SuccessValue("FocusedWindow", focused)}, nil
 	case "FocusedOutput":
 		return ipc.Reply{Ok: ipc.SuccessValue("FocusedOutput", h.currentState().focusedOutput)}, nil
 	case "EventStream":
@@ -292,6 +389,14 @@ func (h niriHandler) action(a ipc.Action) (ipc.Reply, func()) {
 		err = h.spawn.spawn(a.Command)
 	case "SpawnSh":
 		err = h.spawn.spawnSh(a.ShellCommand)
+	case "FocusWindow", "CloseWindow":
+		return h.windowAction(a, "")
+	case "FocusWorkspace":
+		output := focusWorkspaceOutput(h.currentState(), a.Workspace)
+		if output == "" {
+			return ipc.Reply{Ok: ipc.Handled}, nil
+		}
+		return h.windowAction(a, output)
 	default:
 		return ipc.Unimplemented(a.Name), nil
 	}
@@ -301,6 +406,39 @@ func (h niriHandler) action(a ipc.Action) (ipc.Reply, func()) {
 		os.Stderr.WriteString("sysc-compositor: spawn: " + err.Error() + "\n")
 	}
 	return ipc.Reply{Ok: ipc.Handled}, nil
+}
+
+func (h niriHandler) windowAction(action ipc.Action, output string) (ipc.Reply, func()) {
+	if h.postAction == nil {
+		return ipc.Unimplemented(action.Name), nil
+	}
+	return ipc.Reply{Ok: ipc.Handled}, func() {
+		if err := h.postAction(action, output); err != nil {
+			os.Stderr.WriteString("sysc-compositor: action " + action.Name + ": " + err.Error() + "\n")
+		}
+	}
+}
+
+func focusWorkspaceOutput(state niriSnapshot, reference *ipc.WorkspaceReference) string {
+	if reference == nil {
+		return ""
+	}
+	for _, workspace := range state.workspaces {
+		matches := false
+		switch {
+		case reference.ID != nil:
+			matches = workspace.ID == *reference.ID
+		case reference.Index != nil:
+			matches = workspace.Idx == *reference.Index && state.focusedOutput != nil &&
+				workspace.Output != nil && *workspace.Output == state.focusedOutput.Name
+		case reference.Name != nil:
+			matches = workspace.Name != nil && *workspace.Name == *reference.Name
+		}
+		if matches && workspace.Output != nil {
+			return *workspace.Output
+		}
+	}
+	return ""
 }
 
 func (h niriHandler) serve(c *net.UnixConn) {

@@ -132,6 +132,13 @@ type KeyboardLayouts struct {
 	CurrentIdx uint8    `json:"current_idx"`
 }
 
+// WorkspaceReference is Niri's externally tagged workspace argument.
+type WorkspaceReference struct {
+	ID    *uint64
+	Index *uint8
+	Name  *string
+}
+
 // Action is a decoded action. Only the fields of the actions built so far
 // are kept; every other action is known by Name alone.
 type Action struct {
@@ -139,6 +146,8 @@ type Action struct {
 	SkipConfirmation bool     // Quit
 	Command          []string // Spawn
 	ShellCommand     string   // SpawnSh
+	WindowID         *uint64
+	Workspace        *WorkspaceReference
 }
 
 // DecodeRequest decodes one request line.
@@ -189,6 +198,57 @@ func decodeAction(raw json.RawMessage) (Action, error) {
 			return Action{}, ErrParse
 		}
 		a.ShellCommand = *f.Command
+	case "FocusWindow":
+		var f struct {
+			ID *uint64 `json:"id"`
+		}
+		if err := strict(body, &f); err != nil || f.ID == nil {
+			return Action{}, ErrParse
+		}
+		a.WindowID = f.ID
+	case "CloseWindow":
+		var f struct {
+			ID *uint64 `json:"id"`
+		}
+		if err := strict(body, &f); err != nil {
+			return Action{}, ErrParse
+		}
+		a.WindowID = f.ID
+	case "FocusWorkspace":
+		var f struct {
+			Reference *json.RawMessage `json:"reference"`
+		}
+		if err := strict(body, &f); err != nil || f.Reference == nil {
+			return Action{}, ErrParse
+		}
+		name, value, err := variant(*f.Reference)
+		if err != nil {
+			return Action{}, ErrParse
+		}
+		reference := &WorkspaceReference{}
+		switch name {
+		case "Id":
+			var id uint64
+			if err := json.Unmarshal(value, &id); err != nil {
+				return Action{}, ErrParse
+			}
+			reference.ID = &id
+		case "Index":
+			var index uint8
+			if err := json.Unmarshal(value, &index); err != nil {
+				return Action{}, ErrParse
+			}
+			reference.Index = &index
+		case "Name":
+			var workspaceName string
+			if err := json.Unmarshal(value, &workspaceName); err != nil {
+				return Action{}, ErrParse
+			}
+			reference.Name = &workspaceName
+		default:
+			return Action{}, ErrParse
+		}
+		a.Workspace = reference
 	}
 	return a, nil
 }
@@ -244,6 +304,33 @@ func EncodeRequest(r Request) []byte {
 		body = struct {
 			Command string `json:"command"`
 		}{a.ShellCommand}
+	case "FocusWindow":
+		id := uint64(0)
+		if a.WindowID != nil {
+			id = *a.WindowID
+		}
+		body = struct {
+			ID uint64 `json:"id"`
+		}{id}
+	case "CloseWindow":
+		body = struct {
+			ID *uint64 `json:"id"`
+		}{a.WindowID}
+	case "FocusWorkspace":
+		var reference any = map[string]any{}
+		if a.Workspace != nil {
+			switch {
+			case a.Workspace.ID != nil:
+				reference = map[string]any{"Id": *a.Workspace.ID}
+			case a.Workspace.Index != nil:
+				reference = map[string]any{"Index": *a.Workspace.Index}
+			case a.Workspace.Name != nil:
+				reference = map[string]any{"Name": *a.Workspace.Name}
+			}
+		}
+		body = struct {
+			Reference any `json:"reference"`
+		}{reference}
 	}
 	return marshal(map[string]any{"Action": map[string]any{a.Name: body}})
 }

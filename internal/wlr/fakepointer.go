@@ -6,6 +6,7 @@ package wlr
 
 #include <stdlib.h>
 #include <wlr/interfaces/wlr_pointer.h>
+#include <wlr/types/wlr_cursor.h>
 #include <wlr/types/wlr_pointer.h>
 
 static const struct wlr_pointer_impl sysc_fake_pointer_impl = {
@@ -63,6 +64,12 @@ type fakePointer struct {
 }
 
 func (c *Compositor) addFakePointer() *fakePointer {
+	// The nested Wayland backend forwards host pointer motion. Let this fake
+	// device own cursor position during scripted input tests.
+	for device := range c.pointerDevices {
+		C.wlr_cursor_detach_input_device(c.cursor, (*C.struct_wlr_input_device)(device))
+		delete(c.pointerDevices, device)
+	}
 	pointer := C.sysc_fake_pointer_create()
 	if pointer == nil {
 		return nil

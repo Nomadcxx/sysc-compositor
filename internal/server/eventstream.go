@@ -199,6 +199,15 @@ func eventStreamChanges(before, after niriSnapshot) [][]byte {
 	} else {
 		for i, workspace := range after.workspaces {
 			previous := before.workspaces[i]
+			if previous.ActiveWindowID == nil && workspace.ActiveWindowID != nil ||
+				previous.ActiveWindowID != nil && workspace.ActiveWindowID == nil ||
+				previous.ActiveWindowID != nil && workspace.ActiveWindowID != nil &&
+					*previous.ActiveWindowID != *workspace.ActiveWindowID {
+				lines = append(lines, eventLine("WorkspaceActiveWindowChanged", struct {
+					WorkspaceID    uint64  `json:"workspace_id"`
+					ActiveWindowID *uint64 `json:"active_window_id"`
+				}{WorkspaceID: workspace.ID, ActiveWindowID: workspace.ActiveWindowID}))
+			}
 			if workspace.IsFocused && !previous.IsFocused {
 				lines = append(lines, workspaceActivatedLine(workspace.ID, true))
 				continue
@@ -208,11 +217,7 @@ func eventStreamChanges(before, after niriSnapshot) [][]byte {
 			}
 		}
 	}
-	if !reflect.DeepEqual(before.windows, after.windows) {
-		lines = append(lines, eventLine("WindowsChanged", struct {
-			Windows []ipc.Window `json:"windows"`
-		}{Windows: nonNilWindows(after.windows)}))
-	}
+	lines = append(lines, eventStreamWindowChanges(before.windows, after.windows)...)
 	if after.keyboardLayouts != nil {
 		switch {
 		case before.keyboardLayouts == nil || !slices.Equal(before.keyboardLayouts.Names, after.keyboardLayouts.Names):
@@ -228,14 +233,77 @@ func eventStreamChanges(before, after niriSnapshot) [][]byte {
 	return lines
 }
 
+func eventStreamWindowChanges(before, after []ipc.Window) [][]byte {
+	previous := make(map[uint64]ipc.Window, len(before))
+	for _, window := range before {
+		previous[window.ID] = window
+	}
+	seen := make(map[uint64]struct{}, len(after))
+	var lines [][]byte
+	hadFocusedWindow := focusedWindowID(before) != nil
+	for _, window := range after {
+		seen[window.ID] = struct{}{}
+		old, exists := previous[window.ID]
+		if !exists || windowDetailsChanged(old, window) {
+			lines = append(lines, eventLine("WindowOpenedOrChanged", struct {
+				Window ipc.Window `json:"window"`
+			}{Window: window}))
+			continue
+		}
+		if window.IsFocused && !old.IsFocused {
+			id := window.ID
+			lines = append(lines, eventLine("WindowFocusChanged", struct {
+				ID *uint64 `json:"id"`
+			}{ID: &id}))
+		}
+		if !reflect.DeepEqual(old.FocusTimestamp, window.FocusTimestamp) {
+			lines = append(lines, eventLine("WindowFocusTimestampChanged", struct {
+				ID             uint64         `json:"id"`
+				FocusTimestamp *ipc.Timestamp `json:"focus_timestamp"`
+			}{ID: window.ID, FocusTimestamp: window.FocusTimestamp}))
+		}
+	}
+	for _, window := range before {
+		if _, exists := seen[window.ID]; !exists {
+			lines = append(lines, eventLine("WindowClosed", struct {
+				ID uint64 `json:"id"`
+			}{ID: window.ID}))
+		}
+	}
+	if hadFocusedWindow && focusedWindowID(after) == nil {
+		lines = append(lines, eventLine("WindowFocusChanged", struct {
+			ID *uint64 `json:"id"`
+		}{}))
+	}
+	return lines
+}
+
+func focusedWindowID(windows []ipc.Window) *uint64 {
+	for _, window := range windows {
+		if window.IsFocused {
+			id := window.ID
+			return &id
+		}
+	}
+	return nil
+}
+
+func windowDetailsChanged(before, after ipc.Window) bool {
+	return before.WorkspaceID == nil && after.WorkspaceID != nil ||
+		before.WorkspaceID != nil && after.WorkspaceID == nil ||
+		before.WorkspaceID != nil && after.WorkspaceID != nil && *before.WorkspaceID != *after.WorkspaceID ||
+		!reflect.DeepEqual(before.Title, after.Title) || !reflect.DeepEqual(before.AppID, after.AppID) ||
+		before.IsFloating != after.IsFloating
+}
+
 func workspaceDetailsChanged(before, after []ipc.Workspace) bool {
 	if len(before) != len(after) {
 		return true
 	}
 	for i := range before {
 		previous, current := before[i], after[i]
-		previous.IsActive, previous.IsFocused = false, false
-		current.IsActive, current.IsFocused = false, false
+		previous.IsActive, previous.IsFocused, previous.ActiveWindowID = false, false, nil
+		current.IsActive, current.IsFocused, current.ActiveWindowID = false, false, nil
 		if !reflect.DeepEqual(previous, current) {
 			return true
 		}

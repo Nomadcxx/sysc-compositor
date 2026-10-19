@@ -58,6 +58,42 @@ func TestDecodeRequestRejects(t *testing.T) {
 	}
 }
 
+func TestWindowActionsRoundTripNiriWire(t *testing.T) {
+	for _, line := range []string{
+		`{"Action":{"FocusWindow":{"id":81}}}`,
+		`{"Action":{"CloseWindow":{"id":81}}}`,
+		`{"Action":{"CloseWindow":{"id":null}}}`,
+		`{"Action":{"FocusWorkspace":{"reference":{"Id":7}}}}`,
+		`{"Action":{"FocusWorkspace":{"reference":{"Index":2}}}}`,
+		`{"Action":{"FocusWorkspace":{"reference":{"Name":"work"}}}}`,
+	} {
+		r, err := DecodeRequest([]byte(line))
+		if err != nil {
+			t.Fatalf("DecodeRequest(%s): %v", line, err)
+		}
+		if got := string(EncodeRequest(r)); got != line {
+			t.Errorf("round trip = %s, want %s", got, line)
+		}
+	}
+}
+
+func TestWindowActionsRejectMalformedFields(t *testing.T) {
+	for _, line := range []string{
+		`{"Action":{"FocusWindow":{}}}`,
+		`{"Action":{"FocusWindow":{"id":null}}}`,
+		`{"Action":{"FocusWindow":{"id":81,"extra":true}}}`,
+		`{"Action":{"CloseWindow":{"id":"81"}}}`,
+		`{"Action":{"CloseWindow":{"extra":true}}}`,
+		`{"Action":{"FocusWorkspace":{}}}`,
+		`{"Action":{"FocusWorkspace":{"reference":{"Id":7,"Index":1}}}}`,
+		`{"Action":{"FocusWorkspace":{"reference":{"Other":7}}}}`,
+	} {
+		if _, err := DecodeRequest([]byte(line)); err != ErrParse {
+			t.Errorf("DecodeRequest(%s) error = %v, want %v", line, err, ErrParse)
+		}
+	}
+}
+
 // EncodeRequest must write what serde writes, so Niri's own server would
 // accept our `msg`, and ours accepts Niri's.
 func TestEncodeRequestRoundTrips(t *testing.T) {

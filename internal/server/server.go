@@ -88,11 +88,34 @@ func (s *Server) refreshNiriState() {
 	if layouts := s.c.KeyboardLayoutsSnapshot(); layouts != nil {
 		keyboardLayouts = &ipc.KeyboardLayouts{Names: layouts.Names, CurrentIdx: layouts.CurrentIdx}
 	}
+	windows := make([]ipc.Window, 0)
+	for _, window := range s.c.Windows() {
+		outputName := niriWindowOutputName(window.Output, focusedName, outputs)
+		output, connected := outputs[outputName]
+		if !connected {
+			continue
+		}
+		workspaceID := s.state.workspaceIDForOutput(outputName)
+		windows = append(windows, toNiriWindow(window, workspaceID, output))
+	}
 	s.state.replace(niriSnapshot{
-		outputs: outputs, windows: []ipc.Window{}, layers: wireLayers,
+		outputs: outputs, windows: windows, layers: wireLayers,
 		keyboardLayouts: keyboardLayouts, focusedOutput: focused,
 	})
 	s.events.publish(eventStreamChanges(before, s.state.snapshot()))
+}
+
+// niriWindowOutputName keeps mapped windows in IPC when their center moves
+// outside every output. M4 has no independent workspace placement, so the
+// focused output is the available fallback until M5 adds it.
+func niriWindowOutputName(windowOutput, focusedOutput string, outputs map[string]ipc.Output) string {
+	if _, connected := outputs[windowOutput]; connected {
+		return windowOutput
+	}
+	if _, connected := outputs[focusedOutput]; connected {
+		return focusedOutput
+	}
+	return ""
 }
 
 func (s *Server) startNiri() error {
@@ -146,6 +169,20 @@ func (s *Server) Run() error {
 		h := niriHandler{
 			quit: s.c.Terminate, spawn: s.spawn, snapshot: s.state.snapshot,
 			stream: func(conn net.Conn) { s.state.serveEventStream(s.events, conn) },
+			postAction: func(action ipc.Action, output string) error {
+				return s.c.Post(func() {
+					switch action.Name {
+					case "FocusWindow":
+						if action.WindowID != nil {
+							s.c.FocusWindow(*action.WindowID)
+						}
+					case "CloseWindow":
+						s.c.CloseWindow(action.WindowID)
+					case "FocusWorkspace":
+						s.c.FocusWorkspaceOutput(output)
+					}
+				})
+			},
 		}
 		go s.niri.Serve(h.serve)
 	}

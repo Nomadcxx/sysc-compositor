@@ -63,6 +63,7 @@ import "C"
 
 import (
 	"errors"
+	"time"
 	"unsafe"
 )
 
@@ -122,6 +123,11 @@ type Compositor struct {
 	focusedOutputName          string
 	activeOutputName           string
 	stateChanged               func()
+	lastWindowState            []WindowInfo
+	focusTimer                 *time.Timer
+	pendingFocus               *toplevelView
+	pendingFocusStamp          time.Duration
+	pendingFocusGeneration     uint64
 
 	// injected is the table of seats fed by the compositor rather than the
 	// user's hardware, after the user seat (c.seat) in creation order.
@@ -324,6 +330,10 @@ func (c *Compositor) Terminate() { C.wl_display_terminate(c.display) }
 // Destroy releases the compositor. Listeners added through AddListener are
 // removed first so no token outlives its wl_signal.
 func (c *Compositor) Destroy() {
+	if c.focusTimer != nil {
+		c.focusTimer.Stop()
+		c.focusTimer = nil
+	}
 	c.stopPost()
 	// Before any seat goes: wlroots frees a seat's popup grab twice when the
 	// seat is destroyed with the grab open (dismissGrabbedPopups).

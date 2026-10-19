@@ -13,11 +13,11 @@ Legend: `[ ]` missing · `[~]` partial · `[x]` done.
 | Version | [x] | M2 — `sysc-compositor <version> (niri-ipc 26.4.0)` |
 | Outputs | [x] | M3 — wlroots output snapshots |
 | Workspaces | [~] | M3 — one empty active workspace per output; dynamic layout lands later |
-| Windows | [~] | M3 — empty response until mapped toplevels land in M4 |
+| Windows | [x] | M4 — mapped toplevels with stable IDs and logical geometry; offscreen centers fall back to the focused output |
 | Layers | [x] | M3 — mapped layer-shell surfaces |
 | KeyboardLayouts | [ ] | M9 |
 | FocusedOutput | [x] | M3 — active output follows keyboard focus; first connected output is the initial and disconnect fallback |
-| FocusedWindow | [ ] | M4 |
+| FocusedWindow | [x] | M4 — actual keyboard-focused mapped window, otherwise null |
 | PickWindow | [ ] | M15 |
 | PickColor | [ ] | M15 |
 | Action | [~] | M2: all 141 decode; per-action below |
@@ -34,12 +34,12 @@ Legend: `[ ]` missing · `[~]` partial · `[x]` done.
 | WorkspacesChanged | [x] | M3 — workspace topology changes |
 | WorkspaceUrgencyChanged | [ ] | M6 |
 | WorkspaceActivated | [x] | M3 — focus and activation changes |
-| WorkspaceActiveWindowChanged | [ ] | M4 |
-| WindowsChanged | [~] | M3 — initial empty list; populated in M4 |
-| WindowOpenedOrChanged | [ ] | M4 |
-| WindowClosed | [ ] | M4 |
-| WindowFocusChanged | [ ] | M4 |
-| WindowFocusTimestampChanged | [ ] | M4 |
+| WorkspaceActiveWindowChanged | [x] | M4 — retained layout-focused window per output workspace, even while a layer owns keyboard focus |
+| WindowsChanged | [x] | M4 — populated initial EventStream snapshot |
+| WindowOpenedOrChanged | [x] | M4 — map and metadata changes |
+| WindowClosed | [x] | M4 — unmap/destroy |
+| WindowFocusChanged | [x] | M4 — focus changes and clear, following Niri event semantics |
+| WindowFocusTimestampChanged | [x] | M4 — monotonic timestamp after Niri's 750 ms debounce |
 | WindowUrgencyChanged | [ ] | M6 |
 | WindowLayoutsChanged | [ ] | M5 |
 | KeyboardLayoutsChanged | [~] | M3 — current XKB layout baseline; config support in M9 |
@@ -77,6 +77,14 @@ Until implemented, decode and reply `Err` with `unimplemented: <Name>`. Tick whe
 | Screenshot | [ ] | M11 |
 | ScreenshotScreen | [ ] | M11 |
 | ScreenshotWindow | [ ] | M11 |
+
+### Window focus and workspace
+
+| Action | Status | Milestone |
+|---|---|---|
+| FocusWindow | [x] | M4 — stable mapped-window ID |
+| CloseWindow | [x] | M4 — sends xdg-toplevel close for an explicit ID or the retained Niri layout focus |
+| FocusWorkspace | [~] | M4 — current output workspace by ID/index; named workspaces arrive with M6 |
 
 ### Window / column / workspace / monitor / floating / overview / cast / debug
 
