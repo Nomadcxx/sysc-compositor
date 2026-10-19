@@ -238,6 +238,16 @@ func (c *Compositor) outputNameAt(x, y float64) string {
 	return C.GoString(output.name)
 }
 
+// outputNameForView infers a view's output from its center, with the active
+// output as the M4 fallback while views have no independent output placement.
+func (c *Compositor) outputNameForView(view *toplevelView) string {
+	x, y := c.viewCenter(view)
+	if name := c.outputNameAt(x, y); name != "" {
+		return name
+	}
+	return c.FocusedOutputName()
+}
+
 func (c *Compositor) setActiveOutputName(focused string) {
 	names := make([]string, 0, len(c.sceneOutputs))
 	for pointer := range c.sceneOutputs {

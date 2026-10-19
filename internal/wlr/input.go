@@ -382,8 +382,7 @@ func (c *Compositor) focusView(view *toplevelView) {
 	if view == nil || view.toplevel == nil {
 		return
 	}
-	x, y := c.viewCenter(view)
-	c.setActiveOutputName(c.outputNameAt(x, y))
+	c.setActiveOutputName(c.outputNameForView(view))
 	changed := c.focusedView != view
 	if changed {
 		if previous := c.focusedView; previous != nil && previous.toplevel != nil {
@@ -432,9 +431,7 @@ func (c *Compositor) updateKeyboardFocus() {
 	activeOutput := c.FocusedOutputName()
 	focusedView := c.focusedView
 	if focusedView != nil && focusedView.toplevel != nil {
-		// M3 has no per-view output assignment, so use the view's scene position.
-		x, y := c.viewCenter(focusedView)
-		if c.outputNameAt(x, y) != activeOutput {
+		if c.outputNameForView(focusedView) != activeOutput {
 			focusedView = nil
 		}
 	} else {

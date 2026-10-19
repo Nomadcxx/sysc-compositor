@@ -61,13 +61,11 @@ func (c *Compositor) Windows() []WindowInfo {
 	for _, v := range views {
 		x, y := v.treePosition()
 		g := v.toplevel.base.geometry
-		cx := float64(x) + float64(g.width)/2
-		cy := float64(y) + float64(g.height)/2
 		out = append(out, WindowInfo{
 			ID: v.id, AppID: cStringPointer(v.toplevel.app_id), Title: cStringPointer(v.toplevel.title),
 			PID: int(C.sysc_surface_pid(v.toplevel.base.surface)),
 			X:   x, Y: y, Width: int(g.width), Height: int(g.height),
-			Output: c.outputNameAt(cx, cy), IsFocused: c.keyboardFocusedView() == v,
+			Output: c.outputNameForView(v), IsFocused: c.keyboardFocusedView() == v,
 			FocusTimestamp: v.focusTimestamp, HasFocusTimestamp: v.hasFocusTimestamp,
 		})
 	}
@@ -203,8 +201,7 @@ func (c *Compositor) FocusWorkspaceOutput(name string) bool {
 		if !view.mapped || view.tree == nil || !bool(view.toplevel.base.surface.mapped) {
 			continue
 		}
-		x, y := c.viewCenter(view)
-		if c.outputNameAt(x, y) == name && (recent == nil || view.touched > recent.touched) {
+		if c.outputNameForView(view) == name && (recent == nil || view.touched > recent.touched) {
 			recent = view
 		}
 	}

@@ -77,6 +77,50 @@ func TestFocusWindowSelectsStableID(t *testing.T) {
 	}
 }
 
+func TestFocusWindowOffscreenCenterUsesFocusedOutput(t *testing.T) {
+	if _, err := exec.LookPath("weston-terminal"); err != nil {
+		t.Skipf("weston-terminal unavailable: %v", err)
+	}
+	c := newNested(t)
+	var views []*toplevelView
+	var focused bool
+	var focusedOutput string
+	var targetOutput string
+	c.viewMapped = func(view *toplevelView) {
+		views = append(views, view)
+		if len(views) != 2 {
+			return
+		}
+		target := views[0]
+		c.placeView(target, 100000, 100000)
+		focusedOutput = c.FocusedOutputName()
+		if c.outputNameAt(c.viewCenter(target)) != "" {
+			t.Error("test target center still resolves to an output after placement")
+		}
+		if !c.FocusWindow(target.id) {
+			t.Error("FocusWindow rejected the mapped offscreen target")
+		}
+		focused = c.keyboardFocusedView() == target
+		for _, window := range c.Windows() {
+			if window.ID == target.id {
+				targetOutput = window.Output
+				break
+			}
+		}
+		c.Terminate()
+	}
+	runClient(t, c, []string{"sh", "-c", "weston-terminal & weston-terminal & wait"}, nil, nil)
+	if len(views) != 2 {
+		t.Fatalf("mapped windows = %d, want two", len(views))
+	}
+	if !focused {
+		t.Fatal("FocusWindow did not move actual keyboard focus to the offscreen target")
+	}
+	if targetOutput != focusedOutput {
+		t.Fatalf("offscreen target output = %q, want focused output %q", targetOutput, focusedOutput)
+	}
+}
+
 func TestCloseFocusedWindowSendsProtocolRequest(t *testing.T) {
 	if _, err := exec.LookPath("weston-terminal"); err != nil {
 		t.Skipf("weston-terminal unavailable: %v", err)
