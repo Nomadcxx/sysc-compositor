@@ -182,8 +182,10 @@ func (m *Model) mapWindow(id uint64, output string) {
 		workspace.strip.SetWindowSizeHints(id, hints.minWidth, hints.maxWidth, hints.minHeight, hints.maxHeight)
 	}
 	if size, ok := m.resizedWindows[id]; ok {
-		if placement, ok := workspace.strip.Placement(id); ok {
-			workspace.strip.ResizeWindow(id, placement.X, placement.Y, size.width, size.height)
+		if placement, ok := workspace.strip.Placement(id); ok && (size.width > 0 || size.height > 0) {
+			workspace.strip.ResizeWindow(id, placement.X, placement.Y, size.width, size.height, layout.ResizeOptions{
+				ResizeWidth: size.width > 0, ResizeHeight: size.height > 0,
+			})
 		}
 	}
 	m.reconcile(out)
@@ -271,7 +273,7 @@ func (m *Model) FocusWindow(id uint64) bool {
 }
 
 // ResizeWindow retains a pointer-resized tile's geometry in its workspace.
-func (m *Model) ResizeWindow(id uint64, x, y, width, height int) bool {
+func (m *Model) ResizeWindow(id uint64, x, y, width, height int, options layout.ResizeOptions) bool {
 	state, ok := m.windows[id]
 	if !ok {
 		return false
@@ -282,10 +284,19 @@ func (m *Model) ResizeWindow(id uint64, x, y, width, height int) bool {
 	}
 	for _, workspace := range out.workspaces {
 		if workspace.id == state.workspaceID {
-			if !workspace.strip.ResizeWindow(id, x, y, width, height) {
+			if !workspace.strip.ResizeWindow(id, x, y, width, height, options) {
 				return false
 			}
-			m.resizedWindows[id] = windowSize{width: width, height: height}
+			size := m.resizedWindows[id]
+			if options.ResizeWidth {
+				size.width = width
+			}
+			if options.ResizeHeight {
+				size.height = height
+			}
+			if size.width > 0 || size.height > 0 {
+				m.resizedWindows[id] = size
+			}
 			return true
 		}
 	}

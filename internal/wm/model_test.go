@@ -197,7 +197,7 @@ func TestResizeRetainsTileSizeAcrossWindowUnmapAndRemap(t *testing.T) {
 	if !m.MapWindow(1, "DP-1") {
 		t.Fatal("MapWindow() failed")
 	}
-	if !m.ResizeWindow(1, 16, 16, 560, 420) {
+	if !m.ResizeWindow(1, 16, 16, 560, 420, layout.ResizeOptions{ResizeWidth: true, ResizeHeight: true}) {
 		t.Fatal("ResizeWindow() failed")
 	}
 
@@ -215,11 +215,45 @@ func TestResizeRetainsTileSizeAcrossWindowUnmapAndRemap(t *testing.T) {
 	}
 }
 
+func TestVerticalResizePreservesConstrainedWidthAcrossRemap(t *testing.T) {
+	m := New()
+	m.AddOutput("DP-1", layout.Bounds{Width: 1200, Height: 800}, 400, 16)
+	if !m.MapWindow(1, "DP-1") {
+		t.Fatal("MapWindow() failed")
+	}
+	if !m.ResizeWindow(1, 16, 16, 900, 500, layout.ResizeOptions{ResizeWidth: true, ResizeHeight: true}) {
+		t.Fatal("initial ResizeWindow() failed")
+	}
+	if !m.SetWindowSizeHints(1, 0, 500, 0, 0) {
+		t.Fatal("setting max-width hint failed")
+	}
+
+	placement := m.Snapshot().Windows[0].Tile
+	if placement.Width != 500 {
+		t.Fatalf("constrained width = %d, want 500", placement.Width)
+	}
+	if !m.ResizeWindow(1, placement.X, placement.Y, placement.Width, 420, layout.ResizeOptions{ResizeHeight: true}) {
+		t.Fatal("vertical ResizeWindow() failed")
+	}
+	m.RemoveWindow(1)
+	if !m.MapWindow(1, "DP-1") {
+		t.Fatal("MapWindow() after unmap failed")
+	}
+	if !m.SetWindowSizeHints(1, 0, 0, 0, 0) {
+		t.Fatal("removing max-width hint failed")
+	}
+
+	placement = m.Snapshot().Windows[0].Tile
+	if placement.Width != 900 || placement.Height != 420 {
+		t.Fatalf("remapped placement after vertical resize = %+v, want 900x420", placement)
+	}
+}
+
 func TestDestroyDropsRetainedResizeState(t *testing.T) {
 	m := New()
 	m.AddOutput("DP-1", layout.Bounds{Width: 1000, Height: 800}, 500, 16)
 	m.MapWindow(1, "DP-1")
-	if !m.ResizeWindow(1, 16, 16, 560, 420) {
+	if !m.ResizeWindow(1, 16, 16, 560, 420, layout.ResizeOptions{ResizeWidth: true, ResizeHeight: true}) {
 		t.Fatal("ResizeWindow() failed")
 	}
 	m.RemoveWindow(1)

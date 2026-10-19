@@ -1,6 +1,53 @@
 package wlr
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/Nomadcxx/sysc-compositor/internal/layout"
+)
+
+func TestPointerGrabResizeOptions(t *testing.T) {
+	tests := []struct {
+		name  string
+		edges uint32
+		want  layout.ResizeOptions
+	}{
+		{
+			name:  "left",
+			edges: edgeLeft,
+			want:  layout.ResizeOptions{ResizeWidth: true, AnchorRight: true},
+		},
+		{
+			name:  "right",
+			edges: edgeRight,
+			want:  layout.ResizeOptions{ResizeWidth: true},
+		},
+		{
+			name:  "top",
+			edges: edgeTop,
+			want:  layout.ResizeOptions{ResizeHeight: true, AnchorBottom: true},
+		},
+		{
+			name:  "bottom",
+			edges: edgeBottom,
+			want:  layout.ResizeOptions{ResizeHeight: true},
+		},
+		{
+			name:  "top left corner",
+			edges: edgeTop | edgeLeft,
+			want: layout.ResizeOptions{
+				ResizeWidth: true, ResizeHeight: true, AnchorRight: true, AnchorBottom: true,
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := (pointerGrab{edges: tt.edges}).resizeOptions(); got != tt.want {
+				t.Fatalf("resizeOptions() = %+v, want %+v", got, tt.want)
+			}
+		})
+	}
+}
 
 func TestPointerGrabGeometry(t *testing.T) {
 	tests := []struct {

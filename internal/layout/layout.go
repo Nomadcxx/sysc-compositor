@@ -12,6 +12,12 @@ type Placement struct {
 	X, Y, Width, Height int
 }
 
+// ResizeOptions selects the changed axes and the edges fixed by a resize.
+type ResizeOptions struct {
+	ResizeWidth, ResizeHeight bool
+	AnchorRight, AnchorBottom bool
+}
+
 type columnState struct {
 	id            uint64
 	width, height int
@@ -229,24 +235,35 @@ func (w *Workspace) SetWindowSizeHints(id uint64, minWidth, maxWidth, minHeight,
 	return true
 }
 
-// ResizeWindow retains a column's width and its window's height at the grabbed
-// position, matching pointer resize grabs.
-func (w *Workspace) ResizeWindow(id uint64, x, y, width, height int) bool {
+// ResizeWindow updates the selected dimensions at the grabbed position,
+// keeping the far edge fixed when a left or top resize is clamped.
+func (w *Workspace) ResizeWindow(id uint64, x, y, width, height int, options ResizeOptions) bool {
 	idx := w.indexOf(id)
-	if idx < 0 || width < 1 || height < 1 {
+	if idx < 0 || (!options.ResizeWidth && !options.ResizeHeight) ||
+		(options.ResizeWidth && width < 1) || (options.ResizeHeight && height < 1) {
 		return false
 	}
 	column := &w.columns[idx]
-	column.width = width
-	if width == w.columnWidth {
-		column.width = 0
+	if options.ResizeWidth && options.AnchorRight {
+		x += width - clampSizeHint(width, column.minWidth, column.maxWidth)
 	}
-	column.height = height
-	if height == w.defaultWindowHeight() {
-		column.height = 0
+	if options.ResizeHeight && options.AnchorBottom {
+		y += height - clampSizeHint(height, column.minHeight, column.maxHeight)
 	}
-	column.yOffset = y - (w.bounds.Y + w.verticalInset())
-	w.viewOffset = w.bounds.X + w.columnStart(idx) - x
+	if options.ResizeWidth {
+		column.width = width
+		if width == w.columnWidth {
+			column.width = 0
+		}
+		w.viewOffset = w.bounds.X + w.columnStart(idx) - x
+	}
+	if options.ResizeHeight {
+		column.height = height
+		if height == w.defaultWindowHeight() {
+			column.height = 0
+		}
+		column.yOffset = y - (w.bounds.Y + w.verticalInset())
+	}
 	w.revealFocused()
 	return true
 }

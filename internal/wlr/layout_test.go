@@ -61,7 +61,9 @@ func TestConstrainedToplevelSizeUpdatesTileAndWindowOffset(t *testing.T) {
 		}
 		view.toplevel.current.max_width = 720
 		c.applyWorkspaceModel()
-		if !c.model.ResizeWindow(view.id, tile.X, tile.Y, 900, 200) {
+		if !c.model.ResizeWindow(view.id, tile.X, tile.Y, 900, 200, layout.ResizeOptions{
+			ResizeWidth: true, ResizeHeight: true,
+		}) {
 			t.Error("could not resize the constrained tile")
 		} else {
 			c.applyWorkspaceModel()
@@ -212,6 +214,7 @@ func TestPointerResizeSurvivesWorkspaceModelReapplication(t *testing.T) {
 		grab := *c.pointerGrab
 		pointer.moveTo(60, 60)
 		want := grab.geometry(float64(c.cursor.x), float64(c.cursor.y))
+		positionAfterResize := c.WorkspaceSnapshot().Windows[0].Tile
 		pointer.button(buttonRight, false)
 		c.applyWorkspaceModel()
 
@@ -219,8 +222,9 @@ func TestPointerResizeSurvivesWorkspaceModelReapplication(t *testing.T) {
 		if got.Width != want.width || got.Height != want.height {
 			t.Errorf("workspace size after resize/reapply = %dx%d, want %dx%d", got.Width, got.Height, want.width, want.height)
 		}
-		if got.X != want.x || got.Y != want.y {
-			t.Errorf("workspace position after resize/reapply = (%d,%d), want (%d,%d)", got.X, got.Y, want.x, want.y)
+		if got.X != positionAfterResize.X || got.Y != positionAfterResize.Y {
+			t.Errorf("workspace position after resize/reapply = (%d,%d), want retained (%d,%d)",
+				got.X, got.Y, positionAfterResize.X, positionAfterResize.Y)
 		}
 		c.Terminate()
 	}

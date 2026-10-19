@@ -156,10 +156,10 @@ func TestResizeRetainsColumnWidthAndWindowHeightAcrossLayoutUpdates(t *testing.T
 	ws := NewWorkspace(Bounds{Width: 1000, Height: 800}, 400, 16)
 	ws.AddWindow(1)
 	ws.AddWindow(2)
-	if !ws.ResizeWindow(1, 16, 16, 560, 420) {
+	if !ws.ResizeWindow(1, 16, 16, 560, 420, ResizeOptions{ResizeWidth: true, ResizeHeight: true}) {
 		t.Fatal("ResizeWindow(1) = false, want true")
 	}
-	if ws.ResizeWindow(1, 0, 0, 0, 0) {
+	if ws.ResizeWindow(1, 0, 0, 0, 0, ResizeOptions{ResizeWidth: true, ResizeHeight: true}) {
 		t.Fatal("ResizeWindow with an empty size = true, want false")
 	}
 	if !ws.FocusWindow(2) || !ws.FocusWindow(1) {
@@ -180,5 +180,97 @@ func TestResizeRetainsColumnWidthAndWindowHeightAcrossLayoutUpdates(t *testing.T
 	}
 	if second.X != first.X+first.Width+16 {
 		t.Fatalf("second column x = %d, want after resized first column at %d", second.X, first.X+first.Width+16)
+	}
+}
+
+func TestVerticalResizePreservesConstrainedColumnWidth(t *testing.T) {
+	ws := NewWorkspace(Bounds{Width: 1200, Height: 800}, 400, 16)
+	ws.AddWindow(1)
+	if !ws.ResizeWindow(1, 16, 16, 900, 500, ResizeOptions{ResizeWidth: true, ResizeHeight: true}) {
+		t.Fatal("initial ResizeWindow() failed")
+	}
+	ws.SetWindowSizeHints(1, 0, 500, 0, 0)
+
+	placement, ok := ws.Placement(1)
+	if !ok || placement.Width != 500 {
+		t.Fatalf("constrained placement = %+v, %t, want width 500", placement, ok)
+	}
+	if !ws.ResizeWindow(1, placement.X, placement.Y, placement.Width, 420, ResizeOptions{ResizeHeight: true}) {
+		t.Fatal("vertical ResizeWindow() failed")
+	}
+	ws.SetWindowSizeHints(1, 0, 0, 0, 0)
+
+	placement, _ = ws.Placement(1)
+	if placement.Width != 900 || placement.Height != 420 {
+		t.Fatalf("placement after vertical resize and hint removal = %+v, want 900x420", placement)
+	}
+}
+
+func TestResizeClampsAndKeepsLeftAndTopAnchorsFixed(t *testing.T) {
+	ws := NewWorkspace(Bounds{X: 100, Y: 50, Width: 1000, Height: 800}, 400, 16)
+	ws.AddWindow(1)
+	ws.SetWindowSizeHints(1, 500, 0, 400, 0)
+
+	// The pointer requested a 300x300 tile at (316, 166). Its right and bottom
+	// edges were anchored at (616, 466), so size-hint clamping must move the
+	// tile origin back as the tile grows to 500x400.
+	if !ws.ResizeWindow(1, 316, 166, 300, 300, ResizeOptions{
+		ResizeWidth: true, ResizeHeight: true, AnchorRight: true, AnchorBottom: true,
+	}) {
+		t.Fatal("ResizeWindow(1) = false, want true")
+	}
+
+	placement, ok := ws.Placement(1)
+	if !ok {
+		t.Fatal("Placement(1) missing")
+	}
+	if placement.X != 116 || placement.Y != 66 || placement.Width != 500 || placement.Height != 400 {
+		t.Fatalf("clamped placement = %+v, want origin (116, 66), size 500x400", placement)
+	}
+	if right, bottom := placement.X+placement.Width, placement.Y+placement.Height; right != 616 || bottom != 466 {
+		t.Fatalf("anchored edges = (%d, %d), want (616, 466)", right, bottom)
+	}
+}
+
+func TestResizeClampsRightAndBottomEdgesWithoutMovingOrigin(t *testing.T) {
+	ws := NewWorkspace(Bounds{Width: 1000, Height: 800}, 400, 16)
+	ws.AddWindow(1)
+	ws.SetWindowSizeHints(1, 500, 0, 400, 0)
+
+	if !ws.ResizeWindow(1, 200, 100, 300, 300, ResizeOptions{ResizeWidth: true, ResizeHeight: true}) {
+		t.Fatal("ResizeWindow(1) = false, want true")
+	}
+
+	placement, ok := ws.Placement(1)
+	if !ok {
+		t.Fatal("Placement(1) missing")
+	}
+	if placement.X != 200 || placement.Y != 100 || placement.Width != 500 || placement.Height != 400 {
+		t.Fatalf("clamped placement = %+v, want origin (200, 100), size 500x400", placement)
+	}
+}
+
+func TestResizeClampsAtMaximumAndKeepsLeftAndTopAnchorsFixed(t *testing.T) {
+	ws := NewWorkspace(Bounds{X: 100, Y: 50, Width: 1000, Height: 800}, 400, 16)
+	ws.AddWindow(1)
+	ws.SetWindowSizeHints(1, 0, 500, 0, 400)
+
+	// The requested 600x500 tile exceeds the client maximum. The grabbed
+	// right and bottom edges still need to stay at (616, 466) after clamping.
+	if !ws.ResizeWindow(1, 16, -34, 600, 500, ResizeOptions{
+		ResizeWidth: true, ResizeHeight: true, AnchorRight: true, AnchorBottom: true,
+	}) {
+		t.Fatal("ResizeWindow(1) = false, want true")
+	}
+
+	placement, ok := ws.Placement(1)
+	if !ok {
+		t.Fatal("Placement(1) missing")
+	}
+	if placement.X != 116 || placement.Y != 66 || placement.Width != 500 || placement.Height != 400 {
+		t.Fatalf("clamped placement = %+v, want origin (116, 66), size 500x400", placement)
+	}
+	if right, bottom := placement.X+placement.Width, placement.Y+placement.Height; right != 616 || bottom != 466 {
+		t.Fatalf("anchored edges = (%d, %d), want (616, 466)", right, bottom)
 	}
 }

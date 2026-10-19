@@ -94,6 +94,8 @@ import (
 	"math"
 	"time"
 	"unsafe"
+
+	"github.com/Nomadcxx/sysc-compositor/internal/layout"
 )
 
 type pointerGrabMode uint8
@@ -117,6 +119,15 @@ type pointerGrab struct {
 	x, y             int
 	width, height    int
 	edges            uint32
+}
+
+func (g pointerGrab) resizeOptions() layout.ResizeOptions {
+	return layout.ResizeOptions{
+		ResizeWidth:  g.edges&(edgeLeft|edgeRight) != 0,
+		ResizeHeight: g.edges&(edgeTop|edgeBottom) != 0,
+		AnchorRight:  g.edges&edgeLeft != 0,
+		AnchorBottom: g.edges&edgeTop != 0,
+	}
 }
 
 type toplevelView struct {
@@ -257,7 +268,8 @@ func (c *Compositor) processCursorMotion(time C.uint32_t) {
 		geometry := c.pointerGrab.geometry(float64(c.cursor.x), float64(c.cursor.y))
 		if c.pointerGrab.mode == grabResize {
 			if c.model == nil || !c.model.ResizeWindow(c.grabView.id,
-				geometry.x, geometry.y, geometry.width, geometry.height) {
+				geometry.x, geometry.y, geometry.width, geometry.height,
+				c.pointerGrab.resizeOptions()) {
 				C.sysc_scene_tree_set_position(c.grabView.tree,
 					C.int(geometry.x), C.int(geometry.y))
 				C.wlr_xdg_toplevel_set_size(c.grabView.toplevel,
