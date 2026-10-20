@@ -249,13 +249,15 @@ func (c *Compositor) viewForSurface(surface *C.struct_wlr_surface) *toplevelView
 }
 
 // applyFullscreen answers a toplevel's fullscreen request. Fullscreen covers
-// the output the client named, else the default one, from its origin.
-// Leaving it hands the size back to the client. Restoring the old place and
-// size, windowed fullscreen and stacking above the top layer are M6.
+// the requested output when it is connected, otherwise the assigned or default
+// output. Leaving it hands the size back to the client and restores saved
+// floating placement when needed.
 func (c *Compositor) applyFullscreen(view *toplevelView) {
 	toplevel := view.toplevel
 	fullscreen := bool(toplevel.requested.fullscreen)
+	focusedOutputBefore := ""
 	if view.mapped && c.model != nil {
+		focusedOutputBefore = c.model.Snapshot().FocusedOutput
 		c.model.SetFullscreen(view.id, fullscreen)
 	}
 	if !fullscreen {
@@ -263,12 +265,15 @@ func (c *Compositor) applyFullscreen(view *toplevelView) {
 		C.wlr_xdg_toplevel_set_size(toplevel, 0, 0)
 		return
 	}
-	output := toplevel.requested.fullscreen_output
-	if output != nil {
-		if _, connected := c.sceneOutputs[unsafe.Pointer(output)]; !connected {
-			output = nil
+	requestedOutput := toplevel.requested.fullscreen_output
+	if requestedOutput != nil {
+		if _, connected := c.sceneOutputs[unsafe.Pointer(requestedOutput)]; !connected {
+			requestedOutput = nil
 		}
 	}
+	// Use the assigned/default output when the request omitted or named a
+	// disconnected output, but only an explicit connected request may move it.
+	output := requestedOutput
 	if output == nil {
 		if view.mapped {
 			name := c.outputNameForView(view)
@@ -287,13 +292,27 @@ func (c *Compositor) applyFullscreen(view *toplevelView) {
 		return
 	}
 	if view.mapped && c.model != nil {
-		c.model.MoveWindowToOutput(view.id, C.GoString(output.name), true)
+		if requestedOutput != nil {
+			requestedName := C.GoString(requestedOutput.name)
+			if requestedName != c.outputNameForView(view) {
+				c.model.MoveWindowToOutput(view.id, requestedName, true)
+			}
+		}
 	}
 	C.wlr_xdg_toplevel_set_fullscreen(toplevel, true)
 	var box C.struct_wlr_box
 	C.sysc_output_layout_box(c.layout, output, &box)
 	C.wlr_xdg_toplevel_set_size(toplevel, box.width, box.height)
 	c.placeView(view, int(box.x), int(box.y))
+	if view.mapped && c.model != nil {
+		c.applyWorkspaceModel()
+		// Moving the focused window can move model focus to the requested
+		// output. Mirror that output without changing keyboard focus, which
+		// may still belong to an on-demand layer surface.
+		if focused := c.model.Snapshot().FocusedOutput; focused != focusedOutputBefore {
+			c.setActiveOutputName(focused)
+		}
+	}
 }
 
 func (c *Compositor) handleActivationRequest(data unsafe.Pointer) {

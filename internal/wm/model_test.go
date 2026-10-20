@@ -280,6 +280,95 @@ func TestFullscreenModesRemainDistinctAndKeepTiledPlacement(t *testing.T) {
 	t.Fatal("fullscreen window missing from snapshot")
 }
 
+func TestClientFullscreenTemporarilyTilesFloatingWindow(t *testing.T) {
+	m := New()
+	m.AddOutput("DP-1", layout.Bounds{Width: 1000, Height: 800}, 500, 16)
+	m.MapWindow(1, "DP-1")
+	floatBounds := layout.Bounds{X: 180, Y: 130, Width: 420, Height: 280}
+	if !m.SetWindowFloating(1, true, floatBounds) {
+		t.Fatal("SetWindowFloating() = false, want window floated")
+	}
+
+	if !m.SetFullscreen(1, true) {
+		t.Fatal("SetFullscreen(true) = false, want fullscreen state set")
+	}
+	fullscreen, ok := windowSnapshot(m, 1)
+	if !ok || !fullscreen.Fullscreen || fullscreen.Tile.Floating {
+		t.Fatalf("fullscreen placement = %+v, %t, want tiled fullscreen window", fullscreen, ok)
+	}
+
+	if !m.SetFullscreen(1, false) {
+		t.Fatal("SetFullscreen(false) = false, want fullscreen exited")
+	}
+	restored, ok := windowSnapshot(m, 1)
+	if !ok || restored.Fullscreen || !restored.Tile.Floating {
+		t.Fatalf("restored placement = %+v, %t, want floating window", restored, ok)
+	}
+	if got := [4]int{restored.Tile.X, restored.Tile.Y, restored.Tile.Width, restored.Tile.Height}; got != [4]int{floatBounds.X, floatBounds.Y, floatBounds.Width, floatBounds.Height} {
+		t.Errorf("restored floating bounds = %v, want %v", got, floatBounds)
+	}
+}
+
+func TestClientFullscreenToWindowedFullscreenRestoresFloatingWindow(t *testing.T) {
+	m := New()
+	m.AddOutput("DP-1", layout.Bounds{Width: 1000, Height: 800}, 500, 16)
+	m.MapWindow(1, "DP-1")
+	floatBounds := layout.Bounds{X: 180, Y: 130, Width: 420, Height: 280}
+	if !m.SetWindowFloating(1, true, floatBounds) || !m.SetFullscreen(1, true) {
+		t.Fatal("could not float and fullscreen the window")
+	}
+	if !m.SetWindowedFullscreen(1, true) {
+		t.Fatal("SetWindowedFullscreen(true) = false, want transition from client fullscreen")
+	}
+
+	window, ok := windowSnapshot(m, 1)
+	if !ok || window.Fullscreen || !window.WindowedFullscreen || !window.Tile.Floating {
+		t.Fatalf("windowed fullscreen placement = %+v, %t, want floating windowed fullscreen", window, ok)
+	}
+	if got := [4]int{window.Tile.X, window.Tile.Y, window.Tile.Width, window.Tile.Height}; got != [4]int{floatBounds.X, floatBounds.Y, floatBounds.Width, floatBounds.Height} {
+		t.Errorf("windowed floating bounds = %v, want %v", got, floatBounds)
+	}
+	if !m.SetWindowedFullscreen(1, false) {
+		t.Fatal("SetWindowedFullscreen(false) = false, want windowed fullscreen exited")
+	}
+	window, ok = windowSnapshot(m, 1)
+	if !ok || window.WindowedFullscreen || !window.Tile.Floating {
+		t.Fatalf("window after windowed fullscreen exit = %+v, %t, want floating placement", window, ok)
+	}
+}
+
+func TestFullscreenFloatingWindowRestoresOnMovedOutput(t *testing.T) {
+	m := New()
+	m.AddOutput("DP-1", layout.Bounds{Width: 1000, Height: 800}, 500, 16)
+	m.AddOutput("HDMI-A-1", layout.Bounds{X: 1000, Y: 300, Width: 2000, Height: 1200}, 1000, 16)
+	m.MapWindow(1, "DP-1")
+	if !m.SetWindowFloating(1, true, layout.Bounds{X: 200, Y: 200, Width: 300, Height: 200}) || !m.SetFullscreen(1, true) {
+		t.Fatal("could not float and fullscreen the window")
+	}
+	if !m.MoveWindowToOutput(1, "HDMI-A-1", true) {
+		t.Fatal("MoveWindowToOutput() = false, want fullscreen window moved")
+	}
+	if !m.SetFullscreen(1, false) {
+		t.Fatal("SetFullscreen(false) = false, want fullscreen exited")
+	}
+	window, ok := windowSnapshot(m, 1)
+	if !ok || window.Output != "HDMI-A-1" || !window.Tile.Floating {
+		t.Fatalf("window after fullscreen exit = %+v, %t, want floating on HDMI-A-1", window, ok)
+	}
+	if got, want := [4]int{window.Tile.X, window.Tile.Y, window.Tile.Width, window.Tile.Height}, [4]int{1400, 600, 300, 200}; got != want {
+		t.Errorf("restored floating bounds = %v, want remapped bounds %v", got, want)
+	}
+}
+
+func windowSnapshot(m *Model, id uint64) (WindowSnapshot, bool) {
+	for _, window := range m.Snapshot().Windows {
+		if window.ID == id {
+			return window, true
+		}
+	}
+	return WindowSnapshot{}, false
+}
+
 func TestWindowUrgencyIsDerivedAndClearsOnFocus(t *testing.T) {
 	m := New()
 	m.AddOutput("DP-1", layout.Bounds{Width: 1000, Height: 800}, 500, 16)
@@ -369,6 +458,92 @@ func TestMoveWindowToWorkspacePreservesIDAndFollowsWhenFocused(t *testing.T) {
 		if window.ID == 2 && window.Output != "DP-1" {
 			t.Errorf("unmoved window = %+v, want to remain on DP-1", window)
 		}
+	}
+}
+
+func TestMoveWindowToWorkspaceWithoutFollowPreservesDestinationFocus(t *testing.T) {
+	m := New()
+	m.AddOutput("DP-1", layout.Bounds{Width: 1000, Height: 800}, 500, 16)
+	m.AddOutput("HDMI-A-1", layout.Bounds{X: 1000, Width: 1000, Height: 800}, 500, 16)
+	for _, id := range []uint64{1, 2} {
+		m.MapWindow(id, "DP-1")
+	}
+	for _, id := range []uint64{3, 4} {
+		m.MapWindow(id, "HDMI-A-1")
+	}
+	if !m.FocusOutput("DP-1") || !m.FocusWindow(1) {
+		t.Fatal("could not focus source window")
+	}
+
+	var targetID, targetFocus uint64
+	for _, workspace := range m.Snapshot().Workspaces {
+		if workspace.Output == "HDMI-A-1" && workspace.IsActive {
+			targetID = workspace.ID
+			if workspace.ActiveWindowID != nil {
+				targetFocus = *workspace.ActiveWindowID
+			}
+		}
+	}
+	if targetID == 0 || targetFocus == 0 {
+		t.Fatal("target workspace has no active window")
+	}
+	if !m.MoveWindowToWorkspace(1, targetID, false) {
+		t.Fatal("MoveWindowToWorkspace() = false, want move")
+	}
+
+	for _, workspace := range m.Snapshot().Workspaces {
+		if workspace.ID != targetID {
+			continue
+		}
+		if workspace.ActiveWindowID == nil || *workspace.ActiveWindowID != targetFocus {
+			t.Errorf("destination active window = %v, want preserved window %d", workspace.ActiveWindowID, targetFocus)
+		}
+	}
+	if got := m.Snapshot().FocusedOutput; got != "DP-1" {
+		t.Errorf("focused output = %q, want DP-1 when focus does not follow", got)
+	}
+}
+
+func TestMoveFocusedColumnToWorkspaceWithoutFollowPreservesDestinationFocus(t *testing.T) {
+	m := New()
+	m.AddOutput("DP-1", layout.Bounds{Width: 1000, Height: 800}, 500, 16)
+	m.AddOutput("HDMI-A-1", layout.Bounds{X: 1000, Width: 1000, Height: 800}, 500, 16)
+	for _, id := range []uint64{1, 2} {
+		m.MapWindow(id, "DP-1")
+	}
+	for _, id := range []uint64{3, 4} {
+		m.MapWindow(id, "HDMI-A-1")
+	}
+	if !m.FocusOutput("DP-1") || !m.FocusWindow(1) {
+		t.Fatal("could not focus source column")
+	}
+
+	var targetID, targetFocus uint64
+	for _, workspace := range m.Snapshot().Workspaces {
+		if workspace.Output == "HDMI-A-1" && workspace.IsActive {
+			targetID = workspace.ID
+			if workspace.ActiveWindowID != nil {
+				targetFocus = *workspace.ActiveWindowID
+			}
+		}
+	}
+	if targetID == 0 || targetFocus == 0 {
+		t.Fatal("target workspace has no active window")
+	}
+	if !m.MoveFocusedColumnToWorkspace(targetID, false) {
+		t.Fatal("MoveFocusedColumnToWorkspace() = false, want move")
+	}
+
+	for _, workspace := range m.Snapshot().Workspaces {
+		if workspace.ID != targetID {
+			continue
+		}
+		if workspace.ActiveWindowID == nil || *workspace.ActiveWindowID != targetFocus {
+			t.Errorf("destination active window = %v, want preserved window %d", workspace.ActiveWindowID, targetFocus)
+		}
+	}
+	if got := m.Snapshot().FocusedOutput; got != "DP-1" {
+		t.Errorf("focused output = %q, want DP-1 when focus does not follow", got)
 	}
 }
 
@@ -524,6 +699,66 @@ func TestMoveFocusedWorkspaceToMonitorMovesStableWorkspaceAndActivatesTarget(t *
 	if len(snapshot.Windows) != 1 || snapshot.Windows[0].ID != 1 || snapshot.Windows[0].WorkspaceID != movedWorkspaceID || snapshot.Windows[0].Output != "HDMI-A-1" {
 		t.Errorf("window after workspace move = %+v, want stable window and workspace IDs on HDMI-A-1", snapshot.Windows)
 	}
+}
+
+func TestMoveWorkspaceToOutputRemapsFloatingWindowPosition(t *testing.T) {
+	m := New()
+	m.AddOutput("DP-1", layout.Bounds{Width: 1000, Height: 800}, 500, 16)
+	m.AddOutput("HDMI-A-1", layout.Bounds{X: 1000, Width: 2000, Height: 1200}, 1000, 16)
+	m.MapWindow(1, "DP-1")
+	if !m.SetWindowFloating(1, true, layout.Bounds{X: 200, Y: 200, Width: 300, Height: 200}) {
+		t.Fatal("SetWindowFloating() = false, want window floating")
+	}
+
+	var workspaceID uint64
+	for _, window := range m.Snapshot().Windows {
+		if window.ID == 1 {
+			workspaceID = window.WorkspaceID
+		}
+	}
+	if workspaceID == 0 || !m.MoveWorkspaceToOutput(workspaceID, "HDMI-A-1") {
+		t.Fatal("MoveWorkspaceToOutput() = false, want workspace transferred")
+	}
+
+	for _, window := range m.Snapshot().Windows {
+		if window.ID != 1 {
+			continue
+		}
+		if window.Output != "HDMI-A-1" || !window.Tile.Floating {
+			t.Fatalf("moved floating window = %+v, want floating on HDMI-A-1", window)
+		}
+		if got, want := [4]int{window.Tile.X, window.Tile.Y, window.Tile.Width, window.Tile.Height}, [4]int{1400, 300, 300, 200}; got != want {
+			t.Errorf("moved floating bounds = %v, want relative position and size %v", got, want)
+		}
+		return
+	}
+	t.Fatal("moved floating window missing from workspace snapshot")
+}
+
+func TestRemoveOutputRemapsFloatingWindowPositionToFallback(t *testing.T) {
+	m := New()
+	m.AddOutput("DP-1", layout.Bounds{Width: 1000, Height: 800}, 500, 16)
+	m.AddOutput("HDMI-A-1", layout.Bounds{X: 1000, Y: 300, Width: 2000, Height: 1200}, 1000, 16)
+	m.MapWindow(1, "DP-1")
+	if !m.SetWindowFloating(1, true, layout.Bounds{X: 200, Y: 200, Width: 300, Height: 200}) {
+		t.Fatal("SetWindowFloating() = false, want window floating")
+	}
+
+	m.RemoveOutput("DP-1")
+
+	for _, window := range m.Snapshot().Windows {
+		if window.ID != 1 {
+			continue
+		}
+		if window.Output != "HDMI-A-1" || !window.Tile.Floating {
+			t.Fatalf("window after output removal = %+v, want floating on HDMI-A-1", window)
+		}
+		if got, want := [4]int{window.Tile.X, window.Tile.Y, window.Tile.Width, window.Tile.Height}, [4]int{1400, 600, 300, 200}; got != want {
+			t.Errorf("fallback floating bounds = %v, want remapped bounds %v", got, want)
+		}
+		return
+	}
+	t.Fatal("floating window missing after output removal")
 }
 
 func TestMoveNamedInactiveWorkspaceToMonitorKeepsCurrentFocus(t *testing.T) {

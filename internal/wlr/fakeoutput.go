@@ -67,6 +67,14 @@ func requestFullscreenOnOutputForTest(c *Compositor, view *toplevelView, name st
 	return false
 }
 
+func requestFullscreenWithoutOutputForTest(view *toplevelView) bool {
+	if view == nil || view.toplevel == nil {
+		return false
+	}
+	C.sysc_fake_fullscreen_request(view.toplevel, nil)
+	return true
+}
+
 func clearFullscreenOutputForTest(view *toplevelView) {
 	if view != nil && view.toplevel != nil {
 		C.sysc_fake_clear_fullscreen_output(view.toplevel)

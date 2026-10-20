@@ -103,7 +103,7 @@ Until implemented, decode and reply `Err` with `unimplemented: <Name>`. Tick whe
 | FocusWindowInColumn | [x] | M6 — focus a tab by 1-based index |
 | ToggleWindowFloating / MoveWindowToFloating / MoveWindowToTiling | [x] | M6 — preserve floating placement and restore tiled geometry |
 | FocusFloating / FocusTiling / SwitchFocusBetweenFloatingAndTiling | [x] | M6 — switch keyboard focus between the two layouts |
-| FullscreenWindow / ToggleWindowedFullscreen | [x] | M6 — client fullscreen and windowed fullscreen remain distinct and restore tiled geometry |
+| FullscreenWindow / ToggleWindowedFullscreen | [x] | M6 — client fullscreen covers its output; windowed fullscreen sets XDG fullscreen state while retaining ordinary placement |
 | ToggleWindowUrgent / SetWindowUrgent / UnsetWindowUrgent | [x] | M6 — urgency updates flow into window and workspace snapshots and events |
 | FocusMonitor / FocusMonitorLeft/Right/Up/Down/Previous/Next | [x] | M6 — output selection and pointer warp; multi-output hardware behavior remains unproven on the one-output testbench |
 | MoveWindowToMonitor / MoveWindowToMonitorLeft/Right/Up/Down/Previous/Next | [x] | M6 — explicit output and relative-output moves |

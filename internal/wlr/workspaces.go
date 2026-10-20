@@ -126,8 +126,8 @@ func (c *Compositor) ToggleFullscreenWindow(id *uint64) bool {
 	return ok && c.SetFullscreen(window.ID, !window.Fullscreen)
 }
 
-// SetWindowedFullscreen changes compositor-only fullscreen without setting
-// the client's xdg fullscreen state.
+// SetWindowedFullscreen changes the client's xdg fullscreen state while keeping
+// its ordinary workspace placement and size.
 func (c *Compositor) SetWindowedFullscreen(id uint64, fullscreen bool) bool {
 	if c.model == nil {
 		return false
@@ -142,10 +142,7 @@ func (c *Compositor) SetWindowedFullscreen(id uint64, fullscreen bool) bool {
 	if view == nil || !c.model.SetWindowedFullscreen(id, fullscreen) {
 		return false
 	}
-	if fullscreen && (bool(view.toplevel.current.fullscreen) || bool(view.toplevel.requested.fullscreen)) {
-		C.wlr_xdg_toplevel_set_fullscreen(view.toplevel, false)
-		C.wlr_xdg_toplevel_set_size(view.toplevel, 0, 0)
-	}
+	C.wlr_xdg_toplevel_set_fullscreen(view.toplevel, C.bool(fullscreen))
 	c.applyWorkspaceModel()
 	c.notifyWindowStateChanged()
 	return true
@@ -248,6 +245,19 @@ func (c *Compositor) workspaceBounds(name string) layout.Bounds {
 	return layout.Bounds{}
 }
 
+func (c *Compositor) outputLayoutBounds(name string) (layout.Bounds, bool) {
+	for output := range c.sceneOutputs {
+		if C.GoString((*C.struct_wlr_output)(output).name) != name {
+			continue
+		}
+		var box C.struct_wlr_box
+		C.sysc_workspace_output_layout_box(c.layout, (*C.struct_wlr_output)(output), &box)
+		bounds := layout.Bounds{X: int(box.x), Y: int(box.y), Width: int(box.width), Height: int(box.height)}
+		return bounds, bounds.Width > 0 && bounds.Height > 0
+	}
+	return layout.Bounds{}, false
+}
+
 func (c *Compositor) focusedWorkspaceID() (uint64, bool) {
 	if c.model == nil {
 		return 0, false
@@ -293,15 +303,7 @@ func (c *Compositor) activeWindowSnapshot() (wm.WindowSnapshot, bool) {
 }
 
 func (c *Compositor) positionWorkspaceWindow(view *toplevelView, window wm.WindowSnapshot) {
-	if view == nil || view.tree == nil || view.toplevel == nil ||
-		window.Fullscreen || bool(view.toplevel.current.fullscreen) {
-		return
-	}
-	if window.WindowedFullscreen {
-		bounds := c.workspaceBounds(window.Output)
-		if bounds.Width > 0 && bounds.Height > 0 {
-			C.sysc_workspace_set_position(view.tree, C.int(bounds.X), C.int(bounds.Y))
-		}
+	if view == nil || view.tree == nil || view.toplevel == nil || window.Fullscreen {
 		return
 	}
 
@@ -352,14 +354,13 @@ func (c *Compositor) applyWorkspaceModel() {
 			continue
 		}
 		window, exists := windows[view.id]
-		if !exists || !activeWorkspace[window.WorkspaceID] ||
-			(!window.Fullscreen && !bool(view.toplevel.current.fullscreen)) {
+		if !exists || !activeWorkspace[window.WorkspaceID] || !window.Fullscreen {
 			continue
 		}
+		// The WM model owns output assignment. A client request is applied to
+		// the model before this reconciliation, so key visibility by the same
+		// assigned output used below for each window.
 		output := window.Output
-		if requested := view.toplevel.requested.fullscreen_output; requested != nil {
-			output = C.GoString(requested.name)
-		}
 		if current := fullscreenByOutput[output]; current == nil || view.touched > current.touched {
 			fullscreenByOutput[output] = view
 		}
@@ -378,18 +379,19 @@ func (c *Compositor) applyWorkspaceModel() {
 			visible = fullscreen == view
 		}
 		C.sysc_workspace_set_enabled(view.tree, C.bool(visible))
-		if window.Fullscreen || bool(view.toplevel.current.fullscreen) {
+		if window.Fullscreen {
+			if bounds, ok := c.outputLayoutBounds(window.Output); ok {
+				if x, y := view.treePosition(); x != bounds.X || y != bounds.Y {
+					c.placeView(view, bounds.X, bounds.Y)
+				}
+				if int(view.toplevel.scheduled.width) != bounds.Width || int(view.toplevel.scheduled.height) != bounds.Height {
+					C.sysc_workspace_set_size(view.toplevel, C.int(bounds.Width), C.int(bounds.Height))
+				}
+			}
 			continue
 		}
 		placement := window.Tile
 		c.positionWorkspaceWindow(view, window)
-		if window.WindowedFullscreen {
-			area := c.workspaceBounds(window.Output)
-			if area.Width > 0 && area.Height > 0 {
-				C.sysc_workspace_set_size(view.toplevel, C.int(area.Width), C.int(area.Height))
-			}
-			continue
-		}
 		if placement.Width > 0 && placement.Height > 0 {
 			C.sysc_workspace_set_size(view.toplevel, C.int(placement.Width), C.int(placement.Height))
 		}

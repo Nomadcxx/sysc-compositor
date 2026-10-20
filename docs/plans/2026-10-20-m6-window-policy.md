@@ -121,7 +121,7 @@ These focused nested WLR tests passed individually under the active parent Niri 
 - `TestWindowRulePlacesNewWindowOnNamedWorkspaceAndFloating`
 - `TestWindowRulesApplyDefaultSizesAndFullscreen`
 - `TestWindowRuleFallsBackWhenNamedWorkspaceIsUnavailable`
-- `TestWindowedFullscreenUsesOutputBoundsAndRestoresTile`
+- `TestWindowedFullscreenKeepsTileBoundsAndRestoresTile`
 - `TestTabbedColumnHitTestIgnoresInactiveWindow`
 - `TestNestedKeyboardBindNamesAndMovesWindowToNamedWorkspace`
 - `TestFloatingBindsMoveMappedWindowBetweenLayers`
@@ -145,3 +145,19 @@ The fixed sysc-shell build was then run in the laptop's nested session. After th
 After code review, these focused checks passed individually on the current M6 tree: `TestFullscreenWindowDoesNotOverrideAnotherWorkspace`, `TestFullscreenRequestMovesWindowToRequestedOutput`, `TestNestedModPointerGrabsUseEdgeResizeAndCursorImages`, `TestMoveFocusedColumnToWorkspaceMovesOnlyFocusedFloatingWindow`, `TestVerticalResizePreservesConstrainedColumnWidth`, and `TestVerticalResizePreservesConstrainedWidthAcrossRemap`. The reported review conditions are covered by the current implementation and tests; no additional compositor code change was needed.
 
 The laptop's physical output is eDP-1 at 1920x1080, 60.010 Hz, scale 1.25, with VRR unsupported. The nested child still exposes one synthetic WL-1 output; mode, refresh, scale, position, transform, power, and VRR application remain M15 work. The physical monitor configuration was not changed.
+
+### Cross-output follow-up (2026-10-21)
+
+Follow-up regressions cover floating-window position remapping and visibility on a smaller output, destination focus when a move does not follow, and fullscreen requests that omit or repeat the current output. Fullscreen scene visibility now follows the WM's assigned output after a mapped request.
+
+Focused tests passed in `internal/layout`, `internal/wm`, and `internal/wlr` for these transitions. `gofmt`, `git diff --check`, `go vet -p 2 ./...`, and builds of `cmd/sysc-compositor` and `cmd/niri` passed. `go.mod` and `go.sum` are unchanged. The second-output cases use a synthetic nested output; physical multi-output behavior remains unproven.
+
+### Niri contract review follow-up (2026-10-21)
+
+The Niri 26.04 reference showed that `ToggleWindowedFullscreen` sets the client's XDG fullscreen state while retaining its ordinary tiled or floating geometry. M6 had treated it as compositor-only output-sized fullscreen. The WLR path now sends the protocol state and sizes/positions the view from its workspace placement; transitioning a floating client from real fullscreen restores its floating placement for windowed fullscreen. Real client fullscreen remains output-sized and exclusive to its assigned output.
+
+`TestWindowedFullscreenKeepsTileBoundsAndRestoresTile` failed before the correction and passed afterward. `TestClientFullscreenToWindowedFullscreenRestoresFloatingWindow` caught and verified floating restoration in the WM model; `TestWindowedFullscreenFromClientFullscreenRestoresFloatingPlacement` covers the nested WLR transition. `TestWindowedFullscreenExitRepositionsAfterClientConfigure`, `TestFullscreenRequestReconcilesOutputSceneAndFocus`, `TestFullscreenWindowTracksAssignedOutputAfterMove`, `TestFullscreenWindowDoesNotOverrideAnotherWorkspace`, `TestFullscreenRequestWithoutOutputKeepsWindowOnItsWorkspace`, and `TestWindowRuleFullscreenRestoresOpenFloatingWindow` also passed after the change. Existing output tests use a synthetic nested output; physical multi-output behavior remains unproven.
+
+### Windowed-fullscreen remap follow-up (2026-10-21)
+
+Review found that the remap path replayed the client's XDG fullscreen flag as real fullscreen, clearing the model's retained windowed-fullscreen state. Remap reconciliation now preserves the retained mode for the stable toplevel ID. `TestWindowedFullscreenSurvivesUnmapAndRemap` failed before the correction and passed afterward, checking both windowed mode and the saved floating bounds.

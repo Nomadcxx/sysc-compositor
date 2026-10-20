@@ -244,6 +244,37 @@ window-rule {
 	runClient(t, c, []string{"weston-terminal"}, nil, nil)
 }
 
+func TestWindowRuleFullscreenRestoresOpenFloatingWindow(t *testing.T) {
+	c := newNested(t)
+	c.viewMapped = func(view *toplevelView) {
+		openFloating, openFullscreen := true, true
+		c.windowRules = []config.WindowRule{{OpenFloating: &openFloating, OpenFullscreen: &openFullscreen}}
+		c.model.RemoveWindow(view.id)
+		c.mapWindowWithRules(view, false)
+
+		fullscreen, ok := findWindowSnapshot(c.WorkspaceSnapshot().Windows, view.id)
+		if !ok || !fullscreen.Fullscreen || fullscreen.Tile.Floating {
+			t.Errorf("rule fullscreen placement = %+v, %t, want tiled fullscreen window", fullscreen, ok)
+		}
+		if !c.SetFullscreen(view.id, false) {
+			t.Error("SetFullscreen(false) = false, want fullscreen exited")
+		} else if restored, ok := findWindowSnapshot(c.WorkspaceSnapshot().Windows, view.id); !ok || restored.Fullscreen || !restored.Tile.Floating {
+			t.Errorf("window after fullscreen exit = %+v, %t, want floating", restored, ok)
+		}
+		c.Terminate()
+	}
+	runClient(t, c, []string{"weston-terminal"}, nil, nil)
+}
+
+func findWindowSnapshot(windows []wm.WindowSnapshot, id uint64) (wm.WindowSnapshot, bool) {
+	for _, window := range windows {
+		if window.ID == id {
+			return window, true
+		}
+	}
+	return wm.WindowSnapshot{}, false
+}
+
 func TestFullscreenWindowDoesNotOverrideAnotherWorkspace(t *testing.T) {
 	terminal, err := exec.LookPath("weston-terminal")
 	if err != nil {
@@ -371,6 +402,251 @@ func TestFullscreenRequestMovesWindowToRequestedOutput(t *testing.T) {
 		c.Terminate()
 	}
 	runClient(t, c, []string{"weston-terminal"}, nil, nil)
+}
+
+func TestFullscreenRequestWithoutOutputKeepsWindowOnItsWorkspace(t *testing.T) {
+	c := newNested(t)
+	c.viewMapped = func(view *toplevelView) {
+		var window wm.WindowSnapshot
+		for _, candidate := range c.WorkspaceSnapshot().Windows {
+			if candidate.ID == view.id {
+				window = candidate
+				break
+			}
+		}
+		if window.ID == 0 {
+			t.Error("mapped window missing from workspace snapshot")
+			c.Terminate()
+			return
+		}
+		var inactiveWorkspace uint64
+		for _, workspace := range c.WorkspaceSnapshot().Workspaces {
+			if workspace.Output == window.Output && !workspace.IsActive {
+				inactiveWorkspace = workspace.ID
+				break
+			}
+		}
+		if inactiveWorkspace == 0 || !c.model.MoveWindowToWorkspace(view.id, inactiveWorkspace, false) {
+			t.Error("could not move mapped window to an inactive workspace")
+			c.Terminate()
+			return
+		}
+		c.applyWorkspaceModel()
+		focusedOutput := c.model.Snapshot().FocusedOutput
+		if !requestFullscreenWithoutOutputForTest(view) {
+			t.Error("could not request fullscreen without an output")
+			c.Terminate()
+			return
+		}
+		c.applyFullscreen(view)
+
+		var after wm.WindowSnapshot
+		for _, candidate := range c.WorkspaceSnapshot().Windows {
+			if candidate.ID == view.id {
+				after = candidate
+				break
+			}
+		}
+		if !after.Fullscreen || after.WorkspaceID != inactiveWorkspace {
+			t.Errorf("fullscreen state after output-less request = %+v, want fullscreen in workspace %d", after, inactiveWorkspace)
+		}
+		if got := c.model.Snapshot().FocusedOutput; got != focusedOutput {
+			t.Errorf("focused output after output-less request = %q, want unchanged %q", got, focusedOutput)
+		}
+		if bool(view.tree.node.enabled) {
+			t.Error("output-less request activated the window's inactive workspace")
+		}
+		if !requestFullscreenOnOutputForTest(c, view, window.Output) {
+			t.Error("could not request fullscreen on the current output")
+			c.Terminate()
+			return
+		}
+		defer clearFullscreenOutputForTest(view)
+		c.applyFullscreen(view)
+		for _, candidate := range c.WorkspaceSnapshot().Windows {
+			if candidate.ID == view.id && candidate.WorkspaceID != inactiveWorkspace {
+				t.Errorf("same-output fullscreen request moved window to workspace %d, want %d", candidate.WorkspaceID, inactiveWorkspace)
+			}
+		}
+		c.Terminate()
+	}
+	runClient(t, c, []string{"weston-terminal"}, nil, nil)
+}
+
+func TestFullscreenRequestReconcilesOutputSceneAndFocus(t *testing.T) {
+	terminal, err := exec.LookPath("weston-terminal")
+	if err != nil {
+		t.Skipf("weston-terminal unavailable: %v", err)
+	}
+	c := newNested(t)
+	headless, err := addHeadlessTestOutput(c, 800, 600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(headless.destroy)
+
+	var views []*toplevelView
+	c.viewMapped = func(view *toplevelView) {
+		views = append(views, view)
+		if len(views) != 2 {
+			return
+		}
+		first, sibling := views[0], views[1]
+		var sourceOutput string
+		for _, window := range c.WorkspaceSnapshot().Windows {
+			if window.ID == first.id {
+				sourceOutput = window.Output
+				break
+			}
+		}
+		targetOutput := ""
+		for _, output := range c.OutputSnapshot() {
+			if output.Name != sourceOutput {
+				targetOutput = output.Name
+				break
+			}
+		}
+		if targetOutput == "" {
+			t.Error("could not resolve target output")
+			c.Terminate()
+			return
+		}
+		if !c.model.MoveWindowToOutput(sibling.id, targetOutput, false) {
+			t.Error("could not move sibling window to target output")
+			c.Terminate()
+			return
+		}
+		c.applyWorkspaceModel()
+		if !c.FocusWindow(first.id) {
+			t.Error("could not focus fullscreen request window")
+			c.Terminate()
+			return
+		}
+		if !requestFullscreenOnOutputForTest(c, first, targetOutput) {
+			t.Errorf("could not request fullscreen on output %q", targetOutput)
+			c.Terminate()
+			return
+		}
+		defer clearFullscreenOutputForTest(first)
+		c.applyFullscreen(first)
+
+		var fullscreenWindow *wm.WindowSnapshot
+		for _, window := range c.WorkspaceSnapshot().Windows {
+			if window.ID == first.id {
+				fullscreenWindow = &window
+				break
+			}
+		}
+		if fullscreenWindow == nil || !fullscreenWindow.Fullscreen || fullscreenWindow.Output != targetOutput {
+			t.Errorf("fullscreen model state = %+v, want first window fullscreen on %q", fullscreenWindow, targetOutput)
+		}
+		if got := c.FocusedOutputName(); got != targetOutput {
+			t.Errorf("focused output after fullscreen request = %q, want %q", got, targetOutput)
+		}
+		if bool(sibling.tree.node.enabled) {
+			t.Error("target sibling scene node remained enabled beneath fullscreen window")
+		}
+		c.Terminate()
+	}
+
+	clients := make([]*exec.Cmd, 0, 2)
+	defer func() {
+		for _, client := range clients {
+			_ = client.Process.Kill()
+		}
+		for _, client := range clients {
+			_ = client.Wait()
+		}
+	}()
+	for range 2 {
+		client := exec.Command(terminal)
+		client.Env = append(os.Environ(), "WAYLAND_DISPLAY="+c.SocketName())
+		if err := client.Start(); err != nil {
+			t.Fatal(err)
+		}
+		clients = append(clients, client)
+	}
+	if err := c.Run(); err != nil {
+		t.Fatal(err)
+	}
+	if len(views) != 2 {
+		t.Fatalf("mapped windows = %d, want two", len(views))
+	}
+}
+
+func TestFullscreenWindowTracksAssignedOutputAfterMove(t *testing.T) {
+	terminal, err := exec.LookPath("weston-terminal")
+	if err != nil {
+		t.Skipf("weston-terminal unavailable: %v", err)
+	}
+	c := newNested(t)
+	headless, err := addHeadlessTestOutput(c, 800, 600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(headless.destroy)
+
+	c.viewMapped = func(view *toplevelView) {
+		sourceOutput := c.outputNameForView(view)
+		if !c.SetFullscreen(view.id, true) {
+			t.Error("SetFullscreen() = false, want fullscreen enabled")
+			c.Terminate()
+			return
+		}
+		var target *OutputSnapshot
+		for _, output := range c.OutputSnapshot() {
+			if output.Name != c.outputNameForView(view) && output.Logical != nil {
+				copy := output
+				target = &copy
+				break
+			}
+		}
+		if target == nil || !c.model.MoveWindowToOutput(view.id, target.Name, true) {
+			t.Error("could not move fullscreen window to the second output")
+			c.Terminate()
+			return
+		}
+		c.applyWorkspaceModel()
+		if gotX, gotY := view.treePosition(); gotX != int(target.Logical.X) || gotY != int(target.Logical.Y) {
+			t.Errorf("fullscreen scene origin = (%d,%d), want assigned output origin (%d,%d)", gotX, gotY, target.Logical.X, target.Logical.Y)
+		}
+		if got := [2]int{int(view.toplevel.scheduled.width), int(view.toplevel.scheduled.height)}; got != [2]int{int(target.Logical.Width), int(target.Logical.Height)} {
+			t.Errorf("fullscreen size after output move = %v, want assigned output size [%d %d]", got, target.Logical.Width, target.Logical.Height)
+		}
+
+		headless.destroy()
+		var fallback *OutputSnapshot
+		for _, output := range c.OutputSnapshot() {
+			if output.Name == sourceOutput && output.Logical != nil {
+				copy := output
+				fallback = &copy
+			}
+		}
+		window, mapped := findWindowSnapshot(c.WorkspaceSnapshot().Windows, view.id)
+		if fallback == nil || !mapped || window.Output != sourceOutput {
+			t.Errorf("fullscreen window after output disconnect = %+v, %t; fallback output = %+v", window, mapped, fallback)
+		} else {
+			if x, y := view.treePosition(); x != int(fallback.Logical.X) || y != int(fallback.Logical.Y) {
+				t.Errorf("fullscreen scene origin after disconnect = (%d,%d), want fallback origin (%d,%d)", x, y, fallback.Logical.X, fallback.Logical.Y)
+			}
+			if got := [2]int{int(view.toplevel.scheduled.width), int(view.toplevel.scheduled.height)}; got != [2]int{int(fallback.Logical.Width), int(fallback.Logical.Height)} {
+				t.Errorf("fullscreen size after disconnect = %v, want fallback size [%d %d]", got, fallback.Logical.Width, fallback.Logical.Height)
+			}
+		}
+		c.Terminate()
+	}
+	client := exec.Command(terminal)
+	client.Env = append(os.Environ(), "WAYLAND_DISPLAY="+c.SocketName())
+	if err := client.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_ = client.Process.Kill()
+		_ = client.Wait()
+	}()
+	if err := c.Run(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestWorkspaceMoveAndMonitorFocusUseConnectedOutputs(t *testing.T) {
@@ -556,7 +832,7 @@ func TestMoveFloatingWindowUpdatesSceneAndRestoresSavedPosition(t *testing.T) {
 	runClient(t, c, []string{"weston-terminal"}, nil, nil)
 }
 
-func TestWindowedFullscreenUsesOutputBoundsAndRestoresTile(t *testing.T) {
+func TestWindowedFullscreenKeepsTileBoundsAndRestoresTile(t *testing.T) {
 	c := newNested(t)
 	c.viewMapped = func(view *toplevelView) {
 		before := c.model.Snapshot().Windows
@@ -564,23 +840,31 @@ func TestWindowedFullscreenUsesOutputBoundsAndRestoresTile(t *testing.T) {
 			t.Fatal("mapped window has no tiled placement")
 		}
 		original := before[0].Tile
-		bounds := c.layoutBox()
 		if !c.SetWindowedFullscreen(view.id, true) {
 			t.Error("SetWindowedFullscreen(true) = false, want fullscreen enabled")
 			c.Terminate()
 			return
 		}
-		if bool(view.toplevel.current.fullscreen) {
-			t.Error("windowed fullscreen set the client xdg fullscreen state")
+		if !bool(view.toplevel.scheduled.fullscreen) {
+			t.Error("windowed fullscreen did not set the client xdg fullscreen state")
 		}
-		if x, y := view.treePosition(); x != bounds.x || y != bounds.y {
-			t.Errorf("windowed fullscreen position = (%d,%d), want output origin (%d,%d)", x, y, bounds.x, bounds.y)
+		wantX, wantY := original.X, original.Y
+		if !original.Floating {
+			geometry := view.geometry()
+			wantX += (original.Width - geometry.w) / 2
+			wantY += (original.Height - geometry.h) / 2
 		}
-		if got := [2]int{int(view.toplevel.scheduled.width), int(view.toplevel.scheduled.height)}; got != [2]int{bounds.w, bounds.h} {
-			t.Errorf("windowed fullscreen size = %v, want [%d %d]", got, bounds.w, bounds.h)
+		if x, y := view.treePosition(); x != wantX || y != wantY {
+			t.Errorf("windowed fullscreen position = (%d,%d), want window placement (%d,%d)", x, y, wantX, wantY)
+		}
+		if got := [2]int{int(view.toplevel.scheduled.width), int(view.toplevel.scheduled.height)}; got != [2]int{original.Width, original.Height} {
+			t.Errorf("windowed fullscreen size = %v, want tile size [%d %d]", got, original.Width, original.Height)
 		}
 		if !c.SetWindowedFullscreen(view.id, false) {
 			t.Error("SetWindowedFullscreen(false) = false, want tiled placement restored")
+		}
+		if bool(view.toplevel.scheduled.fullscreen) {
+			t.Error("windowed fullscreen exit kept the client xdg fullscreen state")
 		}
 		snapshot := c.WorkspaceSnapshot()
 		if len(snapshot.Windows) != 1 || snapshot.Windows[0].WindowedFullscreen || snapshot.Windows[0].Tile != original {
@@ -589,6 +873,70 @@ func TestWindowedFullscreenUsesOutputBoundsAndRestoresTile(t *testing.T) {
 		c.Terminate()
 	}
 	runClient(t, c, []string{"weston-terminal"}, nil, nil)
+}
+
+func TestWindowedFullscreenFromClientFullscreenRestoresFloatingPlacement(t *testing.T) {
+	c := newNested(t)
+	c.viewMapped = func(view *toplevelView) {
+		if !c.SetWindowFloating(view.id, true) {
+			t.Error("SetWindowFloating() = false, want floating window")
+			c.Terminate()
+			return
+		}
+		floating, ok := findWindowSnapshot(c.WorkspaceSnapshot().Windows, view.id)
+		if !ok || !floating.Tile.Floating {
+			t.Fatalf("floating placement = %+v, %t, want floating window", floating, ok)
+		}
+		if !c.SetFullscreen(view.id, true) {
+			t.Error("SetFullscreen(true) = false, want client fullscreen")
+			c.Terminate()
+			return
+		}
+		if !c.SetWindowedFullscreen(view.id, true) {
+			t.Error("SetWindowedFullscreen(true) = false, want transition from client fullscreen")
+			c.Terminate()
+			return
+		}
+		window, ok := findWindowSnapshot(c.WorkspaceSnapshot().Windows, view.id)
+		if !ok || window.Fullscreen || !window.WindowedFullscreen || !window.Tile.Floating {
+			t.Errorf("windowed fullscreen placement = %+v, %t, want floating windowed fullscreen", window, ok)
+		} else if got, want := [4]int{window.Tile.X, window.Tile.Y, window.Tile.Width, window.Tile.Height}, [4]int{floating.Tile.X, floating.Tile.Y, floating.Tile.Width, floating.Tile.Height}; got != want {
+			t.Errorf("windowed floating bounds = %v, want restored bounds %v", got, want)
+		}
+		if !bool(view.toplevel.scheduled.fullscreen) {
+			t.Error("windowed fullscreen did not set the client xdg fullscreen state")
+		}
+		if got, want := [2]int{int(view.toplevel.scheduled.width), int(view.toplevel.scheduled.height)}, [2]int{floating.Tile.Width, floating.Tile.Height}; got != want {
+			t.Errorf("windowed floating size = %v, want restored size %v", got, want)
+		}
+		if x, y := view.treePosition(); x != floating.Tile.X || y != floating.Tile.Y {
+			t.Errorf("windowed floating origin = (%d,%d), want restored origin (%d,%d)", x, y, floating.Tile.X, floating.Tile.Y)
+		}
+		c.Terminate()
+	}
+	runClient(t, c, []string{"weston-terminal"}, nil, nil)
+}
+
+func TestWindowedFullscreenSurvivesUnmapAndRemap(t *testing.T) {
+	model := wm.New()
+	model.AddOutput("DP-1", layout.Bounds{Width: 1000, Height: 800}, 500, 16)
+	model.MapWindow(1, "DP-1")
+	bounds := layout.Bounds{X: 180, Y: 130, Width: 420, Height: 280}
+	if !model.SetWindowFloating(1, true, bounds) || !model.SetWindowedFullscreen(1, true) {
+		t.Fatal("could not set up floating windowed fullscreen")
+	}
+	model.RemoveWindow(1)
+
+	c := &Compositor{model: model}
+	c.mapWindowAfterUnmap(&toplevelView{id: 1}, "DP-1", true)
+
+	window, ok := findWindowSnapshot(model.Snapshot().Windows, 1)
+	if !ok || window.Fullscreen || !window.WindowedFullscreen || !window.Tile.Floating {
+		t.Fatalf("remapped window = %+v, %t, want floating windowed fullscreen", window, ok)
+	}
+	if got := [4]int{window.Tile.X, window.Tile.Y, window.Tile.Width, window.Tile.Height}; got != [4]int{bounds.X, bounds.Y, bounds.Width, bounds.Height} {
+		t.Errorf("remapped floating bounds = %v, want %v", got, bounds)
+	}
 }
 
 func TestWindowedFullscreenExitRepositionsAfterClientConfigure(t *testing.T) {

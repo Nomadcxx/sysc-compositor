@@ -755,8 +755,7 @@ func (c *Compositor) handleNewToplevel(data unsafe.Pointer) {
 					if output == "" {
 						output = c.FocusedOutputName()
 					}
-					c.model.MapWindow(view.id, output)
-					c.model.SetFullscreen(view.id, clientFullscreen)
+					c.mapWindowAfterUnmap(view, output, clientFullscreen)
 				}
 			}
 			// Niri activates newly mapped windows (ActivateWindow::Smart); its

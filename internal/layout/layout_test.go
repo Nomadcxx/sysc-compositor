@@ -233,6 +233,46 @@ func TestMoveWindowUpDownReordersTilesAndKeepsFocus(t *testing.T) {
 	}
 }
 
+func TestMoveFloatingWindowToOutputPreservesRelativePosition(t *testing.T) {
+	source := NewWorkspace(Bounds{X: 100, Y: 50, Width: 1000, Height: 800}, 500, 16)
+	target := NewWorkspace(Bounds{X: 1200, Y: 300, Width: 2000, Height: 1200}, 800, 16)
+	source.AddWindow(1)
+	if !source.SetWindowFloating(1, true, Bounds{X: 300, Y: 250, Width: 400, Height: 300}) {
+		t.Fatal("SetWindowFloating() = false, want source window floating")
+	}
+
+	if !source.MoveWindowTo(target, 1) {
+		t.Fatal("MoveWindowTo() = false, want floating window moved to target workspace")
+	}
+	placement, ok := target.Placement(1)
+	if !ok || !placement.Floating {
+		t.Fatalf("target placement = %+v, %t, want floating window", placement, ok)
+	}
+	if got, want := [4]int{placement.X, placement.Y, placement.Width, placement.Height}, [4]int{1600, 600, 400, 300}; got != want {
+		t.Errorf("target floating bounds = %v, want relative position and size %v", got, want)
+	}
+}
+
+func TestMoveFloatingWindowToSmallerOutputKeepsItVisible(t *testing.T) {
+	source := NewWorkspace(Bounds{X: 100, Y: 50, Width: 1000, Height: 800}, 500, 16)
+	target := NewWorkspace(Bounds{X: 1200, Y: 300, Width: 640, Height: 480}, 320, 16)
+	source.AddWindow(1)
+	if !source.SetWindowFloating(1, true, Bounds{X: 1050, Y: 800, Width: 400, Height: 300}) {
+		t.Fatal("SetWindowFloating() = false, want source window floating")
+	}
+
+	if !source.MoveWindowTo(target, 1) {
+		t.Fatal("MoveWindowTo() = false, want floating window moved to target workspace")
+	}
+	placement, ok := target.Placement(1)
+	if !ok || !placement.Floating {
+		t.Fatalf("target placement = %+v, %t, want floating window", placement, ok)
+	}
+	if got, want := [2]int{placement.X, placement.Y}, [2]int{1765, 705}; got != want {
+		t.Errorf("target floating position = %v, want edge-clamped position %v", got, want)
+	}
+}
+
 func TestFloatingFocusAndMoveWindowUpDownFollowNiri(t *testing.T) {
 	ws := NewWorkspace(Bounds{Width: 1200, Height: 800}, 500, 16)
 	for _, id := range []uint64{1, 2, 3} {
@@ -308,6 +348,30 @@ func TestFloatingWindowRetainsGeometryAndTiledPositionAcrossToggles(t *testing.T
 	placement, ok = ws.Placement(1)
 	if !ok || [4]int{placement.X, placement.Y, placement.Width, placement.Height} != [4]int{140, 110, 420, 300} {
 		t.Errorf("remembered floating placement = %+v, %t, want rectangle (140,110,420,300)", placement, ok)
+	}
+}
+
+func TestReturningUnfocusedFloatingTabKeepsFocusOnRightColumn(t *testing.T) {
+	ws := NewWorkspace(Bounds{Width: 1200, Height: 800}, 400, 16)
+	for _, id := range []uint64{1, 2, 3} {
+		ws.AddWindow(id)
+	}
+	if !ws.FocusWindow(2) || !ws.ConsumeOrExpelWindowRight(nil) {
+		t.Fatal("could not tab window 3 into window 2's column")
+	}
+	ws.AddWindow(4)
+	if !ws.SetWindowFloating(3, true, Bounds{X: 500, Y: 80, Width: 300, Height: 200}) {
+		t.Fatal("SetWindowFloating(3, true) = false, want inactive tab floated")
+	}
+	if got, ok := ws.FocusedWindow(); !ok || got != 4 {
+		t.Fatalf("FocusedWindow() after floating tab = %d, %t, want right column window 4", got, ok)
+	}
+
+	if !ws.SetWindowFloating(3, false, Bounds{}) {
+		t.Fatal("SetWindowFloating(3, false) = false, want inactive tab restored")
+	}
+	if got, ok := ws.FocusedWindow(); !ok || got != 4 {
+		t.Errorf("FocusedWindow() after restoring tab = %d, %t, want right column window 4", got, ok)
 	}
 }
 

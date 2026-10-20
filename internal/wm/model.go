@@ -42,12 +42,18 @@ type windowSizeHints struct {
 	minHeight, maxHeight int
 }
 
+type fullscreenRestore struct {
+	bounds layout.Bounds
+	area   layout.Bounds
+}
+
 // Model tracks windows, layouts, and dynamic per-output workspaces.
 type Model struct {
 	outputs         map[string]*outputState
 	windows         map[uint64]windowState
 	resizedWindows  map[uint64]windowSize
 	floatingWindows map[uint64]layout.Bounds
+	fullscreenFloat map[uint64]fullscreenRestore
 	fullscreen      map[uint64]bool
 	windowedFull    map[uint64]bool
 	urgent          map[uint64]bool
@@ -96,6 +102,7 @@ func New(workspaces ...WorkspaceConfig) *Model {
 		windows:         map[uint64]windowState{},
 		resizedWindows:  map[uint64]windowSize{},
 		floatingWindows: map[uint64]layout.Bounds{},
+		fullscreenFloat: map[uint64]fullscreenRestore{},
 		fullscreen:      map[uint64]bool{},
 		windowedFull:    map[uint64]bool{},
 		urgent:          map[uint64]bool{},
@@ -126,6 +133,7 @@ func (m *Model) AddOutput(name string, bounds layout.Bounds, columnWidth, gap in
 	}
 	slices.Sort(orphaned)
 	for _, id := range orphaned {
+		m.remapFullscreenFloating(id, out.bounds)
 		m.mapWindow(id, name)
 	}
 	return true
@@ -139,8 +147,16 @@ func (m *Model) RemoveOutput(name string) {
 		return
 	}
 	var moved []uint64
+	floating := make(map[uint64]layout.Bounds)
 	for _, workspace := range out.workspaces {
 		moved = append(moved, workspace.strip.WindowOrder()...)
+		for _, placement := range workspace.strip.Placements() {
+			if placement.Floating {
+				floating[placement.ID] = layout.Bounds{
+					X: placement.X, Y: placement.Y, Width: placement.Width, Height: placement.Height,
+				}
+			}
+		}
 	}
 	slices.Sort(moved)
 	delete(m.outputs, name)
@@ -150,8 +166,18 @@ func (m *Model) RemoveOutput(name string) {
 	if m.focusedOutput == name {
 		m.focusedOutput = m.firstOutput()
 	}
+	target := m.outputs[m.focusedOutput]
+	if target == nil {
+		target = m.outputs[m.firstOutput()]
+	}
 	for _, id := range moved {
 		if m.focusedOutput != "" {
+			if target != nil {
+				m.remapFullscreenFloating(id, target.bounds)
+			}
+			if bounds, ok := floating[id]; ok && target != nil {
+				m.floatingWindows[id] = layout.RemapFloatingBounds(out.bounds, target.bounds, bounds)
+			}
 			m.mapWindow(id, m.focusedOutput)
 		} else {
 			m.windows[id] = windowState{}
@@ -171,6 +197,12 @@ func (m *Model) SetOutputGeometry(name string, bounds layout.Bounds, columnWidth
 	out.gap = gap
 	for _, workspace := range out.workspaces {
 		workspace.strip.SetGeometry(bounds, columnWidth, gap)
+	}
+	for id, state := range m.windows {
+		if state.output == name {
+			m.remapFullscreenFloating(id, bounds)
+			m.syncFullscreenFloatingGeometry(id)
+		}
 	}
 	return true
 }
@@ -224,6 +256,17 @@ func (m *Model) mapWindowOnWorkspace(id uint64, out *outputState, workspace *wor
 	}
 	if bounds, ok := m.floatingWindows[id]; ok {
 		workspace.strip.SetWindowFloating(id, true, bounds)
+	}
+	if restore, ok := m.fullscreenFloat[id]; ok {
+		workspace.strip.SetSavedFloatingGeometry(id, restore.bounds)
+		if !m.fullscreen[id] && !m.windowedFull[id] && workspace.strip.SetWindowFloating(id, true, restore.bounds) {
+			if placement, exists := workspace.strip.Placement(id); exists {
+				m.floatingWindows[id] = layout.Bounds{
+					X: placement.X, Y: placement.Y, Width: placement.Width, Height: placement.Height,
+				}
+			}
+			delete(m.fullscreenFloat, id)
+		}
 	}
 }
 
@@ -289,6 +332,7 @@ func (m *Model) DestroyWindow(id uint64) {
 	m.RemoveWindow(id)
 	delete(m.resizedWindows, id)
 	delete(m.floatingWindows, id)
+	delete(m.fullscreenFloat, id)
 	delete(m.fullscreen, id)
 	delete(m.windowedFull, id)
 	delete(m.urgent, id)
@@ -477,12 +521,31 @@ func (m *Model) MoveFloatingWindow(id uint64, x, y layout.PositionChange) bool {
 // SetFullscreen records a mapped client's requested fullscreen state without
 // replacing its saved workspace placement.
 func (m *Model) SetFullscreen(id uint64, fullscreen bool) bool {
-	if _, ok := m.windows[id]; !ok {
+	state, ok := m.windows[id]
+	if !ok {
 		return false
 	}
 	if fullscreen {
 		if m.fullscreen[id] && !m.windowedFull[id] {
 			return false
+		}
+		if _, restoring := m.fullscreenFloat[id]; !restoring {
+			out, _, workspace := m.workspaceLocation(state.workspaceID)
+			if workspace != nil {
+				if placement, exists := workspace.strip.Placement(id); exists && placement.Floating {
+					bounds := layout.Bounds{X: placement.X, Y: placement.Y, Width: placement.Width, Height: placement.Height}
+					if !workspace.strip.SetWindowFloating(id, false, layout.Bounds{}) {
+						return false
+					}
+					area := layout.Bounds{}
+					if out != nil {
+						area = out.bounds
+					}
+					m.fullscreenFloat[id] = fullscreenRestore{bounds: bounds, area: area}
+					delete(m.floatingWindows, id)
+					m.reconcile(out)
+				}
+			}
 		}
 		m.fullscreen[id] = true
 		delete(m.windowedFull, id)
@@ -490,17 +553,57 @@ func (m *Model) SetFullscreen(id uint64, fullscreen bool) bool {
 	}
 	if m.windowedFull[id] {
 		delete(m.windowedFull, id)
+		m.restoreFloatingAfterFullscreen(id)
 		return true
 	}
 	if !m.fullscreen[id] {
 		return false
 	}
 	delete(m.fullscreen, id)
+	m.restoreFloatingAfterFullscreen(id)
 	return true
 }
 
-// SetWindowedFullscreen keeps the client xdg fullscreen state false and stores
-// the compositor-only fullscreen presentation separately.
+func (m *Model) restoreFloatingAfterFullscreen(id uint64) {
+	restore, ok := m.fullscreenFloat[id]
+	if !ok {
+		return
+	}
+	if _, mapped := m.windows[id]; !mapped {
+		return
+	}
+	m.syncFullscreenFloatingGeometry(id)
+	if m.SetWindowFloating(id, true, restore.bounds) {
+		delete(m.fullscreenFloat, id)
+	}
+}
+
+func (m *Model) syncFullscreenFloatingGeometry(id uint64) {
+	restore, ok := m.fullscreenFloat[id]
+	if !ok {
+		return
+	}
+	state, ok := m.windows[id]
+	if !ok {
+		return
+	}
+	if workspace := m.workspaceByID(state.workspaceID); workspace != nil {
+		workspace.strip.SetSavedFloatingGeometry(id, restore.bounds)
+	}
+}
+
+func (m *Model) remapFullscreenFloating(id uint64, bounds layout.Bounds) {
+	restore, ok := m.fullscreenFloat[id]
+	if !ok || restore.area == bounds {
+		return
+	}
+	restore.bounds = layout.RemapFloatingBounds(restore.area, bounds, restore.bounds)
+	restore.area = bounds
+	m.fullscreenFloat[id] = restore
+}
+
+// SetWindowedFullscreen records windowed fullscreen separately from real
+// client fullscreen while retaining the window's ordinary placement.
 func (m *Model) SetWindowedFullscreen(id uint64, fullscreen bool) bool {
 	if _, ok := m.windows[id]; !ok || m.windowedFull[id] == fullscreen {
 		return false
@@ -508,10 +611,18 @@ func (m *Model) SetWindowedFullscreen(id uint64, fullscreen bool) bool {
 	if fullscreen {
 		delete(m.fullscreen, id)
 		m.windowedFull[id] = true
+		m.restoreFloatingAfterFullscreen(id)
 	} else {
 		delete(m.windowedFull, id)
+		m.restoreFloatingAfterFullscreen(id)
 	}
 	return true
+}
+
+// IsWindowedFullscreen reports the retained presentation mode, including while
+// the stable toplevel ID is unmapped.
+func (m *Model) IsWindowedFullscreen(id uint64) bool {
+	return m.windowedFull[id]
 }
 
 // SetWindowUrgent marks an unfocused mapped window urgent. Focusing a window
@@ -679,15 +790,22 @@ func (m *Model) MoveWindowToWorkspace(id, targetID uint64, follow bool) bool {
 			focused = active == id
 		}
 	}
+	destinationFocus, destinationHadFocus := target.strip.FocusedWindow()
+	activate := follow && focused
 	if !source.strip.MoveWindowTo(target.strip, id) {
 		return false
 	}
+	if !activate && destinationHadFocus {
+		target.strip.FocusWindow(destinationFocus)
+	}
 	m.windows[id] = windowState{output: targetOutput.name, workspaceID: target.id}
+	m.remapFullscreenFloating(id, targetOutput.bounds)
+	m.syncFullscreenFloatingGeometry(id)
 	m.reconcile(sourceOutput)
 	if targetOutput != sourceOutput {
 		m.reconcile(targetOutput)
 	}
-	if follow && focused {
+	if activate {
 		targetOutput.active = m.workspaceIndex(targetOutput, target.id)
 		target.strip.FocusWindow(id)
 		m.focusedOutput = targetOutput.name
@@ -715,11 +833,19 @@ func (m *Model) MoveFocusedColumnToWorkspace(targetID uint64, follow bool) bool 
 		}
 	}
 	ids := source.strip.FocusedColumnWindowIDs()
+	destinationFocus, destinationHadFocus := target.strip.FocusedWindow()
 	if len(ids) == 0 || !source.strip.MoveFocusedColumnTo(target.strip) {
 		return false
 	}
 	for _, id := range ids {
+		m.remapFullscreenFloating(id, targetOutput.bounds)
+	}
+	if !follow && destinationHadFocus {
+		target.strip.FocusWindow(destinationFocus)
+	}
+	for _, id := range ids {
 		m.windows[id] = windowState{output: targetOutput.name, workspaceID: target.id}
+		m.syncFullscreenFloatingGeometry(id)
 	}
 	m.reconcile(sourceOutput)
 	if targetOutput != sourceOutput {
@@ -850,7 +976,9 @@ func (m *Model) MoveWorkspaceToOutput(id uint64, output string) bool {
 		m.focusedOutput = target.name
 	}
 	for _, windowID := range workspace.strip.WindowOrder() {
+		m.remapFullscreenFloating(windowID, target.bounds)
 		m.windows[windowID] = windowState{output: target.name, workspaceID: workspace.id}
+		m.syncFullscreenFloatingGeometry(windowID)
 	}
 	m.reconcile(source)
 	m.reconcile(target)

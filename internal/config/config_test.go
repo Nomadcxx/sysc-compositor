@@ -169,13 +169,35 @@ layer-rule {
 	}
 }
 
+func TestWindowRuleProportionClampsLikeNiri(t *testing.T) {
+	cfg, err := Parse("zero-proportion.kdl", []byte(`
+window-rule {
+    default-column-width { proportion 0.0; }
+    default-window-height { proportion 0.0; }
+}
+window-rule {
+    default-column-width { proportion -1.0; }
+    default-window-height { proportion 10001.0; }
+}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := cfg.ResolveWindowRules("app", "title")
+	if result.DefaultColumnWidth == nil || result.DefaultColumnWidth.Value != 0 ||
+		result.DefaultWindowHeight == nil || result.DefaultWindowHeight.Value != 10000 {
+		t.Fatalf("clamped proportion rules = %+v", result)
+	}
+}
+
 func TestM6RulesRejectBadRegexDuplicateNamesAndValues(t *testing.T) {
 	for src, want := range map[string]string{
-		`window-rule { match app-id="["; }`:                   "regular expression",
-		`workspace "Work"; workspace "work";`:                 "duplicate workspace name",
-		`window-rule { open-floating "yes"; }`:                "boolean",
-		`layer-rule { match namespace="("; }`:                 "regular expression",
-		`window-rule { default-column-width { fixed -1; }; }`: "whole number",
+		`window-rule { match app-id="["; }`:                       "regular expression",
+		`workspace "Work"; workspace "work";`:                     "duplicate workspace name",
+		`window-rule { open-floating "yes"; }`:                    "boolean",
+		`layer-rule { match namespace="("; }`:                     "regular expression",
+		`window-rule { default-column-width { fixed -1; }; }`:     "whole number",
+		`window-rule { default-column-width { proportion 1; }; }`: "decimal number",
 	} {
 		if _, err := Parse("bad-m6.kdl", []byte(src)); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("Parse(%q) error = %v, want containing %q", src, err, want)

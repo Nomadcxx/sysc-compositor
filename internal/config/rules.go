@@ -393,7 +393,7 @@ func parsePresetSize(node *document.Node) (PresetSize, error) {
 		}
 		return PresetSize{Fixed: true, Value: float64(value)}, nil
 	case "proportion":
-		value, err := floatArg(child, 0, 10000)
+		value, err := proportionArg(child)
 		if err != nil {
 			return PresetSize{}, err
 		}
@@ -401,6 +401,20 @@ func parsePresetSize(node *document.Node) (PresetSize, error) {
 	default:
 		return PresetSize{}, fmt.Errorf("expected fixed or proportion, got `%s`", nodeName(child))
 	}
+}
+
+func proportionArg(node *document.Node) (float64, error) {
+	if len(node.Arguments) != 1 {
+		return 0, fmt.Errorf("`%s` takes one decimal number", nodeName(node))
+	}
+	value, ok := node.Arguments[0].Value.(float64)
+	if !ok {
+		return 0, fmt.Errorf("`%s` must be a decimal number", nodeName(node))
+	}
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return 0, fmt.Errorf("`%s` must be a finite decimal number", nodeName(node))
+	}
+	return min(10000, max(0, value)), nil
 }
 
 func boolArg(node *document.Node) (bool, error) {

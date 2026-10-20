@@ -106,9 +106,6 @@ func (w *Workspace) SetWindowFloating(id uint64, floating bool, bounds Bounds) b
 		if tileIndex <= column.active && len(column.tiles) > 1 {
 			column.active++
 		}
-		if w.focused > columnIndex {
-			w.focused++
-		}
 	} else {
 		w.columns = append(w.columns, columnState{})
 		copy(w.columns[columnIndex+1:], w.columns[columnIndex:])
@@ -148,6 +145,28 @@ func (w *Workspace) SetFloatingGeometry(id uint64, bounds Bounds) bool {
 	floating.bounds = bounds
 	floating.tile.floatingBounds = bounds
 	floating.tile.hasFloatingBounds = true
+	return true
+}
+
+// SetSavedFloatingGeometry updates the rectangle a tiled window will use when floated.
+func (w *Workspace) SetSavedFloatingGeometry(id uint64, bounds Bounds) bool {
+	if bounds.Width <= 0 || bounds.Height <= 0 {
+		return false
+	}
+	if index := w.floatingIndexOf(id); index >= 0 {
+		return w.SetFloatingGeometry(id, bounds)
+	}
+	columnIndex, tileIndex, ok := w.locationOf(id)
+	if !ok {
+		return false
+	}
+	tile := &w.columns[columnIndex].tiles[tileIndex]
+	bounds.Width = clampSizeHint(bounds.Width, tile.minWidth, tile.maxWidth)
+	bounds.Height = clampSizeHint(bounds.Height, tile.minHeight, tile.maxHeight)
+	if tile.hasFloatingBounds && tile.floatingBounds == bounds {
+		return false
+	}
+	tile.floatingBounds, tile.hasFloatingBounds = bounds, true
 	return true
 }
 
@@ -303,6 +322,12 @@ func (w *Workspace) SetGeometry(bounds Bounds, columnWidth, gap int) {
 	if gap < 0 {
 		gap = 0
 	}
+	if w.bounds != bounds {
+		for i := range w.floating {
+			w.floating[i].bounds = RemapFloatingBounds(w.bounds, bounds, w.floating[i].bounds)
+			w.floating[i].tile.floatingBounds = w.floating[i].bounds
+		}
+	}
 	w.bounds = bounds
 	w.columnWidth = columnWidth
 	w.gap = gap
@@ -379,6 +404,8 @@ func (w *Workspace) MoveWindowTo(target *Workspace, id uint64) bool {
 	floatingIndex := w.floatingIndexOf(id)
 	if floatingIndex >= 0 {
 		floating := w.floating[floatingIndex]
+		floating.bounds = RemapFloatingBounds(w.bounds, target.bounds, floating.bounds)
+		floating.tile.floatingBounds = floating.bounds
 		w.RemoveWindow(id)
 		target.AddWindow(id)
 		column, tile, ok := target.locationOf(id)
@@ -406,6 +433,23 @@ func (w *Workspace) MoveWindowTo(target *Workspace, id uint64) bool {
 	target.columns[newColumn].width = width
 	target.revealFocused()
 	return true
+}
+
+// RemapFloatingBounds carries a floating window's relative position to another workspace.
+func RemapFloatingBounds(source, target, bounds Bounds) Bounds {
+	bounds.X = remapFloatingPosition(bounds.X, source.X, source.Width, target.X, target.Width, bounds.Width)
+	bounds.Y = remapFloatingPosition(bounds.Y, source.Y, source.Height, target.Y, target.Height, bounds.Height)
+	return bounds
+}
+
+func remapFloatingPosition(position, sourceOrigin, sourceSize, targetOrigin, targetSize, windowSize int) int {
+	fraction := float64(position-sourceOrigin) / float64(max(sourceSize, 1))
+	positionInTarget := float64(targetOrigin) + fraction*float64(targetSize)
+	minVisible := math.Max(10, math.Min(float64(windowSize)/4, 75))
+	maxOffscreen := math.Max(0, float64(windowSize)-minVisible)
+	minPosition := float64(targetOrigin) - maxOffscreen
+	maxPosition := float64(targetOrigin+targetSize-windowSize) + maxOffscreen
+	return int(math.Round(math.Max(minPosition, math.Min(positionInTarget, maxPosition))))
 }
 
 // MoveFocusedColumnTo transfers the focused tiled column, including all of

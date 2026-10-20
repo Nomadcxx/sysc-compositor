@@ -124,11 +124,11 @@ func (c *Compositor) mapWindowWithRules(view *toplevelView, clientFullscreen boo
 		}
 		c.model.MapWindow(view.id, output)
 	}
-	if clientFullscreen {
-		c.model.SetFullscreen(view.id, true)
-	}
 	if result.OpenFloating != nil && *result.OpenFloating {
 		c.model.SetWindowFloating(view.id, true, layout.Bounds{})
+	}
+	if clientFullscreen {
+		c.model.SetFullscreen(view.id, true)
 	}
 	if result.OpenFullscreen != nil && *result.OpenFullscreen != clientFullscreen {
 		c.SetFullscreen(view.id, *result.OpenFullscreen)
@@ -161,6 +161,13 @@ func (c *Compositor) mapWindowWithRules(view *toplevelView, clientFullscreen boo
 			c.model.ResizeWindow(view.id, window.Tile.X, window.Tile.Y, width, height, resize)
 			break
 		}
+	}
+}
+
+func (c *Compositor) mapWindowAfterUnmap(view *toplevelView, output string, clientFullscreen bool) {
+	c.model.MapWindow(view.id, output)
+	if !c.model.IsWindowedFullscreen(view.id) {
+		c.model.SetFullscreen(view.id, clientFullscreen)
 	}
 }
 
