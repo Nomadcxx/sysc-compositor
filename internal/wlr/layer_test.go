@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Nomadcxx/sysc-compositor/internal/config"
 )
 
 func TestLayerSnapshotWireMappings(t *testing.T) {
@@ -156,7 +158,16 @@ func mappedOn(placed []layerPlacement, layer int) *layerPlacement {
 // TestLayerSurfaceFillsItsOutput: swaybg anchors a background surface to every
 // edge with size 0x0, which asks the compositor for the whole output.
 func TestLayerSurfaceFillsItsOutput(t *testing.T) {
-	c := newNested(t)
+	cfg, err := config.Parse("layer-rules.kdl", []byte(`
+layer-rule {
+    match namespace="wallpaper"
+    place-within-backdrop true
+}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := newNestedWith(t, Options{LayerRules: cfg.LayerRules})
 	var (
 		got    *layerPlacement
 		output rect
@@ -175,6 +186,9 @@ func TestLayerSurfaceFillsItsOutput(t *testing.T) {
 	}
 	if got.namespace != "wallpaper" {
 		t.Errorf("namespace %q, want swaybg's \"wallpaper\"", got.namespace)
+	}
+	if !got.placeWithinBackdrop {
+		t.Error("matching layer rule lost its place-within-backdrop classification")
 	}
 }
 

@@ -13,8 +13,10 @@ import (
 	"github.com/Nomadcxx/sysc-compositor/internal/config"
 	"github.com/Nomadcxx/sysc-compositor/internal/control"
 	"github.com/Nomadcxx/sysc-compositor/internal/ipc"
+	"github.com/Nomadcxx/sysc-compositor/internal/layout"
 	"github.com/Nomadcxx/sysc-compositor/internal/unixsock"
 	"github.com/Nomadcxx/sysc-compositor/internal/wlr"
+	"github.com/Nomadcxx/sysc-compositor/internal/wm"
 )
 
 // Server wraps the wlroots object graph behind the lifetime the binary needs.
@@ -37,6 +39,10 @@ func New(cfg *config.Config, configLoadFailed bool) (*Server, error) {
 	if cfg == nil {
 		cfg = config.Default()
 	}
+	workspaces := make([]wm.WorkspaceConfig, len(cfg.Workspaces))
+	for i, workspace := range cfg.Workspaces {
+		workspaces[i] = wm.WorkspaceConfig{Name: workspace.Name, OpenOnOutput: workspace.OpenOnOutput}
+	}
 	k := cfg.Keyboard
 	c, err := wlr.NewWith(wlr.Options{Keyboard: wlr.Keyboard{
 		Rules: k.Rules, Model: k.Model, Layout: k.Layout, Variant: k.Variant, Options: k.Options,
@@ -46,6 +52,7 @@ func New(cfg *config.Config, configLoadFailed bool) (*Server, error) {
 			Gaps: cfg.Layout.Gaps, ColumnWidthProportion: cfg.Layout.ColumnWidthProportion,
 			FixedColumnWidth: cfg.Layout.FixedColumnWidth,
 		}, CursorTheme: cfg.Cursor.Theme, CursorSize: cfg.Cursor.Size, Binds: cfg.Binds,
+		Workspaces: workspaces, WindowRules: cfg.WindowRules, LayerRules: cfg.LayerRules,
 	})
 	if err != nil {
 		return nil, err
@@ -199,6 +206,153 @@ func (s *Server) Run() error {
 						s.c.CloseWindow(action.WindowID)
 					case "FocusWorkspace":
 						s.c.FocusWorkspaceID(workspaceID)
+					case "FocusWindowInColumn":
+						if action.ColumnIndex != nil {
+							s.c.FocusWindowInColumn(*action.ColumnIndex)
+						}
+					case "FocusWindowDown":
+						s.c.FocusWindowDown()
+					case "FocusWindowUp":
+						s.c.FocusWindowUp()
+					case "MoveWindowDown":
+						s.c.MoveWindowDown()
+					case "MoveWindowUp":
+						s.c.MoveWindowUp()
+					case "FocusColumnLeft":
+						s.c.FocusColumnLeft()
+					case "FocusColumnRight":
+						s.c.FocusColumnRight()
+					case "FocusColumnFirst":
+						s.c.FocusColumnFirst()
+					case "FocusColumnLast":
+						s.c.FocusColumnLast()
+					case "MoveColumnLeft":
+						s.c.MoveColumnLeft()
+					case "MoveColumnRight":
+						s.c.MoveColumnRight()
+					case "MoveColumnToFirst":
+						s.c.MoveColumnToFirst()
+					case "MoveColumnToLast":
+						s.c.MoveColumnToLast()
+					case "ConsumeWindowIntoColumn":
+						s.c.ConsumeWindowIntoColumn()
+					case "ExpelWindowFromColumn":
+						s.c.ExpelWindowFromColumn()
+					case "ConsumeOrExpelWindowLeft":
+						s.c.ConsumeOrExpelWindowLeft(action.WindowID)
+					case "ConsumeOrExpelWindowRight":
+						s.c.ConsumeOrExpelWindowRight(action.WindowID)
+					case "ToggleColumnTabbedDisplay":
+						s.c.ToggleColumnTabbedDisplay()
+					case "SetColumnDisplay":
+						display := layout.ColumnDisplayNormal
+						if action.ColumnDisplay == "Tabbed" {
+							display = layout.ColumnDisplayTabbed
+						}
+						s.c.SetColumnDisplay(display)
+					case "FullscreenWindow":
+						s.c.ToggleFullscreenWindow(action.WindowID)
+					case "ToggleWindowedFullscreen":
+						s.c.ToggleWindowedFullscreenWindow(action.WindowID)
+					case "ToggleWindowFloating":
+						s.c.ToggleWindowFloatingFor(action.WindowID)
+					case "MoveWindowToFloating":
+						s.c.SetWindowFloatingFor(action.WindowID, true)
+					case "MoveWindowToTiling":
+						s.c.SetWindowFloatingFor(action.WindowID, false)
+					case "FocusFloating":
+						s.c.FocusFloating()
+					case "FocusTiling":
+						s.c.FocusTiling()
+					case "SwitchFocusBetweenFloatingAndTiling":
+						s.c.SwitchFocusFloatingAndTiling()
+					case "MoveFloatingWindow":
+						s.c.MoveFloatingWindow(action.WindowID,
+							layout.PositionChange{Kind: layout.PositionChangeKind(action.X.Kind), Value: action.X.Value},
+							layout.PositionChange{Kind: layout.PositionChangeKind(action.Y.Kind), Value: action.Y.Value},
+						)
+					case "ToggleWindowUrgent":
+						if action.WindowID != nil {
+							s.c.ToggleWindowUrgent(*action.WindowID)
+						}
+					case "SetWindowUrgent", "UnsetWindowUrgent":
+						if action.WindowID != nil {
+							s.c.SetWindowUrgent(*action.WindowID, action.Name == "SetWindowUrgent")
+						}
+					case "SetWorkspaceName":
+						if action.WorkspaceName != nil {
+							s.c.SetWorkspaceName(workspaceID, *action.WorkspaceName)
+						}
+					case "UnsetWorkspaceName":
+						s.c.UnsetWorkspaceName(workspaceID)
+					case "MoveWindowToWorkspace":
+						s.c.MoveWindowToWorkspace(action.WindowID, workspaceID, action.Focus != nil && *action.Focus)
+					case "MoveColumnToWorkspace":
+						s.c.MoveColumnToWorkspace(workspaceID, action.Focus != nil && *action.Focus)
+					case "MoveWindowToWorkspaceDown":
+						s.c.MoveWindowToWorkspaceDown(action.Focus != nil && *action.Focus)
+					case "MoveWindowToWorkspaceUp":
+						s.c.MoveWindowToWorkspaceUp(action.Focus != nil && *action.Focus)
+					case "MoveColumnToWorkspaceDown":
+						s.c.MoveColumnToWorkspaceDown(action.Focus != nil && *action.Focus)
+					case "MoveColumnToWorkspaceUp":
+						s.c.MoveColumnToWorkspaceUp(action.Focus != nil && *action.Focus)
+					case "MoveWorkspaceToMonitor":
+						s.c.MoveWorkspaceToOutput(workspaceID, action.Output)
+					case "MoveWorkspaceToMonitorLeft":
+						s.c.MoveWorkspaceToMonitorDirection("left")
+					case "MoveWorkspaceToMonitorRight":
+						s.c.MoveWorkspaceToMonitorDirection("right")
+					case "MoveWorkspaceToMonitorUp":
+						s.c.MoveWorkspaceToMonitorDirection("up")
+					case "MoveWorkspaceToMonitorDown":
+						s.c.MoveWorkspaceToMonitorDirection("down")
+					case "MoveWorkspaceToMonitorPrevious":
+						s.c.MoveWorkspaceToMonitorDirection("previous")
+					case "MoveWorkspaceToMonitorNext":
+						s.c.MoveWorkspaceToMonitorDirection("next")
+					case "MoveWindowToMonitor":
+						s.c.MoveWindowToMonitor(action.WindowID, action.Output)
+					case "MoveColumnToMonitor":
+						s.c.MoveColumnToMonitor(action.Output)
+					case "MoveWindowToMonitorLeft":
+						s.c.MoveWindowToMonitorDirection(nil, "left")
+					case "MoveWindowToMonitorRight":
+						s.c.MoveWindowToMonitorDirection(nil, "right")
+					case "MoveWindowToMonitorUp":
+						s.c.MoveWindowToMonitorDirection(nil, "up")
+					case "MoveWindowToMonitorDown":
+						s.c.MoveWindowToMonitorDirection(nil, "down")
+					case "MoveWindowToMonitorPrevious":
+						s.c.MoveWindowToMonitorDirection(nil, "previous")
+					case "MoveWindowToMonitorNext":
+						s.c.MoveWindowToMonitorDirection(nil, "next")
+					case "MoveColumnToMonitorLeft":
+						s.c.MoveColumnToMonitorDirection("left")
+					case "MoveColumnToMonitorRight":
+						s.c.MoveColumnToMonitorDirection("right")
+					case "MoveColumnToMonitorUp":
+						s.c.MoveColumnToMonitorDirection("up")
+					case "MoveColumnToMonitorDown":
+						s.c.MoveColumnToMonitorDirection("down")
+					case "MoveColumnToMonitorPrevious":
+						s.c.MoveColumnToMonitorDirection("previous")
+					case "MoveColumnToMonitorNext":
+						s.c.MoveColumnToMonitorDirection("next")
+					case "FocusMonitor":
+						s.c.FocusMonitor(action.Output)
+					case "FocusMonitorLeft":
+						s.c.FocusMonitorDirection("left")
+					case "FocusMonitorRight":
+						s.c.FocusMonitorDirection("right")
+					case "FocusMonitorUp":
+						s.c.FocusMonitorDirection("up")
+					case "FocusMonitorDown":
+						s.c.FocusMonitorDirection("down")
+					case "FocusMonitorPrevious":
+						s.c.FocusMonitorDirection("previous")
+					case "FocusMonitorNext":
+						s.c.FocusMonitorDirection("next")
 					}
 				})
 			},

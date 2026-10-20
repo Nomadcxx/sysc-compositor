@@ -130,6 +130,7 @@ import (
 	"unsafe"
 
 	"github.com/Nomadcxx/sysc-compositor/internal/bind"
+	"github.com/Nomadcxx/sysc-compositor/internal/layout"
 )
 
 // Keyboard is the user seat's keymap and repeat: niri's input.keyboard.
@@ -340,6 +341,140 @@ func (c *Compositor) executeBindAction(action bind.Action) {
 	if c.model == nil {
 		return
 	}
+	switch action.Name {
+	case bind.ActionSetWorkspaceName:
+		if workspaceID, ok := c.focusedWorkspaceID(); ok {
+			c.SetWorkspaceName(workspaceID, action.WorkspaceName)
+		}
+		return
+	case bind.ActionUnsetWorkspaceName:
+		if workspaceID, ok := c.focusedWorkspaceID(); ok {
+			c.UnsetWorkspaceName(workspaceID)
+		}
+		return
+	case bind.ActionMoveWindowToWorkspace, bind.ActionMoveColumnToWorkspace:
+		workspaceID, ok := c.workspaceIDForBind(action.WorkspaceIndex, action.WorkspaceName)
+		if !ok {
+			return
+		}
+		if action.Name == bind.ActionMoveWindowToWorkspace {
+			c.MoveWindowToWorkspace(nil, workspaceID, action.Focus)
+		} else {
+			c.MoveColumnToWorkspace(workspaceID, action.Focus)
+		}
+		return
+	case bind.ActionMoveWindowToMonitor:
+		c.MoveWindowToMonitor(nil, action.Output)
+		return
+	case bind.ActionMoveColumnToMonitor:
+		c.MoveColumnToMonitor(action.Output)
+		return
+	case bind.ActionMoveWorkspaceToMonitor:
+		if workspaceID, ok := c.focusedWorkspaceID(); ok {
+			c.MoveWorkspaceToOutput(workspaceID, action.Output)
+		}
+		return
+	case bind.ActionFocusMonitor:
+		c.FocusMonitor(action.Output)
+		return
+	case bind.ActionMoveWindowToMonitorLeft:
+		c.MoveWindowToMonitorDirection(nil, "left")
+		return
+	case bind.ActionMoveWindowToMonitorRight:
+		c.MoveWindowToMonitorDirection(nil, "right")
+		return
+	case bind.ActionMoveWindowToMonitorUp:
+		c.MoveWindowToMonitorDirection(nil, "up")
+		return
+	case bind.ActionMoveWindowToMonitorDown:
+		c.MoveWindowToMonitorDirection(nil, "down")
+		return
+	case bind.ActionMoveWindowToMonitorPrevious:
+		c.MoveWindowToMonitorDirection(nil, "previous")
+		return
+	case bind.ActionMoveWindowToMonitorNext:
+		c.MoveWindowToMonitorDirection(nil, "next")
+		return
+	case bind.ActionMoveColumnToMonitorLeft:
+		c.MoveColumnToMonitorDirection("left")
+		return
+	case bind.ActionMoveColumnToMonitorRight:
+		c.MoveColumnToMonitorDirection("right")
+		return
+	case bind.ActionMoveColumnToMonitorUp:
+		c.MoveColumnToMonitorDirection("up")
+		return
+	case bind.ActionMoveColumnToMonitorDown:
+		c.MoveColumnToMonitorDirection("down")
+		return
+	case bind.ActionMoveColumnToMonitorPrevious:
+		c.MoveColumnToMonitorDirection("previous")
+		return
+	case bind.ActionMoveColumnToMonitorNext:
+		c.MoveColumnToMonitorDirection("next")
+		return
+	case bind.ActionMoveWorkspaceToMonitorLeft:
+		c.MoveWorkspaceToMonitorDirection("left")
+		return
+	case bind.ActionMoveWorkspaceToMonitorRight:
+		c.MoveWorkspaceToMonitorDirection("right")
+		return
+	case bind.ActionMoveWorkspaceToMonitorUp:
+		c.MoveWorkspaceToMonitorDirection("up")
+		return
+	case bind.ActionMoveWorkspaceToMonitorDown:
+		c.MoveWorkspaceToMonitorDirection("down")
+		return
+	case bind.ActionMoveWorkspaceToMonitorPrevious:
+		c.MoveWorkspaceToMonitorDirection("previous")
+		return
+	case bind.ActionMoveWorkspaceToMonitorNext:
+		c.MoveWorkspaceToMonitorDirection("next")
+		return
+	case bind.ActionFocusMonitorLeft:
+		c.FocusMonitorDirection("left")
+		return
+	case bind.ActionFocusMonitorRight:
+		c.FocusMonitorDirection("right")
+		return
+	case bind.ActionFocusMonitorUp:
+		c.FocusMonitorDirection("up")
+		return
+	case bind.ActionFocusMonitorDown:
+		c.FocusMonitorDirection("down")
+		return
+	case bind.ActionFocusMonitorPrevious:
+		c.FocusMonitorDirection("previous")
+		return
+	case bind.ActionFocusMonitorNext:
+		c.FocusMonitorDirection("next")
+		return
+	case bind.ActionToggleWindowFloating:
+		c.ToggleWindowFloating()
+		return
+	case bind.ActionMoveWindowToFloating, bind.ActionMoveWindowToTiling:
+		id, ok := c.model.ActiveWindow()
+		if !ok {
+			return
+		}
+		c.SetWindowFloating(id, action.Name == bind.ActionMoveWindowToFloating)
+		return
+	case bind.ActionFocusFloating:
+		c.FocusFloating()
+		return
+	case bind.ActionFocusTiling:
+		c.FocusTiling()
+		return
+	case bind.ActionSwitchFocusFloatingAndTiling:
+		c.SwitchFocusFloatingAndTiling()
+		return
+	case bind.ActionFullscreenWindow:
+		c.ToggleFullscreen()
+		return
+	case bind.ActionToggleWindowedFullscreen:
+		c.ToggleWindowedFullscreen()
+		return
+	}
 	changed, focus := false, false
 	switch action.Name {
 	case bind.ActionFocusColumnLeft:
@@ -359,7 +494,46 @@ func (c *Compositor) executeBindAction(action bind.Action) {
 	case bind.ActionMoveColumnToLast:
 		changed = c.model.MoveColumnToLast()
 	case bind.ActionFocusWorkspace:
-		changed, focus = c.model.FocusWorkspace("", action.WorkspaceIndex), true
+		if action.WorkspaceName != "" {
+			changed = c.model.FocusWorkspaceName(action.WorkspaceName)
+		} else {
+			changed = c.model.FocusWorkspace("", action.WorkspaceIndex)
+		}
+		focus = true
+	case bind.ActionConsumeWindowIntoColumn:
+		changed = c.model.ConsumeWindowIntoColumn()
+	case bind.ActionExpelWindowFromColumn:
+		changed = c.model.ExpelWindowFromColumn()
+	case bind.ActionConsumeOrExpelWindowLeft:
+		changed = c.model.ConsumeOrExpelWindowLeft(nil)
+	case bind.ActionConsumeOrExpelWindowRight:
+		changed = c.model.ConsumeOrExpelWindowRight(nil)
+	case bind.ActionToggleColumnTabbedDisplay:
+		changed = c.model.ToggleColumnTabbedDisplay()
+	case bind.ActionSetColumnDisplay:
+		display := layout.ColumnDisplayNormal
+		if action.ColumnDisplay == "tabbed" {
+			display = layout.ColumnDisplayTabbed
+		}
+		changed = c.model.SetColumnDisplay(display)
+	case bind.ActionFocusWindowInColumn:
+		changed, focus = c.model.FocusWindowInColumn(action.ColumnIndex), true
+	case bind.ActionFocusWindowDown:
+		changed, focus = c.model.FocusWindowDown(), true
+	case bind.ActionFocusWindowUp:
+		changed, focus = c.model.FocusWindowUp(), true
+	case bind.ActionMoveWindowDown:
+		changed = c.model.MoveWindowDown()
+	case bind.ActionMoveWindowUp:
+		changed = c.model.MoveWindowUp()
+	case bind.ActionMoveWindowToWorkspaceDown:
+		changed, focus = c.model.MoveWindowToWorkspaceDown(action.Focus), action.Focus
+	case bind.ActionMoveWindowToWorkspaceUp:
+		changed, focus = c.model.MoveWindowToWorkspaceUp(action.Focus), action.Focus
+	case bind.ActionMoveColumnToWorkspaceDown:
+		changed, focus = c.model.MoveColumnToWorkspaceDown(action.Focus), action.Focus
+	case bind.ActionMoveColumnToWorkspaceUp:
+		changed, focus = c.model.MoveColumnToWorkspaceUp(action.Focus), action.Focus
 	}
 	if changed {
 		c.applyWorkspaceModel()

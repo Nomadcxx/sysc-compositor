@@ -30,6 +30,7 @@ package wlr
 #include <wlr/types/wlr_subcompositor.h>
 #include <wlr/types/wlr_viewporter.h>
 #include <wlr/types/wlr_xdg_output_v1.h>
+#include <wlr/types/wlr_xdg_activation_v1.h>
 #include <wlr/types/wlr_xdg_shell.h>
 #include <wlr/types/wlr_xcursor_manager.h>
 
@@ -86,30 +87,33 @@ import "C"
 import (
 	"errors"
 	"os"
+	"slices"
 	"testing"
 	"time"
 	"unsafe"
 
 	"github.com/Nomadcxx/sysc-compositor/internal/bind"
+	"github.com/Nomadcxx/sysc-compositor/internal/config"
 	"github.com/Nomadcxx/sysc-compositor/internal/wm"
 )
 
 // Compositor holds the wlroots object graph for one running server. Every
 // method must be called on the thread that ran LockOSThread.
 type Compositor struct {
-	display    *C.struct_wl_display
-	backend    *C.struct_wlr_backend
-	session    *C.struct_wlr_session
-	renderer   *C.struct_wlr_renderer
-	alloc      *C.struct_wlr_allocator
-	comp       *C.struct_wlr_compositor
-	layout     *C.struct_wlr_output_layout
-	scene      *C.struct_wlr_scene
-	seat       *C.struct_wlr_seat
-	xdgShell   *C.struct_wlr_xdg_shell
-	layerShell *C.struct_wlr_layer_shell_v1
-	socketName string
-	listeners  map[*Listener]struct{}
+	display       *C.struct_wl_display
+	backend       *C.struct_wlr_backend
+	session       *C.struct_wlr_session
+	renderer      *C.struct_wlr_renderer
+	alloc         *C.struct_wlr_allocator
+	comp          *C.struct_wlr_compositor
+	layout        *C.struct_wlr_output_layout
+	scene         *C.struct_wlr_scene
+	seat          *C.struct_wlr_seat
+	xdgShell      *C.struct_wlr_xdg_shell
+	xdgActivation *C.struct_wlr_xdg_activation_v1
+	layerShell    *C.struct_wlr_layer_shell_v1
+	socketName    string
+	listeners     map[*Listener]struct{}
 
 	loop                   *C.struct_wl_event_loop
 	cursor                 *C.struct_wlr_cursor
@@ -174,6 +178,8 @@ type Compositor struct {
 
 	model         *wm.Model
 	bindings      []bind.Binding
+	windowRules   []config.WindowRule
+	layerRules    []config.LayerRule
 	modKey        bind.Modifier
 	layoutOptions LayoutOptions
 	cursorTheme   string
@@ -196,6 +202,9 @@ type Options struct {
 	CursorTheme  string
 	CursorSize   int
 	Binds        []bind.Binding
+	Workspaces   []wm.WorkspaceConfig
+	WindowRules  []config.WindowRule
+	LayerRules   []config.LayerRule
 }
 
 type LayoutOptions struct {
@@ -221,7 +230,9 @@ func NewWith(opts Options) (*Compositor, error) {
 		return nil, ErrNestedTestNeedsConsent
 	}
 	c := &Compositor{}
-	c.model = wm.New()
+	c.model = wm.New(opts.Workspaces...)
+	c.windowRules = slices.Clone(opts.WindowRules)
+	c.layerRules = slices.Clone(opts.LayerRules)
 	c.layoutOptions = LayoutOptions{Gaps: 16, ColumnWidthProportion: 0.5}
 	if opts.Layout != nil {
 		c.layoutOptions = *opts.Layout
@@ -301,6 +312,9 @@ func NewWith(opts Options) (*Compositor, error) {
 	if c.xdgShell = C.wlr_xdg_shell_create(c.display, C.uint32_t(C.sysc_xdg_version)); c.xdgShell == nil {
 		return nil, errors.New("wlr_xdg_shell_create failed")
 	}
+	if c.xdgActivation = C.wlr_xdg_activation_v1_create(c.display); c.xdgActivation == nil {
+		return nil, errors.New("wlr_xdg_activation_v1_create failed")
+	}
 	if c.scene = C.wlr_scene_create(); c.scene == nil {
 		return nil, errors.New("wlr_scene_create failed")
 	}
@@ -341,6 +355,7 @@ func NewWith(opts Options) (*Compositor, error) {
 		AddListener(c.newPopupSignal(), c.handleNewPopup),
 		AddListener(unsafe.Pointer(&c.layerShell.events.new_surface), c.handleNewLayerSurface),
 		AddListener(c.newToplevelSignal(), c.handleNewToplevel),
+		AddListener(unsafe.Pointer(&c.xdgActivation.events.request_activate), c.handleActivationRequest),
 		AddListener(unsafe.Pointer(&c.cursor.events.motion), c.handleCursorMotion),
 		AddListener(unsafe.Pointer(&c.cursor.events.motion_absolute), c.handleCursorMotionAbsolute),
 		AddListener(unsafe.Pointer(&c.cursor.events.button), c.handleCursorButton),

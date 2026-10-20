@@ -5,6 +5,17 @@ package wlr
 #cgo CFLAGS: -DWLR_USE_UNSTABLE
 
 #include <wlr/backend/headless.h>
+#include <wlr/types/wlr_xdg_shell.h>
+
+static void sysc_fake_fullscreen_request(struct wlr_xdg_toplevel *toplevel,
+		struct wlr_output *output) {
+	toplevel->requested.fullscreen = true;
+	toplevel->requested.fullscreen_output = output;
+}
+
+static void sysc_fake_clear_fullscreen_output(struct wlr_xdg_toplevel *toplevel) {
+	toplevel->requested.fullscreen_output = NULL;
+}
 */
 import "C"
 
@@ -41,6 +52,25 @@ func addHeadlessTestOutput(c *Compositor, width, height uint32) (*headlessTestBa
 		return nil, errors.New("wlr_backend_start failed")
 	}
 	return &headlessTestBackend{c: c, backend: backend, newOutput: listener}, nil
+}
+
+func requestFullscreenOnOutputForTest(c *Compositor, view *toplevelView, name string) bool {
+	if c == nil || view == nil || view.toplevel == nil {
+		return false
+	}
+	for output := range c.sceneOutputs {
+		if C.GoString((*C.struct_wlr_output)(output).name) == name {
+			C.sysc_fake_fullscreen_request(view.toplevel, (*C.struct_wlr_output)(output))
+			return true
+		}
+	}
+	return false
+}
+
+func clearFullscreenOutputForTest(view *toplevelView) {
+	if view != nil && view.toplevel != nil {
+		C.sysc_fake_clear_fullscreen_output(view.toplevel)
+	}
 }
 
 func (b *headlessTestBackend) destroy() {

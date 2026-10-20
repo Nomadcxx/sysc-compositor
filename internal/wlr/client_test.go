@@ -111,6 +111,7 @@ func TestRequiredGlobalsAdvertised(t *testing.T) {
 		"wl_output":                      1,
 		"wl_data_device_manager":         1,
 		"xdg_wm_base":                    7,
+		"xdg_activation_v1":              1,
 		"zwlr_layer_shell_v1":            5,
 		"wp_fractional_scale_manager_v1": 1,
 		"wp_viewporter":                  1,

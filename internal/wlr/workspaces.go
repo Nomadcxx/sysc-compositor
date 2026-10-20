@@ -6,6 +6,7 @@ package wlr
 
 #include <wlr/types/wlr_scene.h>
 #include <wlr/types/wlr_output_layout.h>
+#include <wlr/types/wlr_cursor.h>
 #include <wlr/types/wlr_xdg_shell.h>
 
 static void sysc_workspace_output_layout_box(struct wlr_output_layout *layout,
@@ -78,6 +79,242 @@ func (c *Compositor) removeWorkspaceOutput(name string) {
 	c.activateWorkspaceFocus()
 }
 
+// SetFullscreen changes the server-side xdg fullscreen state while retaining
+// the workspace placement for restoration after the client acknowledges exit.
+func (c *Compositor) SetFullscreen(id uint64, fullscreen bool) bool {
+	if c.model == nil {
+		return false
+	}
+	var view *toplevelView
+	for _, candidate := range c.views {
+		if candidate.id == id && candidate.mapped && bool(candidate.toplevel.base.surface.mapped) {
+			view = candidate
+			break
+		}
+	}
+	if view == nil || !c.model.SetFullscreen(id, fullscreen) {
+		return false
+	}
+	C.wlr_xdg_toplevel_set_fullscreen(view.toplevel, C.bool(fullscreen))
+	if fullscreen {
+		for output := range c.sceneOutputs {
+			if C.GoString((*C.struct_wlr_output)(output).name) != c.outputNameForView(view) {
+				continue
+			}
+			var bounds C.struct_wlr_box
+			C.sysc_workspace_output_layout_box(c.layout, (*C.struct_wlr_output)(output), &bounds)
+			C.wlr_xdg_toplevel_set_size(view.toplevel, bounds.width, bounds.height)
+			C.sysc_workspace_set_position(view.tree, bounds.x, bounds.y)
+			break
+		}
+	} else {
+		C.wlr_xdg_toplevel_set_size(view.toplevel, 0, 0)
+	}
+	c.applyWorkspaceModel()
+	c.notifyWindowStateChanged()
+	return true
+}
+
+// ToggleFullscreen toggles the active workspace window's client fullscreen.
+func (c *Compositor) ToggleFullscreen() bool {
+	window, ok := c.activeWindowSnapshot()
+	return ok && c.SetFullscreen(window.ID, !window.Fullscreen)
+}
+
+func (c *Compositor) ToggleFullscreenWindow(id *uint64) bool {
+	window, ok := c.windowActionSnapshot(id)
+	return ok && c.SetFullscreen(window.ID, !window.Fullscreen)
+}
+
+// SetWindowedFullscreen changes compositor-only fullscreen without setting
+// the client's xdg fullscreen state.
+func (c *Compositor) SetWindowedFullscreen(id uint64, fullscreen bool) bool {
+	if c.model == nil {
+		return false
+	}
+	var view *toplevelView
+	for _, candidate := range c.views {
+		if candidate.id == id && candidate.mapped && bool(candidate.toplevel.base.surface.mapped) {
+			view = candidate
+			break
+		}
+	}
+	if view == nil || !c.model.SetWindowedFullscreen(id, fullscreen) {
+		return false
+	}
+	if fullscreen && (bool(view.toplevel.current.fullscreen) || bool(view.toplevel.requested.fullscreen)) {
+		C.wlr_xdg_toplevel_set_fullscreen(view.toplevel, false)
+		C.wlr_xdg_toplevel_set_size(view.toplevel, 0, 0)
+	}
+	c.applyWorkspaceModel()
+	c.notifyWindowStateChanged()
+	return true
+}
+
+func (c *Compositor) ToggleWindowedFullscreen() bool {
+	window, ok := c.activeWindowSnapshot()
+	return ok && c.SetWindowedFullscreen(window.ID, !window.WindowedFullscreen)
+}
+
+func (c *Compositor) ToggleWindowedFullscreenWindow(id *uint64) bool {
+	window, ok := c.windowActionSnapshot(id)
+	return ok && c.SetWindowedFullscreen(window.ID, !window.WindowedFullscreen)
+}
+
+func (c *Compositor) MoveWorkspaceToOutput(id uint64, output string) bool {
+	if c.model == nil || !c.model.MoveWorkspaceToOutput(id, output) {
+		return false
+	}
+	c.applyWorkspaceModel()
+	c.activateWorkspaceFocus()
+	return true
+}
+
+func (c *Compositor) MoveWorkspaceToMonitorDirection(direction string) bool {
+	if c.model == nil || !c.model.MoveFocusedWorkspaceToMonitorDirection(direction) {
+		return false
+	}
+	c.applyWorkspaceModel()
+	c.activateWorkspaceFocus()
+	return true
+}
+
+func (c *Compositor) FocusMonitor(output string) bool {
+	if c.model == nil || !c.model.FocusOutput(output) {
+		return false
+	}
+	c.activateWorkspaceFocus()
+	c.warpCursorToOutput(output)
+	return true
+}
+
+func (c *Compositor) FocusMonitorDirection(direction string) bool {
+	if c.model == nil || !c.model.FocusOutputDirection(direction) {
+		return false
+	}
+	output := c.model.Snapshot().FocusedOutput
+	c.activateWorkspaceFocus()
+	c.warpCursorToOutput(output)
+	return true
+}
+
+func (c *Compositor) warpCursorToOutput(name string) {
+	if c.cursor == nil {
+		return
+	}
+	for pointer := range c.sceneOutputs {
+		output := (*C.struct_wlr_output)(pointer)
+		if C.GoString(output.name) != name {
+			continue
+		}
+		var bounds C.struct_wlr_box
+		C.sysc_workspace_output_layout_box(c.layout, output, &bounds)
+		C.wlr_cursor_warp_closest(c.cursor, nil,
+			C.double(bounds.x)+C.double(bounds.width)/2,
+			C.double(bounds.y)+C.double(bounds.height)/2)
+		return
+	}
+}
+
+func (c *Compositor) SetWindowUrgent(id uint64, urgent bool) bool {
+	if c.model == nil || !c.model.SetWindowUrgent(id, urgent) {
+		return false
+	}
+	c.notifyStateChanged()
+	return true
+}
+
+func (c *Compositor) ToggleWindowUrgent(id uint64) bool {
+	if c.model == nil || !c.model.ToggleWindowUrgent(id) {
+		return false
+	}
+	c.notifyStateChanged()
+	return true
+}
+
+func (c *Compositor) workspaceBounds(name string) layout.Bounds {
+	for output := range c.sceneOutputs {
+		if C.GoString((*C.struct_wlr_output)(output).name) != name {
+			continue
+		}
+		area := c.usable[output]
+		if area.w <= 0 || area.h <= 0 {
+			var full C.struct_wlr_box
+			C.sysc_workspace_output_layout_box(c.layout, (*C.struct_wlr_output)(output), &full)
+			area = rect{int(full.x), int(full.y), int(full.width), int(full.height)}
+		}
+		return layout.Bounds{X: area.x, Y: area.y, Width: area.w, Height: area.h}
+	}
+	return layout.Bounds{}
+}
+
+func (c *Compositor) focusedWorkspaceID() (uint64, bool) {
+	if c.model == nil {
+		return 0, false
+	}
+	for _, workspace := range c.model.Snapshot().Workspaces {
+		if workspace.IsFocused {
+			return workspace.ID, true
+		}
+	}
+	return 0, false
+}
+
+func (c *Compositor) workspaceIDForBind(index uint8, name string) (uint64, bool) {
+	if c.model == nil {
+		return 0, false
+	}
+	if name != "" {
+		return c.model.WorkspaceIDByName(name)
+	}
+	snapshot := c.model.Snapshot()
+	for _, workspace := range snapshot.Workspaces {
+		if workspace.Output == snapshot.FocusedOutput && workspace.Index == index {
+			return workspace.ID, true
+		}
+	}
+	return 0, false
+}
+
+func (c *Compositor) activeWindowSnapshot() (wm.WindowSnapshot, bool) {
+	if c.model == nil {
+		return wm.WindowSnapshot{}, false
+	}
+	id, ok := c.model.ActiveWindow()
+	if !ok {
+		return wm.WindowSnapshot{}, false
+	}
+	for _, window := range c.model.Snapshot().Windows {
+		if window.ID == id {
+			return window, true
+		}
+	}
+	return wm.WindowSnapshot{}, false
+}
+
+func (c *Compositor) positionWorkspaceWindow(view *toplevelView, window wm.WindowSnapshot) {
+	if view == nil || view.tree == nil || view.toplevel == nil ||
+		window.Fullscreen || bool(view.toplevel.current.fullscreen) {
+		return
+	}
+	if window.WindowedFullscreen {
+		bounds := c.workspaceBounds(window.Output)
+		if bounds.Width > 0 && bounds.Height > 0 {
+			C.sysc_workspace_set_position(view.tree, C.int(bounds.X), C.int(bounds.Y))
+		}
+		return
+	}
+
+	placement := window.Tile
+	x, y := placement.X, placement.Y
+	if !placement.Floating {
+		geometry := view.geometry()
+		x += (placement.Width - geometry.w) / 2
+		y += (placement.Height - geometry.h) / 2
+	}
+	C.sysc_workspace_set_position(view.tree, C.int(x), C.int(y))
+}
+
 func (c *Compositor) defaultColumnWidth(available int) int {
 	if available <= 0 {
 		return 0
@@ -109,6 +346,24 @@ func (c *Compositor) applyWorkspaceModel() {
 	for _, window := range snapshot.Windows {
 		windows[window.ID] = window
 	}
+	fullscreenByOutput := make(map[string]*toplevelView)
+	for _, view := range c.views {
+		if view == nil || view.toplevel == nil || !view.mapped || !bool(view.toplevel.base.surface.mapped) {
+			continue
+		}
+		window, exists := windows[view.id]
+		if !exists || !activeWorkspace[window.WorkspaceID] ||
+			(!window.Fullscreen && !bool(view.toplevel.current.fullscreen)) {
+			continue
+		}
+		output := window.Output
+		if requested := view.toplevel.requested.fullscreen_output; requested != nil {
+			output = C.GoString(requested.name)
+		}
+		if current := fullscreenByOutput[output]; current == nil || view.touched > current.touched {
+			fullscreenByOutput[output] = view
+		}
+	}
 	for _, view := range c.views {
 		if view == nil || view.tree == nil || !view.mapped {
 			continue
@@ -118,15 +373,23 @@ func (c *Compositor) applyWorkspaceModel() {
 			C.sysc_workspace_set_enabled(view.tree, false)
 			continue
 		}
-		C.sysc_workspace_set_enabled(view.tree, C.bool(activeWorkspace[window.WorkspaceID]))
-		if bool(view.toplevel.current.fullscreen) || bool(view.toplevel.requested.fullscreen) {
+		visible := activeWorkspace[window.WorkspaceID] && window.Tile.Visible
+		if fullscreen := fullscreenByOutput[window.Output]; fullscreen != nil {
+			visible = fullscreen == view
+		}
+		C.sysc_workspace_set_enabled(view.tree, C.bool(visible))
+		if window.Fullscreen || bool(view.toplevel.current.fullscreen) {
 			continue
 		}
 		placement := window.Tile
-		geometry := view.geometry()
-		x := placement.X + (placement.Width-geometry.w)/2
-		y := placement.Y + (placement.Height-geometry.h)/2
-		C.sysc_workspace_set_position(view.tree, C.int(x), C.int(y))
+		c.positionWorkspaceWindow(view, window)
+		if window.WindowedFullscreen {
+			area := c.workspaceBounds(window.Output)
+			if area.Width > 0 && area.Height > 0 {
+				C.sysc_workspace_set_size(view.toplevel, C.int(area.Width), C.int(area.Height))
+			}
+			continue
+		}
 		if placement.Width > 0 && placement.Height > 0 {
 			C.sysc_workspace_set_size(view.toplevel, C.int(placement.Width), C.int(placement.Height))
 		}

@@ -32,6 +32,9 @@ type Config struct {
 	Layout      Layout
 	Cursor      Cursor
 	Binds       []Binding
+	Workspaces  []WorkspaceConfig
+	WindowRules []WindowRule
+	LayerRules  []LayerRule
 }
 
 type Input struct {
@@ -125,10 +128,14 @@ func decode(name string, nodes []*document.Node) (*Config, error) {
 			err = c.cursor(n)
 		case "binds":
 			err = c.binds(n)
+		case "workspace":
+			err = c.workspace(n)
+		case "window-rule":
+			err = c.windowRule(n)
+		case "layer-rule":
+			err = c.layerRule(n)
 		default:
-			if !slices.Contains(c.Warnings, node) {
-				c.Warnings = append(c.Warnings, node)
-			}
+			c.addWarning(node)
 		}
 		if err != nil {
 			return nil, fmt.Errorf("%s: %s: %w", name, node, err)
@@ -353,6 +360,20 @@ func (c *Config) binds(n *document.Node) error {
 			action, _, err := bind.ParseAction(name, args)
 			if err != nil {
 				return fmt.Errorf("bind %q action %s: %w", nodeName(node), name, err)
+			}
+			if name == bind.ActionMoveColumnToWorkspace || name == bind.ActionMoveWindowToWorkspace ||
+				name == bind.ActionMoveColumnToWorkspaceDown || name == bind.ActionMoveColumnToWorkspaceUp ||
+				name == bind.ActionMoveWindowToWorkspaceDown || name == bind.ActionMoveWindowToWorkspaceUp {
+				for key, property := range actionNode.Properties {
+					if key != "focus" {
+						return fmt.Errorf("bind %q action %s: unexpected property `%s`", nodeName(node), name, key)
+					}
+					focus, ok := property.Value.(bool)
+					if !ok {
+						return fmt.Errorf("bind %q action %s: `focus` must be boolean", nodeName(node), name)
+					}
+					action.Focus = focus
+				}
 			}
 			if chord.Trigger != bind.TriggerKey {
 				c.addUnappliedAction(name)

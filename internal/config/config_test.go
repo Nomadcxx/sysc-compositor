@@ -121,6 +121,143 @@ binds {
 	}
 }
 
+func TestM6WorkspaceAndRuleSectionsAreApplied(t *testing.T) {
+	cfg, err := Parse("m6.kdl", []byte(`
+workspace "Work" { open-on-output "DP-1"; }
+window-rule {
+    match app-id="terminal"
+    exclude title="hidden"
+    open-floating true
+    open-on-output "DP-1"
+    default-column-width { proportion 0.4; }
+}
+window-rule {
+    match app-id="terminal" title="dialog"
+    open-floating false
+    open-fullscreen true
+    open-on-workspace "Work"
+    default-window-height { fixed 480; }
+}
+layer-rule {
+    match namespace="sysc-shell"
+    place-within-backdrop true
+}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Warnings) != 0 {
+		t.Fatalf("M6 sections remain unapplied: %v", cfg.Warnings)
+	}
+	if !reflect.DeepEqual(cfg.Workspaces, []WorkspaceConfig{{Name: "Work", OpenOnOutput: "DP-1"}}) {
+		t.Errorf("workspaces = %+v", cfg.Workspaces)
+	}
+	resolved := cfg.ResolveWindowRules("x-terminal-test", "open dialog")
+	if resolved.OpenFloating == nil || *resolved.OpenFloating || resolved.OpenFullscreen == nil || !*resolved.OpenFullscreen ||
+		resolved.OpenOnWorkspace == nil || *resolved.OpenOnWorkspace != "Work" || resolved.OpenOnOutput == nil || *resolved.OpenOnOutput != "DP-1" {
+		t.Errorf("ordered window rule result = %+v", resolved)
+	}
+	if resolved.DefaultColumnWidth == nil || resolved.DefaultColumnWidth.Fixed || resolved.DefaultColumnWidth.Value != 0.4 ||
+		resolved.DefaultWindowHeight == nil || !resolved.DefaultWindowHeight.Fixed || resolved.DefaultWindowHeight.Value != 480 {
+		t.Errorf("default sizes = %+v, %+v", resolved.DefaultColumnWidth, resolved.DefaultWindowHeight)
+	}
+	if got := cfg.ResolveWindowRules("x-terminal-test", "hidden"); got.OpenFloating != nil {
+		t.Errorf("excluded window got rules = %+v", got)
+	}
+	if !cfg.ResolveLayerRules("sysc-shell-panel") || cfg.ResolveLayerRules("other") {
+		t.Error("layer namespace rule did not match only sysc-shell namespaces")
+	}
+}
+
+func TestM6RulesRejectBadRegexDuplicateNamesAndValues(t *testing.T) {
+	for src, want := range map[string]string{
+		`window-rule { match app-id="["; }`:                   "regular expression",
+		`workspace "Work"; workspace "work";`:                 "duplicate workspace name",
+		`window-rule { open-floating "yes"; }`:                "boolean",
+		`layer-rule { match namespace="("; }`:                 "regular expression",
+		`window-rule { default-column-width { fixed -1; }; }`: "whole number",
+	} {
+		if _, err := Parse("bad-m6.kdl", []byte(src)); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("Parse(%q) error = %v, want containing %q", src, err, want)
+		}
+	}
+}
+
+func TestM6WindowRulesAcceptEmptyDefaultSizes(t *testing.T) {
+	cfg, err := Parse("empty-default-size.kdl", []byte(`
+window-rule {
+    match app-id="test"
+    default-column-width {}
+    default-window-height {}
+}
+`))
+	if err != nil {
+		t.Fatalf("Parse() rejected Niri's empty default sizes: %v", err)
+	}
+	if len(cfg.WindowRules) != 1 || cfg.WindowRules[0].DefaultColumnWidth == nil || cfg.WindowRules[0].DefaultWindowHeight == nil {
+		t.Fatalf("empty size overrides = %+v, want both overrides preserved", cfg.WindowRules)
+	}
+	if !cfg.WindowRules[0].DefaultColumnWidth.WindowChooses || !cfg.WindowRules[0].DefaultWindowHeight.WindowChooses {
+		t.Fatalf("empty size overrides = %+v, want client-chosen dimensions", cfg.WindowRules[0])
+	}
+}
+
+func TestM6WorkspaceAndMonitorBindsAreApplied(t *testing.T) {
+	cfg, err := Parse("m6-binds.kdl", []byte(`
+binds {
+    Mod+1 { focus-workspace "Work"; }
+    Mod+N { set-workspace-name "Work"; }
+    Mod+Shift+N { unset-workspace-name; }
+    Mod+Alt+Right { move-column-to-monitor "DP-2"; }
+    Mod+Alt+Left { move-column-to-monitor-left; }
+    Mod+Alt+W { move-window-to-workspace "Work" focus=false; }
+}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.UnappliedActions) != 0 {
+		t.Fatalf("unapplied actions = %v, want none", cfg.UnappliedActions)
+	}
+	if len(cfg.Binds) != 6 {
+		t.Fatalf("bind count = %d, want 6: %+v", len(cfg.Binds), cfg.Binds)
+	}
+	if got := cfg.Binds[1].Actions[0].WorkspaceName; got != "Work" {
+		t.Errorf("set-workspace-name = %q, want Work", got)
+	}
+	if got := reflect.ValueOf(cfg.Binds[3].Actions[0]).FieldByName("Output"); !got.IsValid() || got.String() != "DP-2" {
+		t.Errorf("move-column-to-monitor output = %v, want DP-2", got)
+	}
+	if got := cfg.Binds[4].Actions[0].Name; got != "move-column-to-monitor-left" {
+		t.Errorf("directional move = %q, want move-column-to-monitor-left", got)
+	}
+	if got := cfg.Binds[5].Actions[0]; got.WorkspaceName != "Work" ||
+		!reflect.ValueOf(got).FieldByName("Focus").IsValid() || reflect.ValueOf(got).FieldByName("Focus").Bool() {
+		t.Errorf("move-window-to-workspace = %+v, want Work with focus=false", got)
+	}
+}
+
+func TestM6RelativeWorkspaceMoveBindsAreApplied(t *testing.T) {
+	cfg, err := Parse("relative-workspace-binds.kdl", []byte(`
+binds {
+    Mod+Ctrl+Page_Down { move-column-to-workspace-down focus=false; }
+    Mod+Ctrl+Page_Up { move-window-to-workspace-up; }
+}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.UnappliedActions) != 0 || len(cfg.Binds) != 2 {
+		t.Fatalf("relative workspace binds = %+v, unapplied = %v; want two applied actions", cfg.Binds, cfg.UnappliedActions)
+	}
+	if got := cfg.Binds[0].Actions[0]; got.Name != "move-column-to-workspace-down" || got.Focus {
+		t.Errorf("move-column-to-workspace-down = %+v, want focus=false", got)
+	}
+	if got := cfg.Binds[1].Actions[0]; got.Name != "move-window-to-workspace-up" || !got.Focus {
+		t.Errorf("move-window-to-workspace-up = %+v, want default focus=true", got)
+	}
+}
+
 func TestParseRejectsMalformedM5Binds(t *testing.T) {
 	for src, want := range map[string]string{
 		`binds {

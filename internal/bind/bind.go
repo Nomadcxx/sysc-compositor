@@ -1,4 +1,4 @@
-// Package bind parses the key and action subset applied by the M5 compositor.
+// Package bind parses the key and action subset applied by the compositor.
 // Key names stay as XKB names so this package does not depend on cgo.
 package bind
 
@@ -40,6 +40,11 @@ type Action struct {
 	Name           string
 	Args           []string
 	WorkspaceIndex uint8
+	WorkspaceName  string
+	ColumnIndex    uint8
+	ColumnDisplay  string
+	Output         string
+	Focus          bool
 }
 
 type Binding struct {
@@ -48,18 +53,73 @@ type Binding struct {
 }
 
 const (
-	ActionCloseWindow       = "close-window"
-	ActionSpawn             = "spawn"
-	ActionSpawnSh           = "spawn-sh"
-	ActionFocusColumnLeft   = "focus-column-left"
-	ActionFocusColumnRight  = "focus-column-right"
-	ActionFocusColumnFirst  = "focus-column-first"
-	ActionFocusColumnLast   = "focus-column-last"
-	ActionMoveColumnLeft    = "move-column-left"
-	ActionMoveColumnRight   = "move-column-right"
-	ActionMoveColumnToFirst = "move-column-to-first"
-	ActionMoveColumnToLast  = "move-column-to-last"
-	ActionFocusWorkspace    = "focus-workspace"
+	ActionCloseWindow                    = "close-window"
+	ActionSpawn                          = "spawn"
+	ActionSpawnSh                        = "spawn-sh"
+	ActionFocusColumnLeft                = "focus-column-left"
+	ActionFocusColumnRight               = "focus-column-right"
+	ActionFocusColumnFirst               = "focus-column-first"
+	ActionFocusColumnLast                = "focus-column-last"
+	ActionMoveColumnLeft                 = "move-column-left"
+	ActionMoveColumnRight                = "move-column-right"
+	ActionMoveColumnToFirst              = "move-column-to-first"
+	ActionMoveColumnToLast               = "move-column-to-last"
+	ActionFocusWorkspace                 = "focus-workspace"
+	ActionConsumeWindowIntoColumn        = "consume-window-into-column"
+	ActionExpelWindowFromColumn          = "expel-window-from-column"
+	ActionConsumeOrExpelWindowLeft       = "consume-or-expel-window-left"
+	ActionConsumeOrExpelWindowRight      = "consume-or-expel-window-right"
+	ActionToggleColumnTabbedDisplay      = "toggle-column-tabbed-display"
+	ActionSetColumnDisplay               = "set-column-display"
+	ActionFocusWindowInColumn            = "focus-window-in-column"
+	ActionFocusWindowDown                = "focus-window-down"
+	ActionFocusWindowUp                  = "focus-window-up"
+	ActionMoveWindowDown                 = "move-window-down"
+	ActionMoveWindowUp                   = "move-window-up"
+	ActionToggleWindowFloating           = "toggle-window-floating"
+	ActionMoveWindowToFloating           = "move-window-to-floating"
+	ActionMoveWindowToTiling             = "move-window-to-tiling"
+	ActionFocusFloating                  = "focus-floating"
+	ActionFocusTiling                    = "focus-tiling"
+	ActionSwitchFocusFloatingAndTiling   = "switch-focus-between-floating-and-tiling"
+	ActionFullscreenWindow               = "fullscreen-window"
+	ActionToggleWindowedFullscreen       = "toggle-windowed-fullscreen"
+	ActionSetWorkspaceName               = "set-workspace-name"
+	ActionUnsetWorkspaceName             = "unset-workspace-name"
+	ActionMoveWindowToWorkspace          = "move-window-to-workspace"
+	ActionMoveWindowToWorkspaceDown      = "move-window-to-workspace-down"
+	ActionMoveWindowToWorkspaceUp        = "move-window-to-workspace-up"
+	ActionMoveColumnToWorkspace          = "move-column-to-workspace"
+	ActionMoveColumnToWorkspaceDown      = "move-column-to-workspace-down"
+	ActionMoveColumnToWorkspaceUp        = "move-column-to-workspace-up"
+	ActionMoveWindowToMonitor            = "move-window-to-monitor"
+	ActionMoveColumnToMonitor            = "move-column-to-monitor"
+	ActionMoveWorkspaceToMonitor         = "move-workspace-to-monitor"
+	ActionFocusMonitor                   = "focus-monitor"
+	ActionMoveWindowToMonitorLeft        = "move-window-to-monitor-left"
+	ActionMoveWindowToMonitorRight       = "move-window-to-monitor-right"
+	ActionMoveWindowToMonitorUp          = "move-window-to-monitor-up"
+	ActionMoveWindowToMonitorDown        = "move-window-to-monitor-down"
+	ActionMoveWindowToMonitorPrevious    = "move-window-to-monitor-previous"
+	ActionMoveWindowToMonitorNext        = "move-window-to-monitor-next"
+	ActionMoveColumnToMonitorLeft        = "move-column-to-monitor-left"
+	ActionMoveColumnToMonitorRight       = "move-column-to-monitor-right"
+	ActionMoveColumnToMonitorUp          = "move-column-to-monitor-up"
+	ActionMoveColumnToMonitorDown        = "move-column-to-monitor-down"
+	ActionMoveColumnToMonitorPrevious    = "move-column-to-monitor-previous"
+	ActionMoveColumnToMonitorNext        = "move-column-to-monitor-next"
+	ActionMoveWorkspaceToMonitorLeft     = "move-workspace-to-monitor-left"
+	ActionMoveWorkspaceToMonitorRight    = "move-workspace-to-monitor-right"
+	ActionMoveWorkspaceToMonitorUp       = "move-workspace-to-monitor-up"
+	ActionMoveWorkspaceToMonitorDown     = "move-workspace-to-monitor-down"
+	ActionMoveWorkspaceToMonitorPrevious = "move-workspace-to-monitor-previous"
+	ActionMoveWorkspaceToMonitorNext     = "move-workspace-to-monitor-next"
+	ActionFocusMonitorLeft               = "focus-monitor-left"
+	ActionFocusMonitorRight              = "focus-monitor-right"
+	ActionFocusMonitorUp                 = "focus-monitor-up"
+	ActionFocusMonitorDown               = "focus-monitor-down"
+	ActionFocusMonitorPrevious           = "focus-monitor-previous"
+	ActionFocusMonitorNext               = "focus-monitor-next"
 )
 
 // ResolveModKey follows Niri's backend defaults: Super on native/headless,
@@ -175,14 +235,21 @@ func isModifierName(name string) bool {
 	return err == nil || strings.EqualFold(name, "mod")
 }
 
-// ParseAction returns supported=false for valid action names outside M5. The
-// config loader keeps those names in its unapplied-action warnings.
+// ParseAction returns supported=false for valid action names outside the
+// implemented Niri subset. The config loader keeps those names in warnings.
 func ParseAction(name string, args []string) (Action, bool, error) {
 	action := Action{Name: name, Args: append([]string(nil), args...)}
 	switch name {
 	case ActionCloseWindow, ActionFocusColumnLeft, ActionFocusColumnRight,
 		ActionFocusColumnFirst, ActionFocusColumnLast, ActionMoveColumnLeft,
-		ActionMoveColumnRight, ActionMoveColumnToFirst, ActionMoveColumnToLast:
+		ActionMoveColumnRight, ActionMoveColumnToFirst, ActionMoveColumnToLast,
+		ActionConsumeWindowIntoColumn, ActionExpelWindowFromColumn,
+		ActionConsumeOrExpelWindowLeft, ActionConsumeOrExpelWindowRight,
+		ActionToggleColumnTabbedDisplay, ActionFocusWindowDown, ActionFocusWindowUp,
+		ActionMoveWindowDown, ActionMoveWindowUp, ActionToggleWindowFloating,
+		ActionMoveWindowToFloating, ActionMoveWindowToTiling,
+		ActionFocusFloating, ActionFocusTiling, ActionSwitchFocusFloatingAndTiling,
+		ActionFullscreenWindow, ActionToggleWindowedFullscreen:
 		if len(args) != 0 {
 			return Action{}, true, fmt.Errorf("%s takes no arguments", name)
 		}
@@ -198,18 +265,93 @@ func ParseAction(name string, args []string) (Action, bool, error) {
 		}
 		return action, true, nil
 	case ActionFocusWorkspace:
+		if err := parseWorkspaceReference(&action, args); err != nil {
+			return Action{}, true, err
+		}
+		return action, true, nil
+	case ActionMoveColumnToWorkspace, ActionMoveWindowToWorkspace:
+		if err := parseWorkspaceReference(&action, args); err != nil {
+			return Action{}, true, err
+		}
+		action.Focus = true
+		return action, true, nil
+	case ActionMoveWindowToWorkspaceDown, ActionMoveWindowToWorkspaceUp,
+		ActionMoveColumnToWorkspaceDown, ActionMoveColumnToWorkspaceUp:
+		if len(args) != 0 {
+			return Action{}, true, fmt.Errorf("%s takes no arguments", name)
+		}
+		action.Focus = true
+		return action, true, nil
+	case ActionSetWorkspaceName:
+		if len(args) != 1 || args[0] == "" {
+			return Action{}, true, fmt.Errorf("set-workspace-name takes one non-empty name")
+		}
+		action.WorkspaceName = args[0]
+		return action, true, nil
+	case ActionUnsetWorkspaceName:
+		if len(args) != 0 {
+			return Action{}, true, fmt.Errorf("unset-workspace-name takes no arguments")
+		}
+		return action, true, nil
+	case ActionMoveWindowToMonitor, ActionMoveColumnToMonitor, ActionMoveWorkspaceToMonitor, ActionFocusMonitor:
+		if len(args) != 1 || args[0] == "" {
+			return Action{}, true, fmt.Errorf("%s takes one non-empty output name", name)
+		}
+		action.Output = args[0]
+		return action, true, nil
+	case ActionMoveWindowToMonitorLeft, ActionMoveWindowToMonitorRight,
+		ActionMoveWindowToMonitorUp, ActionMoveWindowToMonitorDown,
+		ActionMoveWindowToMonitorPrevious, ActionMoveWindowToMonitorNext,
+		ActionMoveColumnToMonitorLeft, ActionMoveColumnToMonitorRight,
+		ActionMoveColumnToMonitorUp, ActionMoveColumnToMonitorDown,
+		ActionMoveColumnToMonitorPrevious, ActionMoveColumnToMonitorNext,
+		ActionMoveWorkspaceToMonitorLeft, ActionMoveWorkspaceToMonitorRight,
+		ActionMoveWorkspaceToMonitorUp, ActionMoveWorkspaceToMonitorDown,
+		ActionMoveWorkspaceToMonitorPrevious, ActionMoveWorkspaceToMonitorNext,
+		ActionFocusMonitorLeft, ActionFocusMonitorRight, ActionFocusMonitorUp,
+		ActionFocusMonitorDown, ActionFocusMonitorPrevious, ActionFocusMonitorNext:
+		if len(args) != 0 {
+			return Action{}, true, fmt.Errorf("%s takes no arguments", name)
+		}
+		return action, true, nil
+	case ActionFocusWindowInColumn:
 		if len(args) != 1 {
-			return Action{}, true, fmt.Errorf("focus-workspace takes one index")
+			return Action{}, true, fmt.Errorf("focus-window-in-column takes one index")
 		}
 		index, err := strconv.ParseUint(args[0], 10, 8)
 		if err != nil || index == 0 {
-			return Action{}, true, fmt.Errorf("focus-workspace index must be from 1 to 255")
+			return Action{}, true, fmt.Errorf("focus-window-in-column index must be from 1 to 255")
 		}
-		action.WorkspaceIndex = uint8(index)
+		action.ColumnIndex = uint8(index)
+		return action, true, nil
+	case ActionSetColumnDisplay:
+		if len(args) != 1 || (args[0] != "normal" && args[0] != "tabbed") {
+			return Action{}, true, fmt.Errorf("set-column-display takes `normal` or `tabbed`")
+		}
+		action.ColumnDisplay = args[0]
 		return action, true, nil
 	default:
 		return action, false, nil
 	}
+}
+
+func parseWorkspaceReference(action *Action, args []string) error {
+	if len(args) != 1 {
+		return fmt.Errorf("%s takes one index or name", action.Name)
+	}
+	index, err := strconv.ParseUint(args[0], 10, 64)
+	if err == nil {
+		if index == 0 || index > 255 {
+			return fmt.Errorf("%s index must be from 1 to 255", action.Name)
+		}
+		action.WorkspaceIndex = uint8(index)
+		return nil
+	}
+	if args[0] == "" {
+		return fmt.Errorf("%s name must not be empty", action.Name)
+	}
+	action.WorkspaceName = args[0]
+	return nil
 }
 
 func IsSupportedAction(name string) bool {
@@ -217,7 +359,29 @@ func IsSupportedAction(name string) bool {
 	case ActionCloseWindow, ActionSpawn, ActionSpawnSh,
 		ActionFocusColumnLeft, ActionFocusColumnRight, ActionFocusColumnFirst,
 		ActionFocusColumnLast, ActionMoveColumnLeft, ActionMoveColumnRight,
-		ActionMoveColumnToFirst, ActionMoveColumnToLast, ActionFocusWorkspace:
+		ActionMoveColumnToFirst, ActionMoveColumnToLast, ActionFocusWorkspace,
+		ActionConsumeWindowIntoColumn, ActionExpelWindowFromColumn,
+		ActionConsumeOrExpelWindowLeft, ActionConsumeOrExpelWindowRight,
+		ActionToggleColumnTabbedDisplay, ActionSetColumnDisplay, ActionFocusWindowInColumn,
+		ActionFocusWindowDown, ActionFocusWindowUp, ActionMoveWindowDown, ActionMoveWindowUp,
+		ActionToggleWindowFloating, ActionMoveWindowToFloating, ActionMoveWindowToTiling,
+		ActionFocusFloating, ActionFocusTiling, ActionSwitchFocusFloatingAndTiling,
+		ActionFullscreenWindow, ActionToggleWindowedFullscreen,
+		ActionSetWorkspaceName, ActionUnsetWorkspaceName,
+		ActionMoveWindowToWorkspace, ActionMoveWindowToWorkspaceDown, ActionMoveWindowToWorkspaceUp,
+		ActionMoveColumnToWorkspace, ActionMoveColumnToWorkspaceDown, ActionMoveColumnToWorkspaceUp,
+		ActionMoveWindowToMonitor, ActionMoveColumnToMonitor, ActionMoveWorkspaceToMonitor, ActionFocusMonitor,
+		ActionMoveWindowToMonitorLeft, ActionMoveWindowToMonitorRight,
+		ActionMoveWindowToMonitorUp, ActionMoveWindowToMonitorDown,
+		ActionMoveWindowToMonitorPrevious, ActionMoveWindowToMonitorNext,
+		ActionMoveColumnToMonitorLeft, ActionMoveColumnToMonitorRight,
+		ActionMoveColumnToMonitorUp, ActionMoveColumnToMonitorDown,
+		ActionMoveColumnToMonitorPrevious, ActionMoveColumnToMonitorNext,
+		ActionMoveWorkspaceToMonitorLeft, ActionMoveWorkspaceToMonitorRight,
+		ActionMoveWorkspaceToMonitorUp, ActionMoveWorkspaceToMonitorDown,
+		ActionMoveWorkspaceToMonitorPrevious, ActionMoveWorkspaceToMonitorNext,
+		ActionFocusMonitorLeft, ActionFocusMonitorRight, ActionFocusMonitorUp,
+		ActionFocusMonitorDown, ActionFocusMonitorPrevious, ActionFocusMonitorNext:
 		return true
 	default:
 		return false

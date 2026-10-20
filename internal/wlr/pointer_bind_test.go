@@ -3,6 +3,8 @@ package wlr
 import (
 	"testing"
 	"time"
+
+	"github.com/Nomadcxx/sysc-compositor/internal/wm"
 )
 
 const (
@@ -110,4 +112,67 @@ func TestNestedModPointerGrabsUseEdgeResizeAndCursorImages(t *testing.T) {
 	if len(c.Windows()) != 1 {
 		t.Fatalf("mapped windows = %d, want one", len(c.Windows()))
 	}
+}
+
+func TestModDragPersistsFloatingWindowPositionOnRelease(t *testing.T) {
+	c := newNested(t)
+	var keyboard *fakeKeyboard
+	var pointer *fakePointer
+	t.Cleanup(func() {
+		if keyboard != nil {
+			keyboard.remove()
+		}
+		if pointer != nil {
+			pointer.remove()
+		}
+	})
+	c.viewMapped = func(view *toplevelView) {
+		keyboard = c.addFakeKeyboard()
+		pointer = c.addFakePointer()
+		if keyboard == nil || pointer == nil {
+			t.Error("could not attach fake input devices")
+			c.Terminate()
+			return
+		}
+		if !c.SetWindowFloating(view.id, true) {
+			t.Error("SetWindowFloating() = false, want mapped window floating")
+			c.Terminate()
+			return
+		}
+		keyboard.key(56, true) // Left Alt is Mod in a nested Wayland backend.
+		pointer.moveTo(c.viewCenter(view))
+		pointer.button(buttonLeft, true)
+		if c.pointerGrab == nil || c.pointerGrab.mode != grabMove {
+			t.Error("Mod+LMB did not start a move grab")
+			c.Terminate()
+			return
+		}
+		pointer.moveTo(float64(int(c.cursor.x)+80), float64(int(c.cursor.y)+60))
+		wantX, wantY := view.treePosition()
+		pointer.button(buttonLeft, false)
+		if c.pointerGrab != nil {
+			t.Error("move grab remained active after release")
+		}
+
+		var window *wm.WindowSnapshot
+		for _, candidate := range c.WorkspaceSnapshot().Windows {
+			if candidate.ID == view.id {
+				window = &candidate
+				break
+			}
+		}
+		if window == nil {
+			t.Fatal("moved window missing from workspace snapshot")
+		}
+		if !window.Tile.Floating || window.Tile.X != wantX || window.Tile.Y != wantY {
+			t.Errorf("floating model position = (%d,%d), want released scene position (%d,%d)",
+				window.Tile.X, window.Tile.Y, wantX, wantY)
+		}
+		c.applyWorkspaceModel()
+		if gotX, gotY := view.treePosition(); gotX != wantX || gotY != wantY {
+			t.Errorf("scene position after model reapply = (%d,%d), want (%d,%d)", gotX, gotY, wantX, wantY)
+		}
+		c.Terminate()
+	}
+	runClient(t, c, []string{"weston-terminal"}, nil, nil)
 }
