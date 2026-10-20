@@ -151,8 +151,10 @@ static struct wlr_scene_output *sysc_place_in_layout(
 	return so;
 }
 
-// sysc_repaint_scene_output commits the scene for one output, answers the
-// frame callbacks of every surface on it, and asks for the next frame.
+// sysc_repaint_scene_output commits the scene for one output and answers the
+// frame callbacks of every surface on it. It returns true when the output
+// really committed a frame.
+//
 // wlr_scene_output takes a state-options struct rather than a timestamp, and
 // M0 changes no options, so NULL is the honest argument.
 //
@@ -160,16 +162,21 @@ static struct wlr_scene_output *sysc_place_in_layout(
 // events a client that paces its drawing on them (kitty, weston-simple-shm)
 // stops repainting after its first frames. tinywl sends them here too, even
 // when the commit had nothing to draw.
+//
+// Nothing here asks for the next frame, and that is deliberate. wlr_scene_output_commit
+// returns true without committing when the scene needs no frame, and calling
+// wlr_output_schedule_frame after it made "needs a frame" true forever: every
+// frame event re-armed the next one, so an idle output re-rendered and
+// re-flipped at its refresh rate, 62 commits a second on a 60 Hz output
+// (sysc-1469). wlroots arms the output itself when damage lands or a surface
+// asks for a frame callback, which is how a frame-paced client still gets the
+// next frame.
 static bool sysc_repaint_scene_output(struct wlr_scene_output *so) {
 	bool committed = wlr_scene_output_commit(so, NULL);
 	struct timespec now;
 	clock_gettime(CLOCK_MONOTONIC, &now);
 	wlr_scene_output_send_frame_done(so, &now);
-	if (!committed) {
-		return false;
-	}
-	wlr_output_schedule_frame(so->output);
-	return true;
+	return committed;
 }
 */
 import "C"

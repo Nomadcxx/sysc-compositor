@@ -294,18 +294,20 @@ func TestOutputFollowsHostResize(t *testing.T) {
 // frame ever drew the scene and the nested window stayed black.
 func TestClientContentIsDrawn(t *testing.T) {
 	c := newNested(t)
-	var before, after int
+	// Nothing has run the loop yet, so no frame listener has fired: this is the
+	// count before the client connects. A baseline sampled once the background
+	// is already visible would include the commit that mapped it, and with
+	// nothing re-arming an idle output (sysc-1469) there is no later frame to
+	// make the count move.
+	before := c.scenesDrawn()
+	after := before
 	mappedAt := -1
 	pollThenStop(c, func() bool {
-		if mappedAt < 0 {
-			if mappedOn(c.layerPlacements(), layerBackground) == nil {
-				return false
-			}
-			mappedAt = c.scenesDrawn()
-			before = mappedAt
+		after = c.scenesDrawn()
+		if mappedOn(c.layerPlacements(), layerBackground) == nil {
 			return false
 		}
-		after = c.scenesDrawn()
+		mappedAt = after
 		return after > before
 	})
 	runClient(t, c, []string{"swaybg", "-c", "#336699"}, nil, nil)
