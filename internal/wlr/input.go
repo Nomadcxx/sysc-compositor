@@ -4,6 +4,7 @@ package wlr
 #cgo pkg-config: wlroots-0.20 wayland-server
 #cgo CFLAGS: -DWLR_USE_UNSTABLE
 
+#include <stdlib.h>
 #include <wlr/backend.h>
 #include <wlr/types/wlr_cursor.h>
 #include <wlr/types/wlr_input_device.h>
@@ -16,8 +17,8 @@ package wlr
 #include <wlr/util/edges.h>
 #include <linux/input-event-codes.h>
 
-static struct wlr_xcursor_manager *sysc_xcursor_manager(void) {
-	return wlr_xcursor_manager_create(NULL, 24);
+static struct wlr_xcursor_manager *sysc_xcursor_manager(const char *theme, uint32_t size) {
+	return wlr_xcursor_manager_create(theme, size);
 }
 
 // The field is named `type`, which is a Go keyword, so cgo cannot expose
@@ -31,6 +32,16 @@ static int sysc_device_type(struct wlr_input_device *device) {
 static void sysc_default_image(struct wlr_cursor *cursor,
 		struct wlr_xcursor_manager *manager) {
 	wlr_cursor_set_xcursor(cursor, manager, "default");
+}
+
+static void sysc_named_image(struct wlr_cursor *cursor,
+		struct wlr_xcursor_manager *manager, const char *name) {
+	wlr_cursor_set_xcursor(cursor, manager, name);
+}
+
+static void sysc_restore_client_image(struct wlr_cursor *cursor,
+		struct wlr_surface *surface, int hotspot_x, int hotspot_y) {
+	wlr_cursor_set_surface(cursor, surface, hotspot_x, hotspot_y);
 }
 
 static struct wlr_surface *sysc_scene_surface_at(struct wlr_scene *scene,
@@ -50,6 +61,10 @@ static void sysc_scene_tree_position(struct wlr_scene_tree *tree, int *x, int *y
 
 static void sysc_scene_tree_set_position(struct wlr_scene_tree *tree, int x, int y) {
 	wlr_scene_node_set_position(&tree->node, x, y);
+}
+
+static void sysc_scene_tree_set_enabled(struct wlr_scene_tree *tree, bool enabled) {
+	wlr_scene_node_set_enabled(&tree->node, enabled);
 }
 
 // Only the user seat's focused client may change the drawn image (rule
@@ -79,6 +94,8 @@ import (
 	"math"
 	"time"
 	"unsafe"
+
+	"github.com/Nomadcxx/sysc-compositor/internal/layout"
 )
 
 type pointerGrabMode uint8
@@ -102,6 +119,15 @@ type pointerGrab struct {
 	x, y             int
 	width, height    int
 	edges            uint32
+}
+
+func (g pointerGrab) resizeOptions() layout.ResizeOptions {
+	return layout.ResizeOptions{
+		ResizeWidth:  g.edges&(edgeLeft|edgeRight) != 0,
+		ResizeHeight: g.edges&(edgeTop|edgeBottom) != 0,
+		AnchorRight:  g.edges&edgeLeft != 0,
+		AnchorBottom: g.edges&edgeTop != 0,
+	}
 }
 
 type toplevelView struct {
@@ -181,7 +207,9 @@ func (c *Compositor) handleNewInput(data unsafe.Pointer) {
 		c.keyboardDevices[deviceKey] = true
 	case C.WLR_INPUT_DEVICE_POINTER:
 		if c.xcursorManager == nil {
-			c.xcursorManager = C.sysc_xcursor_manager()
+			theme := C.CString(c.cursorTheme)
+			c.xcursorManager = C.sysc_xcursor_manager(theme, C.uint32_t(c.cursorSize))
+			C.free(unsafe.Pointer(theme))
 			if c.xcursorManager != nil {
 				// A cursor with no image is an invisible cursor, so the
 				// theme is loaded once, here.
@@ -238,11 +266,20 @@ func (c *Compositor) handleCursorMotionAbsolute(data unsafe.Pointer) {
 func (c *Compositor) processCursorMotion(time C.uint32_t) {
 	if c.pointerGrab != nil && c.grabView != nil && c.grabView.tree != nil {
 		geometry := c.pointerGrab.geometry(float64(c.cursor.x), float64(c.cursor.y))
-		C.sysc_scene_tree_set_position(c.grabView.tree,
-			C.int(geometry.x), C.int(geometry.y))
 		if c.pointerGrab.mode == grabResize {
-			C.wlr_xdg_toplevel_set_size(c.grabView.toplevel,
-				C.int(geometry.width), C.int(geometry.height))
+			if c.model == nil || !c.model.ResizeWindow(c.grabView.id,
+				geometry.x, geometry.y, geometry.width, geometry.height,
+				c.pointerGrab.resizeOptions()) {
+				C.sysc_scene_tree_set_position(c.grabView.tree,
+					C.int(geometry.x), C.int(geometry.y))
+				C.wlr_xdg_toplevel_set_size(c.grabView.toplevel,
+					C.int(geometry.width), C.int(geometry.height))
+			} else {
+				c.applyWorkspaceModel()
+			}
+		} else {
+			C.sysc_scene_tree_set_position(c.grabView.tree,
+				C.int(geometry.x), C.int(geometry.y))
 		}
 		c.notifyWindowStateChanged()
 		return
@@ -290,6 +327,26 @@ func (c *Compositor) showDefaultImage() {
 	c.drawnImage = "default"
 }
 
+func (c *Compositor) showCursorImage(name string) {
+	if c.xcursorManager == nil {
+		return
+	}
+	image := C.CString(name)
+	C.sysc_named_image(c.cursor, c.xcursorManager, image)
+	C.free(unsafe.Pointer(image))
+	c.drawnImage = name
+}
+
+func (c *Compositor) restoreCursorImage() {
+	if c.cursorClientSet {
+		C.sysc_restore_client_image(c.cursor, c.cursorSurface,
+			C.int(c.cursorHotspotX), C.int(c.cursorHotspotY))
+		c.drawnImage = ""
+		return
+	}
+	c.showDefaultImage()
+}
+
 func (c *Compositor) handleCursorButton(data unsafe.Pointer) {
 	event := (*C.struct_wlr_pointer_button_event)(data)
 	button := uint32(event.button)
@@ -321,7 +378,7 @@ func (c *Compositor) handleCursorButton(data unsafe.Pointer) {
 		}
 	}
 
-	if pressed && c.modifiers&uint32(C.WLR_MODIFIER_LOGO) != 0 {
+	if pressed && c.modifierActive(c.modKey) {
 		if view := c.viewAtCursor(); view != nil {
 			mode := grabNone
 			var edges uint32
@@ -330,11 +387,16 @@ func (c *Compositor) handleCursorButton(data unsafe.Pointer) {
 				mode = grabMove
 			case uint32(C.BTN_RIGHT):
 				mode = grabResize
-				edges = uint32(C.WLR_EDGE_RIGHT) | uint32(C.WLR_EDGE_BOTTOM)
+				edges = c.resizeEdgesAt(view)
 			}
-			if mode != grabNone && c.startPointerGrab(view, mode, edges, button) {
+			if mode != grabNone && (mode != grabResize || edges != 0) && c.startPointerGrab(view, mode, edges, button) {
 				c.focusView(view)
 				c.consumedPointerButtons[button] = true
+				if mode == grabMove {
+					c.showCursorImage("grabbing")
+				} else {
+					c.showCursorImage(resizeCursorName(edges))
+				}
 				return
 			}
 		}
@@ -381,6 +443,9 @@ func (c *Compositor) viewAtCursor() *toplevelView {
 func (c *Compositor) focusView(view *toplevelView) {
 	if view == nil || view.toplevel == nil {
 		return
+	}
+	if c.model != nil && c.model.FocusWindow(view.id) {
+		c.applyWorkspaceModel()
 	}
 	c.setActiveOutputName(c.outputNameForView(view))
 	changed := c.focusedView != view
@@ -431,7 +496,7 @@ func (c *Compositor) updateKeyboardFocus() {
 	activeOutput := c.FocusedOutputName()
 	focusedView := c.focusedView
 	if focusedView != nil && focusedView.toplevel != nil {
-		if c.outputNameForView(focusedView) != activeOutput {
+		if activeOutput == "" || c.outputNameForView(focusedView) != activeOutput {
 			focusedView = nil
 		}
 	} else {
@@ -512,9 +577,56 @@ func (c *Compositor) startPointerGrab(view *toplevelView, mode pointerGrabMode,
 }
 
 func (c *Compositor) clearPointerGrab() {
+	wasGrabbed := c.pointerGrab != nil
 	c.pointerGrab = nil
 	c.grabView = nil
 	c.grabButton = 0
+	if wasGrabbed {
+		c.restoreCursorImage()
+	}
+}
+
+func (c *Compositor) resizeEdgesAt(view *toplevelView) uint32 {
+	if view == nil || c.model == nil {
+		return 0
+	}
+	x, y := view.treePosition()
+	geometry := view.geometry()
+	fx := (float64(c.cursor.x) - float64(x)) / float64(max(geometry.w, 1))
+	fy := (float64(c.cursor.y) - float64(y)) / float64(max(geometry.h, 1))
+	var edges uint32
+	if fx < 1.0/3.0 {
+		edges |= edgeLeft
+	} else if fx > 2.0/3.0 {
+		edges |= edgeRight
+	}
+	if fy < 1.0/3.0 {
+		edges |= edgeTop
+	} else if fy > 2.0/3.0 {
+		edges |= edgeBottom
+	}
+	return edges
+}
+
+func resizeCursorName(edges uint32) string {
+	switch edges & (edgeLeft | edgeRight | edgeTop | edgeBottom) {
+	case edgeLeft:
+		return "w-resize"
+	case edgeRight:
+		return "e-resize"
+	case edgeTop:
+		return "n-resize"
+	case edgeBottom:
+		return "s-resize"
+	case edgeLeft | edgeTop:
+		return "nw-resize"
+	case edgeRight | edgeTop:
+		return "ne-resize"
+	case edgeLeft | edgeBottom:
+		return "sw-resize"
+	default:
+		return "se-resize"
+	}
 }
 
 func (c *Compositor) handleToplevelMove(view *toplevelView, data unsafe.Pointer) {
@@ -592,6 +704,10 @@ func (c *Compositor) handleNewToplevel(data unsafe.Pointer) {
 	add(unsafe.Pointer(&toplevel.base.surface.events.unmap), func(unsafe.Pointer) {
 		view.mapped = false
 		c.cancelPendingWindowFocus(view)
+		if c.model != nil {
+			c.model.RemoveWindow(view.id)
+			c.applyWorkspaceModel()
+		}
 		c.releaseView(view)
 		c.notifyWindowStateChanged()
 	})
@@ -608,9 +724,19 @@ func (c *Compositor) handleNewToplevel(data unsafe.Pointer) {
 		newlyMapped := !view.mapped
 		view.mapped = true
 		if newlyMapped {
+			if c.model != nil {
+				output := c.model.Snapshot().FocusedOutput
+				if output == "" {
+					output = c.FocusedOutputName()
+				}
+				c.model.MapWindow(view.id, output)
+			}
 			// Niri activates newly mapped windows (ActivateWindow::Smart); its
 			// dialog and activation-token heuristics come with M5.
 			c.focusView(view)
+		}
+		if c.syncWorkspaceWindowSizeHints(view) {
+			c.applyWorkspaceModel()
 		}
 		c.notifyWindowStateChanged()
 		if newlyMapped && c.viewMapped != nil {
@@ -622,8 +748,31 @@ func (c *Compositor) handleNewToplevel(data unsafe.Pointer) {
 // handleRequestSetCursor lets the user seat's focused client set the drawn
 // image. It is registered on the user seat only.
 func (c *Compositor) handleRequestSetCursor(data unsafe.Pointer) {
-	if C.sysc_set_cursor_from_seat(c.cursor, c.seat,
-		(*C.struct_wlr_seat_pointer_request_set_cursor_event)(data)) {
+	event := (*C.struct_wlr_seat_pointer_request_set_cursor_event)(data)
+	if C.sysc_set_cursor_from_seat(c.cursor, c.seat, event) {
+		if c.cursorSurfaceDestroy != nil {
+			c.drop(c.cursorSurfaceDestroy)
+			c.cursorSurfaceDestroy = nil
+		}
+		c.cursorSurface, c.cursorClientSet = event.surface, true
+		c.cursorHotspotX, c.cursorHotspotY = int(event.hotspot_x), int(event.hotspot_y)
+		if event.surface != nil {
+			surface := event.surface
+			var listener *Listener
+			listener = AddListener(unsafe.Pointer(&surface.events.destroy), func(unsafe.Pointer) {
+				if c.cursorSurface == surface {
+					c.cursorSurface = nil
+					c.cursorSurfaceDestroy = nil
+					c.cursorClientSet = false
+					if c.pointerGrab == nil {
+						c.showDefaultImage()
+					}
+				}
+				c.drop(listener)
+			})
+			c.cursorSurfaceDestroy = listener
+			c.keep(listener)
+		}
 		c.drawnImage = ""
 	}
 }
@@ -699,7 +848,8 @@ func (c *Compositor) releaseView(view *toplevelView) {
 	if c.grabView == view {
 		c.clearPointerGrab()
 	}
-	if c.focusedView == view {
+	wasFocused := c.focusedView == view
+	if wasFocused {
 		c.focusedView = nil
 	}
 	seats := []*C.struct_wlr_seat{c.seat}
@@ -714,12 +864,19 @@ func (c *Compositor) releaseView(view *toplevelView) {
 			C.wlr_seat_pointer_notify_clear_focus(seat)
 		}
 	}
-	c.updateKeyboardFocus()
+	if wasFocused && c.model != nil {
+		c.activateWorkspaceFocus()
+	} else {
+		c.updateKeyboardFocus()
+	}
 }
 
 func (c *Compositor) handleToplevelDestroy(view *toplevelView) {
 	if view == nil {
 		return
+	}
+	if c.model != nil {
+		c.model.DestroyWindow(view.id)
 	}
 	c.releaseView(view)
 	c.cancelPendingWindowFocus(view)

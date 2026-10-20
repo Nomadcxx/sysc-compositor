@@ -179,38 +179,13 @@ func (c *Compositor) CloseWindow(id *uint64) bool {
 	return true
 }
 
-// FocusWorkspaceOutput focuses the current workspace hosted by name. M4 has
-// one active workspace per output, so this selects that output's most recently
-// focused mapped window when one exists.
-func (c *Compositor) FocusWorkspaceOutput(name string) bool {
-	if name == "" {
+// FocusWorkspaceID focuses an IPC workspace by its stable model ID.
+func (c *Compositor) FocusWorkspaceID(id uint64) bool {
+	if c.model == nil || !c.model.FocusWorkspaceID(id) {
 		return false
 	}
-	connected := false
-	for pointer := range c.sceneOutputs {
-		if C.GoString((*C.struct_wlr_output)(pointer).name) == name {
-			connected = true
-			break
-		}
-	}
-	if !connected {
-		return false
-	}
-	var recent *toplevelView
-	for _, view := range c.views {
-		if !view.mapped || view.tree == nil || !bool(view.toplevel.base.surface.mapped) {
-			continue
-		}
-		if c.outputNameForView(view) == name && (recent == nil || view.touched > recent.touched) {
-			recent = view
-		}
-	}
-	if recent != nil {
-		c.focusView(recent)
-		return true
-	}
-	c.setActiveOutputName(name)
-	c.updateKeyboardFocus()
+	c.applyWorkspaceModel()
+	c.activateWorkspaceFocus()
 	return true
 }
 

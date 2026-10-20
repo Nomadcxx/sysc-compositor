@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Nomadcxx/sysc-compositor/internal/config"
 )
 
 func TestSpawnShSeesTheCompositorEnvironment(t *testing.T) {
@@ -17,7 +19,7 @@ func TestSpawnShSeesTheCompositorEnvironment(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "env")
 	val := func(v string) *string { return &v }
 	s := newSpawner("wayland-9", "/run/user/1000/niri.wayland-9.1.sock",
-		map[string]*string{"SYSC_ADDED": val("added"), "SYSC_DROP": nil})
+		map[string]*string{"SYSC_ADDED": val("added"), "SYSC_DROP": nil}, config.Default().Cursor)
 	err := s.spawnSh(`printf '%s|%s|%s|%s|%s|%s|%s' "$WAYLAND_DISPLAY" "$NIRI_SOCKET" "${DISPLAY-unset}" ` +
 		`"${NOTIFY_SOCKET-unset}" "$SYSC_KEEP" "$SYSC_ADDED" "${SYSC_DROP-unset}" > ` + out)
 	if err != nil {
@@ -37,11 +39,27 @@ func TestSpawnShSeesTheCompositorEnvironment(t *testing.T) {
 }
 
 func TestSpawnReportsAMissingProgram(t *testing.T) {
-	if err := newSpawner("w", "", nil).spawn([]string{"/nonexistent/sysc-spawn-test"}); err == nil {
+	if err := newSpawner("w", "", nil, config.Default().Cursor).spawn([]string{"/nonexistent/sysc-spawn-test"}); err == nil {
 		t.Fatal("spawning a missing program returned no error")
 	}
-	if err := newSpawner("w", "", nil).spawn(nil); err != nil {
+	if err := newSpawner("w", "", nil, config.Default().Cursor).spawn(nil); err != nil {
 		t.Fatalf("an empty command is a no-op in Niri, got %v", err)
+	}
+}
+
+func TestSpawnerPropagatesCursorConfigToChildren(t *testing.T) {
+	val := func(v string) *string { return &v }
+	configured := map[string]*string{"XCURSOR_THEME": val("ChildTheme")}
+	s := newSpawner("wayland-9", "", configured, config.Cursor{Theme: "Adwaita", Size: 32})
+	got := make(map[string]string)
+	for _, item := range s.env {
+		name, value, ok := strings.Cut(item, "=")
+		if ok {
+			got[name] = value
+		}
+	}
+	if got["XCURSOR_THEME"] != "ChildTheme" || got["XCURSOR_SIZE"] != "32" {
+		t.Fatalf("child cursor environment = %v, want explicit theme override and configured size", got)
 	}
 }
 

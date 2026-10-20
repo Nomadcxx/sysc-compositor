@@ -241,6 +241,13 @@ func (c *Compositor) outputNameAt(x, y float64) string {
 // outputNameForView infers a view's output from its center, with the active
 // output as the M4 fallback while views have no independent output placement.
 func (c *Compositor) outputNameForView(view *toplevelView) string {
+	if c.model != nil {
+		for _, window := range c.model.Snapshot().Windows {
+			if window.ID == view.id {
+				return window.Output
+			}
+		}
+	}
 	x, y := c.viewCenter(view)
 	if name := c.outputNameAt(x, y); name != "" {
 		return name
@@ -249,6 +256,9 @@ func (c *Compositor) outputNameForView(view *toplevelView) string {
 }
 
 func (c *Compositor) setActiveOutputName(focused string) {
+	if c.model != nil && focused != "" {
+		c.model.FocusOutput(focused)
+	}
 	names := make([]string, 0, len(c.sceneOutputs))
 	for pointer := range c.sceneOutputs {
 		names = append(names, C.GoString((*C.struct_wlr_output)(pointer).name))
@@ -401,9 +411,11 @@ func (c *Compositor) handleNewOutput(data unsafe.Pointer) {
 
 	var destroy *Listener
 	destroy = AddListener(unsafe.Pointer(&output.events.destroy), func(unsafe.Pointer) {
+		name := C.GoString(output.name)
 		c.closeOutputLayers(data)
 		delete(c.sceneOutputs, data)
 		delete(c.usable, data)
+		c.removeWorkspaceOutput(name)
 		c.refreshState()
 		c.drop(frame)
 		c.drop(request)

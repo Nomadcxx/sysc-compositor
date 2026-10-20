@@ -247,3 +247,33 @@ exists and a real gap can be pointed at rather than predicted.
 
 The recommendation is unchanged from D8: exclude, or keep open until M9. Nothing in M1–M9 depends on the
 answer.
+
+## Owner update (2026-10-20): selected capabilities under the Niri contract
+
+The owner direction recorded on 2026-10-19 keeps Niri's product, KDL, IPC, and CLI shape while allowing
+selected Pleamar capabilities implemented with Go and cgo. This update supersedes D8–D10's default
+recommendation to exclude the broader capability work. The Luau scene mechanism remains excluded by
+the Go+cgo rule. The [2026-10-19 capability report](2026-10-19-niri-mango-pleamar-capability-research.md)
+compares the pinned references; this update records the selected scope.
+
+| Capability | Reference evidence | sysc decision and owner | Acceptance and stop condition |
+|---|---|---|---|
+| Window layout and authoring | Niri defines the scrolling column model and KDL controls. Mango's tags and layouts are a different product. Pleamar-wm offers several layouts through Luau scenes. | Use Niri's model and KDL. Implement policy in first-party Go. Do not add alternate layout modes, a private layout dialect, or an external layout process without a concrete user workflow. The compositor owns layout and input. | M5 must pass its existing pure-Go model and nested bind gates while existing Niri config remains valid. Revisit after M9 only if a named workflow does not fit the Niri model; present any KDL or IPC extension to the owner before implementation. |
+| Compositor-drawn UI | Niri owns overview and its compositor overlays. Mango's UI follows Mango behavior. Pleamar-wm draws its own overview, title bars, and dock from its scene. | Implement Niri-owned overview and selector behavior in the compositor at M7 and M11. Keep bars, panels, launchers, and notifications in sysc-shell. Do not add a general UI scene API. | Pass the M7 and M11 behavior gates from the Niri parity plan. Stop at those surfaces; shell UI stays a Wayland client. |
+| Agent input and Stop | Niri has no isolated agent seat. Mango provides wlroots seat mechanics, not agent policy. Pleamar-wm separates agent input and exposes Stop. | Keep the existing Go control socket and injected seat. The compositor owns routing and Stop enforcement; sysc-shell owns presence presentation. This uses the local control protocol, not Niri IPC or KDL. | Preserve seat-isolation and post-Stop refusal tests. The local `0600` socket plus `SO_PEERCRED` identifies same-UID peers but does not authenticate them. Any peer may set Stop; no socket verb may lift it. Finish re-arm, lock/blank gating, and shell presence under `sysc-1261`, `sysc-1260`, and `sysc-1193`. Add no second agent seat. |
+| Window-image capture for the switcher | Niri defines the selector behavior. Mango supplies wlroots protocol patterns. Pleamar-wm demonstrates live window previews. | Use the already approved `ext_foreign_toplevel_image_capture_source_v1` and `ext_image_copy_capture_v1` path in M12. The compositor owns capture and the M11 selector. No Niri IPC or KDL extension is needed. | Join each source to a stable window ID and geometry; keep at most one frame outstanding per window; refresh on damage; stop on selector close or window removal. Suppress `screen-capture` protected windows and apply `screencast` rules only to screencasts. Do not retain frames after the selector closes. |
+| Browser remote access | Niri and Mango provide no browser remote-session contract. Pleamar-wm has a remote-session feature. | Defer under `sysc-1213`. Keep transport out of sysc-shell and do not expose the same-UID control socket to a network. The compositor/session owns future capture, input, and revocation. | No code until M12 capture exists and the owner approves a separate security design with per-session consent, a persistent compositor-drawn indicator, and compositor-enforced revocation. |
+
+The 2026-10-19 research report assigned thumbnail presentation to sysc-shell. The later M11 plan assigns
+the switcher selector and overlay to the compositor. This update follows M11 for switcher previews;
+sysc-shell keeps its own bars, panels, launcher, and notifications.
+
+### M5 gate
+
+M5 can proceed with the existing Niri layout plan. It implements scrollable columns, dynamic workspaces,
+Niri KDL binds, and the input behavior recorded in the Mango comparison. Its layout model remains pure Go;
+all scene changes remain on the compositor thread. This selection adds no M5 KDL or Niri IPC surface.
+
+The broader capability gate stops here. Reopen it only for a concrete user workflow that Niri parity does
+not cover, or for a separate owner-approved security design. Do not build a generic scene engine to keep
+the option open.

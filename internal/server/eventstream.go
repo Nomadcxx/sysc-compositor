@@ -218,6 +218,7 @@ func eventStreamChanges(before, after niriSnapshot) [][]byte {
 		}
 	}
 	lines = append(lines, eventStreamWindowChanges(before.windows, after.windows)...)
+	lines = append(lines, eventStreamWindowLayoutChanges(before.windows, after.windows)...)
 	if after.keyboardLayouts != nil {
 		switch {
 		case before.keyboardLayouts == nil || !slices.Equal(before.keyboardLayouts.Names, after.keyboardLayouts.Names):
@@ -231,6 +232,26 @@ func eventStreamChanges(before, after niriSnapshot) [][]byte {
 		}
 	}
 	return lines
+}
+
+func eventStreamWindowLayoutChanges(before, after []ipc.Window) [][]byte {
+	previous := make(map[uint64]ipc.Window, len(before))
+	for _, window := range before {
+		previous[window.ID] = window
+	}
+	changes := make([][2]any, 0)
+	for _, window := range after {
+		old, exists := previous[window.ID]
+		if exists && !reflect.DeepEqual(old.Layout, window.Layout) {
+			changes = append(changes, [2]any{window.ID, window.Layout})
+		}
+	}
+	if len(changes) == 0 {
+		return nil
+	}
+	return [][]byte{eventLine("WindowLayoutsChanged", struct {
+		Changes [][2]any `json:"changes"`
+	}{Changes: changes})}
 }
 
 func eventStreamWindowChanges(before, after []ipc.Window) [][]byte {

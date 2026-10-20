@@ -7,11 +7,14 @@ package config
 import (
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
+	"github.com/Nomadcxx/sysc-compositor/internal/bind"
 	"github.com/sblinch/kdl-go"
 	"github.com/sblinch/kdl-go/document"
 )
@@ -25,7 +28,28 @@ type Config struct {
 	// Environment is applied to spawned commands; a nil value unsets.
 	Environment map[string]*string
 	Keyboard    Keyboard
+	Input       Input
+	Layout      Layout
+	Cursor      Cursor
+	Binds       []Binding
 }
+
+type Input struct {
+	ModKey, ModKeyNested string
+}
+
+type Layout struct {
+	Gaps                  int
+	ColumnWidthProportion float64
+	FixedColumnWidth      int
+}
+
+type Cursor struct {
+	Theme string
+	Size  int
+}
+
+type Binding = bind.Binding
 
 // Keyboard is input.keyboard: the xkb names and the repeat clients use.
 type Keyboard struct {
@@ -36,7 +60,9 @@ type Keyboard struct {
 // Default is what niri runs with when no config applies.
 func Default() *Config {
 	return &Config{Environment: map[string]*string{},
-		Keyboard: Keyboard{RepeatDelay: 600, RepeatRate: 25}}
+		Keyboard: Keyboard{RepeatDelay: 600, RepeatRate: 25},
+		Layout:   Layout{Gaps: 16, ColumnWidthProportion: 0.5},
+		Cursor:   Cursor{Theme: "default", Size: 24}}
 }
 
 // topLevel is every top-level node niri 26.04 decodes (niri-config/src/lib.rs).
@@ -93,18 +119,12 @@ func decode(name string, nodes []*document.Node) (*Config, error) {
 			err = c.environment(n)
 		case "input":
 			err = c.input(n)
+		case "layout":
+			err = c.layout(n)
+		case "cursor":
+			err = c.cursor(n)
 		case "binds":
-			if !slices.Contains(c.Warnings, node) {
-				c.Warnings = append(c.Warnings, node)
-			}
-			for _, binding := range n.Children {
-				for _, action := range binding.Children {
-					name := nodeName(action)
-					if !slices.Contains(c.UnappliedActions, name) {
-						c.UnappliedActions = append(c.UnappliedActions, name)
-					}
-				}
-			}
+			err = c.binds(n)
 		default:
 			if !slices.Contains(c.Warnings, node) {
 				c.Warnings = append(c.Warnings, node)
@@ -216,10 +236,26 @@ func (c *Config) environment(n *document.Node) error {
 // input decodes input.keyboard. Its other children (mouse, touchpad, …) are
 // accepted and not applied yet.
 func (c *Config) input(n *document.Node) error {
-	for _, kb := range n.Children {
-		if nodeName(kb) != "keyboard" {
+	for _, child := range n.Children {
+		if nodeName(child) == "mod-key" || nodeName(child) == "mod-key-nested" {
+			value, err := stringArgs(child, 1, 1)
+			if err != nil {
+				return fmt.Errorf("%s: %w", nodeName(child), err)
+			}
+			if _, err := bind.ParseModKey(value[0]); err != nil {
+				return fmt.Errorf("%s: %w", nodeName(child), err)
+			}
+			if nodeName(child) == "mod-key" {
+				c.Input.ModKey = value[0]
+			} else {
+				c.Input.ModKeyNested = value[0]
+			}
 			continue
 		}
+		if nodeName(child) != "keyboard" {
+			continue
+		}
+		kb := child
 		for _, k := range kb.Children {
 			var err error
 			switch nodeName(k) {
@@ -236,6 +272,120 @@ func (c *Config) input(n *document.Node) error {
 		}
 	}
 	return nil
+}
+
+func (c *Config) layout(n *document.Node) error {
+	for _, child := range n.Children {
+		switch nodeName(child) {
+		case "gaps":
+			value, err := intArg(child, 0, 1<<16-1)
+			if err != nil {
+				return err
+			}
+			c.Layout.Gaps = value
+		case "default-column-width":
+			for _, width := range child.Children {
+				switch nodeName(width) {
+				case "proportion":
+					value, err := floatArg(width, 0, 100)
+					if err != nil {
+						return fmt.Errorf("default-column-width: %w", err)
+					}
+					c.Layout.ColumnWidthProportion = value
+					c.Layout.FixedColumnWidth = 0
+				case "fixed":
+					value, err := intArg(width, 1, 1<<16-1)
+					if err != nil {
+						return fmt.Errorf("default-column-width: %w", err)
+					}
+					c.Layout.FixedColumnWidth = value
+					c.Layout.ColumnWidthProportion = 0
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func (c *Config) cursor(n *document.Node) error {
+	for _, child := range n.Children {
+		switch nodeName(child) {
+		case "xcursor-theme":
+			value, err := stringArgs(child, 1, 1)
+			if err != nil {
+				return fmt.Errorf("xcursor-theme: %w", err)
+			}
+			c.Cursor.Theme = value[0]
+		case "xcursor-size":
+			value, err := intArg(child, 0, 255)
+			if err != nil {
+				return err
+			}
+			c.Cursor.Size = value
+		}
+	}
+	return nil
+}
+
+func (c *Config) binds(n *document.Node) error {
+	if !slices.Contains(c.Warnings, "binds") {
+		c.Warnings = append(c.Warnings, "binds")
+	}
+	for _, node := range n.Children {
+		chord, err := bind.ParseChord(nodeName(node))
+		if err != nil {
+			return fmt.Errorf("bind %q: %w", nodeName(node), err)
+		}
+		if len(node.Children) == 0 {
+			return fmt.Errorf("bind %q: expected at least one action", nodeName(node))
+		}
+		binding := Binding{Chord: chord}
+		for _, actionNode := range node.Children {
+			name := nodeName(actionNode)
+			if !bind.IsSupportedAction(name) {
+				c.addUnappliedAction(name)
+				continue
+			}
+			args, err := actionArgs(actionNode)
+			if err != nil {
+				return fmt.Errorf("bind %q action %s: %w", nodeName(node), name, err)
+			}
+			action, _, err := bind.ParseAction(name, args)
+			if err != nil {
+				return fmt.Errorf("bind %q action %s: %w", nodeName(node), name, err)
+			}
+			if chord.Trigger != bind.TriggerKey {
+				c.addUnappliedAction(name)
+				continue
+			}
+			binding.Actions = append(binding.Actions, action)
+		}
+		if len(binding.Actions) > 0 {
+			c.Binds = append(c.Binds, binding)
+		}
+	}
+	return nil
+}
+
+func (c *Config) addUnappliedAction(name string) {
+	if !slices.Contains(c.UnappliedActions, name) {
+		c.UnappliedActions = append(c.UnappliedActions, name)
+	}
+}
+
+func actionArgs(n *document.Node) ([]string, error) {
+	args := make([]string, 0, len(n.Arguments))
+	for _, arg := range n.Arguments {
+		switch value := arg.Value.(type) {
+		case string:
+			args = append(args, value)
+		case int64:
+			args = append(args, strconv.FormatInt(value, 10))
+		default:
+			return nil, fmt.Errorf("argument %v must be a string or integer", arg.Value)
+		}
+	}
+	return args, nil
 }
 
 func (c *Config) xkb(n *document.Node) error {
@@ -285,6 +435,25 @@ func intArg(n *document.Node, min, max int64) (int, error) {
 		return 0, fmt.Errorf("`%s` must be a whole number from %d to %d", nodeName(n), min, max)
 	}
 	return int(v), nil
+}
+
+func floatArg(n *document.Node, min, max float64) (float64, error) {
+	if len(n.Arguments) != 1 {
+		return 0, fmt.Errorf("`%s` takes one number", nodeName(n))
+	}
+	var value float64
+	switch v := n.Arguments[0].Value.(type) {
+	case int64:
+		value = float64(v)
+	case float64:
+		value = v
+	default:
+		return 0, fmt.Errorf("`%s` must be a number", nodeName(n))
+	}
+	if math.IsNaN(value) || math.IsInf(value, 0) || value <= min || value > max {
+		return 0, fmt.Errorf("`%s` must be greater than %v and at most %v", nodeName(n), min, max)
+	}
+	return value, nil
 }
 
 // Locate is the config path niri would read: the -c flag, then $NIRI_CONFIG

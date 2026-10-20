@@ -12,7 +12,7 @@ Legend: `[ ]` missing · `[~]` partial · `[x]` done.
 |---|---|---|
 | Version | [x] | M2 — `sysc-compositor <version> (niri-ipc 26.4.0)` |
 | Outputs | [x] | M3 — wlroots output snapshots |
-| Workspaces | [~] | M3 — one empty active workspace per output; dynamic layout lands later |
+| Workspaces | [x] | M3/M5 — stable per-output IDs, active plus trailing empty workspace, dynamic indices |
 | Windows | [x] | M4 — mapped toplevels with stable IDs and logical geometry; offscreen centers fall back to the focused output |
 | Layers | [x] | M3 — mapped layer-shell surfaces |
 | KeyboardLayouts | [ ] | M9 |
@@ -41,7 +41,7 @@ Legend: `[ ]` missing · `[~]` partial · `[x]` done.
 | WindowFocusChanged | [x] | M4 — focus changes and clear, following Niri event semantics |
 | WindowFocusTimestampChanged | [x] | M4 — monotonic timestamp after Niri's 750 ms debounce |
 | WindowUrgencyChanged | [ ] | M6 |
-| WindowLayoutsChanged | [ ] | M5 |
+| WindowLayoutsChanged | [x] | M5 — tile order, position, and size changes |
 | KeyboardLayoutsChanged | [~] | M3 — current XKB layout baseline; config support in M9 |
 | KeyboardLayoutSwitched | [~] | M3 — XKB layout changes; switch action in M9 |
 | OverviewOpenedOrClosed | [~] | M3 — initial closed state; overview in M7 |
@@ -84,7 +84,7 @@ Until implemented, decode and reply `Err` with `unimplemented: <Name>`. Tick whe
 |---|---|---|
 | FocusWindow | [x] | M4 — stable mapped-window ID |
 | CloseWindow | [x] | M4 — sends xdg-toplevel close for an explicit ID or the retained Niri layout focus |
-| FocusWorkspace | [~] | M4 — current output workspace by ID/index; named workspaces arrive with M6 |
+| FocusWorkspace | [~] | M4/M5 — stable ID and current-output index; named workspaces arrive with M6 |
 
 ### Window / column / workspace / monitor / floating / overview / cast / debug
 
@@ -97,14 +97,18 @@ Track the rest against niri-ipc 26.4.0 `Action` as they are implemented in M4–
 - Cast: M12
 - Debug tint / opaque / damage: M15
 
+M5 applies `Spawn`, `SpawnSh`, `CloseWindow`, `FocusColumnLeft/Right/First/Last`,
+`MoveColumnLeft/Right/ToFirst/ToLast`, and `FocusWorkspace` by stable ID or current-output index.
+`FocusWorkspace` remains partial until named workspaces arrive in M6.
+
 ## Config sections
 
 | Section | Status | Milestone |
 |---|---|---|
-| input | [~] | M2 keyboard xkb + repeat; rest M5 (parse M3) |
+| input | [~] | M2 keyboard xkb + repeat; M5 nested Mod defaults, core key binds, Mod+drag, and edge resize with tile dimensions retained across unmap/remap for the stable window ID; remaining input work is M6/M10 |
 | output | [~] | M3 accepted, M15 apply full |
-| layout | [ ] | M5 |
-| binds | [ ] | M5 |
+| layout | [~] | M5 gaps, default column width, scrolling columns, client min/max size bounds, centered window offsets, and retained pointer-resized column width/window height across focus, output geometry updates, and unmap/remap; remaining layout options later |
+| binds | [~] | M5 core key subset; unsupported actions and mouse/scroll triggers warn |
 | switch-events | [ ] | M9 |
 | window-rule | [ ] | M6 |
 | layer-rule | [ ] | M6 |
@@ -113,7 +117,7 @@ Track the rest against niri-ipc 26.4.0 `Action` as they are implemented in M4–
 | overview | [ ] | M7 |
 | hotkey-overlay | [ ] | M11 |
 | environment | [x] | M2 (applied to spawns) |
-| cursor | [ ] | M10 |
+| cursor | [~] | M5 theme/size and child environment; cursor-shape M10, per-output scale M15 |
 | screenshot-path | [ ] | M11 |
 | prefer-no-csd | [ ] | M8 |
 | spawn-at-startup / spawn-sh-at-startup | [x] | M2 |
@@ -135,7 +139,7 @@ Acceptance file: `/home/nomadx/.config/niri/config.kdl` + `sysc-shell.kdl`. Pars
 | `niri validate` | [x] | M3 command and parser accept the laptop config; unapplied sections warn |
 | `niri msg action spawn` | [x] | M2 (sysc-launch L0) |
 | `niri msg action quit --skip-confirmation` | [x] | M2 (sysc-greet) |
-| `niri msg action focus-window --id`, `close-window [--id]`, `focus-workspace <index|name>` | [x] | M4; laptop-tested against mapped windows and the current output workspace |
+| `niri msg action focus-window --id`, `close-window [--id]`, `focus-workspace <index|name>` | [x] | M4/M5; stable IDs, dynamic current-output indices, and mapped windows |
 
 ## D-Bus
 
@@ -157,11 +161,11 @@ above is a debt.
 
 | Exclusion | Decision | Reason | Item |
 |---|---|---|---|
-| A scene language for window motion and WM policy | Not built, permanently | The mechanism pleamar uses is Luau, and scripting languages are banned in this product. KDL binds, the 141-action table and per-kind springs in `animations{}` are the authoring surface, and they are already specified | gh#264 / sysc-1212 |
+| General user-authored WM policy or scene runtime | Excluded from current scope; revisit through a separate design | No concrete workflow beyond Niri's KDL and the planned Go behavior is identified. Lua/Luau conflicts with the Go+cgo rule; a new KDL dialect or external layout process adds compatibility and lifecycle cost | gh#264 / sysc-1212 |
 
-**A future agent reading this should not "fix" it.** The exclusion was reached deliberately and
-re-checked after the repository was created: being in the right repository did not change it. If the
-constraint on scripting languages ever lifts, that is a new design, not a resumption of this one.
+The [Tier 3 design](2026-10-15-tier3-wm-scene-equivalent-design.md#owner-update-2026-10-20-selected-capabilities-under-the-niri-contract)
+records the selected agent-seat and window-capture work. Any KDL or IPC extension needs a concrete user
+workflow and owner review.
 
 ## Sibling (not this repo)
 

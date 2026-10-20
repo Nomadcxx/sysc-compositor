@@ -18,8 +18,11 @@ import (
 func TestEventStreamInitialStateOrderAndUpdates(t *testing.T) {
 	state := newNiriState(false)
 	dp := ipc.Output{Name: "DP-1"}
+	dpName := "DP-1"
+	dpWorkspace := ipc.Workspace{ID: 1, Idx: 1, Output: &dpName, IsActive: true, IsFocused: true}
 	state.replace(niriSnapshot{
 		outputs: map[string]ipc.Output{"DP-1": dp}, focusedOutput: &dp,
+		workspaces:      []ipc.Workspace{dpWorkspace},
 		keyboardLayouts: &ipc.KeyboardLayouts{Names: []string{"English (US)", "German"}, CurrentIdx: 1},
 	})
 	hub := newEventHub()
@@ -55,9 +58,14 @@ func TestEventStreamInitialStateOrderAndUpdates(t *testing.T) {
 
 	before := state.snapshot()
 	hdmi := ipc.Output{Name: "HDMI-A-1"}
+	hdmiName := "HDMI-A-1"
 	focused := hdmi
 	state.replace(niriSnapshot{
 		outputs: map[string]ipc.Output{"DP-1": dp, "HDMI-A-1": hdmi}, focusedOutput: &focused,
+		workspaces: []ipc.Workspace{
+			{ID: 1, Idx: 1, Output: &dpName, IsActive: true},
+			{ID: 2, Idx: 1, Output: &hdmiName, IsActive: true, IsFocused: true},
+		},
 		keyboardLayouts: &ipc.KeyboardLayouts{Names: []string{"English (US)", "German"}, CurrentIdx: 1},
 	})
 	hub.publish(eventStreamChanges(before, state.snapshot()))
@@ -70,6 +78,10 @@ func TestEventStreamInitialStateOrderAndUpdates(t *testing.T) {
 	before = state.snapshot()
 	state.replace(niriSnapshot{
 		outputs: map[string]ipc.Output{"DP-1": dp, "HDMI-A-1": hdmi}, focusedOutput: &focused,
+		workspaces: []ipc.Workspace{
+			{ID: 1, Idx: 1, Output: &dpName, IsActive: true},
+			{ID: 2, Idx: 1, Output: &hdmiName, IsActive: true, IsFocused: true},
+		},
 		keyboardLayouts: &ipc.KeyboardLayouts{Names: []string{"English (US)", "German"}, CurrentIdx: 0},
 	})
 	hub.publish(eventStreamChanges(before, state.snapshot()))
@@ -105,14 +117,23 @@ func TestEventStreamUsesWorkspaceActivatedForFocusChanges(t *testing.T) {
 	state := newNiriState(false)
 	dp := ipc.Output{Name: "DP-1"}
 	hdmi := ipc.Output{Name: "HDMI-A-1"}
+	dpName, hdmiName := "DP-1", "HDMI-A-1"
 	focused := dp
 	state.replace(niriSnapshot{
 		outputs: map[string]ipc.Output{"DP-1": dp, "HDMI-A-1": hdmi}, focusedOutput: &focused,
+		workspaces: []ipc.Workspace{
+			{ID: 1, Idx: 1, Output: &dpName, IsActive: true, IsFocused: true},
+			{ID: 2, Idx: 1, Output: &hdmiName, IsActive: true},
+		},
 	})
 	before := state.snapshot()
 	focused = hdmi
 	state.replace(niriSnapshot{
 		outputs: map[string]ipc.Output{"DP-1": dp, "HDMI-A-1": hdmi}, focusedOutput: &focused,
+		workspaces: []ipc.Workspace{
+			{ID: 1, Idx: 1, Output: &dpName, IsActive: true},
+			{ID: 2, Idx: 1, Output: &hdmiName, IsActive: true, IsFocused: true},
+		},
 	})
 
 	got := eventStreamChanges(before, state.snapshot())
@@ -122,6 +143,28 @@ func TestEventStreamUsesWorkspaceActivatedForFocusChanges(t *testing.T) {
 	}{ID: 2, Focused: true})}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("focus change events = %q, want %q", got, want)
+	}
+}
+
+func TestEventStreamUsesSnapshotWhenWorkspaceTopologyChanges(t *testing.T) {
+	output := "DP-1"
+	before := niriSnapshot{workspaces: []ipc.Workspace{
+		{ID: 1, Idx: 1, Output: &output},
+		{ID: 9, Idx: 9, Output: &output, IsActive: true, IsFocused: true},
+		{ID: 10, Idx: 10, Output: &output},
+	}}
+	after := niriSnapshot{workspaces: []ipc.Workspace{
+		{ID: 1, Idx: 1, Output: &output, IsActive: true, IsFocused: true},
+		{ID: 10, Idx: 9, Output: &output},
+	}}
+
+	want := [][]byte{
+		eventLine("WorkspacesChanged", struct {
+			Workspaces []ipc.Workspace `json:"workspaces"`
+		}{Workspaces: after.workspaces}),
+	}
+	if got := eventStreamChanges(before, after); !reflect.DeepEqual(got, want) {
+		t.Fatalf("workspace removal events = %q, want %q", got, want)
 	}
 }
 

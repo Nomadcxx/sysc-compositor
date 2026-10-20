@@ -39,6 +39,31 @@ static int sysc_switch_vt_for_key(struct wlr_keyboard *keyboard, uint32_t keycod
 	return (int)(keysym - XKB_KEY_XF86Switch_VT_1 + 1);
 }
 
+static bool sysc_modifier_active(struct wlr_keyboard *keyboard, const char *name) {
+	return keyboard != NULL && keyboard->xkb_state != NULL &&
+		xkb_state_mod_name_is_active(keyboard->xkb_state, name,
+			XKB_STATE_MODS_EFFECTIVE) > 0;
+}
+
+static bool sysc_keysym_matches(struct wlr_keyboard *keyboard, uint32_t keycode,
+		const char *name) {
+	if (keyboard == NULL || keyboard->xkb_state == NULL) {
+		return false;
+	}
+	xkb_keysym_t wanted = xkb_keysym_from_name(name, XKB_KEYSYM_CASE_INSENSITIVE);
+	if (wanted == XKB_KEY_NoSymbol) {
+		return false;
+	}
+	const xkb_keysym_t *syms = NULL;
+	int count = xkb_state_key_get_syms(keyboard->xkb_state, keycode + 8, &syms);
+	for (int i = 0; i < count; i++) {
+		if (syms[i] == wanted || xkb_keysym_to_lower(syms[i]) == xkb_keysym_to_lower(wanted)) {
+			return true;
+		}
+	}
+	return false;
+}
+
 #include <stdlib.h>
 
 // sysc_compile_keymap compiles from a keymap file's text when there is one,
@@ -103,6 +128,8 @@ import (
 	"fmt"
 	"os"
 	"unsafe"
+
+	"github.com/Nomadcxx/sysc-compositor/internal/bind"
 )
 
 // Keyboard is the user seat's keymap and repeat: niri's input.keyboard.
@@ -233,12 +260,115 @@ func (c *Compositor) handleKeyboardKey(data unsafe.Pointer) {
 			}
 			return
 		}
+		if c.dispatchKeyBinding(keycode) {
+			c.suppressedKeys[keycode] = true
+			return
+		}
 	} else if c.suppressedKeys[keycode] {
 		delete(c.suppressedKeys, keycode)
 		return
 	}
 	C.wlr_seat_keyboard_notify_key(c.seat, event.time_msec, event.keycode,
 		C.uint32_t(event.state))
+}
+
+func (c *Compositor) dispatchKeyBinding(keycode uint32) bool {
+	modifiers := c.activeBindModifiers()
+	for _, binding := range c.bindings {
+		if binding.Chord.Trigger != bind.TriggerKey || binding.Chord.Modifiers != modifiers {
+			continue
+		}
+		name := C.CString(binding.Chord.Key)
+		matches := bool(C.sysc_keysym_matches(c.keyboard, C.uint32_t(keycode), name))
+		C.free(unsafe.Pointer(name))
+		if !matches {
+			continue
+		}
+		for _, action := range binding.Actions {
+			c.executeBindAction(action)
+		}
+		return true
+	}
+	return false
+}
+
+func (c *Compositor) activeBindModifiers() bind.Modifiers {
+	var modifiers bind.Modifiers
+	for _, item := range []struct {
+		bit  bind.Modifier
+		name string
+	}{
+		{bind.ModifierCtrl, "Control"}, {bind.ModifierShift, "Shift"},
+		{bind.ModifierAlt, "Mod1"}, {bind.ModifierSuper, "Mod4"},
+		{bind.ModifierLevel3, "Mod5"}, {bind.ModifierLevel5, "Mod3"},
+	} {
+		name := C.CString(item.name)
+		active := bool(C.sysc_modifier_active(c.keyboard, name))
+		C.free(unsafe.Pointer(name))
+		if active {
+			modifiers |= bind.Modifiers(item.bit)
+		}
+	}
+	return modifiers
+}
+
+func (c *Compositor) modifierActive(modifier bind.Modifier) bool {
+	return c.activeBindModifiers()&bind.Modifiers(modifier) != 0
+}
+
+func (c *Compositor) executeBindAction(action bind.Action) {
+	if action.Name == bind.ActionCloseWindow {
+		c.CloseWindow(nil)
+		return
+	}
+	if action.Name == bind.ActionSpawn {
+		if c.spawn != nil {
+			if err := c.spawn(action.Args); err != nil {
+				fmt.Fprintf(os.Stderr, "sysc-compositor: bind spawn: %v\n", err)
+			}
+		}
+		return
+	}
+	if action.Name == bind.ActionSpawnSh {
+		if c.spawnSh != nil {
+			if err := c.spawnSh(action.Args[0]); err != nil {
+				fmt.Fprintf(os.Stderr, "sysc-compositor: bind spawn-sh: %v\n", err)
+			}
+		}
+		return
+	}
+	if c.model == nil {
+		return
+	}
+	changed, focus := false, false
+	switch action.Name {
+	case bind.ActionFocusColumnLeft:
+		changed, focus = c.model.FocusColumnLeft(), true
+	case bind.ActionFocusColumnRight:
+		changed, focus = c.model.FocusColumnRight(), true
+	case bind.ActionFocusColumnFirst:
+		changed, focus = c.model.FocusColumnFirst(), true
+	case bind.ActionFocusColumnLast:
+		changed, focus = c.model.FocusColumnLast(), true
+	case bind.ActionMoveColumnLeft:
+		changed = c.model.MoveColumnLeft()
+	case bind.ActionMoveColumnRight:
+		changed = c.model.MoveColumnRight()
+	case bind.ActionMoveColumnToFirst:
+		changed = c.model.MoveColumnToFirst()
+	case bind.ActionMoveColumnToLast:
+		changed = c.model.MoveColumnToLast()
+	case bind.ActionFocusWorkspace:
+		changed, focus = c.model.FocusWorkspace("", action.WorkspaceIndex), true
+	}
+	if changed {
+		c.applyWorkspaceModel()
+		if focus {
+			c.activateWorkspaceFocus()
+		} else {
+			c.notifyWindowStateChanged()
+		}
+	}
 }
 
 func (c *Compositor) handleKeyboardModifiers(unsafe.Pointer) {
