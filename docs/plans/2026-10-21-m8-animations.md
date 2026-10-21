@@ -93,3 +93,14 @@
 
 **M8 stop condition:** The SceneFX renderer passes the nested output gate; the spring math and config checks pass; all seven configured transitions run and settle; appearance and decoration behavior pass nested assertions; the laptop config parses; and the parity matrix records unsupported easing/custom-shader and hardware limits. Stop before M9 session and reload work.
 
+## Execution record — 2026-10-22
+
+- **Task 1:** `TestSceneFXRendererRendersNestedSceneEffects` proved that the SceneFX renderer commits output frames with a shadow and rounded rectangle. `TestWindowEffectsRenderForMappedToplevel` confirmed rounded radii on a mapped client buffer.
+- **Task 2:** Named spring checks passed for initial/target values, underdamped motion, velocity, invalid values, and exact settling.
+- **Task 3:** Named config checks passed for the seven laptop springs, animation off, appearance settings, one and four corner radii, ordered rules, `prefer-no-csd false`, invalid values, and warnings. The laptop config validated; remaining unapplied sections and bind actions were reported.
+- **Task 4:** Nested checks passed for mapped focus ring, shadow, surface corner radii and clipping, fullscreen suppression, and the initial server-side decoration preference followed by a client-side request. The focus ring uses one rounded SceneFX rectangle with its inner geometry clipped out.
+- **Task 5:** Named WM, animation, and nested WLR checks passed for overview open/close, workspace switching, horizontal view movement, window open/close, window movement, resize, and spring retargeting. Layout snapshots retain their committed target values.
+- **Task 6:** `gofmt`, `git diff --check`, named checks in `internal/animation`, `internal/config`, `internal/server`, `internal/wm`, and `internal/wlr`, `go vet -p 2 ./...`, and builds of `./cmd/niri` and `./cmd/sysc-compositor` passed. `go.mod` and `go.sum` are unchanged.
+
+The host nested renderer has one output. Multi-output, mixed-DPI, VRR, direct-session rendering, and pixel-level visual calibration remain unverified. SceneFX exposes one shadow corner radius; nonuniform window corner rules use their top-left radius for the shadow. Easing, slowdown, custom shaders, and the four recognized animation kinds outside this laptop config remain unapplied and produce warnings. M8 stops before M9 session and reload work.
+

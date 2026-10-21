@@ -34,23 +34,27 @@ type RuleMatch struct {
 }
 
 type WindowRule struct {
-	Matches             []RuleMatch
-	Excludes            []RuleMatch
-	OpenOnOutput        *string
-	OpenOnWorkspace     *string
-	OpenFloating        *bool
-	OpenFullscreen      *bool
-	DefaultColumnWidth  *PresetSize
-	DefaultWindowHeight *PresetSize
+	Matches              []RuleMatch
+	Excludes             []RuleMatch
+	OpenOnOutput         *string
+	OpenOnWorkspace      *string
+	OpenFloating         *bool
+	OpenFullscreen       *bool
+	DefaultColumnWidth   *PresetSize
+	DefaultWindowHeight  *PresetSize
+	GeometryCornerRadius *CornerRadius
+	ClipToGeometry       *bool
 }
 
 type WindowRuleResult struct {
-	OpenOnOutput        *string
-	OpenOnWorkspace     *string
-	OpenFloating        *bool
-	OpenFullscreen      *bool
-	DefaultColumnWidth  *PresetSize
-	DefaultWindowHeight *PresetSize
+	OpenOnOutput         *string
+	OpenOnWorkspace      *string
+	OpenFloating         *bool
+	OpenFullscreen       *bool
+	DefaultColumnWidth   *PresetSize
+	DefaultWindowHeight  *PresetSize
+	GeometryCornerRadius *CornerRadius
+	ClipToGeometry       *bool
 }
 
 type LayerRule struct {
@@ -80,6 +84,8 @@ func ResolveWindowRules(rules []WindowRule, appID, title string) WindowRuleResul
 		applyRuleValue(&result.OpenFullscreen, rule.OpenFullscreen)
 		applyRuleValue(&result.DefaultColumnWidth, rule.DefaultColumnWidth)
 		applyRuleValue(&result.DefaultWindowHeight, rule.DefaultWindowHeight)
+		applyRuleValue(&result.GeometryCornerRadius, rule.GeometryCornerRadius)
+		applyRuleValue(&result.ClipToGeometry, rule.ClipToGeometry)
 	}
 	return result
 }
@@ -260,6 +266,18 @@ func (c *Config) windowRule(node *document.Node) error {
 					rule.DefaultWindowHeight = &value
 				}
 			}
+		case "geometry-corner-radius":
+			var value CornerRadius
+			value, err = parseCornerRadius(child)
+			if err == nil {
+				rule.GeometryCornerRadius = &value
+			}
+		case "clip-to-geometry":
+			var value bool
+			value, err = boolArg(child)
+			if err == nil {
+				rule.ClipToGeometry = &value
+			}
 		default:
 			c.addWarning("window-rule")
 		}
@@ -274,6 +292,24 @@ func (c *Config) windowRule(node *document.Node) error {
 	}
 	c.WindowRules = append(c.WindowRules, rule)
 	return nil
+}
+
+func parseCornerRadius(node *document.Node) (CornerRadius, error) {
+	if len(node.Properties) != 0 || len(node.Children) != 0 || (len(node.Arguments) != 1 && len(node.Arguments) != 4) {
+		return CornerRadius{}, fmt.Errorf("geometry-corner-radius takes one or four numbers")
+	}
+	var radius CornerRadius
+	for i, arg := range node.Arguments {
+		value, ok := numericValue(arg.Value)
+		if !ok || value < 0 {
+			return CornerRadius{}, fmt.Errorf("corner radius %d must be a finite non-negative number", i+1)
+		}
+		radius[i] = value
+	}
+	if len(node.Arguments) == 1 {
+		radius[1], radius[2], radius[3] = radius[0], radius[0], radius[0]
+	}
+	return radius, nil
 }
 
 func parseWindowMatch(node *document.Node) (RuleMatch, error) {

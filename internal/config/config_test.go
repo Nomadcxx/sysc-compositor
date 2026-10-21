@@ -31,6 +31,9 @@ func TestGreeterConfig(t *testing.T) {
 	if kb := (Keyboard{Layout: "us", RepeatDelay: 400, RepeatRate: 40}); c.Keyboard != kb {
 		t.Errorf("keyboard %+v, want %+v", c.Keyboard, kb)
 	}
+	if !c.Animations.Off {
+		t.Error("greeter animations should be off")
+	}
 }
 
 func TestParse(t *testing.T) {
@@ -195,7 +198,7 @@ func TestM7ConfigDefaultsAndRangeValidation(t *testing.T) {
 	}
 }
 
-func TestConfiguredLaptopNiriM7Values(t *testing.T) {
+func TestConfiguredLaptopNiriM8Values(t *testing.T) {
 	path := os.Getenv("SYSC_NIRI_CONFIG")
 	if path == "" {
 		t.Skip("SYSC_NIRI_CONFIG is not set")
@@ -215,6 +218,46 @@ func TestConfiguredLaptopNiriM7Values(t *testing.T) {
 	}
 	if cfg.Layout.InsertHint.Off || cfg.Layout.InsertHint.Color != (Color{1, 1, 1, 34.0 / 255}) {
 		t.Errorf("laptop insert hint = %+v, want #ffffff22 enabled", cfg.Layout.InsertHint)
+	}
+	if !cfg.PreferNoCSD {
+		t.Error("laptop prefer-no-csd was not applied")
+	}
+	if got := cfg.Layout.FocusRing; got.Off || got.Width != 4 ||
+		got.ActiveColor != (Color{55.0 / 255, 244.0 / 255, 153.0 / 255, 1}) ||
+		got.InactiveColor != (Color{80.0 / 255, 80.0 / 255, 80.0 / 255, 1}) {
+		t.Errorf("laptop focus ring = %+v", got)
+	}
+	if got := cfg.Layout.Shadow; !got.On || got.Softness != 20 || got.Spread != 5 || got.OffsetX != 0 || got.OffsetY != 5 {
+		t.Errorf("laptop shadow = %+v", got)
+	}
+	wantSprings := []SpringConfig{
+		{DampingRatio: 1, Stiffness: 700, Epsilon: 0.0001},
+		{DampingRatio: 1, Stiffness: 700, Epsilon: 0.1},
+		{DampingRatio: 1, Stiffness: 800, Epsilon: 0.001},
+		{DampingRatio: 1, Stiffness: 600, Epsilon: 0.0001},
+		{DampingRatio: 1, Stiffness: 900, Epsilon: 0.0001},
+		{DampingRatio: 1, Stiffness: 800, Epsilon: 0.00001},
+		{DampingRatio: 1, Stiffness: 700, Epsilon: 0.0001},
+	}
+	gotAnimations := []Animation{
+		cfg.Animations.WindowOpen, cfg.Animations.WindowClose, cfg.Animations.WindowResize,
+		cfg.Animations.WindowMovement, cfg.Animations.OverviewOpenClose,
+		cfg.Animations.WorkspaceSwitch, cfg.Animations.HorizontalViewMovement,
+	}
+	for i, want := range wantSprings {
+		if got := gotAnimations[i]; got.Spring == nil || *got.Spring != want || got.Off {
+			t.Errorf("laptop animation %d = %+v, want spring %+v", i, got, want)
+		}
+	}
+	appearance := cfg.ResolveWindowRules("test-app", "test-title")
+	if appearance.GeometryCornerRadius == nil || *appearance.GeometryCornerRadius != (CornerRadius{20, 20, 20, 20}) ||
+		appearance.ClipToGeometry == nil || !*appearance.ClipToGeometry {
+		t.Errorf("laptop window geometry appearance = %+v", appearance)
+	}
+	for _, warning := range cfg.Warnings {
+		if strings.HasPrefix(warning, "animations") {
+			t.Errorf("laptop's supported spring settings produced warning %q", warning)
+		}
 	}
 }
 
@@ -412,6 +455,166 @@ binds {
 	}
 	if len(cfg.Binds) != 0 || !reflect.DeepEqual(cfg.UnappliedActions, []string{"focus-column-left"}) {
 		t.Fatalf("binds = %+v, unapplied = %q; want no applied wheel bind and a visible action warning", cfg.Binds, cfg.UnappliedActions)
+	}
+}
+
+func TestParseM8SettingsAreApplied(t *testing.T) {
+	cfg, err := Parse("m8.kdl", []byte(`
+prefer-no-csd
+layout {
+    focus-ring {
+        width 4
+        active-color "#7fc8ff"
+        inactive-color "#505050"
+    }
+    shadow {
+        on
+        softness 20
+        spread 5
+        offset x=0 y=5
+    }
+}
+animations {
+    window-open { spring damping-ratio=1.0 stiffness=700 epsilon=0.0001; }
+    window-close { spring damping-ratio=1.0 stiffness=700 epsilon=0.1; }
+    window-resize { spring damping-ratio=1.0 stiffness=800 epsilon=0.001; }
+    window-movement { spring damping-ratio=1.0 stiffness=600 epsilon=0.0001; }
+    overview-open-close { spring damping-ratio=1.0 stiffness=900 epsilon=0.0001; }
+    workspace-switch { spring damping-ratio=1.0 stiffness=800 epsilon=0.00001; }
+    horizontal-view-movement { spring damping-ratio=1.0 stiffness=700 epsilon=0.0001; }
+}
+window-rule {
+    geometry-corner-radius 20
+    clip-to-geometry true
+}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Warnings) != 0 {
+		t.Fatalf("M8 settings were reported unapplied: %v", cfg.Warnings)
+	}
+	if !cfg.PreferNoCSD {
+		t.Error("prefer-no-csd was not applied")
+	}
+	if got := cfg.Layout.FocusRing; got.Off || got.Width != 4 ||
+		got.ActiveColor != (Color{127.0 / 255, 200.0 / 255, 1, 1}) ||
+		got.InactiveColor != (Color{80.0 / 255, 80.0 / 255, 80.0 / 255, 1}) {
+		t.Errorf("focus ring = %+v", got)
+	}
+	if got := cfg.Layout.Shadow; !got.On || got.Softness != 20 || got.Spread != 5 || got.OffsetX != 0 || got.OffsetY != 5 {
+		t.Errorf("shadow = %+v", got)
+	}
+	want := map[string]SpringConfig{
+		"window-open":              {DampingRatio: 1, Stiffness: 700, Epsilon: 0.0001},
+		"window-close":             {DampingRatio: 1, Stiffness: 700, Epsilon: 0.1},
+		"window-resize":            {DampingRatio: 1, Stiffness: 800, Epsilon: 0.001},
+		"window-movement":          {DampingRatio: 1, Stiffness: 600, Epsilon: 0.0001},
+		"overview-open-close":      {DampingRatio: 1, Stiffness: 900, Epsilon: 0.0001},
+		"workspace-switch":         {DampingRatio: 1, Stiffness: 800, Epsilon: 0.00001},
+		"horizontal-view-movement": {DampingRatio: 1, Stiffness: 700, Epsilon: 0.0001},
+	}
+	got := map[string]Animation{
+		"window-open": cfg.Animations.WindowOpen, "window-close": cfg.Animations.WindowClose,
+		"window-resize": cfg.Animations.WindowResize, "window-movement": cfg.Animations.WindowMovement,
+		"overview-open-close": cfg.Animations.OverviewOpenClose, "workspace-switch": cfg.Animations.WorkspaceSwitch,
+		"horizontal-view-movement": cfg.Animations.HorizontalViewMovement,
+	}
+	for name, params := range want {
+		if got[name].Off || got[name].Spring == nil || *got[name].Spring != params {
+			t.Errorf("%s animation = %+v, want spring %+v", name, got[name], params)
+		}
+	}
+	if got := cfg.ResolveWindowRules("app", "title"); got.GeometryCornerRadius == nil || *got.GeometryCornerRadius != (CornerRadius{20, 20, 20, 20}) ||
+		got.ClipToGeometry == nil || !*got.ClipToGeometry {
+		t.Errorf("window appearance rule = %+v", got)
+	}
+}
+
+func TestM8WindowRuleCornersUseCSSOrderAndLastMatch(t *testing.T) {
+	cfg, err := Parse("m8-rules.kdl", []byte(`
+window-rule {
+    geometry-corner-radius 1 2 3 4
+    clip-to-geometry false
+}
+window-rule {
+    match app-id="special"
+    geometry-corner-radius 20
+    clip-to-geometry true
+}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.ResolveWindowRules("other", "title"); got.GeometryCornerRadius == nil || *got.GeometryCornerRadius != (CornerRadius{1, 2, 3, 4}) ||
+		got.ClipToGeometry == nil || *got.ClipToGeometry {
+		t.Errorf("general window appearance = %+v", got)
+	}
+	if got := cfg.ResolveWindowRules("special", "title"); got.GeometryCornerRadius == nil || *got.GeometryCornerRadius != (CornerRadius{20, 20, 20, 20}) ||
+		got.ClipToGeometry == nil || !*got.ClipToGeometry {
+		t.Errorf("last matching window appearance = %+v", got)
+	}
+}
+
+func TestPreferNoCSDAcceptsExplicitFalse(t *testing.T) {
+	cfg, err := Parse("prefer-no-csd.kdl", []byte("prefer-no-csd false"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.PreferNoCSD {
+		t.Fatal("prefer-no-csd false enabled the preference")
+	}
+}
+
+func TestM8AnimationOffAndUnsupportedSettings(t *testing.T) {
+	cfg, err := Parse("m8-unsupported.kdl", []byte(`
+animations { off; }
+animations {
+    on
+    window-open { off; }
+    window-close {
+        duration-ms 150
+        curve "ease-out-expo"
+    }
+    slowdown 2
+}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Animations.Off || !cfg.Animations.WindowOpen.Off {
+		t.Errorf("global/per-kind animation off = %v/%v", cfg.Animations.Off, cfg.Animations.WindowOpen.Off)
+	}
+	if cfg.Animations.WindowClose.Spring != nil || !cfg.Animations.WindowClose.Unsupported {
+		t.Errorf("unsupported easing was applied: %+v", cfg.Animations.WindowClose)
+	}
+	for _, warning := range []string{"animations.slowdown", "animations.window-close.easing"} {
+		if !slices.Contains(cfg.Warnings, warning) {
+			t.Errorf("warnings %v do not contain %q", cfg.Warnings, warning)
+		}
+	}
+}
+
+func TestParseRejectsInvalidM8Settings(t *testing.T) {
+	for src, want := range map[string]string{
+		`animations { window-open { spring damping-ratio=0.0 stiffness=700 epsilon=0.0001; }; }`: "damping ratio",
+		`animations { window-open { spring damping-ratio=1.0 stiffness=0 epsilon=0.0001; }; }`:   "stiffness",
+		`animations { window-open { spring damping-ratio=1.0 stiffness=700 epsilon=0.2; }; }`:    "epsilon",
+		`layout { focus-ring { width -1; }; }`:                                                   "width",
+		`layout { shadow { softness 1025; }; }`:                                                  "softness",
+		`layout { focus-ring 1 {}; }`:                                                            "takes child",
+		`layout { focus-ring { width 4 unit="px"; }; }`:                                          "width",
+		`layout { shadow extra=true {}; }`:                                                       "takes child",
+		`layout { shadow { softness 20 extra=true; }; }`:                                         "softness",
+		`animations { slowdown 2 extra=true; }`:                                                  "slowdown",
+		`animations { window-open { duration-ms 150 extra=true; }; }`:                            "duration-ms",
+		`animations { window-open { custom-shader "shader" extra=true; }; }`:                     "custom-shader",
+		`window-rule { geometry-corner-radius -1; }`:                                             "radius",
+		`window-rule { clip-to-geometry "yes"; }`:                                                "boolean",
+	} {
+		if _, err := Parse("bad-m8.kdl", []byte(src)); err == nil || !strings.Contains(strings.ToLower(err.Error()), strings.ToLower(want)) {
+			t.Errorf("Parse(%q) error = %v, want containing %q", src, err, want)
+		}
 	}
 }
 

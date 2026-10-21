@@ -75,11 +75,36 @@ static const struct wl_interface sysc_xdg_toplevel_interface = {
 	"xdg_toplevel", 1, 14, sysc_xdg_toplevel_requests, 2, sysc_xdg_toplevel_events,
 };
 
+static const struct wl_interface sysc_xdg_toplevel_decoration_interface;
+static const struct wl_interface *sysc_xdg_decoration_manager_get_toplevel_types[] = {
+	&sysc_xdg_toplevel_decoration_interface, &sysc_xdg_toplevel_interface,
+};
+static const struct wl_message sysc_xdg_decoration_manager_requests[] = {
+	{"destroy", "", NULL},
+	{"get_toplevel_decoration", "no", sysc_xdg_decoration_manager_get_toplevel_types},
+};
+static const struct wl_interface sysc_xdg_decoration_manager_interface = {
+	"zxdg_decoration_manager_v1", 1, 2, sysc_xdg_decoration_manager_requests, 0, NULL,
+};
+static const struct wl_message sysc_xdg_toplevel_decoration_requests[] = {
+	{"destroy", "", NULL},
+	{"set_mode", "u", NULL},
+	{"unset_mode", "", NULL},
+};
+static const struct wl_message sysc_xdg_toplevel_decoration_events[] = {
+	{"configure", "u", NULL},
+};
+static const struct wl_interface sysc_xdg_toplevel_decoration_interface = {
+	"zxdg_toplevel_decoration_v1", 1, 3, sysc_xdg_toplevel_decoration_requests,
+	1, sysc_xdg_toplevel_decoration_events,
+};
+
 struct sysc_client_globals {
 	struct wl_compositor *compositor;
 	struct wl_subcompositor *subcompositor;
 	struct wl_shm *shm;
 	struct wl_proxy *xdg_wm_base;
+	struct wl_proxy *xdg_decoration_manager;
 };
 
 static void sysc_client_global(void *data, struct wl_registry *registry,
@@ -96,6 +121,9 @@ static void sysc_client_global(void *data, struct wl_registry *registry,
 	} else if (strcmp(interface, "xdg_wm_base") == 0) {
 		globals->xdg_wm_base = wl_registry_bind(registry, name,
 				&sysc_xdg_wm_base_interface, 1);
+	} else if (strcmp(interface, "zxdg_decoration_manager_v1") == 0) {
+		globals->xdg_decoration_manager = wl_registry_bind(registry, name,
+				&sysc_xdg_decoration_manager_interface, 1);
 	}
 }
 
@@ -144,6 +172,25 @@ struct sysc_xdg_toplevel_listener {
 static const struct sysc_xdg_toplevel_listener sysc_xdg_toplevel_listener = {
 	.configure = sysc_xdg_toplevel_configure,
 	.close = sysc_xdg_toplevel_close,
+};
+
+struct sysc_decoration_state {
+	uint32_t mode;
+	bool configured;
+};
+
+static void sysc_xdg_decoration_configure(void *data, struct wl_proxy *proxy,
+		uint32_t mode) {
+	struct sysc_decoration_state *state = data;
+	state->mode = mode;
+	state->configured = true;
+}
+
+struct sysc_xdg_decoration_listener {
+	void (*configure)(void *, struct wl_proxy *, uint32_t);
+};
+static const struct sysc_xdg_decoration_listener sysc_xdg_decoration_listener = {
+	.configure = sysc_xdg_decoration_configure,
 };
 
 static struct wl_buffer *sysc_client_buffer(struct wl_shm *shm, int width, int height) {
@@ -329,6 +376,118 @@ done:
 	wl_display_disconnect(display);
 	return result;
 }
+
+static int sysc_client_decoration_mode_sequence(const char *display_name) {
+	int result = 1;
+	struct wl_display *display = wl_display_connect(display_name);
+	if (display == NULL) {
+		return 2;
+	}
+	struct sysc_client_globals globals = {0};
+	struct wl_registry *registry = wl_display_get_registry(display);
+	struct wl_surface *root = NULL;
+	struct wl_proxy *xdg_surface = NULL, *xdg_toplevel = NULL, *decoration = NULL;
+	struct sysc_decoration_state state = {0};
+	if (registry == NULL || wl_registry_add_listener(registry,
+			&sysc_client_registry_listener, &globals) < 0 ||
+		wl_display_roundtrip(display) < 0 || globals.compositor == NULL ||
+		globals.xdg_wm_base == NULL || globals.xdg_decoration_manager == NULL) {
+		result = 3;
+		goto done;
+	}
+	if (wl_proxy_add_listener(globals.xdg_wm_base,
+			(void (**)(void))&sysc_xdg_wm_base_listener, &globals) < 0) {
+		result = 4;
+		goto done;
+	}
+	root = wl_compositor_create_surface(globals.compositor);
+	if (root == NULL) {
+		result = 5;
+		goto done;
+	}
+	xdg_surface = wl_proxy_marshal_flags(globals.xdg_wm_base, 2,
+			&sysc_xdg_surface_interface, wl_proxy_get_version(globals.xdg_wm_base),
+			0, NULL, root);
+	if (xdg_surface == NULL || wl_proxy_add_listener(xdg_surface,
+			(void (**)(void))&sysc_xdg_surface_listener, NULL) < 0) {
+		result = 6;
+		goto done;
+	}
+	xdg_toplevel = wl_proxy_marshal_flags(xdg_surface, 1,
+			&sysc_xdg_toplevel_interface, wl_proxy_get_version(xdg_surface), 0, NULL);
+	if (xdg_toplevel == NULL || wl_proxy_add_listener(xdg_toplevel,
+			(void (**)(void))&sysc_xdg_toplevel_listener, NULL) < 0) {
+		result = 7;
+		goto done;
+	}
+	decoration = wl_proxy_marshal_flags(globals.xdg_decoration_manager, 1,
+			&sysc_xdg_toplevel_decoration_interface,
+			wl_proxy_get_version(globals.xdg_decoration_manager), 0, NULL, xdg_toplevel);
+	if (decoration == NULL || wl_proxy_add_listener(decoration,
+			(void (**)(void))&sysc_xdg_decoration_listener, &state) < 0) {
+		result = 8;
+		goto done;
+	}
+	wl_proxy_marshal_flags(xdg_toplevel, 2, NULL, wl_proxy_get_version(xdg_toplevel), 0,
+			"sysc xdg decoration test");
+	wl_surface_commit(root);
+	if (wl_display_roundtrip(display) < 0) {
+		result = 9;
+		goto done;
+	}
+	if (!state.configured || state.mode != 2) {
+		result = 10;
+		goto done;
+	}
+	wl_proxy_marshal_flags(decoration, 1, NULL, wl_proxy_get_version(decoration), 0, 1u);
+	wl_surface_commit(root);
+	if (wl_display_roundtrip(display) < 0) {
+		result = 11;
+		goto done;
+	}
+	if (!state.configured || state.mode != 1) {
+		result = 12;
+		goto done;
+	}
+	result = 0;
+done:
+	if (decoration != NULL) {
+		wl_proxy_marshal_flags(decoration, 0, NULL, wl_proxy_get_version(decoration),
+				WL_MARSHAL_FLAG_DESTROY);
+	}
+	if (xdg_toplevel != NULL) {
+		wl_proxy_marshal_flags(xdg_toplevel, 0, NULL, wl_proxy_get_version(xdg_toplevel),
+				WL_MARSHAL_FLAG_DESTROY);
+	}
+	if (xdg_surface != NULL) {
+		wl_proxy_marshal_flags(xdg_surface, 0, NULL, wl_proxy_get_version(xdg_surface),
+				WL_MARSHAL_FLAG_DESTROY);
+	}
+	if (root != NULL) {
+		wl_surface_destroy(root);
+	}
+	if (display != NULL) {
+		(void)wl_display_roundtrip(display);
+	}
+	if (globals.xdg_decoration_manager != NULL) {
+		wl_proxy_marshal_flags(globals.xdg_decoration_manager, 0, NULL,
+				wl_proxy_get_version(globals.xdg_decoration_manager), WL_MARSHAL_FLAG_DESTROY);
+	}
+	if (globals.xdg_wm_base != NULL) {
+		wl_proxy_marshal_flags(globals.xdg_wm_base, 0, NULL,
+				wl_proxy_get_version(globals.xdg_wm_base), WL_MARSHAL_FLAG_DESTROY);
+	}
+	if (registry != NULL) {
+		wl_registry_destroy(registry);
+	}
+	if (globals.compositor != NULL) {
+		wl_compositor_destroy(globals.compositor);
+	}
+	if (display != NULL) {
+		wl_display_disconnect(display);
+	}
+	return result;
+}
 */
 import "C"
 
@@ -344,6 +503,17 @@ func RunSubsurfaceSequence(display string) error {
 	defer C.free(unsafe.Pointer(name))
 	if code := int(C.sysc_client_subsurface_sequence(name)); code != 0 {
 		return fmt.Errorf("Wayland subsurface client failed at step %d", code)
+	}
+	return nil
+}
+
+// RunDecorationModeSequence checks the initial server-side preference and a
+// later explicit client-side request over a real xdg-decoration connection.
+func RunDecorationModeSequence(display string) error {
+	name := C.CString(display)
+	defer C.free(unsafe.Pointer(name))
+	if code := int(C.sysc_client_decoration_mode_sequence(name)); code != 0 {
+		return fmt.Errorf("Wayland xdg-decoration client failed at step %d", code)
 	}
 	return nil
 }

@@ -243,6 +243,14 @@ func (m *Model) OverviewProgress() float64 {
 	return m.overview.progress
 }
 
+// SetOverviewAnimationProgress updates the presented progress while retaining
+// the already committed open or closed target.
+func (m *Model) SetOverviewAnimationProgress(progress float64) {
+	if !m.overview.gestureActive {
+		m.overview.progress = clampOverviewProgress(progress)
+	}
+}
+
 // OverviewOpen reports the overview's current target state.
 func (m *Model) OverviewOpen() bool { return m.overview.open }
 
@@ -261,6 +269,13 @@ func (m *Model) BeginOverviewGesture() {
 	m.overview.open = true
 }
 
+// BeginOverviewGestureAt starts a direct gesture at the currently rendered
+// progress, which may differ from the committed open/close target.
+func (m *Model) BeginOverviewGestureAt(progress float64) {
+	m.overview.progress = clampOverviewProgress(progress)
+	m.BeginOverviewGesture()
+}
+
 // UpdateOverviewGesture applies vertical logical pixels to the active gesture.
 func (m *Model) UpdateOverviewGesture(deltaY float64, timestamp time.Duration) bool {
 	if !m.overview.gestureActive || math.IsNaN(deltaY) || math.IsInf(deltaY, 0) {
@@ -277,19 +292,33 @@ func (m *Model) UpdateOverviewGesture(deltaY float64, timestamp time.Duration) b
 
 // EndOverviewGesture settles to the open or closed state projected from recent swipe velocity.
 func (m *Model) EndOverviewGesture(timestamp time.Duration) bool {
-	if !m.overview.gestureActive {
+	_, to, _, ok := m.FinishOverviewGestureAnimation(timestamp)
+	if !ok {
 		return false
+	}
+	m.overview.progress = to
+	return true
+}
+
+// FinishOverviewGestureAnimation commits the gesture's target state while
+// leaving progress at the last directly-manipulated value for presentation.
+// Velocity is returned in normalized progress per second.
+func (m *Model) FinishOverviewGestureAnimation(timestamp time.Duration) (from, to, velocity float64, ok bool) {
+	if !m.overview.gestureActive {
+		return 0, 0, 0, false
 	}
 	m.overview.gesture.push(0, timestamp)
 	m.overview.gestureActive = false
 	projected := m.overview.gestureStart + m.overview.gesture.projectedEndPosition()/overviewGesturePixels
 	m.overview.open = clampOverviewProgress(projected) >= 0.5
+	from = m.overview.progress
 	if m.overview.open {
-		m.overview.progress = 1
+		to = 1
 	} else {
-		m.overview.progress = 0
+		to = 0
 	}
-	return true
+	velocity = m.overview.gesture.velocity() / overviewGesturePixels
+	return from, to, velocity, true
 }
 
 // OverviewFrame projects an output's workspaces and window placements at zoom.

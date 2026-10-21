@@ -29,6 +29,7 @@ import (
 	"reflect"
 	"slices"
 	"time"
+	"unsafe"
 
 	"github.com/Nomadcxx/sysc-compositor/internal/config"
 	"github.com/Nomadcxx/sysc-compositor/internal/layout"
@@ -52,6 +53,12 @@ type WindowInfo struct {
 // Windows lists toplevels, most recently focused first by either seat, then
 // newest first. Call it on the compositor thread.
 func (c *Compositor) Windows() []WindowInfo {
+	targets := map[uint64]wm.WindowSnapshot{}
+	if c.model != nil {
+		for _, window := range c.model.Snapshot().Windows {
+			targets[window.ID] = window
+		}
+	}
 	views := make([]*toplevelView, 0, len(c.views))
 	for _, v := range c.views {
 		if v.toplevel != nil && v.tree != nil && v.mapped && bool(v.toplevel.base.surface.mapped) {
@@ -65,10 +72,22 @@ func (c *Compositor) Windows() []WindowInfo {
 	for _, v := range views {
 		x, y := v.treePosition()
 		g := v.toplevel.base.geometry
+		width, height := int(g.width), int(g.height)
+		if target, ok := targets[v.id]; ok {
+			x, y, width, height = target.Tile.X, target.Tile.Y, target.Tile.Width, target.Tile.Height
+			if width <= 0 || height <= 0 {
+				width, height = int(g.width), int(g.height)
+			}
+			if target.Fullscreen {
+				if bounds, ok := c.outputLayoutBounds(target.Output); ok {
+					x, y, width, height = bounds.X, bounds.Y, bounds.Width, bounds.Height
+				}
+			}
+		}
 		out = append(out, WindowInfo{
 			ID: v.id, AppID: cStringPointer(v.toplevel.app_id), Title: cStringPointer(v.toplevel.title),
 			PID: int(C.sysc_surface_pid(v.toplevel.base.surface)),
-			X:   x, Y: y, Width: int(g.width), Height: int(g.height),
+			X:   x, Y: y, Width: width, Height: height,
 			Output: c.outputNameForView(v), IsFocused: c.keyboardFocusedView() == v,
 			FocusTimestamp: v.focusTimestamp, HasFocusTimestamp: v.hasFocusTimestamp,
 		})
@@ -99,6 +118,7 @@ func (c *Compositor) mapWindowWithRules(view *toplevelView, clientFullscreen boo
 	}
 	result := config.ResolveWindowRules(c.windowRules,
 		cString(view.toplevel.app_id), cString(view.toplevel.title))
+	view.appearance = result
 	output := c.model.Snapshot().FocusedOutput
 	if output == "" {
 		output = c.FocusedOutputName()
@@ -257,8 +277,34 @@ func (c *Compositor) CloseWindow(id *uint64) bool {
 	if target == nil || !target.mapped || !bool(target.toplevel.base.surface.mapped) {
 		return false
 	}
+	c.captureCloseSnapshot(target)
 	C.wlr_xdg_toplevel_send_close(target.toplevel)
 	return true
+}
+
+func (c *Compositor) captureCloseSnapshot(view *toplevelView) {
+	if view == nil || !view.presentationVisible || view.closeSnapshot != nil || c.animationConfig.Off ||
+		c.animationConfig.WindowClose.Off || c.animationConfig.WindowClose.Spring == nil {
+		return
+	}
+	snapshot, count := sceneFXCloneView(unsafe.Pointer(c.windowAnimationTree), unsafe.Pointer(view.tree))
+	if count == 0 || snapshot == nil {
+		return
+	}
+	view.closeSnapshot = snapshot
+	view.closeSnapshotGeneration++
+	generation := view.closeSnapshotGeneration
+	sceneFXSetNodeEnabled(snapshot, false)
+	view.closeSnapshotTimer = time.AfterFunc(2*time.Second, func() {
+		_ = c.Post(func() {
+			if view.closeSnapshot != snapshot || view.closeSnapshotGeneration != generation {
+				return
+			}
+			view.closeSnapshotTimer = nil
+			view.closeSnapshot = nil
+			sceneFXNodeDestroy(snapshot)
+		})
+	})
 }
 
 // FocusWorkspaceID focuses an IPC workspace by its stable model ID.

@@ -276,6 +276,7 @@ func (c *Compositor) setActiveOutputName(focused string) {
 	}
 	c.activeOutputName = name
 	c.notifyFocusedOutputChanged()
+	c.syncFocusRings()
 }
 
 // OutputSnapshot copies the enabled outputs into plain Go values. Call it on

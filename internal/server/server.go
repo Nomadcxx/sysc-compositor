@@ -51,8 +51,10 @@ func New(cfg *config.Config, configLoadFailed bool) (*Server, error) {
 		Layout: &wlr.LayoutOptions{
 			Gaps: cfg.Layout.Gaps, ColumnWidthProportion: cfg.Layout.ColumnWidthProportion,
 			FixedColumnWidth: cfg.Layout.FixedColumnWidth, InsertHint: cfg.Layout.InsertHint,
+			FocusRing: cfg.Layout.FocusRing, Shadow: cfg.Layout.Shadow,
 		}, CursorTheme: cfg.Cursor.Theme, CursorSize: cfg.Cursor.Size, Binds: cfg.Binds,
 		Overview: cfg.Overview, Gestures: cfg.Gestures,
+		Animations: cfg.Animations, PreferNoCSD: cfg.PreferNoCSD,
 		Workspaces: workspaces, WindowRules: cfg.WindowRules, LayerRules: cfg.LayerRules,
 	})
 	if err != nil {
