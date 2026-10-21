@@ -51,6 +51,7 @@ type fullscreenRestore struct {
 type Model struct {
 	outputs         map[string]*outputState
 	windows         map[uint64]windowState
+	overview        overviewState
 	resizedWindows  map[uint64]windowSize
 	floatingWindows map[uint64]layout.Bounds
 	fullscreenFloat map[uint64]fullscreenRestore
@@ -91,6 +92,7 @@ type WindowSnapshot struct {
 // Snapshot is a detached view of the compositor's layout state.
 type Snapshot struct {
 	FocusedOutput string
+	OverviewOpen  bool
 	Workspaces    []WorkspaceSnapshot
 	Windows       []WindowSnapshot
 }
@@ -1223,7 +1225,7 @@ func (m *Model) ActiveWindow() (uint64, bool) {
 // Snapshot returns workspaces and windows in stable output/workspace order.
 func (m *Model) Snapshot() Snapshot {
 	names := m.outputNames()
-	snapshot := Snapshot{FocusedOutput: m.focusedOutput}
+	snapshot := Snapshot{FocusedOutput: m.focusedOutput, OverviewOpen: m.overview.open}
 	for _, name := range names {
 		out := m.outputs[name]
 		for i, workspace := range out.workspaces {
