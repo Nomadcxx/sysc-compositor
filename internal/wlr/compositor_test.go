@@ -2,6 +2,7 @@ package wlr
 
 import (
 	"bufio"
+	"errors"
 	"os"
 	"os/exec"
 	"runtime"
@@ -28,6 +29,21 @@ func newNestedWith(t *testing.T, opts Options) *Compositor {
 	}
 	t.Cleanup(c.Destroy)
 	return c
+}
+
+// TestNestedNeedsConsent: without SYSC_NESTED_TESTS=1 no test can build a
+// compositor, so none puts a window on the owner's desktop by default.
+func TestNestedNeedsConsent(t *testing.T) {
+	t.Setenv("SYSC_NESTED_TESTS", "")
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	c, err := New()
+	if c != nil {
+		c.Destroy()
+	}
+	if !errors.Is(err, ErrNestedTestNeedsConsent) {
+		t.Fatalf("New() error = %v, want ErrNestedTestNeedsConsent", err)
+	}
 }
 
 // TestOutputsEnabled is the check that foot already failed for once: a client
