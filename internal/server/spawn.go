@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/Nomadcxx/sysc-compositor/internal/config"
 )
@@ -16,6 +17,11 @@ import (
 // safely, so the child is reaped by a goroutine instead. Go already restores
 // the original RLIMIT_NOFILE in children.
 type spawner struct {
+	environment *spawnEnvironment
+}
+
+type spawnEnvironment struct {
+	mu  sync.RWMutex
 	env []string
 }
 
@@ -48,7 +54,20 @@ func newSpawner(waylandDisplay, niriSocket string, configured map[string]*string
 			env = append(env, k+"="+*v)
 		}
 	}
-	return spawner{env: env}
+	return spawner{environment: &spawnEnvironment{env: env}}
+}
+
+func (s spawner) updateEnvironment(waylandDisplay, niriSocket string, configured map[string]*string, cursor config.Cursor) {
+	next := newSpawner(waylandDisplay, niriSocket, configured, cursor).environment.env
+	s.environment.mu.Lock()
+	s.environment.env = next
+	s.environment.mu.Unlock()
+}
+
+func (s spawner) childEnvironment() []string {
+	s.environment.mu.RLock()
+	defer s.environment.mu.RUnlock()
+	return append([]string(nil), s.environment.env...)
 }
 
 // spawn starts argv and returns once it is running or has failed to start.
@@ -58,7 +77,7 @@ func (s spawner) spawn(argv []string) error {
 	}
 	name := expandHome(argv[0])
 	cmd := exec.Command(name, argv[1:]...)
-	cmd.Env = s.env
+	cmd.Env = s.childEnvironment()
 	if err := cmd.Start(); err != nil {
 		return err
 	}

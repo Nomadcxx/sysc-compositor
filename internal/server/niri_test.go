@@ -2,6 +2,8 @@ package server
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -194,6 +196,65 @@ func TestNiriFocusedWindowQuery(t *testing.T) {
 	}
 	if string(got) != `{"Ok":{"FocusedWindow":null}}` {
 		t.Fatalf("FocusedWindow without a window = %s, want null", got)
+	}
+}
+
+func TestNiriKeyboardLayoutsQuery(t *testing.T) {
+	h := niriHandler{snapshot: func() niriSnapshot {
+		return niriSnapshot{keyboardLayouts: &ipc.KeyboardLayouts{
+			Names: []string{"English (US)", "Russian"}, CurrentIdx: 1,
+		}}
+	}}
+	reply, _ := h.handle(ipc.Request{Name: "KeyboardLayouts"})
+	got, err := json.Marshal(reply)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = `{"Ok":{"KeyboardLayouts":{"names":["English (US)","Russian"],"current_idx":1}}}`
+	if string(got) != want {
+		t.Fatalf("KeyboardLayouts = %s, want %s", got, want)
+	}
+}
+
+func TestNiriSwitchLayoutActionIsPosted(t *testing.T) {
+	index := uint8(2)
+	var posted ipc.Action
+	h := niriHandler{postAction: func(action ipc.Action, _ uint64) error {
+		posted = action
+		return nil
+	}}
+	reply, after := h.action(ipc.Action{Name: "SwitchLayout", Layout: "Index", LayoutIndex: &index})
+	if string(reply.Ok) != `"Handled"` || after == nil {
+		t.Fatalf("SwitchLayout reply = %+v, after=%v", reply, after != nil)
+	}
+	after()
+	if posted.Name != "SwitchLayout" || posted.Layout != "Index" || posted.LayoutIndex == nil || *posted.LayoutIndex != index {
+		t.Fatalf("posted SwitchLayout = %+v, want Index %d", posted, index)
+	}
+}
+
+func TestNiriLoadConfigFileActionValidatesAndPosts(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.kdl")
+	if err := os.WriteFile(path, []byte("layout { gaps 20 }"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	posted := false
+	h := niriHandler{postAction: func(action ipc.Action, _ uint64) error {
+		posted = action.ConfigPath != nil && *action.ConfigPath == path
+		return nil
+	}}
+	reply, after := h.action(ipc.Action{Name: "LoadConfigFile", ConfigPath: &path})
+	if string(reply.Ok) != `"Handled"` || after == nil {
+		t.Fatalf("LoadConfigFile reply = %+v, after=%v", reply, after != nil)
+	}
+	after()
+	if !posted {
+		t.Fatal("LoadConfigFile action was not posted")
+	}
+
+	reply, _ = h.action(ipc.Action{Name: "LoadConfigFile", ConfigPath: ptr("relative.kdl")})
+	if reply.Err != "path must be absolute: relative.kdl" {
+		t.Fatalf("relative LoadConfigFile path error = %q", reply.Err)
 	}
 }
 

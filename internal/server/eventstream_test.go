@@ -88,6 +88,13 @@ func TestEventStreamInitialStateOrderAndUpdates(t *testing.T) {
 	if got, err := reader.ReadString('\n'); err != nil || got != `{"KeyboardLayoutSwitched":{"idx":0}}`+"\n" {
 		t.Fatalf("keyboard update = %q, %v", got, err)
 	}
+	state.publishConfigLoaded(hub, true)
+	if got, err := reader.ReadString('\n'); err != nil || got != `{"ConfigLoaded":{"failed":true}}`+"\n" {
+		t.Fatalf("reload result = %q, %v", got, err)
+	}
+	if !state.snapshot().configLoadFailed {
+		t.Fatal("config load state did not retain the failed reload result")
+	}
 }
 
 func TestEventStreamPublishesOverviewInitialStateAndTransitions(t *testing.T) {

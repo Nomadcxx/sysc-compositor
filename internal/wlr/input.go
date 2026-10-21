@@ -13,6 +13,7 @@ package wlr
 #include <wlr/types/wlr_pointer_gestures_v1.h>
 #include <wlr/types/wlr_scene.h>
 #include <wlr/types/wlr_seat.h>
+#include <wlr/types/wlr_switch.h>
 #include <wlr/types/wlr_xdg_shell.h>
 #include <wlr/types/wlr_xcursor_manager.h>
 #include <wlr/util/edges.h>
@@ -115,6 +116,18 @@ const (
 	edgeLeft
 	edgeRight
 )
+
+type SwitchType uint8
+
+const (
+	SwitchLid SwitchType = iota
+	SwitchTabletMode
+)
+
+type SwitchToggle struct {
+	Type SwitchType
+	On   bool
+}
 
 type pointerGrab struct {
 	mode             pointerGrabMode
@@ -291,6 +304,11 @@ func (c *Compositor) handleNewInput(data unsafe.Pointer) {
 		C.wlr_cursor_attach_input_device(c.cursor, device)
 		c.attachPointerGestureListeners(deviceKey, C.wlr_pointer_from_input_device(device))
 		c.pointerDevices[deviceKey] = true
+	case C.WLR_INPUT_DEVICE_SWITCH:
+		switchDevice := C.wlr_switch_from_input_device(device)
+		listener := AddListener(unsafe.Pointer(&switchDevice.events.toggle), c.handleSwitchToggle)
+		c.switchToggleListeners[deviceKey] = listener
+		c.keep(listener)
 	default:
 		return
 	}
@@ -304,6 +322,10 @@ func (c *Compositor) handleNewInput(data unsafe.Pointer) {
 
 func (c *Compositor) handleInputDestroy(device unsafe.Pointer) {
 	c.detachPointerGestureListeners(device)
+	if listener := c.switchToggleListeners[device]; listener != nil {
+		c.drop(listener)
+		delete(c.switchToggleListeners, device)
+	}
 	if listener := c.inputDestroyListeners[device]; listener != nil {
 		c.drop(listener)
 		delete(c.inputDestroyListeners, device)
@@ -322,6 +344,22 @@ func (c *Compositor) handleInputDestroy(device unsafe.Pointer) {
 	// The keyboard group lets a destroyed keyboard go by itself.
 	delete(c.keyboardDevices, device)
 	c.refreshCapabilities()
+}
+
+func (c *Compositor) handleSwitchToggle(data unsafe.Pointer) {
+	event := (*C.struct_wlr_switch_toggle_event)(data)
+	var switchType SwitchType
+	switch event.switch_type {
+	case C.WLR_SWITCH_TYPE_LID:
+		switchType = SwitchLid
+	case C.WLR_SWITCH_TYPE_TABLET_MODE:
+		switchType = SwitchTabletMode
+	default:
+		return
+	}
+	if c.switchToggle != nil {
+		c.switchToggle(SwitchToggle{Type: switchType, On: event.switch_state == C.WLR_SWITCH_STATE_ON})
+	}
 }
 
 func (c *Compositor) attachPointerGestureListeners(device unsafe.Pointer, pointer *C.struct_wlr_pointer) {
@@ -724,6 +762,32 @@ func (c *Compositor) showDefaultImage() {
 	}
 	C.sysc_default_image(c.cursor, c.xcursorManager)
 	c.drawnImage = "default"
+}
+
+func (c *Compositor) reconfigureCursor(theme string, size int) {
+	if theme == "" {
+		theme = "default"
+	}
+	if size <= 0 {
+		size = 24
+	}
+	if c.cursorTheme == theme && c.cursorSize == size {
+		return
+	}
+	c.cursorTheme, c.cursorSize = theme, size
+	if c.xcursorManager != nil {
+		C.wlr_xcursor_manager_destroy(c.xcursorManager)
+		c.xcursorManager = nil
+	}
+	if len(c.pointerDevices) == 0 {
+		return
+	}
+	name := C.CString(theme)
+	c.xcursorManager = C.sysc_xcursor_manager(name, C.uint32_t(size))
+	C.free(unsafe.Pointer(name))
+	if c.xcursorManager != nil && C.wlr_xcursor_manager_load(c.xcursorManager, 1.0) {
+		c.restoreCursorImage()
+	}
 }
 
 func (c *Compositor) showCursorImage(name string) {

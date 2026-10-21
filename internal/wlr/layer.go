@@ -301,6 +301,12 @@ func (c *Compositor) resolveLayerRules(namespace string) bool {
 	return config.ResolveLayerRules(c.layerRules, namespace)
 }
 
+func (c *Compositor) reapplyLayerRules() {
+	for _, layer := range c.layerOrder {
+		layer.placeWithinBackdrop = c.resolveLayerRules(C.GoString(layer.surface.namespace))
+	}
+}
+
 // defaultOutput is the output under the pointer, else any enabled output.
 func (c *Compositor) defaultOutput() *C.struct_wlr_output {
 	if out := C.sysc_output_at(c.layout, c.cursor.x, c.cursor.y); out != nil {

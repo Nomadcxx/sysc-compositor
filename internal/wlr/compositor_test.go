@@ -11,6 +11,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/Nomadcxx/sysc-compositor/internal/bind"
 	"github.com/Nomadcxx/sysc-compositor/internal/config"
 )
 
@@ -104,6 +105,30 @@ func TestOutputsEnabled(t *testing.T) {
 	c := newNested(t)
 	if got := c.EnabledOutputs(); got == 0 {
 		t.Fatal("EnabledOutputs() = 0: clients exit with \"no monitors available\"")
+	}
+}
+
+func TestReconfigureUpdatesCompositorSettings(t *testing.T) {
+	c := newNested(t)
+	defaults := config.Default()
+	want := Options{
+		ModKey: "Alt", ModKeyNested: "Alt",
+		Layout: &LayoutOptions{
+			Gaps: 24, ColumnWidthProportion: 0.6, FixedColumnWidth: 900,
+			InsertHint: defaults.Layout.InsertHint, FocusRing: defaults.Layout.FocusRing,
+			Shadow: defaults.Layout.Shadow,
+		},
+		Overview: defaults.Overview, Animations: defaults.Animations,
+		Gestures: defaults.Gestures,
+	}
+	if err := c.Reconfigure(want); err != nil {
+		t.Fatal(err)
+	}
+	if c.modKey != bind.ModifierAlt {
+		t.Fatalf("mod key = %v, want Alt", c.modKey)
+	}
+	if c.layoutOptions.Gaps != 24 || c.layoutOptions.ColumnWidthProportion != 0.6 || c.layoutOptions.FixedColumnWidth != 900 {
+		t.Fatalf("layout options = %+v, want reloaded layout", c.layoutOptions)
 	}
 }
 

@@ -108,6 +108,27 @@ func TestConfiguredKeyboardReachesClients(t *testing.T) {
 	}
 }
 
+func TestKeyboardLayoutSwitchUpdatesActiveXKBLayout(t *testing.T) {
+	c := newNestedWith(t, Options{Keyboard: Keyboard{Layout: "us,de"}})
+	layouts := c.KeyboardLayoutsSnapshot()
+	if layouts == nil || len(layouts.Names) != 2 || layouts.CurrentIdx != 0 {
+		t.Fatalf("initial keyboard layouts = %+v, want us/de at index 0", layouts)
+	}
+	if !c.SwitchLayout("Next", nil) {
+		t.Fatal("SwitchLayout(Next) did not change the active layout")
+	}
+	if got := c.KeyboardLayoutsSnapshot().CurrentIdx; got != 1 {
+		t.Fatalf("active layout after Next = %d, want 1", got)
+	}
+	if !c.SwitchLayout("Prev", nil) || c.KeyboardLayoutsSnapshot().CurrentIdx != 0 {
+		t.Fatal("SwitchLayout(Prev) did not return to layout 0")
+	}
+	index := uint8(1)
+	if !c.SwitchLayout("Index", &index) || c.KeyboardLayoutsSnapshot().CurrentIdx != index {
+		t.Fatal("SwitchLayout(Index) did not select layout 1")
+	}
+}
+
 // TestNewWindowTakesFocus: sysc-greet's kitty is typed into without a click.
 func TestNewWindowTakesFocus(t *testing.T) {
 	c := newNested(t)

@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Nomadcxx/sysc-compositor/internal/config"
 	"github.com/Nomadcxx/sysc-compositor/internal/ipc"
 )
 
@@ -30,7 +31,7 @@ func TestNiriWindowActionsOverSocket(t *testing.T) {
 	go func() {
 		runtime.LockOSThread()
 		defer runtime.UnlockOSThread()
-		s, err := New(nil, false)
+		s, err := New(config.LoadResult{}, false)
 		if err != nil {
 			ready <- started{err: err}
 			close(done)

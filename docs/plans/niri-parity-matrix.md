@@ -15,14 +15,14 @@ Legend: `[ ]` missing · `[~]` partial · `[x]` done.
 | Workspaces | [x] | M3/M5/M6 — stable per-output IDs, names, active plus trailing empty workspace, dynamic indices |
 | Windows | [x] | M4 — mapped toplevels with stable IDs and logical geometry; offscreen centers fall back to the focused output |
 | Layers | [x] | M3 — mapped layer-shell surfaces |
-| KeyboardLayouts | [ ] | M9 |
+| KeyboardLayouts | [x] | M9 — configured XKB names and active index; `SwitchLayout` updates the active layout |
 | FocusedOutput | [x] | M3/M6 — active output follows keyboard focus; first connected output is the initial and disconnect fallback; monitor focus warps the pointer to output center |
 | FocusedWindow | [x] | M4 — actual keyboard-focused mapped window, otherwise null |
 | PickWindow | [ ] | M15 |
 | PickColor | [ ] | M15 |
 | Action | [~] | M2: all 141 decode; per-action below |
 | Output | [ ] | M15 |
-| EventStream | [~] | M3 — initial baseline, workspace and keyboard updates; remaining events land with their owning milestones |
+| EventStream | [~] | M3/M9 — initial baseline, workspace and keyboard updates, plus config reload results; remaining events land with their owning milestones |
 | ReturnError | [x] | M2 |
 | OverviewState | [x] | M7 — Niri 26.04 query returns open state |
 | Casts | [ ] | M12 |
@@ -42,10 +42,10 @@ Legend: `[ ]` missing · `[~]` partial · `[x]` done.
 | WindowFocusTimestampChanged | [x] | M4 — monotonic timestamp after Niri's 750 ms debounce |
 | WindowUrgencyChanged | [x] | M6 — urgency actions and state transitions |
 | WindowLayoutsChanged | [x] | M5 — tile order, position, and size changes |
-| KeyboardLayoutsChanged | [~] | M3 — current XKB layout baseline; config support in M9 |
-| KeyboardLayoutSwitched | [~] | M3 — XKB layout changes; switch action in M9 |
+| KeyboardLayoutsChanged | [x] | M3/M9 — publishes configured layouts and active-index changes |
+| KeyboardLayoutSwitched | [x] | M3/M9 — publishes XKB layout changes and `SwitchLayout` actions |
 | OverviewOpenedOrClosed | [x] | M7 — initial state and open/close transitions |
-| ConfigLoaded | [~] | M3 — initial config-load result; reload in M9 |
+| ConfigLoaded | [x] | M3/M9 — initial config result and successful or failed reloads |
 | ScreenshotCaptured | [ ] | M11 |
 | CastsChanged | [~] | M3 — initial empty baseline; casts in M12 |
 | CastStartedOrChanged | [ ] | M12 |
@@ -65,9 +65,9 @@ Until implemented, decode and reply `Err` with `unimplemented: <Name>`. Tick whe
 | Spawn | [~] | M2; no XDG_ACTIVATION_TOKEN until xdg-activation |
 | SpawnSh | [~] | M2; as Spawn |
 | DoScreenTransition | [ ] | M15 |
-| LoadConfigFile | [ ] | M9 |
+| LoadConfigFile | [x] | M9 — reloads the active config or switches roots after a successful explicit load |
 | ToggleKeyboardShortcutsInhibit | [ ] | M10 |
-| SwitchLayout | [ ] | M9 |
+| SwitchLayout | [x] | M9 — next, previous, or indexed XKB layout |
 | ShowHotkeyOverlay | [ ] | M11 |
 
 ### Screenshot
@@ -136,11 +136,11 @@ M6 adds the window, column, floating, fullscreen, urgency, named-workspace, and 
 
 | Section | Status | Milestone |
 |---|---|---|
-| input | [~] | M2 keyboard xkb + repeat; M5 nested Mod defaults, core key binds, Mod+drag, and edge resize with tile dimensions retained across unmap/remap for the stable window ID; M6 adds its keyboard action subset; M7 adds overview gestures, hot corners, tiled insert hints, and DND edge scrolling; physical input and client gesture delivery remain unverified; remaining input work is M10 |
+| input | [~] | M2 keyboard xkb + repeat; M5 nested Mod defaults, core key binds, Mod+drag, and edge resize with tile dimensions retained across unmap/remap for the stable window ID; M6 adds its keyboard action subset; M7 adds overview gestures, hot corners, tiled insert hints, and DND edge scrolling; M9 adds layout switching and session locale defaults; physical input and client gesture delivery remain unverified; remaining input work is M10 |
 | output | [~] | M3 reports connected outputs, available/current modes, logical geometry, scale/transform, and VRR capability/state; M15 applies mode/refresh, scale, position, transform, power, and VRR settings |
 | layout | [~] | M5 gaps, default column width, scrolling columns, client min/max size bounds, centered window offsets, and retained pointer-resized dimensions; M7 insert hints and tiled drag placement; M8 focus ring, window shadow, rounded outer subsurface corners, geometry clipping, and clipped snapshot bounds. SceneFX shadows use one radius, so nonuniform corner rules use the top-left radius; direct-session visual calibration remains unverified |
 | binds | [~] | M5 core key subset plus M6 window, workspace, urgency, and monitor actions; M7 overview actions; unsupported later actions and mouse/scroll triggers warn |
-| switch-events | [ ] | M9 |
+| switch-events | [x] | M9 — lid and tablet switch spawn actions; login1 also updates lid state |
 | window-rule | [~] | M6 app-id/title match and exclude, ordered placement/fullscreen overrides, and default size fields; M8 ordered `geometry-corner-radius` and `clip-to-geometry`; remaining Niri rule effects are unimplemented |
 | layer-rule | [~] | M6 parses namespace matching and `place-within-backdrop`; M7 does not render qualifying background surfaces within the overview backdrop or project background/bottom surfaces into workspace thumbnails; other Niri layer-rule effects remain unimplemented |
 | animations | [~] | M8 applies the seven laptop spring kinds and animates overview, workspace, window, movement, and resize transitions; easing, slowdown, custom shaders, and four other recognized animation kinds warn and remain unapplied |
@@ -164,9 +164,9 @@ Acceptance file: `/home/nomadx/.config/niri/config.kdl` + `sysc-shell.kdl`. Pars
 
 | Command | Status | Milestone |
 |---|---|---|
-| `niri` / `sysc-compositor` no args / `--session` | [ ] | M0 binary; `--session` M9 |
+| `niri` / `sysc-compositor` no args / `--session` | [x] | M0 binary; M9 publishes session sockets and starts and clears `graphical-session.target` only with `--session` |
 | `-c` / `--config` | [x] | M2 (+ `$NIRI_CONFIG`, XDG, `/etc/niri`) |
-| `niri msg` / `sysc-compositor msg` | [~] | M2: `version`, `request-error`, `action quit/spawn/spawn-sh`, `--json`; M4 adds `focus-window`, `close-window`, and `focus-workspace`; niri 26.04's own `niri msg` also works against our socket |
+| `niri msg` / `sysc-compositor msg` | [~] | M2/M4 actions; M9 adds all 16 request forms, output actions, `SwitchLayout`, and `LoadConfigFile`; later action subcommands remain open |
 | `niri validate` | [x] | M3 command and parser accept the laptop config; unapplied sections warn |
 | `niri msg action spawn` | [x] | M2 (sysc-launch L0) |
 | `niri msg action quit --skip-confirmation` | [x] | M2 (sysc-greet) |
@@ -182,8 +182,8 @@ Acceptance file: `/home/nomadx/.config/niri/config.kdl` + `sysc-shell.kdl`. Pars
 | org.gnome.Shell.Introspect | [ ] | M12 |
 | org.freedesktop.ScreenSaver | [ ] | M10 |
 | org.freedesktop.a11y.KeyboardMonitor | [ ] | M14 |
-| locale1 client | [ ] | M9 |
-| login1 | [ ] | M9 |
+| locale1 client | [x] | M9 — XKB defaults and property changes, overridden by explicit KDL settings |
+| login1 | [x] | M9 — initial and changed lid state; sleep remains owned by wlroots |
 
 ## Deliberate exclusions (recorded, not missing)
 

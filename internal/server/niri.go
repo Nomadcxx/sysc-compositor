@@ -328,6 +328,12 @@ func (h niriHandler) handle(r ipc.Request) (ipc.Reply, func()) {
 			layers = []ipc.LayerSurface{}
 		}
 		return ipc.Reply{Ok: ipc.SuccessValue("Layers", layers)}, nil
+	case "KeyboardLayouts":
+		layouts := h.currentState().keyboardLayouts
+		if layouts == nil {
+			layouts = &ipc.KeyboardLayouts{Names: []string{}}
+		}
+		return ipc.Reply{Ok: ipc.SuccessValue("KeyboardLayouts", layouts)}, nil
 	case "FocusedWindow":
 		var focused *ipc.Window
 		for _, window := range h.currentState().windows {
@@ -353,6 +359,13 @@ func (h niriHandler) handle(r ipc.Request) (ipc.Reply, func()) {
 func (h niriHandler) action(a ipc.Action) (ipc.Reply, func()) {
 	var err error
 	switch a.Name {
+	case "LoadConfigFile":
+		if a.ConfigPath != nil {
+			if err := validateConfigPath(*a.ConfigPath); err != nil {
+				return ipc.Reply{Err: err.Error()}, nil
+			}
+		}
+		return h.windowAction(a, 0)
 	case "Quit":
 		// There is no confirmation dialog yet, so skip_confirmation changes
 		// nothing. The reply goes out before the shutdown starts.
@@ -361,6 +374,8 @@ func (h niriHandler) action(a ipc.Action) (ipc.Reply, func()) {
 		err = h.spawn.spawn(a.Command)
 	case "SpawnSh":
 		err = h.spawn.spawnSh(a.ShellCommand)
+	case "SwitchLayout":
+		return h.windowAction(a, 0)
 	case "ToggleOverview", "OpenOverview", "CloseOverview":
 		return h.windowAction(a, 0)
 	case "FocusWindow", "CloseWindow",
