@@ -44,8 +44,9 @@ executed until the owner schedules the milestone they belong to.
 | [plans/2026-10-21-m7-overview-design.md](plans/2026-10-21-m7-overview-design.md) | design | Approved M7 design: compositor-owned overview projection, gestures, hot corners, insert hints, and drag edge scrolling. |
 | [plans/2026-10-21-m7-overview.md](plans/2026-10-21-m7-overview.md) | plan | M7 implementation plan (`sysc-1272`): overview rendering and IPC, gestures, hot corners, insert hints, DND edge scrolling, and the nested laptop gate. |
 | [plans/2026-10-21-m8-animations.md](plans/2026-10-21-m8-animations.md) | plan | M8 implementation plan: the laptop's spring animations, focus ring, shadow, geometry clipping, and decoration preference. |
+| [plans/2026-10-22-m9-session-live-config.md](plans/2026-10-22-m9-session-live-config.md) | plan | M9 implementation plan (`sysc-1274`): `--session`, complete `niri msg`, keyboard layouts, D-Bus defaults, include-aware live reload, and `LoadConfigFile`. |
 
-## Reference sources (pinned 2026-10-16)
+## Reference sources (pinned)
 
 Read-only checkouts outside every sysc repo, never built from. Milestone plans cite them by these commits.
 
@@ -53,6 +54,7 @@ Read-only checkouts outside every sysc repo, never built from. Milestone plans c
 |---|---|---|---|
 | Niri 26.04 (Rust, smithay) | `/home/nomadx/references/niri` | tag `v26.04`, `8ed0da44d974c32c6877d2f4630c314da0717ecb` | **Behaviour and contract target**: what each IPC request, config key and layout behaviour must do (`src/layout/`, `src/ipc/`, `src/handlers/`, `src/protocols/`, `niri-config/`). |
 | mangowm 0.18.0 (C, wlroots 0.20 + scenefx) | `/home/nomadx/references/mango` | tag `0.18.0`, `a21b10fcbe6156b76ea96178d1941de5cb36137f` | **wlroots 0.20 implementation reference**: same substrate as this repo, so its global creation (`src/main.c`), input and seat code show the wlroots calls directly. Not a source for layouts, tags or `mmsg` (orchestration "What not to schedule"). |
+| Hyprland (C++, wlroots) | `/home/nomadx/references/hyprland` | commit `8b7aefe32e3459a6e3a92cbd6dd6c638d1b8dbdd` | **Config reload architecture reference only**: watcher/debounce and deferred reload boundaries. Niri 26.04 remains the behavior contract; do not import Hyprland config or session semantics. |
 
 Re-pin by recording a new row; do not silently move a checkout.
 
