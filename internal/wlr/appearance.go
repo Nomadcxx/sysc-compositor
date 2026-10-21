@@ -115,6 +115,11 @@ func (c *Compositor) syncViewDecorations(view *toplevelView) {
 	}
 	visible := view.mapped && view.presentationVisible && !view.fullscreen
 	geometry := view.geometry()
+	visualWidth, visualHeight := geometry.w, geometry.h
+	if view.resizeSnapshot != nil {
+		visualWidth = max(1, int(math.Round(view.resizeWidth)))
+		visualHeight = max(1, int(math.Round(view.resizeHeight)))
+	}
 	x, y := view.treePosition()
 
 	if view.shadowNode != nil {
@@ -122,7 +127,7 @@ func (c *Compositor) syncViewDecorations(view *toplevelView) {
 		style := makeShadowRenderStyle(shadow, view.cornerRadii,
 			view == c.focusedView && c.activeOutputName == c.outputNameForView(view))
 		spread := style.spread
-		width, height := max(1, geometry.w+2*spread), max(1, geometry.h+2*spread)
+		width, height := max(1, visualWidth+2*spread), max(1, visualHeight+2*spread)
 		sceneFXShadowUpdate(view.shadowNode,
 			x-spread+int(math.Round(shadow.OffsetX)), y-spread+int(math.Round(shadow.OffsetY)),
 			width, height, style.radius, style.sigma, style.color)
@@ -144,9 +149,9 @@ func (c *Compositor) syncViewDecorations(view *toplevelView) {
 	for i := range outerRadii {
 		outerRadii[i] += float64(width)
 	}
-	outerRadii = fitCornerRadii(outerRadii, float64(geometry.w+2*width), float64(geometry.h+2*width))
+	outerRadii = fitCornerRadii(outerRadii, float64(visualWidth+2*width), float64(visualHeight+2*width))
 	sceneFXRectUpdateRing(view.focusRingNode, x-width, y-width,
-		geometry.w+2*width, geometry.h+2*width, width,
+		visualWidth+2*width, visualHeight+2*width, width,
 		sceneFXRadii(outerRadii), sceneFXRadii(view.cornerRadii), rgba)
 	sceneFXSetNodeEnabled(view.focusRingNode, ringVisible)
 }

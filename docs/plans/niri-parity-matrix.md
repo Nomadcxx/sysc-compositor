@@ -138,7 +138,7 @@ M6 adds the window, column, floating, fullscreen, urgency, named-workspace, and 
 |---|---|---|
 | input | [~] | M2 keyboard xkb + repeat; M5 nested Mod defaults, core key binds, Mod+drag, and edge resize with tile dimensions retained across unmap/remap for the stable window ID; M6 adds its keyboard action subset; M7 adds overview gestures, hot corners, tiled insert hints, and DND edge scrolling; physical input and client gesture delivery remain unverified; remaining input work is M10 |
 | output | [~] | M3 reports connected outputs, available/current modes, logical geometry, scale/transform, and VRR capability/state; M15 applies mode/refresh, scale, position, transform, power, and VRR settings |
-| layout | [~] | M5 gaps, default column width, scrolling columns, client min/max size bounds, centered window offsets, and retained pointer-resized dimensions; M7 insert hints and tiled drag placement; M8 focus ring, window shadow, rounded corners, and geometry clipping. SceneFX shadows use one radius, so nonuniform corner rules use the top-left radius; direct-session visual calibration remains unverified |
+| layout | [~] | M5 gaps, default column width, scrolling columns, client min/max size bounds, centered window offsets, and retained pointer-resized dimensions; M7 insert hints and tiled drag placement; M8 focus ring, window shadow, rounded outer subsurface corners, geometry clipping, and clipped snapshot bounds. SceneFX shadows use one radius, so nonuniform corner rules use the top-left radius; direct-session visual calibration remains unverified |
 | binds | [~] | M5 core key subset plus M6 window, workspace, urgency, and monitor actions; M7 overview actions; unsupported later actions and mouse/scroll triggers warn |
 | switch-events | [ ] | M9 |
 | window-rule | [~] | M6 app-id/title match and exclude, ordered placement/fullscreen overrides, and default size fields; M8 ordered `geometry-corner-radius` and `clip-to-geometry`; remaining Niri rule effects are unimplemented |
@@ -150,7 +150,7 @@ M6 adds the window, column, floating, fullscreen, urgency, named-workspace, and 
 | environment | [x] | M2 (applied to spawns) |
 | cursor | [~] | M5 theme/size and child environment; cursor-shape M10, per-output scale M15 |
 | screenshot-path | [ ] | M11 |
-| prefer-no-csd | [x] | M8 initial server-side preference; clients can request client-side mode |
+| prefer-no-csd | [x] | M8 exposes xdg-decoration and KDE server-decoration with server-side defaults; both accept client-side requests, and undecorated clients receive tiled-edge state |
 | spawn-at-startup / spawn-sh-at-startup | [x] | M2 |
 | workspace | [~] | M6 named workspace declarations and output placement; remaining Niri workspace options are unimplemented |
 | xwayland-satellite | [ ] | M13 |

@@ -115,6 +115,7 @@ type Compositor struct {
 	layout               *C.struct_wlr_output_layout
 	scene                *C.struct_wlr_scene
 	xdgDecorationManager unsafe.Pointer
+	kdeDecorationManager unsafe.Pointer
 	windowShadowTree     *C.struct_wlr_scene_tree
 	windowAnimationTree  *C.struct_wlr_scene_tree
 	windowFocusTree      *C.struct_wlr_scene_tree

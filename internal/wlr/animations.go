@@ -211,6 +211,7 @@ func (c *Compositor) startWindowOpen(view *toplevelView) {
 	view.presentationOpacity = 0
 	key := animationKey{owner: view.id, property: "open-opacity"}
 	c.animateValue(key, c.animationConfig.WindowOpen, 0, 1, 0, func(value float64) {
+		value = clampOpacity(value)
 		view.presentationOpacity = value
 		sceneFXSetTreeOpacity(view.sceneNode(), value)
 	}, func() {
@@ -219,6 +220,10 @@ func (c *Compositor) startWindowOpen(view *toplevelView) {
 			c.applyWorkspaceModel()
 		}
 	})
+}
+
+func clampOpacity(value float64) float64 {
+	return math.Max(0, math.Min(1, value))
 }
 
 func closeSnapshotKey(id uint64) animationKey {
@@ -237,6 +242,7 @@ func (c *Compositor) startCloseSnapshot(id uint64, node unsafe.Pointer) {
 	sceneFXSetNodeEnabled(node, true)
 	opacity := 1.0
 	c.animateValue(closeSnapshotKey(id), c.animationConfig.WindowClose, 1, 0, 0, func(value float64) {
+		value = clampOpacity(value)
 		if opacity > 0 {
 			sceneFXScaleTreeOpacity(node, value/opacity)
 		}
@@ -326,6 +332,7 @@ func (c *Compositor) syncResizeScale(view *toplevelView) {
 	y := max(0.01, view.resizeHeight/float64(view.resizeBaseHeight))
 	sceneFXScaleTree(view.resizeSnapshot, view.resizeScaleX, view.resizeScaleY, x, y)
 	view.resizeScaleX, view.resizeScaleY = x, y
+	c.syncViewDecorations(view)
 }
 
 func (c *Compositor) finishResizeIfSettled(view *toplevelView) {

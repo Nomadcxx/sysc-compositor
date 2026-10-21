@@ -9,6 +9,7 @@ import (
 	"github.com/Nomadcxx/sysc-compositor/internal/animation"
 	"github.com/Nomadcxx/sysc-compositor/internal/config"
 	"github.com/Nomadcxx/sysc-compositor/internal/layout"
+	"github.com/Nomadcxx/sysc-compositor/internal/wlr/testclient"
 	"github.com/Nomadcxx/sysc-compositor/internal/wm"
 )
 
@@ -453,10 +454,88 @@ func TestWindowOpenAndCloseAnimateReferencedBuffers(t *testing.T) {
 	}
 }
 
+func TestWindowTransitionOpacityClampsUnderdampedOvershoot(t *testing.T) {
+	animations := laptopAnimations()
+	underdamped := config.Animation{Spring: &config.SpringConfig{
+		DampingRatio: 0.1, Stiffness: 120, Epsilon: 0.0001,
+	}}
+	animations.WindowOpen = underdamped
+	animations.WindowClose = underdamped
+	c := newNestedWith(t, Options{Animations: animations})
+	checked := false
+	c.viewMapped = func(view *toplevelView) {
+		time.AfterFunc(300*time.Millisecond, func() {
+			_ = c.Post(func() {
+				openKey := animationKey{owner: view.id, property: "open-opacity"}
+				open := c.animations[openKey]
+				if open == nil {
+					t.Error("underdamped open animation stopped before its overshoot")
+					c.Terminate()
+					return
+				}
+				openProgress := open.spring.ValueAt(time.Since(open.started))
+				_, _, openOpacity, openFound := sceneFXTreeFirstBuffer(unsafe.Pointer(view.tree))
+				if openProgress <= 1 {
+					t.Errorf("test spring open progress = %v, want an overshoot above 1", openProgress)
+				}
+				if !openFound || view.presentationOpacity < 0 || view.presentationOpacity > 1 || openOpacity < 0 || openOpacity > 1 {
+					t.Errorf("opening alpha progress=%v presentation=%v buffer=%v found=%v, want all alpha in [0,1]", openProgress, view.presentationOpacity, openOpacity, openFound)
+					c.Terminate()
+					return
+				}
+
+				snapshot, count := sceneFXCloneView(unsafe.Pointer(c.windowAnimationTree), unsafe.Pointer(view.tree))
+				if snapshot == nil || count == 0 {
+					t.Error("could not clone the mapped view for the close alpha check")
+					c.Terminate()
+					return
+				}
+				owner := c.nextAnimationOwner()
+				c.closingNodes[owner] = snapshot
+				c.startCloseSnapshot(owner, snapshot)
+				closeKey := closeSnapshotKey(owner)
+				time.AfterFunc(300*time.Millisecond, func() {
+					_ = c.Post(func() {
+						closing := c.animations[closeKey]
+						if closing == nil {
+							t.Error("underdamped close animation stopped before its undershoot")
+							c.Terminate()
+							return
+						}
+						closeProgress := closing.spring.ValueAt(time.Since(closing.started))
+						_, _, closeOpacity, closeFound := sceneFXTreeFirstBuffer(snapshot)
+						if closeProgress >= 0 {
+							t.Errorf("test spring close progress = %v, want an undershoot below 0", closeProgress)
+						}
+						if !closeFound || closeOpacity < 0 || closeOpacity > 1 {
+							t.Errorf("closing alpha progress=%v buffer=%v found=%v, want alpha in [0,1]", closeProgress, closeOpacity, closeFound)
+						}
+						checked = true
+						c.Terminate()
+					})
+				})
+			})
+		})
+	}
+	runClient(t, c, []string{"weston-terminal"}, nil, nil)
+	if !checked {
+		t.Fatal("nested underdamped transition alpha check did not complete")
+	}
+}
+
 func TestWindowResizeScalesSnapshotWhileLayoutTargetsCommit(t *testing.T) {
 	animations := laptopAnimations()
 	animations.WindowOpen.Off = true
-	c := newNestedWith(t, Options{Animations: animations})
+	defaults := config.Default()
+	layoutOptions := &LayoutOptions{
+		Gaps: defaults.Layout.Gaps, ColumnWidthProportion: defaults.Layout.ColumnWidthProportion,
+		FixedColumnWidth: defaults.Layout.FixedColumnWidth, InsertHint: defaults.Layout.InsertHint,
+		FocusRing: config.FocusRing{Width: 4,
+			ActiveColor: config.Color{R: 1, A: 1}, InactiveColor: config.Color{B: 1, A: 1}},
+		Shadow: config.Shadow{On: true, Softness: 8, Spread: 3,
+			Color: config.Color{A: 0.5}},
+	}
+	c := newNestedWith(t, Options{Animations: animations, Layout: layoutOptions})
 	checked := false
 	c.viewMapped = func(view *toplevelView) {
 		geometry := view.geometry()
@@ -492,6 +571,15 @@ func TestWindowResizeScalesSnapshotWhileLayoutTargetsCommit(t *testing.T) {
 					c.Terminate()
 					return
 				}
+				visualWidth, visualHeight := int(math.Round(view.resizeWidth)), int(math.Round(view.resizeHeight))
+				shadowWidth, shadowHeight := sceneFXShadowSize(view.shadowNode)
+				if shadowWidth != visualWidth+6 || shadowHeight != visualHeight+6 {
+					t.Errorf("resizing shadow = %dx%d, want animated window size %dx%d plus six pixels", shadowWidth, shadowHeight, visualWidth, visualHeight)
+				}
+				ringWidth, ringHeight := sceneFXRectSize(view.focusRingNode)
+				if ringWidth != visualWidth+8 || ringHeight != visualHeight+8 {
+					t.Errorf("resizing focus ring = %dx%d, want animated window size %dx%d plus eight pixels", ringWidth, ringHeight, visualWidth, visualHeight)
+				}
 				settleStarted := time.Now()
 				var waitForResizeSettle func()
 				waitForResizeSettle = func() {
@@ -520,5 +608,86 @@ func TestWindowResizeScalesSnapshotWhileLayoutTargetsCommit(t *testing.T) {
 	runClient(t, c, []string{"weston-terminal"}, nil, nil)
 	if !checked {
 		t.Fatal("nested window resize animation check did not complete")
+	}
+}
+
+func TestWindowResizeSnapshotPreservesGeometryClip(t *testing.T) {
+	clip := true
+	c := newNestedWith(t, Options{WindowRules: []config.WindowRule{{ClipToGeometry: &clip}}})
+	var checked bool
+	c.viewMapped = func(view *toplevelView) {
+		geometry := view.geometry()
+		if geometry.w != 100 || geometry.h != 60 {
+			t.Errorf("mapped geometry = %dx%d, want 100x60", geometry.w, geometry.h)
+			return
+		}
+		rootSurface := viewSurface(view)
+		var created, childCommit, childDestroy, rootDestroy *Listener
+		created = AddListener(c.surfaceCreatedSignal(), func(data unsafe.Pointer) {
+			if data == rootSurface {
+				return
+			}
+			childSurface := data
+			c.drop(created)
+			created = nil
+			childCommit = AddListener(surfaceCommitSignal(childSurface), func(unsafe.Pointer) {
+				if buffer, _ := surfaceSubsurfaceState(childSurface); buffer == 0 {
+					return
+				}
+				_ = c.Post(func() {
+					childBounds, childFound := sceneFXSurfaceBounds(unsafe.Pointer(view.tree), childSurface)
+					if !childFound || childBounds != (rect{x: 80, y: 50, w: 20, h: 10}) {
+						t.Errorf("live clipped child bounds = %+v found=%v, want 20x10 at (80,50)", childBounds, childFound)
+					}
+					snapshot, count := sceneFXCloneView(unsafe.Pointer(c.windowAnimationTree), unsafe.Pointer(view.tree))
+					if snapshot == nil || count == 0 {
+						t.Error("could not clone the mapped view for the geometry clip check")
+						c.Terminate()
+						return
+					}
+					bounds, found := sceneFXTreeBounds(snapshot)
+					sceneFXNodeDestroy(snapshot)
+					if !found || bounds != (rect{w: geometry.w, h: geometry.h}) {
+						t.Errorf("snapshot bounds = %+v found=%v, want clipped geometry %+v", bounds, found, rect{w: geometry.w, h: geometry.h})
+					}
+					checked = true
+					c.drop(childCommit)
+					childCommit = nil
+				})
+			})
+			c.keep(childCommit)
+			childDestroy = AddListener(surfaceDestroySignal(childSurface), func(unsafe.Pointer) {
+				if childCommit != nil {
+					c.drop(childCommit)
+				}
+				c.drop(childDestroy)
+				childDestroy = nil
+			})
+			c.keep(childDestroy)
+		})
+		c.keep(created)
+		rootDestroy = AddListener(surfaceDestroySignal(rootSurface), func(unsafe.Pointer) {
+			if created != nil {
+				c.drop(created)
+			}
+			c.drop(rootDestroy)
+			rootDestroy = nil
+		})
+		c.keep(rootDestroy)
+	}
+	clientDone := make(chan error, 1)
+	go func() {
+		clientDone <- testclient.RunWindowGeometryOutsetWithChild(c.SocketName())
+		c.Terminate()
+	}()
+	time.AfterFunc(5*time.Second, c.Terminate)
+	if err := c.Run(); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-clientDone; err != nil {
+		t.Fatal(err)
+	}
+	if !checked {
+		t.Fatal("nested client did not commit an outset subsurface within a clipped window geometry")
 	}
 }

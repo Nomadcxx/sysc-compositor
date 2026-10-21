@@ -5,6 +5,17 @@ package wlr
 #cgo CFLAGS: -DWLR_USE_UNSTABLE
 
 #include <wlr/types/wlr_xdg_decoration_v1.h>
+#include <wlr/types/wlr_server_decoration.h>
+#include <wlr/util/edges.h>
+
+static void sysc_xdg_toplevel_set_tiled_edges(struct wlr_xdg_toplevel *toplevel,
+		uint32_t tiled_edges) {
+	if (toplevel->base->initialized) {
+		wlr_xdg_toplevel_set_tiled(toplevel, tiled_edges);
+	} else {
+		toplevel->scheduled.tiled = tiled_edges;
+	}
+}
 
 static void sysc_xdg_decoration_set_initial_preference(
 		struct wlr_xdg_toplevel_decoration_v1 *decoration) {
@@ -15,6 +26,8 @@ static void sysc_xdg_decoration_set_initial_preference(
 	} else {
 		decoration->scheduled_mode = mode;
 	}
+	sysc_xdg_toplevel_set_tiled_edges(decoration->toplevel,
+		WLR_EDGE_TOP | WLR_EDGE_RIGHT | WLR_EDGE_BOTTOM | WLR_EDGE_LEFT);
 }
 
 static void sysc_xdg_decoration_apply_request(
@@ -28,6 +41,9 @@ static void sysc_xdg_decoration_apply_request(
 	} else {
 		decoration->scheduled_mode = mode;
 	}
+	uint32_t tiled_edges = mode == WLR_XDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE ?
+		WLR_EDGE_TOP | WLR_EDGE_RIGHT | WLR_EDGE_BOTTOM | WLR_EDGE_LEFT : WLR_EDGE_NONE;
+	sysc_xdg_toplevel_set_tiled_edges(decoration->toplevel, tiled_edges);
 }
 */
 import "C"
@@ -41,6 +57,14 @@ func (c *Compositor) createDecorationManager() error {
 	if !c.preferNoCSD {
 		return nil
 	}
+	kdeManager := C.wlr_server_decoration_manager_create(c.display)
+	if kdeManager == nil {
+		return errors.New("wlr_server_decoration_manager_create failed")
+	}
+	C.wlr_server_decoration_manager_set_default_mode(kdeManager,
+		C.WLR_SERVER_DECORATION_MANAGER_MODE_SERVER)
+	c.kdeDecorationManager = unsafe.Pointer(kdeManager)
+
 	manager := C.wlr_xdg_decoration_manager_v1_create(c.display)
 	if manager == nil {
 		return errors.New("wlr_xdg_decoration_manager_v1_create failed")

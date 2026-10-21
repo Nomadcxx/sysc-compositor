@@ -12,6 +12,7 @@ package wlr
 struct sysc_corner_data {
 	struct wlr_surface *root;
 	struct fx_corner_radii radii;
+	int root_x, root_y, root_width, root_height;
 };
 
 static void sysc_set_surface_buffer_corners(struct wlr_scene_buffer *buffer,
@@ -21,7 +22,30 @@ static void sysc_set_surface_buffer_corners(struct wlr_scene_buffer *buffer,
 	if (scene_surface == NULL || wlr_surface_get_root_surface(scene_surface->surface) != corners->root) {
 		return;
 	}
-	wlr_scene_buffer_set_corner_radii(buffer, corners->radii);
+	int x, y;
+	wlr_scene_node_coords(&buffer->node, &x, &y);
+	int right = x + scene_surface->surface->current.width;
+	int bottom = y + scene_surface->surface->current.height;
+	int root_right = corners->root_x + corners->root_width;
+	int root_bottom = corners->root_y + corners->root_height;
+	struct fx_corner_radii radii = corner_radii_new(
+		x == corners->root_x && y == corners->root_y ? corners->radii.top_left : 0,
+		right == root_right && y == corners->root_y ? corners->radii.top_right : 0,
+		right == root_right && bottom == root_bottom ? corners->radii.bottom_right : 0,
+		x == corners->root_x && bottom == root_bottom ? corners->radii.bottom_left : 0);
+	wlr_scene_buffer_set_corner_radii(buffer, radii);
+}
+
+static void sysc_find_window_root_buffer(struct wlr_scene_buffer *buffer,
+		int sx, int sy, void *data) {
+	struct sysc_corner_data *corners = data;
+	struct wlr_scene_surface *scene_surface = wlr_scene_surface_try_from_buffer(buffer);
+	if (scene_surface == NULL || scene_surface->surface != corners->root) {
+		return;
+	}
+	wlr_scene_node_coords(&buffer->node, &corners->root_x, &corners->root_y);
+	corners->root_width = scene_surface->surface->current.width;
+	corners->root_height = scene_surface->surface->current.height;
 }
 
 static void sysc_scene_set_window_corners(struct wlr_scene_node *node,
@@ -30,6 +54,10 @@ static void sysc_scene_set_window_corners(struct wlr_scene_node *node,
 		.root = root,
 		.radii = corner_radii_new(tl, tr, br, bl),
 	};
+	wlr_scene_node_for_each_buffer(node, sysc_find_window_root_buffer, &data);
+	if (data.root_width <= 0 || data.root_height <= 0) {
+		return;
+	}
 	wlr_scene_node_for_each_buffer(node, sysc_set_surface_buffer_corners, &data);
 }
 
@@ -51,6 +79,18 @@ static struct wlr_scene_node *sysc_scene_rect_create_node(
 
 static void sysc_scene_rect_set_corner_radius_node(struct wlr_scene_node *node, int radius) {
 	wlr_scene_rect_set_corner_radius(wlr_scene_rect_from_node(node), radius);
+}
+
+static void sysc_scene_rect_size_node(struct wlr_scene_node *node, int *width, int *height) {
+	struct wlr_scene_rect *rect = wlr_scene_rect_from_node(node);
+	*width = rect->width;
+	*height = rect->height;
+}
+
+static void sysc_scene_shadow_size_node(struct wlr_scene_node *node, int *width, int *height) {
+	struct wlr_scene_shadow *shadow = wlr_scene_shadow_from_node(node);
+	*width = shadow->width;
+	*height = shadow->height;
 }
 
 static void sysc_scene_rect_update_ring_node(struct wlr_scene_node *node,
@@ -202,11 +242,63 @@ static void sysc_scene_tree_set_position_node(struct wlr_scene_tree *tree, int x
 
 struct sysc_scene_buffer_probe {
 	int width, height;
+	int origin_x, origin_y;
 	float opacity;
 	uint16_t corner_radii[4];
 	bool corner_radii_found;
+	struct wlr_surface *surface;
+	int surface_x, surface_y, surface_width, surface_height;
+	uint16_t surface_corner_radii[4];
+	bool surface_found;
 	bool found;
 };
+
+struct sysc_scene_bounds_probe {
+	int origin_x, origin_y;
+	int left, top, right, bottom;
+	bool found;
+};
+
+static void sysc_scene_accumulate_buffer_bounds(struct wlr_scene_buffer *buffer,
+		int x, int y, void *data) {
+	if (buffer->buffer == NULL) {
+		return;
+	}
+	struct sysc_scene_bounds_probe *probe = data;
+	int width = buffer->dst_width, height = buffer->dst_height;
+	if (width <= 0 || height <= 0) {
+		width = buffer->buffer->width;
+		height = buffer->buffer->height;
+		if (buffer->transform == WL_OUTPUT_TRANSFORM_90 ||
+				buffer->transform == WL_OUTPUT_TRANSFORM_270 ||
+				buffer->transform == WL_OUTPUT_TRANSFORM_FLIPPED_90 ||
+				buffer->transform == WL_OUTPUT_TRANSFORM_FLIPPED_270) {
+			int swap = width;
+			width = height;
+			height = swap;
+		}
+	}
+	x -= probe->origin_x;
+	y -= probe->origin_y;
+	if (!probe->found) {
+		probe->left = x;
+		probe->top = y;
+		probe->right = x + width;
+		probe->bottom = y + height;
+		probe->found = true;
+		return;
+	}
+	if (x < probe->left) probe->left = x;
+	if (y < probe->top) probe->top = y;
+	if (x + width > probe->right) probe->right = x + width;
+	if (y + height > probe->bottom) probe->bottom = y + height;
+}
+
+static void sysc_scene_tree_bounds(struct wlr_scene_tree *tree,
+		struct sysc_scene_bounds_probe *probe) {
+	wlr_scene_node_coords(&tree->node, &probe->origin_x, &probe->origin_y);
+	wlr_scene_node_for_each_buffer(&tree->node, sysc_scene_accumulate_buffer_bounds, probe);
+}
 
 static void sysc_scene_probe_buffer(struct wlr_scene_buffer *buffer,
 		int x, int y, void *data) {
@@ -229,10 +321,23 @@ static void sysc_scene_probe_buffer(struct wlr_scene_buffer *buffer,
 		probe->corner_radii[3] = buffer->corners.bottom_left;
 		probe->corner_radii_found = true;
 	}
+	struct wlr_scene_surface *scene_surface = wlr_scene_surface_try_from_buffer(buffer);
+	if (probe->surface != NULL && scene_surface != NULL && scene_surface->surface == probe->surface) {
+		probe->surface_x = x - probe->origin_x;
+		probe->surface_y = y - probe->origin_y;
+		probe->surface_width = buffer->dst_width > 0 ? buffer->dst_width : buffer->buffer->width;
+		probe->surface_height = buffer->dst_height > 0 ? buffer->dst_height : buffer->buffer->height;
+		probe->surface_corner_radii[0] = buffer->corners.top_left;
+		probe->surface_corner_radii[1] = buffer->corners.top_right;
+		probe->surface_corner_radii[2] = buffer->corners.bottom_right;
+		probe->surface_corner_radii[3] = buffer->corners.bottom_left;
+		probe->surface_found = true;
+	}
 }
 
 static void sysc_scene_tree_probe(struct wlr_scene_tree *tree,
 		struct sysc_scene_buffer_probe *probe) {
+	wlr_scene_node_coords(&tree->node, &probe->origin_x, &probe->origin_y);
 	wlr_scene_node_for_each_buffer(&tree->node, sysc_scene_probe_buffer, probe);
 }
 */
@@ -330,6 +435,24 @@ func sceneFXSetWindowCorners(node, surface unsafe.Pointer, radii [4]uint16) {
 		C.int(radii[0]), C.int(radii[1]), C.int(radii[2]), C.int(radii[3]))
 }
 
+func sceneFXRectSize(node unsafe.Pointer) (int, int) {
+	if node == nil {
+		return 0, 0
+	}
+	var width, height C.int
+	C.sysc_scene_rect_size_node((*C.struct_wlr_scene_node)(node), &width, &height)
+	return int(width), int(height)
+}
+
+func sceneFXShadowSize(node unsafe.Pointer) (int, int) {
+	if node == nil {
+		return 0, 0
+	}
+	var width, height C.int
+	C.sysc_scene_shadow_size_node((*C.struct_wlr_scene_node)(node), &width, &height)
+	return int(width), int(height)
+}
+
 func sceneFXSetSubsurfaceClip(node unsafe.Pointer, enabled bool, x, y, width, height int) {
 	C.sysc_scene_set_subsurface_clip((*C.struct_wlr_scene_node)(node), C.bool(enabled),
 		C.int(x), C.int(y), C.int(width), C.int(height))
@@ -387,6 +510,18 @@ func sceneFXTreeFirstBuffer(tree unsafe.Pointer) (width, height int, opacity flo
 	return int(probe.width), int(probe.height), float64(probe.opacity), bool(probe.found)
 }
 
+func sceneFXTreeBounds(tree unsafe.Pointer) (bounds rect, found bool) {
+	if tree == nil {
+		return rect{}, false
+	}
+	var probe C.struct_sysc_scene_bounds_probe
+	C.sysc_scene_tree_bounds((*C.struct_wlr_scene_tree)(tree), &probe)
+	return rect{
+		x: int(probe.left), y: int(probe.top),
+		w: int(probe.right - probe.left), h: int(probe.bottom - probe.top),
+	}, bool(probe.found)
+}
+
 func sceneFXTreeRoundedBufferCornerRadii(tree unsafe.Pointer) [4]uint16 {
 	var probe C.struct_sysc_scene_buffer_probe
 	if tree != nil {
@@ -396,4 +531,30 @@ func sceneFXTreeRoundedBufferCornerRadii(tree unsafe.Pointer) [4]uint16 {
 		uint16(probe.corner_radii[0]), uint16(probe.corner_radii[1]),
 		uint16(probe.corner_radii[2]), uint16(probe.corner_radii[3]),
 	}
+}
+
+func sceneFXSurfaceCornerRadii(tree, surface unsafe.Pointer) ([4]uint16, bool) {
+	if tree == nil || surface == nil {
+		return [4]uint16{}, false
+	}
+	var probe C.struct_sysc_scene_buffer_probe
+	probe.surface = (*C.struct_wlr_surface)(surface)
+	C.sysc_scene_tree_probe((*C.struct_wlr_scene_tree)(tree), &probe)
+	return [4]uint16{
+		uint16(probe.surface_corner_radii[0]), uint16(probe.surface_corner_radii[1]),
+		uint16(probe.surface_corner_radii[2]), uint16(probe.surface_corner_radii[3]),
+	}, bool(probe.surface_found)
+}
+
+func sceneFXSurfaceBounds(tree, surface unsafe.Pointer) (rect, bool) {
+	if tree == nil || surface == nil {
+		return rect{}, false
+	}
+	var probe C.struct_sysc_scene_buffer_probe
+	probe.surface = (*C.struct_wlr_surface)(surface)
+	C.sysc_scene_tree_probe((*C.struct_wlr_scene_tree)(tree), &probe)
+	return rect{
+		x: int(probe.surface_x), y: int(probe.surface_y),
+		w: int(probe.surface_width), h: int(probe.surface_height),
+	}, bool(probe.surface_found)
 }

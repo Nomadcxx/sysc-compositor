@@ -9,6 +9,7 @@ import (
 	"unsafe"
 
 	"github.com/Nomadcxx/sysc-compositor/internal/config"
+	"github.com/Nomadcxx/sysc-compositor/internal/wlr/testclient"
 	"github.com/Nomadcxx/sysc-compositor/internal/wm"
 )
 
@@ -83,6 +84,94 @@ func TestSceneFXRendererRendersNestedSceneEffects(t *testing.T) {
 	}
 	if c.drawn == 0 {
 		t.Fatal("nested SceneFX scene rendered no output frames")
+	}
+}
+
+func TestWindowCornerRadiusDoesNotRoundInteriorSubsurface(t *testing.T) {
+	checkSubsurfaceCornerRadii(t, 20, 18, [4]uint16{})
+}
+
+func TestWindowCornerRadiusRoundsSubsurfaceAtOuterCorner(t *testing.T) {
+	checkSubsurfaceCornerRadii(t, 0, 0, [4]uint16{20, 0, 0, 0})
+}
+
+func checkSubsurfaceCornerRadii(t *testing.T, childX, childY int, wantChildRadii [4]uint16) {
+	t.Helper()
+	radius := config.CornerRadius{20, 20, 20, 20}
+	c := newNestedWith(t, Options{WindowRules: []config.WindowRule{{GeometryCornerRadius: &radius}}})
+	var rootSurface, childSurface unsafe.Pointer
+	var rootRadii, childRadii [4]uint16
+	var checked bool
+	var rootSubsurfaces int
+	c.viewMapped = func(view *toplevelView) {
+		rootSurface = viewSurface(view)
+		var created, rootDestroy *Listener
+		created = AddListener(c.surfaceCreatedSignal(), func(data unsafe.Pointer) {
+			if data != rootSurface && childSurface == nil {
+				childSurface = data
+				c.drop(created)
+				created = nil
+				var childCommit, childDestroy *Listener
+				childCommit = AddListener(surfaceCommitSignal(childSurface), func(unsafe.Pointer) {
+					if buffer, _ := surfaceSubsurfaceState(childSurface); buffer == 0 {
+						return
+					}
+					_ = c.Post(func() {
+						var rootFound, childFound bool
+						rootRadii, rootFound = sceneFXSurfaceCornerRadii(unsafe.Pointer(view.tree), rootSurface)
+						childRadii, childFound = sceneFXSurfaceCornerRadii(unsafe.Pointer(view.tree), childSurface)
+						_, rootSubsurfaces = surfaceSubsurfaceState(rootSurface)
+						checked = rootFound && childFound
+						if checked {
+							c.drop(childCommit)
+							childCommit = nil
+						}
+					})
+				})
+				c.keep(childCommit)
+				childDestroy = AddListener(surfaceDestroySignal(childSurface), func(unsafe.Pointer) {
+					if childCommit != nil {
+						c.drop(childCommit)
+					}
+					c.drop(childDestroy)
+					childDestroy = nil
+				})
+				c.keep(childDestroy)
+			}
+		})
+		c.keep(created)
+		rootDestroy = AddListener(surfaceDestroySignal(rootSurface), func(unsafe.Pointer) {
+			if created != nil {
+				c.drop(created)
+			}
+			c.drop(rootDestroy)
+			rootDestroy = nil
+		})
+		c.keep(rootDestroy)
+	}
+	clientDone := make(chan error, 1)
+	go func() {
+		clientDone <- testclient.RunSubsurfaceWithChildAt(c.SocketName(), childX, childY)
+		c.Terminate()
+	}()
+	time.AfterFunc(5*time.Second, c.Terminate)
+	if err := c.Run(); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-clientDone; err != nil {
+		t.Fatal(err)
+	}
+	if !checked {
+		t.Fatal("nested client did not commit an interior subsurface under the mapped toplevel")
+	}
+	if rootSubsurfaces != 1 {
+		t.Fatalf("mapped root subsurface count = %d, want one", rootSubsurfaces)
+	}
+	if rootRadii != [4]uint16{20, 20, 20, 20} {
+		t.Errorf("root surface corner radii = %v, want [20 20 20 20]", rootRadii)
+	}
+	if childRadii != wantChildRadii {
+		t.Errorf("subsurface corner radii = %v, want %v", childRadii, wantChildRadii)
 	}
 }
 

@@ -27,3 +27,45 @@ func TestPreferNoCSDAllowsClientSideDecorationRequest(t *testing.T) {
 		t.Fatal("xdg-decoration client did not finish")
 	}
 }
+
+func TestPreferNoCSDExposesKDEServerDecoration(t *testing.T) {
+	c := newNestedWith(t, Options{PreferNoCSD: true})
+	clientDone := make(chan error, 1)
+	go func() {
+		clientDone <- testclient.RunKDEServerDecorationSequence(c.SocketName())
+		c.Terminate()
+	}()
+	time.AfterFunc(5*time.Second, c.Terminate)
+	if err := c.Run(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-clientDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("KDE server-decoration client did not finish")
+	}
+}
+
+func TestPreferNoCSDSetsInitialTiledStateWithoutDecorationProtocol(t *testing.T) {
+	c := newNestedWith(t, Options{PreferNoCSD: true})
+	clientDone := make(chan error, 1)
+	go func() {
+		clientDone <- testclient.RunPreferNoCSDTiledState(c.SocketName())
+		c.Terminate()
+	}()
+	time.AfterFunc(5*time.Second, c.Terminate)
+	if err := c.Run(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-clientDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("undecorated client did not receive an initial configure")
+	}
+}
