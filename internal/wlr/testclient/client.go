@@ -267,11 +267,15 @@ static int sysc_client_subsurface_sequence(const char *display_name) {
 	}
 
 	wl_subsurface_destroy(subsurface);
-	wl_surface_destroy(child);
-	child = NULL;
 	subsurface = NULL;
 	if (wl_display_roundtrip(display) < 0) {
 		result = 15;
+		goto done;
+	}
+	wl_surface_destroy(child);
+	child = NULL;
+	if (wl_display_roundtrip(display) < 0) {
+		result = 16;
 		goto done;
 	}
 

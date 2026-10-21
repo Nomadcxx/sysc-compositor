@@ -2,27 +2,191 @@ package wm
 
 import (
 	"math"
+	"time"
 
 	"github.com/Nomadcxx/sysc-compositor/internal/layout"
 )
 
 const (
-	overviewZoomMin       = 0.0001
-	overviewZoomMax       = 0.75
-	overviewWorkspaceGap  = 0.1
-	overviewGesturePixels = 300.0
-	swipeAxisThreshold    = 16.0
+	overviewZoomMin        = 0.0001
+	overviewZoomMax        = 0.75
+	overviewWorkspaceGap   = 0.1
+	overviewGesturePixels  = 300.0
+	overviewGestureDecay   = 0.997
+	overviewGestureHistory = 150 * time.Millisecond
+	swipeAxisThreshold     = 16.0
 )
 
 type overviewState struct {
 	open          bool
 	progress      float64
 	gestureActive bool
+	gestureStart  float64
+	gesture       overviewGestureTracker
+}
+
+type overviewGestureEvent struct {
+	delta float64
+	time  time.Duration
+}
+
+type overviewGestureTracker struct {
+	history  []overviewGestureEvent
+	position float64
+}
+
+func (t *overviewGestureTracker) push(delta float64, timestamp time.Duration) {
+	if len(t.history) != 0 && timestamp < t.history[len(t.history)-1].time {
+		return
+	}
+	t.history = append(t.history, overviewGestureEvent{delta: delta, time: timestamp})
+	t.position += delta
+	for len(t.history) > 1 && timestamp > t.history[0].time+overviewGestureHistory {
+		t.history = t.history[1:]
+	}
+}
+
+func (t *overviewGestureTracker) velocity() float64 {
+	if len(t.history) < 2 {
+		return 0
+	}
+	first, last := t.history[0], t.history[len(t.history)-1]
+	seconds := (last.time - first.time).Seconds()
+	if seconds <= 0 {
+		return 0
+	}
+	var delta float64
+	for _, event := range t.history {
+		delta += event.delta
+	}
+	return delta / seconds
+}
+
+func (t *overviewGestureTracker) projectedEndPosition() float64 {
+	return t.position - t.velocity()/(1000*math.Log(overviewGestureDecay))
+}
+
+const windowDragThreshold = 8.0
+
+// WindowDragTarget describes the proposed insertion point and its hint bounds.
+type WindowDragTarget struct {
+	WorkspaceID uint64
+	Position    layout.InsertPosition
+	Hint        layout.Bounds
+}
+
+// WindowDrag is transient pointer state; placements remain committed until release.
+type WindowDrag struct {
+	WindowID       uint64
+	StartX, StartY float64
+	Started        bool
+	Target         *WindowDragTarget
+}
+
+// BeginWindowDrag starts recognizing a tiled move without changing placement.
+func (m *Model) BeginWindowDrag(id uint64, x, y float64) bool {
+	state, exists := m.windows[id]
+	if !exists || m.windowDrag != nil {
+		return false
+	}
+	workspace := m.workspaceByID(state.workspaceID)
+	if workspace == nil {
+		return false
+	}
+	placement, ok := workspace.strip.Placement(id)
+	if !ok || placement.Floating {
+		return false
+	}
+	m.windowDrag = &WindowDrag{WindowID: id, StartX: x, StartY: y}
+	return true
+}
+
+// UpdateWindowDrag recognizes movement after eight logical pixels and tracks its target.
+func (m *Model) UpdateWindowDrag(x, y float64, output string) (WindowDrag, bool) {
+	if m.windowDrag == nil {
+		return WindowDrag{}, false
+	}
+	drag := m.windowDrag
+	dx, dy := x-drag.StartX, y-drag.StartY
+	if !drag.Started && dx*dx+dy*dy < windowDragThreshold*windowDragThreshold {
+		return cloneWindowDrag(*drag), false
+	}
+	drag.Started = true
+	state := m.windows[drag.WindowID]
+	if output == "" {
+		output = state.output
+	}
+	targetOutput := m.outputs[output]
+	if targetOutput == nil || len(targetOutput.workspaces) == 0 {
+		drag.Target = nil
+		return cloneWindowDrag(*drag), true
+	}
+	workspace := targetOutput.workspaces[targetOutput.active]
+	position := workspace.strip.InsertionPositionAt(x, y)
+	target := WindowDragTarget{WorkspaceID: workspace.id, Position: position,
+		Hint: workspace.strip.InsertHintBounds(position)}
+	drag.Target = &target
+	return cloneWindowDrag(*drag), true
+}
+
+// WindowDragState returns a copy of current transient drag state.
+func (m *Model) WindowDragState() (WindowDrag, bool) {
+	if m.windowDrag == nil {
+		return WindowDrag{}, false
+	}
+	return cloneWindowDrag(*m.windowDrag), true
+}
+
+// CancelWindowDrag discards the proposed target and leaves committed placements untouched.
+func (m *Model) CancelWindowDrag() bool {
+	if m.windowDrag == nil {
+		return false
+	}
+	m.windowDrag = nil
+	return true
+}
+
+// CommitWindowDrag applies the proposed tiled insertion on release.
+func (m *Model) CommitWindowDrag() bool {
+	drag := m.windowDrag
+	m.windowDrag = nil
+	if drag == nil || !drag.Started || drag.Target == nil {
+		return false
+	}
+	state, exists := m.windows[drag.WindowID]
+	if !exists {
+		return false
+	}
+	sourceOutput := m.outputs[state.output]
+	source := m.workspaceByID(state.workspaceID)
+	targetOutput, targetIndex, target := m.workspaceLocation(drag.Target.WorkspaceID)
+	if sourceOutput == nil || source == nil || targetOutput == nil || target == nil ||
+		!source.strip.MoveWindowToPosition(target.strip, drag.WindowID, drag.Target.Position) {
+		return false
+	}
+	m.windows[drag.WindowID] = windowState{output: targetOutput.name, workspaceID: target.id}
+	targetOutput.active = targetIndex
+	m.focusedOutput = targetOutput.name
+	m.reconcile(sourceOutput)
+	if sourceOutput != targetOutput {
+		m.reconcile(targetOutput)
+	}
+	m.clearFocusedUrgency()
+	return true
+}
+
+func cloneWindowDrag(drag WindowDrag) WindowDrag {
+	if drag.Target != nil {
+		target := *drag.Target
+		drag.Target = &target
+	}
+	return drag
 }
 
 // OverviewFrame contains the output's workspace thumbnails in layout coordinates.
 type OverviewFrame struct {
 	Output     layout.Bounds
+	Zoom       float64
 	Workspaces []OverviewWorkspace
 }
 
@@ -70,6 +234,7 @@ func (m *Model) setOverviewOpen(open bool) bool {
 		m.overview.progress = 1
 	}
 	m.overview.gestureActive = false
+	m.overview.gesture = overviewGestureTracker{}
 	return changed
 }
 
@@ -78,18 +243,31 @@ func (m *Model) OverviewProgress() float64 {
 	return m.overview.progress
 }
 
+// OverviewOpen reports the overview's current target state.
+func (m *Model) OverviewOpen() bool { return m.overview.open }
+
+// OverviewZoom returns the configured zoom interpolated by the current gesture progress.
+func (m *Model) OverviewZoom(zoom float64) float64 {
+	zoom = validOverviewZoom(zoom)
+	progress := clampOverviewProgress(m.overview.progress)
+	return 1 - progress*(1-zoom)
+}
+
 // BeginOverviewGesture starts a four-finger overview gesture at the current progress.
 func (m *Model) BeginOverviewGesture() {
 	m.overview.gestureActive = true
+	m.overview.gestureStart = m.overview.progress
+	m.overview.gesture = overviewGestureTracker{}
 	m.overview.open = true
 }
 
 // UpdateOverviewGesture applies vertical logical pixels to the active gesture.
-func (m *Model) UpdateOverviewGesture(deltaY float64) bool {
+func (m *Model) UpdateOverviewGesture(deltaY float64, timestamp time.Duration) bool {
 	if !m.overview.gestureActive || math.IsNaN(deltaY) || math.IsInf(deltaY, 0) {
 		return false
 	}
-	progress := clampOverviewProgress(m.overview.progress + deltaY/overviewGesturePixels)
+	m.overview.gesture.push(deltaY, timestamp)
+	progress := clampOverviewProgress(m.overview.gestureStart + m.overview.gesture.position/overviewGesturePixels)
 	if progress == m.overview.progress {
 		return false
 	}
@@ -97,13 +275,15 @@ func (m *Model) UpdateOverviewGesture(deltaY float64) bool {
 	return true
 }
 
-// EndOverviewGesture settles to the nearest open/closed state by gesture progress.
-func (m *Model) EndOverviewGesture() bool {
+// EndOverviewGesture settles to the open or closed state projected from recent swipe velocity.
+func (m *Model) EndOverviewGesture(timestamp time.Duration) bool {
 	if !m.overview.gestureActive {
 		return false
 	}
+	m.overview.gesture.push(0, timestamp)
 	m.overview.gestureActive = false
-	m.overview.open = m.overview.progress >= 0.5
+	projected := m.overview.gestureStart + m.overview.gesture.projectedEndPosition()/overviewGesturePixels
+	m.overview.open = clampOverviewProgress(projected) >= 0.5
 	if m.overview.open {
 		m.overview.progress = 1
 	} else {
@@ -128,7 +308,7 @@ func (m *Model) OverviewFrame(output string, zoom float64) (OverviewFrame, bool)
 	workspaceX := outputBounds.X + (outputBounds.Width-workspaceWidth)/2
 	activeY := outputBounds.Y + (outputBounds.Height-workspaceHeight)/2
 
-	frame := OverviewFrame{Output: outputBounds, Workspaces: make([]OverviewWorkspace, 0, len(out.workspaces))}
+	frame := OverviewFrame{Output: outputBounds, Zoom: zoom, Workspaces: make([]OverviewWorkspace, 0, len(out.workspaces))}
 	for index, workspace := range out.workspaces {
 		bounds := layout.Bounds{
 			X:     workspaceX,
@@ -174,6 +354,23 @@ func (m *Model) OverviewHitTest(output string, x, y, zoom float64) (OverviewHit,
 	return OverviewHit{}, false
 }
 
+// OverviewWorkspaceUnder returns the overview workspace row under a point, extending its horizontal hit region to the output width.
+func (m *Model) OverviewWorkspaceUnder(output string, x, y, zoom float64) (uint64, layout.Bounds, bool) {
+	frame, ok := m.OverviewFrame(output, zoom)
+	if !ok || !pointInBounds(x, y, frame.Output) {
+		return 0, layout.Bounds{}, false
+	}
+	for index := len(frame.Workspaces) - 1; index >= 0; index-- {
+		workspace := frame.Workspaces[index]
+		bounds := workspace.Bounds
+		bounds.X, bounds.Width = frame.Output.X, frame.Output.Width
+		if pointInBounds(x, y, bounds) {
+			return workspace.ID, bounds, true
+		}
+	}
+	return 0, layout.Bounds{}, false
+}
+
 // SelectOverviewAt focuses the hit window or workspace and closes overview.
 func (m *Model) SelectOverviewAt(output string, x, y, zoom float64) bool {
 	if !m.overview.open {
@@ -214,10 +411,10 @@ func (s *SwipeAxisSelector) Add(dx, dy float64) (axis SwipeAxis, delta float64, 
 	if s.axis == SwipeAxisNone {
 		s.x += dx
 		s.y += dy
-		if math.Max(math.Abs(s.x), math.Abs(s.y)) < swipeAxisThreshold {
+		if math.Hypot(s.x, s.y) < swipeAxisThreshold {
 			return SwipeAxisNone, 0, false
 		}
-		if math.Abs(s.x) >= math.Abs(s.y) {
+		if math.Abs(s.x) > math.Abs(s.y) {
 			s.axis = SwipeAxisHorizontal
 			return s.axis, s.x, true
 		}
@@ -253,6 +450,44 @@ type HotCornerTracker struct {
 	corner HotCorner
 	inside bool
 }
+
+// DNDEdgeScrollTracker enforces edge dwell and returns signed logical pixels.
+type DNDEdgeScrollTracker struct {
+	direction int
+	speed     float64
+	started   time.Time
+	last      time.Time
+	active    bool
+	scrolling bool
+}
+
+// Update reports the scroll distance since its previous call after edge dwell.
+func (t *DNDEdgeScrollTracker) Update(now time.Time, bounds layout.Bounds, x, y, width float64, delay time.Duration, maxSpeed float64) float64 {
+	direction, speed := DNDEdgeScrollAt(bounds, x, y, width, maxSpeed)
+	if direction == 0 || speed <= 0 {
+		t.Reset()
+		return 0
+	}
+	if !t.active || direction != t.direction {
+		*t = DNDEdgeScrollTracker{direction: direction, speed: speed, started: now, last: now, active: true}
+		return 0
+	}
+	t.speed = speed
+	if now.Sub(t.started) < delay {
+		return 0
+	}
+	if !t.scrolling {
+		t.scrolling = true
+		t.last = now
+		return 0
+	}
+	elapsed := now.Sub(t.last).Seconds()
+	t.last = now
+	return float64(t.direction) * t.speed * elapsed
+}
+
+// Reset ends the current edge dwell and scroll sequence.
+func (t *DNDEdgeScrollTracker) Reset() { *t = DNDEdgeScrollTracker{} }
 
 // Update detects corner entry using output-global logical coordinates.
 func (t *HotCornerTracker) Update(output string, bounds layout.Bounds, x, y float64, configured HotCorners) bool {
@@ -309,6 +544,23 @@ func hotCornerAt(bounds layout.Bounds, x, y float64) HotCorner {
 	default:
 		return HotCornerNone
 	}
+}
+
+// DNDEdgeScrollAt returns signed direction and speed for a horizontal edge zone.
+func DNDEdgeScrollAt(bounds layout.Bounds, x, y, width, maxSpeed float64) (int, float64) {
+	if bounds.Width <= 0 || bounds.Height <= 0 || width <= 0 || maxSpeed <= 0 ||
+		x < float64(bounds.X) || x >= float64(bounds.X+bounds.Width) ||
+		y < float64(bounds.Y) || y >= float64(bounds.Y+bounds.Height) {
+		return 0, 0
+	}
+	left, right := x-float64(bounds.X), float64(bounds.X+bounds.Width)-x
+	if left < width && left <= right {
+		return -1, maxSpeed * clampOverviewProgress((width-left)/width)
+	}
+	if right <= width {
+		return 1, maxSpeed * clampOverviewProgress((width-right)/width)
+	}
+	return 0, 0
 }
 
 func validOverviewZoom(zoom float64) float64 {

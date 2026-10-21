@@ -532,6 +532,81 @@ func TestOversizedColumnRemainsScrollable(t *testing.T) {
 	}
 }
 
+func TestScrollByMovesViewportWithoutChangingFocusedColumn(t *testing.T) {
+	w := NewWorkspace(Bounds{Width: 200, Height: 100}, 80, 10)
+	for id := uint64(1); id <= 4; id++ {
+		w.AddWindow(id)
+	}
+	w.FocusFirst()
+	focused, _ := w.FocusedWindow()
+	if w.ScrollBy(-1) {
+		t.Fatal("ScrollBy moved left of the first column's initial padding")
+	}
+	if !w.ScrollBy(100) {
+		t.Fatal("ScrollBy(100) did not move the viewport")
+	}
+	placement, _ := w.Placement(1)
+	if placement.X != -90 {
+		t.Fatalf("first column x = %d, want -90 after scrolling", placement.X)
+	}
+	if got, _ := w.FocusedWindow(); got != focused {
+		t.Fatalf("focused window = %d, want unchanged %d", got, focused)
+	}
+	if !w.ScrollBy(100) {
+		t.Fatal("ScrollBy did not clamp to the remaining content")
+	}
+	if w.ScrollBy(1) {
+		t.Fatal("ScrollBy moved past the last column")
+	}
+	if !w.ScrollBy(-1000) || w.ScrollBy(-1) {
+		t.Fatal("ScrollBy did not clamp at the first column")
+	}
+}
+
+func TestInsertionPositionTargetsColumnAndTabbedTileBoundaries(t *testing.T) {
+	w := NewWorkspace(Bounds{X: 10, Y: 20, Width: 400, Height: 300}, 100, 20)
+	for id := uint64(1); id <= 3; id++ {
+		w.AddWindow(id)
+	}
+	if got := w.InsertionPositionAt(12, 150); got != (InsertPosition{Column: 0}) {
+		t.Fatalf("before-first insertion = %+v, want column 0", got)
+	}
+	if got := w.InsertionPositionAt(225, 150); got != (InsertPosition{Column: 2}) {
+		t.Fatalf("between-column insertion = %+v, want column 2", got)
+	}
+	if got := w.InsertionPositionAt(500, 150); got != (InsertPosition{Column: 3}) {
+		t.Fatalf("after-last insertion = %+v, want column 3", got)
+	}
+
+	tabbed := NewWorkspace(Bounds{X: 10, Y: 20, Width: 400, Height: 300}, 100, 20)
+	tabbed.AddWindow(1)
+	tabbed.AddWindow(2)
+	tabbed.FocusLeft()
+	if !tabbed.ConsumeWindowIntoColumn() || !tabbed.ToggleColumnTabbedDisplay() {
+		t.Fatal("could not create a tabbed column")
+	}
+	active, _ := tabbed.Placement(1)
+	upper := tabbed.InsertionPositionAt(float64(active.X+20), float64(active.Y+1))
+	lower := tabbed.InsertionPositionAt(float64(active.X+20), float64(active.Y+active.Height-1))
+	if !upper.InColumn || upper.Tile != 0 || !lower.InColumn || lower.Tile != 1 {
+		t.Fatalf("tabbed insertion positions = upper %+v lower %+v, want before and after active tile", upper, lower)
+	}
+}
+
+func TestMoveWindowToPositionReordersAndKeepsTabbedMembership(t *testing.T) {
+	w := NewWorkspace(Bounds{Width: 500, Height: 300}, 100, 20)
+	for id := uint64(1); id <= 3; id++ {
+		w.AddWindow(id)
+	}
+	if !w.MoveWindowToPosition(w, 1, InsertPosition{Column: 3}) {
+		t.Fatal("MoveWindowToPosition did not move window to the last column")
+	}
+	placements := w.Placements()
+	if placements[0].ID != 2 || placements[1].ID != 3 || placements[2].ID != 1 {
+		t.Fatalf("column order after move = %+v, want [2,3,1]", placements)
+	}
+}
+
 func TestRemovingWindowRemovesItsColumn(t *testing.T) {
 	ws := NewWorkspace(Bounds{Width: 1000, Height: 800}, 500, 16)
 	ws.AddWindow(1)

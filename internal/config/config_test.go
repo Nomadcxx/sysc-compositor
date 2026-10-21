@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -113,11 +114,107 @@ binds {
 	if cfg.Cursor.Theme != "Adwaita" || cfg.Cursor.Size != 28 {
 		t.Errorf("cursor = %+v", cfg.Cursor)
 	}
-	if len(cfg.Binds) != 4 || cfg.Binds[1].Actions[0].Args[0] != "kitty" || cfg.Binds[3].Actions[0].WorkspaceIndex != 1 {
+	if len(cfg.Binds) != 5 || cfg.Binds[1].Actions[0].Args[0] != "kitty" || cfg.Binds[3].Actions[0].WorkspaceIndex != 1 ||
+		cfg.Binds[4].Actions[0].Name != "toggle-overview" {
 		t.Errorf("applied binds = %+v", cfg.Binds)
 	}
-	if !reflect.DeepEqual(cfg.UnappliedActions, []string{"toggle-overview"}) {
-		t.Errorf("unapplied actions = %q, want toggle-overview", cfg.UnappliedActions)
+	if len(cfg.UnappliedActions) != 0 {
+		t.Errorf("unapplied actions = %q, want none", cfg.UnappliedActions)
+	}
+}
+
+func TestM7OverviewGesturesAndInsertHintConfig(t *testing.T) {
+	cfg, err := Parse("m7.kdl", []byte(`
+overview {
+    zoom 0.6
+    backdrop-color "#11223380"
+}
+gestures {
+    hot-corners {
+        top-right
+        bottom-left
+    }
+    dnd-edge-view-scroll {
+        trigger-width 45
+        delay-ms 150
+        max-speed 900
+    }
+}
+layout {
+    insert-hint {
+        off
+        color 20 30 40 50
+    }
+}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Overview.Zoom != 0.6 || cfg.Overview.BackdropColor != (Color{17.0 / 255, 34.0 / 255, 51.0 / 255, 128.0 / 255}) {
+		t.Errorf("overview config = %+v, want zoom 0.6 and #11223380", cfg.Overview)
+	}
+	if cfg.Gestures.HotCorners != (HotCorners{TopRight: true, BottomLeft: true}) {
+		t.Errorf("hot corners = %+v", cfg.Gestures.HotCorners)
+	}
+	if cfg.Gestures.DNDEdgeViewScroll != (DNDEdgeViewScroll{TriggerWidth: 45, DelayMS: 150, MaxSpeed: 900}) {
+		t.Errorf("DND edge view scroll = %+v", cfg.Gestures.DNDEdgeViewScroll)
+	}
+	if cfg.Layout.InsertHint != (InsertHint{Off: true, Color: Color{20.0 / 255, 30.0 / 255, 40.0 / 255, 50.0 / 255}}) {
+		t.Errorf("insert hint = %+v", cfg.Layout.InsertHint)
+	}
+	if slices.Contains(cfg.Warnings, "overview") || slices.Contains(cfg.Warnings, "gestures") || slices.Contains(cfg.Warnings, "layout.insert-hint") {
+		t.Errorf("M7 config sections remain unapplied: %v", cfg.Warnings)
+	}
+}
+
+func TestM7ConfigDefaultsAndRangeValidation(t *testing.T) {
+	cfg := Default()
+	if cfg.Overview.Zoom != 0.5 || cfg.Overview.BackdropColor != (Color{0.15, 0.15, 0.15, 1}) {
+		t.Errorf("overview defaults = %+v", cfg.Overview)
+	}
+	if cfg.Gestures.DNDEdgeViewScroll != (DNDEdgeViewScroll{TriggerWidth: 30, DelayMS: 100, MaxSpeed: 1500}) {
+		t.Errorf("DND edge scroll defaults = %+v", cfg.Gestures.DNDEdgeViewScroll)
+	}
+	if cfg.Layout.InsertHint != (InsertHint{Color: Color{127.0 / 255, 200.0 / 255, 1, 128.0 / 255}}) {
+		t.Errorf("insert hint defaults = %+v", cfg.Layout.InsertHint)
+	}
+
+	for src, want := range map[string]string{
+		`overview { zoom -0.1; }`:                                   "zoom",
+		`overview { zoom 1.1; }`:                                    "zoom",
+		`overview { backdrop-color "#12xz"; }`:                      "color",
+		`overview { backdrop-color 0 0 256 255; }`:                  "color",
+		`gestures { dnd-edge-view-scroll { trigger-width -1; }; }`:  "trigger-width",
+		`gestures { dnd-edge-view-scroll { delay-ms 65536; }; }`:    "delay-ms",
+		`gestures { dnd-edge-view-scroll { max-speed 1000001; }; }`: "max-speed",
+		`layout { insert-hint { color 1 2 3 256; }; }`:              "color",
+	} {
+		if _, err := Parse("bad-m7.kdl", []byte(src)); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("Parse(%q) error = %v, want containing %q", src, err, want)
+		}
+	}
+}
+
+func TestConfiguredLaptopNiriM7Values(t *testing.T) {
+	path := os.Getenv("SYSC_NIRI_CONFIG")
+	if path == "" {
+		t.Skip("SYSC_NIRI_CONFIG is not set")
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Overview.Zoom != 0.5 || cfg.Overview.BackdropColor != (Color{0, 0, 0, 1}) {
+		t.Errorf("laptop overview = %+v, want zoom 0.5 and #000", cfg.Overview)
+	}
+	if !cfg.Gestures.HotCorners.Off {
+		t.Errorf("laptop hot corners = %+v, want off", cfg.Gestures.HotCorners)
+	}
+	if cfg.Gestures.DNDEdgeViewScroll != (DNDEdgeViewScroll{TriggerWidth: 30, DelayMS: 100, MaxSpeed: 1500}) {
+		t.Errorf("laptop DND edge scroll = %+v, want Niri defaults", cfg.Gestures.DNDEdgeViewScroll)
+	}
+	if cfg.Layout.InsertHint.Off || cfg.Layout.InsertHint.Color != (Color{1, 1, 1, 34.0 / 255}) {
+		t.Errorf("laptop insert hint = %+v, want #ffffff22 enabled", cfg.Layout.InsertHint)
 	}
 }
 

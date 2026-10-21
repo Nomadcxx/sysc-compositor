@@ -452,6 +452,15 @@ func (c *Compositor) executeBindAction(action bind.Action) {
 	case bind.ActionToggleWindowFloating:
 		c.ToggleWindowFloating()
 		return
+	case bind.ActionToggleOverview:
+		c.ToggleOverview()
+		return
+	case bind.ActionOpenOverview:
+		c.OpenOverview()
+		return
+	case bind.ActionCloseOverview:
+		c.CloseOverview()
+		return
 	case bind.ActionMoveWindowToFloating, bind.ActionMoveWindowToTiling:
 		id, ok := c.model.ActiveWindow()
 		if !ok {

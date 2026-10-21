@@ -3,6 +3,7 @@ package wm
 import (
 	"math"
 	"testing"
+	"time"
 
 	"github.com/Nomadcxx/sysc-compositor/internal/layout"
 )
@@ -132,6 +133,10 @@ func TestThreeFingerSwipeSelectsDominantAxisAtSixteenPixels(t *testing.T) {
 	if axis, delta, selected := vertical.Add(3, -16); !selected || axis != SwipeAxisVertical || delta != -16 {
 		t.Fatalf("vertical threshold update = %v,%v,%v, want vertical -16", axis, delta, selected)
 	}
+	var diagonal SwipeAxisSelector
+	if axis, _, selected := diagonal.Add(12, 12); !selected || axis != SwipeAxisVertical {
+		t.Fatalf("diagonal threshold update = %v,%v, want Niri's vertical tie break", axis, selected)
+	}
 }
 
 func TestOverviewGestureTracksProgressAndSettles(t *testing.T) {
@@ -141,18 +146,18 @@ func TestOverviewGestureTracksProgressAndSettles(t *testing.T) {
 	if !m.Snapshot().OverviewOpen {
 		t.Fatal("overview should be open while a four-finger gesture is active")
 	}
-	if !m.UpdateOverviewGesture(150) || m.OverviewProgress() != 0.5 {
+	if !m.UpdateOverviewGesture(150, 100*time.Millisecond) || m.OverviewProgress() != 0.5 {
 		t.Fatalf("overview progress = %v, want 0.5", m.OverviewProgress())
 	}
-	if !m.EndOverviewGesture() || !m.Snapshot().OverviewOpen || m.OverviewProgress() != 1 {
+	if !m.EndOverviewGesture(110*time.Millisecond) || !m.Snapshot().OverviewOpen || m.OverviewProgress() != 1 {
 		t.Fatalf("gesture did not settle open: open=%v progress=%v", m.Snapshot().OverviewOpen, m.OverviewProgress())
 	}
 
 	m.BeginOverviewGesture()
-	if !m.UpdateOverviewGesture(-151) || math.Abs(m.OverviewProgress()-0.4966666666666667) > 1e-9 {
+	if !m.UpdateOverviewGesture(-151, 200*time.Millisecond) || math.Abs(m.OverviewProgress()-0.4966666666666667) > 1e-9 {
 		t.Fatalf("closing gesture progress = %v, want about 0.4967", m.OverviewProgress())
 	}
-	if !m.EndOverviewGesture() || m.Snapshot().OverviewOpen || m.OverviewProgress() != 0 {
+	if !m.EndOverviewGesture(210*time.Millisecond) || m.Snapshot().OverviewOpen || m.OverviewProgress() != 0 {
 		t.Fatalf("gesture did not settle closed: open=%v progress=%v", m.Snapshot().OverviewOpen, m.OverviewProgress())
 	}
 }
@@ -194,4 +199,104 @@ func TestHotCornerEntryOnAnotherOutputIsNewEntry(t *testing.T) {
 	if !tracker.Update("DP-2", second, 1000, 0, HotCorners{}) {
 		t.Fatal("entering the same corner on a different output did not trigger")
 	}
+}
+
+func TestDndEdgeScrollHonorsDwellSpeedAndExit(t *testing.T) {
+	bounds := layout.Bounds{X: -1000, Y: 100, Width: 1000, Height: 800}
+	delay := 100 * time.Millisecond
+	start := time.Unix(10, 0)
+	var tracker DNDEdgeScrollTracker
+	if delta := tracker.Update(start, bounds, -1000, 500, 30, delay, 1500); delta != 0 {
+		t.Fatalf("initial edge update = %v, want no scroll", delta)
+	}
+	if delta := tracker.Update(start.Add(99*time.Millisecond), bounds, -1000, 500, 30, delay, 1500); delta != 0 {
+		t.Fatalf("pre-dwell update = %v, want no scroll", delta)
+	}
+	if delta := tracker.Update(start.Add(100*time.Millisecond), bounds, -1000, 500, 30, delay, 1500); delta != 0 {
+		t.Fatalf("first post-dwell update = %v, want timer baseline", delta)
+	}
+	if delta := tracker.Update(start.Add(120*time.Millisecond), bounds, -1000, 500, 30, delay, 1500); math.Abs(delta+30) > 1e-9 {
+		t.Fatalf("left-edge delta = %v, want -30 at the speed cap", delta)
+	}
+	if delta := tracker.Update(start.Add(140*time.Millisecond), bounds, -990, 500, 30, delay, 1500); delta >= 0 || math.Abs(delta) >= 30 {
+		t.Fatalf("near-edge delta = %v, want slower leftward scroll", delta)
+	}
+	if delta := tracker.Update(start.Add(160*time.Millisecond), bounds, -900, 500, 30, delay, 1500); delta != 0 {
+		t.Fatalf("edge exit delta = %v, want no scroll", delta)
+	}
+}
+
+func TestFocusWorkspaceByDeltaClampsToAvailableWorkspaces(t *testing.T) {
+	m := New()
+	m.AddOutput("DP-1", layout.Bounds{Width: 1000, Height: 800}, 500, 16)
+	if !m.MapWindow(1, "DP-1") {
+		t.Fatal("could not map first window")
+	}
+	workspaces := m.Snapshot().Workspaces
+	if len(workspaces) != 2 || !m.MapWindowToWorkspace(2, workspaces[1].ID) || !m.FocusWorkspace("DP-1", 1) {
+		t.Fatal("could not create three workspaces")
+	}
+	if !m.FocusWorkspaceByDelta("DP-1", 1) {
+		t.Fatal("FocusWorkspaceByDelta(+1) did not switch to the second workspace")
+	}
+	if !m.FocusWorkspaceByDelta("DP-1", 1) {
+		t.Fatal("FocusWorkspaceByDelta(+1) did not switch to the trailing workspace")
+	}
+	if m.FocusWorkspaceByDelta("DP-1", 1) {
+		t.Fatal("FocusWorkspaceByDelta moved beyond the trailing workspace")
+	}
+	if !m.FocusWorkspaceByDelta("DP-1", -2) {
+		t.Fatal("FocusWorkspaceByDelta(-2) did not return to the first workspace")
+	}
+}
+
+func TestWindowDragKeepsPlacementUntilReleaseAndCancellationRestoresIt(t *testing.T) {
+	m := New()
+	m.AddOutput("DP-1", layout.Bounds{Width: 1000, Height: 800}, 300, 16)
+	for id := uint64(1); id <= 3; id++ {
+		if !m.MapWindow(id, "DP-1") {
+			t.Fatalf("MapWindow(%d) failed", id)
+		}
+	}
+	before := m.Snapshot().Windows
+	if !m.BeginWindowDrag(1, 100, 100) {
+		t.Fatal("BeginWindowDrag failed")
+	}
+	if drag, started := m.UpdateWindowDrag(107, 100, "DP-1"); started || drag.Started {
+		t.Fatalf("drag crossed threshold early: %+v", drag)
+	}
+	if drag, started := m.UpdateWindowDrag(108, 100, "DP-1"); !started || !drag.Started || drag.Target == nil {
+		t.Fatalf("drag target after threshold = %+v, started %v", drag, started)
+	}
+	if got := m.Snapshot().Windows; !sameWindowPlacements(got, before) {
+		t.Fatalf("placement changed before release: %+v, want %+v", got, before)
+	}
+	if !m.CancelWindowDrag() || !sameWindowPlacements(m.Snapshot().Windows, before) {
+		t.Fatal("cancelling drag changed its committed placement")
+	}
+	if !m.BeginWindowDrag(1, 100, 100) {
+		t.Fatal("second BeginWindowDrag failed")
+	}
+	if _, started := m.UpdateWindowDrag(108, 100, "DP-1"); !started {
+		t.Fatal("second drag did not cross its threshold")
+	}
+	if _, started := m.UpdateWindowDrag(995, 400, "DP-1"); !started || !m.CommitWindowDrag() {
+		t.Fatal("CommitWindowDrag failed")
+	}
+	after := m.Snapshot().Windows
+	if len(after) != 3 || after[0].ID != 2 || after[1].ID != 3 || after[2].ID != 1 {
+		t.Fatalf("window order after release = %+v, want [2,3,1]", after)
+	}
+}
+
+func sameWindowPlacements(left, right []WindowSnapshot) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index].ID != right[index].ID || left[index].WorkspaceID != right[index].WorkspaceID || left[index].Tile != right[index].Tile {
+			return false
+		}
+	}
+	return true
 }

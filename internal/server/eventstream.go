@@ -165,7 +165,7 @@ func initialEventLines(state niriSnapshot) [][]byte {
 	lines = append(lines,
 		eventLine("OverviewOpenedOrClosed", struct {
 			IsOpen bool `json:"is_open"`
-		}{IsOpen: false}),
+		}{IsOpen: state.overviewOpen}),
 		eventLine("ConfigLoaded", struct {
 			Failed bool `json:"failed"`
 		}{Failed: state.configLoadFailed}),
@@ -236,6 +236,11 @@ func eventStreamChanges(before, after niriSnapshot) [][]byte {
 				Idx uint8 `json:"idx"`
 			}{Idx: after.keyboardLayouts.CurrentIdx}))
 		}
+	}
+	if before.overviewOpen != after.overviewOpen {
+		lines = append(lines, eventLine("OverviewOpenedOrClosed", struct {
+			IsOpen bool `json:"is_open"`
+		}{IsOpen: after.overviewOpen}))
 	}
 	return lines
 }

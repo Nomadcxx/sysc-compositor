@@ -41,6 +41,13 @@ type Placement struct {
 	X, Y, Width, Height int
 }
 
+// InsertPosition is a column boundary or an insertion point inside a column.
+type InsertPosition struct {
+	Column   int
+	Tile     int
+	InColumn bool
+}
+
 // SetWindowFloating moves one window between the tiled and floating layers.
 func (w *Workspace) SetWindowFloating(id uint64, floating bool, bounds Bounds) bool {
 	floatIndex := w.floatingIndexOf(id)
@@ -435,6 +442,151 @@ func (w *Workspace) MoveWindowTo(target *Workspace, id uint64) bool {
 	return true
 }
 
+// InsertionPositionAt chooses the closest column or tile boundary in workspace coordinates.
+func (w *Workspace) InsertionPositionAt(x, y float64) InsertPosition {
+	if len(w.columns) == 0 {
+		return InsertPosition{}
+	}
+	contentX := x - float64(w.bounds.X) + float64(w.viewOffset)
+	nearestColumn, columnDistance := 0, math.Inf(1)
+	for index := range w.columns {
+		distance := math.Abs(float64(w.columnStart(index)) - contentX)
+		if distance < columnDistance {
+			nearestColumn, columnDistance = index, distance
+		}
+	}
+	if contentX < 0 {
+		return InsertPosition{Column: 0}
+	}
+	contentWidth := w.columnStart(len(w.columns)-1) + w.columnWidthAt(len(w.columns)-1)
+	if contentX >= float64(contentWidth) {
+		return InsertPosition{Column: len(w.columns)}
+	}
+	column := 0
+	for index := range w.columns {
+		if float64(w.columnStart(index)) <= contentX {
+			column = index
+		} else {
+			break
+		}
+	}
+	state := &w.columns[column]
+	tileIndex, tileDistance := 0, math.Inf(1)
+	if state.display == ColumnDisplayTabbed {
+		active := min(state.active, len(state.tiles)-1)
+		placement := w.placementAt(column, active)
+		for _, candidate := range []struct {
+			index int
+			y     float64
+		}{{active, float64(placement.Y)}, {active + 1, float64(placement.Y + placement.Height)}} {
+			distance := math.Abs(candidate.y - y)
+			if distance < tileDistance {
+				tileIndex, tileDistance = candidate.index, distance
+			}
+		}
+	} else {
+		for index := range state.tiles {
+			placement := w.placementAt(column, index)
+			distance := math.Abs(float64(placement.Y) - y)
+			if distance < tileDistance {
+				tileIndex, tileDistance = index, distance
+			}
+		}
+		last := w.placementAt(column, len(state.tiles)-1)
+		if distance := math.Abs(float64(last.Y+last.Height) - y); distance < tileDistance {
+			tileIndex, tileDistance = len(state.tiles), distance
+		}
+	}
+	if columnDistance <= tileDistance {
+		return InsertPosition{Column: nearestColumn}
+	}
+	return InsertPosition{Column: column, Tile: tileIndex, InColumn: true}
+}
+
+// InsertHintBounds returns the narrow scene rectangle for a pending insertion.
+func (w *Workspace) InsertHintBounds(position InsertPosition) Bounds {
+	if len(w.columns) == 0 || !position.InColumn {
+		contentWidth := 0
+		if len(w.columns) != 0 {
+			last := len(w.columns) - 1
+			contentWidth = w.columnStart(last) + w.columnWidthAt(last)
+		}
+		index := min(max(position.Column, 0), len(w.columns))
+		x := w.bounds.X + w.columnStart(index) - w.viewOffset
+		if position.Column >= len(w.columns) {
+			x = w.bounds.X + contentWidth - w.viewOffset
+		}
+		return Bounds{X: x - 2, Y: w.bounds.Y, Width: 4, Height: w.bounds.Height}
+	}
+	column := min(max(position.Column, 0), len(w.columns)-1)
+	state := &w.columns[column]
+	if len(state.tiles) == 0 {
+		return Bounds{}
+	}
+	x := w.bounds.X + w.columnStart(column) - w.viewOffset
+	y := w.bounds.Y
+	if state.display == ColumnDisplayTabbed {
+		active := min(state.active, len(state.tiles)-1)
+		placement := w.placementAt(column, active)
+		if position.Tile > active {
+			y = placement.Y + placement.Height
+		} else {
+			y = placement.Y
+		}
+	} else if position.Tile >= len(state.tiles) {
+		last := w.placementAt(column, len(state.tiles)-1)
+		y = last.Y + last.Height
+	} else {
+		y = w.placementAt(column, max(0, position.Tile)).Y
+	}
+	return Bounds{X: x, Y: y - 2, Width: w.columnWidthAt(column), Height: 4}
+}
+
+// MoveWindowToPosition commits a tiled move while preserving the tile state.
+func (w *Workspace) MoveWindowToPosition(target *Workspace, id uint64, position InsertPosition) bool {
+	if target == nil || w.floatingIndexOf(id) >= 0 {
+		return false
+	}
+	sourceColumn, sourceTile, ok := w.locationOf(id)
+	if !ok {
+		return false
+	}
+	tile := w.columns[sourceColumn].tiles[sourceTile]
+	columnWidth := w.columns[sourceColumn].width
+	if target == w {
+		w.RemoveWindow(id)
+		if sourceColumn < position.Column {
+			position.Column--
+		} else if sourceColumn == position.Column && position.InColumn && sourceTile < position.Tile {
+			position.Tile--
+		}
+	} else {
+		w.RemoveWindow(id)
+	}
+	if position.InColumn && len(target.columns) > 0 {
+		column := min(max(position.Column, 0), len(target.columns)-1)
+		state := &target.columns[column]
+		tileIndex := min(max(position.Tile, 0), len(state.tiles))
+		state.tiles = append(state.tiles, tileState{})
+		copy(state.tiles[tileIndex+1:], state.tiles[tileIndex:])
+		state.tiles[tileIndex] = tile
+		state.active = tileIndex
+		target.focused = column
+		target.focusedFloat = 0
+		target.revealFocused()
+		return true
+	}
+	index := min(max(position.Column, 0), len(target.columns))
+	column := columnState{tiles: []tileState{tile}, width: columnWidth}
+	target.columns = append(target.columns, columnState{})
+	copy(target.columns[index+1:], target.columns[index:])
+	target.columns[index] = column
+	target.focused = index
+	target.focusedFloat = 0
+	target.revealFocused()
+	return true
+}
+
 // RemapFloatingBounds carries a floating window's relative position to another workspace.
 func RemapFloatingBounds(source, target, bounds Bounds) Bounds {
 	bounds.X = remapFloatingPosition(bounds.X, source.X, source.Width, target.X, target.Width, bounds.Width)
@@ -519,6 +671,22 @@ func (w *Workspace) FocusRight() bool {
 	}
 	w.focused++
 	w.revealFocused()
+	return true
+}
+
+// ScrollBy moves the workspace viewport without changing its focused column.
+func (w *Workspace) ScrollBy(delta int) bool {
+	if delta == 0 || len(w.columns) == 0 || w.bounds.Width <= 0 {
+		return false
+	}
+	last := len(w.columns) - 1
+	contentWidth := w.columnStart(last) + w.columnWidthAt(last)
+	minOffset := min(w.viewOffset, 0)
+	offset := min(max(w.viewOffset+delta, minOffset), max(0, contentWidth-w.bounds.Width))
+	if offset == w.viewOffset {
+		return false
+	}
+	w.viewOffset = offset
 	return true
 }
 

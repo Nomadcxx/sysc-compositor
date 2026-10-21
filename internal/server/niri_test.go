@@ -263,6 +263,38 @@ func TestNiriWindowActionsArePosted(t *testing.T) {
 	}
 }
 
+func TestNiriOverviewStateAndActions(t *testing.T) {
+	h := niriHandler{
+		snapshot: func() niriSnapshot { return niriSnapshot{overviewOpen: true} },
+	}
+	reply, after := h.handle(ipc.Request{Name: "OverviewState"})
+	if after != nil || string(reply.Ok) != `{"OverviewState":{"is_open":true}}` {
+		t.Fatalf("OverviewState = %+v, after %v", reply, after != nil)
+	}
+
+	var posted []string
+	h.snapshot = func() niriSnapshot { return niriSnapshot{} }
+	h.postAction = func(action ipc.Action, _ uint64) error {
+		posted = append(posted, action.Name)
+		return nil
+	}
+	for _, name := range []string{"ToggleOverview", "OpenOverview", "CloseOverview"} {
+		line := []byte(`{"Action":{"` + name + `":{}}}`)
+		request, err := ipc.DecodeRequest(line)
+		if err != nil {
+			t.Fatalf("DecodeRequest(%s): %v", line, err)
+		}
+		reply, after = h.handle(request)
+		if string(reply.Ok) != string(ipc.Handled) || after == nil {
+			t.Fatalf("%s reply = %+v, after %v; want Handled and queued action", name, reply, after != nil)
+		}
+		after()
+	}
+	if !reflect.DeepEqual(posted, []string{"ToggleOverview", "OpenOverview", "CloseOverview"}) {
+		t.Fatalf("posted overview actions = %v", posted)
+	}
+}
+
 func TestNiriM6ActionsArePosted(t *testing.T) {
 	output := "DP-1"
 	focusedOutput := ipc.Output{Name: output}

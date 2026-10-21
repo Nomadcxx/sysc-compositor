@@ -24,7 +24,7 @@ Legend: `[ ]` missing · `[~]` partial · `[x]` done.
 | Output | [ ] | M15 |
 | EventStream | [~] | M3 — initial baseline, workspace and keyboard updates; remaining events land with their owning milestones |
 | ReturnError | [x] | M2 |
-| OverviewState | [ ] | M7 |
+| OverviewState | [x] | M7 — Niri 26.04 query returns open state |
 | Casts | [ ] | M12 |
 
 ## Events (19)
@@ -44,7 +44,7 @@ Legend: `[ ]` missing · `[~]` partial · `[x]` done.
 | WindowLayoutsChanged | [x] | M5 — tile order, position, and size changes |
 | KeyboardLayoutsChanged | [~] | M3 — current XKB layout baseline; config support in M9 |
 | KeyboardLayoutSwitched | [~] | M3 — XKB layout changes; switch action in M9 |
-| OverviewOpenedOrClosed | [~] | M3 — initial closed state; overview in M7 |
+| OverviewOpenedOrClosed | [x] | M7 — initial state and open/close transitions |
 | ConfigLoaded | [~] | M3 — initial config-load result; reload in M9 |
 | ScreenshotCaptured | [ ] | M11 |
 | CastsChanged | [~] | M3 — initial empty baseline; casts in M12 |
@@ -125,20 +125,27 @@ M5 applies `Spawn`, `SpawnSh`, `CloseWindow`, `FocusColumnLeft/Right/First/Last`
 `MoveColumnLeft/Right/ToFirst/ToLast`, and `FocusWorkspace` by stable ID or current-output index.
 M6 adds the window, column, floating, fullscreen, urgency, named-workspace, and monitor actions above.
 
+### M7 overview
+
+| Action | Status | Milestone |
+|---|---|---|
+| ToggleOverview | [x] | M7 — toggles overview state |
+| OpenOverview / CloseOverview | [x] | M7 — idempotent state actions |
+
 ## Config sections
 
 | Section | Status | Milestone |
 |---|---|---|
-| input | [~] | M2 keyboard xkb + repeat; M5 nested Mod defaults, core key binds, Mod+drag, and edge resize with tile dimensions retained across unmap/remap for the stable window ID; M6 adds its keyboard action subset; remaining input work is M7/M10 |
+| input | [~] | M2 keyboard xkb + repeat; M5 nested Mod defaults, core key binds, Mod+drag, and edge resize with tile dimensions retained across unmap/remap for the stable window ID; M6 adds its keyboard action subset; M7 adds overview gestures, hot corners, tiled insert hints, and DND edge scrolling; physical input and client gesture delivery remain unverified; remaining input work is M10 |
 | output | [~] | M3 reports connected outputs, available/current modes, logical geometry, scale/transform, and VRR capability/state; M15 applies mode/refresh, scale, position, transform, power, and VRR settings |
-| layout | [~] | M5 gaps, default column width, scrolling columns, client min/max size bounds, centered window offsets, and retained pointer-resized column width/window height across focus, output geometry updates, and unmap/remap; remaining layout options later |
-| binds | [~] | M5 core key subset plus M6 window, workspace, urgency, and monitor actions; unsupported later actions and mouse/scroll triggers warn |
+| layout | [~] | M5 gaps, default column width, scrolling columns, client min/max size bounds, centered window offsets, and retained pointer-resized column width/window height across focus, output geometry updates, and unmap/remap; M7 insert-hint off/color and tiled drag placement; remaining layout options later |
+| binds | [~] | M5 core key subset plus M6 window, workspace, urgency, and monitor actions; M7 overview actions; unsupported later actions and mouse/scroll triggers warn |
 | switch-events | [ ] | M9 |
 | window-rule | [~] | M6 app-id/title match and exclude, ordered placement/fullscreen overrides, and default size fields; remaining Niri rule effects are unimplemented |
-| layer-rule | [~] | M6 namespace matching and `place-within-backdrop` classification for M7; remaining Niri layer-rule effects are unimplemented |
+| layer-rule | [~] | M6 parses namespace matching and `place-within-backdrop`; M7 does not render qualifying background surfaces within the overview backdrop or project background/bottom surfaces into workspace thumbnails; other Niri layer-rule effects remain unimplemented |
 | animations | [ ] | M8 |
-| gestures | [ ] | M7 |
-| overview | [ ] | M7 |
+| gestures | [~] | M7 swipe, hot-corner, and DND edge-scroll logic passes synthetic nested tests; physical touchpad input, bound-client forwarding of unsupported gestures, and live client DND remain unverified |
+| overview | [~] | M7 IPC, backdrop, window projection, and pointer selection; background/bottom layer projection and visual `place-within-backdrop` behavior remain unimplemented; spring animation is M8 |
 | hotkey-overlay | [ ] | M11 |
 | environment | [x] | M2 (applied to spawns) |
 | cursor | [~] | M5 theme/size and child environment; cursor-shape M10, per-output scale M15 |

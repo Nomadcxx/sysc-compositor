@@ -90,6 +90,31 @@ func TestEventStreamInitialStateOrderAndUpdates(t *testing.T) {
 	}
 }
 
+func TestEventStreamPublishesOverviewInitialStateAndTransitions(t *testing.T) {
+	opened := niriSnapshot{overviewOpen: true}
+	lines := initialEventLines(opened)
+	found := false
+	for _, line := range lines {
+		if strings.Contains(string(line), `"OverviewOpenedOrClosed"`) {
+			if got := string(line); got != `{"OverviewOpenedOrClosed":{"is_open":true}}`+"\n" {
+				t.Fatalf("initial overview event = %s", got)
+			}
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("initial event stream omitted the open overview state")
+	}
+
+	closed := niriSnapshot{}
+	if got := eventStreamChanges(opened, closed); !reflect.DeepEqual(got, [][]byte{[]byte(`{"OverviewOpenedOrClosed":{"is_open":false}}` + "\n")}) {
+		t.Fatalf("overview close events = %s, want one close event", got)
+	}
+	if got := eventStreamChanges(closed, opened); !reflect.DeepEqual(got, [][]byte{[]byte(`{"OverviewOpenedOrClosed":{"is_open":true}}` + "\n")}) {
+		t.Fatalf("overview open events = %s, want one open event", got)
+	}
+}
+
 func TestEventStreamReportsRejectedStartupConfig(t *testing.T) {
 	state := newNiriState(true)
 	state.replace(niriSnapshot{})
