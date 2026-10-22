@@ -371,6 +371,9 @@ func (c *Compositor) dispatchKeyBinding(keycode uint32) (bind.Binding, bool) {
 		if c.sessionLocked && !binding.AllowWhenLocked {
 			continue
 		}
+		if !binding.IgnoresInhibit && c.shortcutsInhibited() {
+			continue
+		}
 		name := C.CString(binding.Chord.Key)
 		matches := bool(C.sysc_keysym_matches(c.keyboard, C.uint32_t(keycode), name))
 		C.free(unsafe.Pointer(name))
@@ -605,6 +608,8 @@ func (c *Compositor) executeBindAction(action bind.Action) {
 		return
 	case bind.ActionToggleOverview:
 		c.ToggleOverview()
+	case bind.ActionToggleKeyboardShortcutsInhibit:
+		c.ToggleKeyboardShortcutsInhibit()
 		return
 	case bind.ActionOpenOverview:
 		c.OpenOverview()

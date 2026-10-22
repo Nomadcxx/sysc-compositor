@@ -19,6 +19,7 @@ package testclient
 static const struct wl_interface sysc_idle_xdg_surface_interface;
 static const struct wl_interface sysc_cursor_shape_device_interface;
 static const struct wl_interface sysc_effect_surface_interface;
+static const struct wl_interface sysc_shortcuts_inhibitor_interface;
 static const struct wl_interface sysc_idle_xdg_toplevel_interface;
 static const struct wl_interface sysc_idle_notification_interface;
 static const struct wl_interface sysc_idle_inhibitor_interface;
@@ -31,6 +32,7 @@ static const struct wl_interface *sysc_idle_types[] = {
 	&sysc_cursor_shape_device_interface, &wl_pointer_interface,
 	&sysc_effect_surface_interface, &wl_surface_interface,
 	&wl_region_interface,
+	&sysc_shortcuts_inhibitor_interface, &wl_surface_interface, &wl_seat_interface,
 };
 static const struct wl_message sysc_idle_wm_base_requests[] = {
 	{"destroy", "", NULL},
@@ -121,6 +123,24 @@ static const struct wl_interface sysc_effect_surface_interface = {
 	"ext_background_effect_surface_v1", 1, 2, sysc_effect_surface_requests, 0, NULL,
 };
 
+static const struct wl_message sysc_shortcuts_inhibit_manager_requests[] = {
+	{"destroy", "", NULL},
+	{"inhibit_shortcuts", "noo", sysc_idle_types + 13},
+};
+static const struct wl_interface sysc_shortcuts_inhibit_manager_interface = {
+	"zwp_keyboard_shortcuts_inhibit_manager_v1", 1, 2,
+	sysc_shortcuts_inhibit_manager_requests, 0, NULL,
+};
+static const struct wl_message sysc_shortcuts_inhibitor_requests[] = {{"destroy", "", NULL}};
+static const struct wl_message sysc_shortcuts_inhibitor_events[] = {
+	{"active", "", NULL},
+	{"inactive", "", NULL},
+};
+static const struct wl_interface sysc_shortcuts_inhibitor_interface = {
+	"zwp_keyboard_shortcuts_inhibitor_v1", 1, 1, sysc_shortcuts_inhibitor_requests,
+	2, sysc_shortcuts_inhibitor_events,
+};
+
 #define SYSC_IDLE_EVENTS 32
 
 struct sysc_idle_client {
@@ -130,6 +150,7 @@ struct sysc_idle_client {
 	struct wl_seat *seat;
 	struct wl_proxy *wm_base, *notifier, *inhibit_manager, *cursor_shape_manager;
 	struct wl_proxy *effect_manager, *effect;
+	struct wl_proxy *shortcuts_manager, *shortcuts_inhibitor;
 	struct wl_pointer *pointer;
 	struct wl_proxy *cursor_shape_device;
 	uint32_t enter_serial;
@@ -161,6 +182,9 @@ static void sysc_idle_global(void *data, struct wl_registry *registry,
 		c->notifier = wl_registry_bind(registry, name, &sysc_idle_notifier_interface, 1);
 	} else if (strcmp(interface, "zwp_idle_inhibit_manager_v1") == 0) {
 		c->inhibit_manager = wl_registry_bind(registry, name, &sysc_idle_inhibit_manager_interface, 1);
+	} else if (strcmp(interface, "zwp_keyboard_shortcuts_inhibit_manager_v1") == 0) {
+		c->shortcuts_manager = wl_registry_bind(registry, name,
+				&sysc_shortcuts_inhibit_manager_interface, 1);
 	} else if (strcmp(interface, "ext_background_effect_manager_v1") == 0) {
 		c->effect_manager = wl_registry_bind(registry, name, &sysc_effect_manager_interface, 1);
 	} else if (strcmp(interface, "wp_cursor_shape_manager_v1") == 0) {
@@ -390,6 +414,19 @@ static int sysc_client_set_blur_region(struct sysc_idle_client *c, const int32_t
 	return wl_display_roundtrip(c->display) < 0 ? 4 : 0;
 }
 
+// Asks to inhibit compositor shortcuts on the toplevel for the user seat.
+static int sysc_client_inhibit_shortcuts(struct sysc_idle_client *c) {
+	if (c->shortcuts_manager == NULL) {
+		return 1;
+	}
+	c->shortcuts_inhibitor = wl_proxy_marshal_flags(c->shortcuts_manager, 1,
+			&sysc_shortcuts_inhibitor_interface, 1, 0, NULL, c->surface, c->seat);
+	if (c->shortcuts_inhibitor == NULL) {
+		return 2;
+	}
+	return wl_display_roundtrip(c->display) < 0 ? 3 : 0;
+}
+
 // Sets a cursor shape against the latest pointer enter serial.
 static int sysc_client_set_cursor_shape(struct sysc_idle_client *c, uint32_t shape) {
 	if (c->cursor_shape_manager == NULL) {
@@ -516,6 +553,15 @@ func (c *ToplevelClient) SetBlurRegion(rects ...[4]int32) error {
 	flat = append(flat, 0)
 	if code := int(C.sysc_client_set_blur_region(c.state, &flat[0], C.int(len(rects)))); code != 0 {
 		return fmt.Errorf("Wayland blur region request failed at step %d", code)
+	}
+	return nil
+}
+
+// InhibitShortcuts asks the compositor to pass its shortcuts to the toplevel
+// while it has keyboard focus.
+func (c *ToplevelClient) InhibitShortcuts() error {
+	if code := int(C.sysc_client_inhibit_shortcuts(c.state)); code != 0 {
+		return fmt.Errorf("Wayland shortcuts inhibit request failed at step %d", code)
 	}
 	return nil
 }

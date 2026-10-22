@@ -489,7 +489,7 @@ func decodeAction(raw json.RawMessage) (Action, error) {
 		a.WindowID = f.ID
 	case "FocusFloating", "FocusTiling", "SwitchFocusBetweenFloatingAndTiling",
 		"ConsumeWindowIntoColumn", "ExpelWindowFromColumn", "ToggleColumnTabbedDisplay",
-		"ToggleOverview", "OpenOverview", "CloseOverview":
+		"ToggleOverview", "OpenOverview", "CloseOverview", "ToggleKeyboardShortcutsInhibit":
 		if err := strict(body, &struct{}{}); err != nil {
 			return Action{}, ErrParse
 		}

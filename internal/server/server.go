@@ -220,6 +220,8 @@ func (s *Server) Run() error {
 						s.c.SwitchLayout(action.Layout, action.LayoutIndex)
 					case "ToggleOverview":
 						s.c.ToggleOverview()
+					case "ToggleKeyboardShortcutsInhibit":
+						s.c.ToggleKeyboardShortcutsInhibit()
 					case "OpenOverview":
 						s.c.OpenOverview()
 					case "CloseOverview":

@@ -980,3 +980,24 @@ blur {
 		t.Error("noise 2 parsed, want a range error")
 	}
 }
+
+func TestBindAllowInhibitingAndToggleShortcutsInhibit(t *testing.T) {
+	cfg, err := Parse("bind-inhibit.kdl", []byte(`
+binds {
+    Mod+Q { close-window; }
+    Mod+Escape allow-inhibiting=false { toggle-keyboard-shortcuts-inhibit; }
+}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Binds) != 2 || len(cfg.UnappliedActions) != 0 {
+		t.Fatalf("binds = %+v, unapplied = %q", cfg.Binds, cfg.UnappliedActions)
+	}
+	if cfg.Binds[0].IgnoresInhibit {
+		t.Error("a bind without allow-inhibiting ignores inhibitors, want it inhibitable")
+	}
+	if !cfg.Binds[1].IgnoresInhibit || cfg.Binds[1].Actions[0].Name != "toggle-keyboard-shortcuts-inhibit" {
+		t.Errorf("toggle bind = %+v, want allow-inhibiting=false kept", cfg.Binds[1])
+	}
+}

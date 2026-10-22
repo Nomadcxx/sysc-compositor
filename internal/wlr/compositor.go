@@ -25,6 +25,7 @@ package wlr
 #include <wlr/types/wlr_layer_shell_v1.h>
 #include <wlr/types/wlr_idle_inhibit_v1.h>
 #include <wlr/types/wlr_idle_notify_v1.h>
+#include <wlr/types/wlr_keyboard_shortcuts_inhibit_v1.h>
 #include <wlr/types/wlr_linux_dmabuf_v1.h>
 #include <wlr/types/wlr_output_layout.h>
 #include <wlr/types/wlr_scene.h>
@@ -242,6 +243,8 @@ type Compositor struct {
 	dbusIdleInhibited bool
 	idleInhibited     bool
 
+	shortcutsInhibitors map[*C.struct_wlr_keyboard_shortcuts_inhibitor_v1]*shortcutsInhibitor
+
 	// viewMapped, when set, runs on the compositor thread once a toplevel is
 	// mapped and hit-testable. It is the hook tests use to act once a client
 	// is on screen.
@@ -438,6 +441,9 @@ func NewWith(opts Options) (*Compositor, error) {
 	}
 	if !c.createCursorShape() {
 		return nil, errors.New("wlr_cursor_shape_manager_v1_create failed")
+	}
+	if !c.createShortcutsInhibit() {
+		return nil, errors.New("wlr_keyboard_shortcuts_inhibit_v1_create failed")
 	}
 	// xdg-output gives clients output names and logical geometry; waybar and
 	// grim refuse to start without it, and Niri advertises it.
