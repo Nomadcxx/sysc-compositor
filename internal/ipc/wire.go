@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"slices"
 )
 
@@ -139,6 +140,20 @@ type WorkspaceReference struct {
 	Name  *string
 }
 
+type PositionChangeKind string
+
+const (
+	PositionSetFixed         PositionChangeKind = "SetFixed"
+	PositionSetProportion    PositionChangeKind = "SetProportion"
+	PositionAdjustFixed      PositionChangeKind = "AdjustFixed"
+	PositionAdjustProportion PositionChangeKind = "AdjustProportion"
+)
+
+type PositionChange struct {
+	Kind  PositionChangeKind
+	Value float64
+}
+
 // Action is a decoded action. Only the fields of the actions built so far
 // are kept; every other action is known by Name alone.
 type Action struct {
@@ -148,6 +163,12 @@ type Action struct {
 	ShellCommand     string   // SpawnSh
 	WindowID         *uint64
 	Workspace        *WorkspaceReference
+	WorkspaceName    *string
+	ColumnIndex      *uint8
+	ColumnDisplay    string
+	Output           string
+	Focus            *bool
+	X, Y             PositionChange
 }
 
 // DecodeRequest decodes one request line.
@@ -221,36 +242,227 @@ func decodeAction(raw json.RawMessage) (Action, error) {
 		if err := strict(body, &f); err != nil || f.Reference == nil {
 			return Action{}, ErrParse
 		}
-		name, value, err := variant(*f.Reference)
+		a.Workspace, err = decodeWorkspaceReference(*f.Reference)
 		if err != nil {
 			return Action{}, ErrParse
 		}
-		reference := &WorkspaceReference{}
-		switch name {
-		case "Id":
-			var id uint64
-			if err := json.Unmarshal(value, &id); err != nil {
-				return Action{}, ErrParse
-			}
-			reference.ID = &id
-		case "Index":
-			var index uint8
-			if err := json.Unmarshal(value, &index); err != nil {
-				return Action{}, ErrParse
-			}
-			reference.Index = &index
-		case "Name":
-			var workspaceName string
-			if err := json.Unmarshal(value, &workspaceName); err != nil {
-				return Action{}, ErrParse
-			}
-			reference.Name = &workspaceName
-		default:
+	case "FocusWindowInColumn":
+		var f struct {
+			Index *uint8 `json:"index"`
+		}
+		if err := strict(body, &f); err != nil || f.Index == nil {
 			return Action{}, ErrParse
 		}
-		a.Workspace = reference
+		a.ColumnIndex = f.Index
+	case "SetColumnDisplay":
+		var f struct {
+			Display *string `json:"display"`
+		}
+		if err := strict(body, &f); err != nil || f.Display == nil || (*f.Display != "Normal" && *f.Display != "Tabbed") {
+			return Action{}, ErrParse
+		}
+		a.ColumnDisplay = *f.Display
+	case "FullscreenWindow", "ToggleWindowedFullscreen", "ToggleWindowFloating", "MoveWindowToFloating", "MoveWindowToTiling",
+		"ConsumeOrExpelWindowLeft", "ConsumeOrExpelWindowRight":
+		var f struct {
+			ID *uint64 `json:"id"`
+		}
+		if err := strict(body, &f); err != nil {
+			return Action{}, ErrParse
+		}
+		a.WindowID = f.ID
+	case "ToggleWindowUrgent", "SetWindowUrgent", "UnsetWindowUrgent":
+		var f struct {
+			ID *uint64 `json:"id"`
+		}
+		if err := strict(body, &f); err != nil || f.ID == nil {
+			return Action{}, ErrParse
+		}
+		a.WindowID = f.ID
+	case "FocusFloating", "FocusTiling", "SwitchFocusBetweenFloatingAndTiling",
+		"ConsumeWindowIntoColumn", "ExpelWindowFromColumn", "ToggleColumnTabbedDisplay":
+		if err := strict(body, &struct{}{}); err != nil {
+			return Action{}, ErrParse
+		}
+	case "SetWorkspaceName":
+		var f struct {
+			Name      *string          `json:"name"`
+			Workspace *json.RawMessage `json:"workspace"`
+		}
+		if err := strict(body, &f); err != nil || f.Name == nil {
+			return Action{}, ErrParse
+		}
+		a.WorkspaceName = f.Name
+		if f.Workspace != nil && string(*f.Workspace) != "null" {
+			a.Workspace, err = decodeWorkspaceReference(*f.Workspace)
+			if err != nil {
+				return Action{}, ErrParse
+			}
+		}
+	case "UnsetWorkspaceName":
+		var f struct {
+			Reference *json.RawMessage `json:"reference"`
+		}
+		if err := strict(body, &f); err != nil {
+			return Action{}, ErrParse
+		}
+		if f.Reference != nil && string(*f.Reference) != "null" {
+			a.Workspace, err = decodeWorkspaceReference(*f.Reference)
+			if err != nil {
+				return Action{}, ErrParse
+			}
+		}
+	case "MoveWindowToWorkspace":
+		var f struct {
+			WindowID  *uint64          `json:"window_id"`
+			Reference *json.RawMessage `json:"reference"`
+			Focus     *bool            `json:"focus"`
+		}
+		if err := strict(body, &f); err != nil || f.Reference == nil || f.Focus == nil {
+			return Action{}, ErrParse
+		}
+		a.Workspace, err = decodeWorkspaceReference(*f.Reference)
+		if err != nil {
+			return Action{}, ErrParse
+		}
+		a.WindowID, a.Focus = f.WindowID, f.Focus
+	case "MoveColumnToWorkspace":
+		var f struct {
+			Reference *json.RawMessage `json:"reference"`
+			Focus     *bool            `json:"focus"`
+		}
+		if err := strict(body, &f); err != nil || f.Reference == nil || f.Focus == nil {
+			return Action{}, ErrParse
+		}
+		a.Workspace, err = decodeWorkspaceReference(*f.Reference)
+		if err != nil {
+			return Action{}, ErrParse
+		}
+		a.Focus = f.Focus
+	case "MoveWindowToWorkspaceDown", "MoveWindowToWorkspaceUp",
+		"MoveColumnToWorkspaceDown", "MoveColumnToWorkspaceUp":
+		var f struct {
+			Focus *bool `json:"focus"`
+		}
+		if err := strict(body, &f); err != nil || f.Focus == nil {
+			return Action{}, ErrParse
+		}
+		a.Focus = f.Focus
+	case "MoveWindowToMonitor":
+		var f struct {
+			ID     *uint64 `json:"id"`
+			Output *string `json:"output"`
+		}
+		if err := strict(body, &f); err != nil || f.Output == nil {
+			return Action{}, ErrParse
+		}
+		a.WindowID, a.Output = f.ID, *f.Output
+	case "MoveColumnToMonitor":
+		var f struct {
+			Output *string `json:"output"`
+		}
+		if err := strict(body, &f); err != nil || f.Output == nil {
+			return Action{}, ErrParse
+		}
+		a.Output = *f.Output
+	case "MoveWorkspaceToMonitor":
+		var f struct {
+			Output    *string          `json:"output"`
+			Reference *json.RawMessage `json:"reference"`
+		}
+		if err := strict(body, &f); err != nil || f.Output == nil {
+			return Action{}, ErrParse
+		}
+		a.Output = *f.Output
+		if f.Reference != nil && string(*f.Reference) != "null" {
+			a.Workspace, err = decodeWorkspaceReference(*f.Reference)
+			if err != nil {
+				return Action{}, ErrParse
+			}
+		}
+	case "FocusMonitor":
+		var f struct {
+			Output *string `json:"output"`
+		}
+		if err := strict(body, &f); err != nil || f.Output == nil {
+			return Action{}, ErrParse
+		}
+		a.Output = *f.Output
+	case "MoveFloatingWindow":
+		var f struct {
+			ID *uint64          `json:"id"`
+			X  *json.RawMessage `json:"x"`
+			Y  *json.RawMessage `json:"y"`
+		}
+		if err := strict(body, &f); err != nil || f.X == nil || f.Y == nil {
+			return Action{}, ErrParse
+		}
+		a.WindowID = f.ID
+		a.X, err = decodePositionChange(*f.X)
+		if err != nil {
+			return Action{}, ErrParse
+		}
+		a.Y, err = decodePositionChange(*f.Y)
+		if err != nil {
+			return Action{}, ErrParse
+		}
 	}
 	return a, nil
+}
+
+func decodePositionChange(raw json.RawMessage) (PositionChange, error) {
+	name, value, err := variant(raw)
+	if err != nil || bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+		return PositionChange{}, ErrParse
+	}
+	var change PositionChange
+	switch name {
+	case string(PositionSetFixed):
+		change.Kind = PositionSetFixed
+	case string(PositionSetProportion):
+		change.Kind = PositionSetProportion
+	case string(PositionAdjustFixed):
+		change.Kind = PositionAdjustFixed
+	case string(PositionAdjustProportion):
+		change.Kind = PositionAdjustProportion
+	default:
+		return PositionChange{}, ErrParse
+	}
+	if err := json.Unmarshal(value, &change.Value); err != nil || math.IsNaN(change.Value) || math.IsInf(change.Value, 0) {
+		return PositionChange{}, ErrParse
+	}
+	return change, nil
+}
+
+func decodeWorkspaceReference(raw json.RawMessage) (*WorkspaceReference, error) {
+	name, value, err := variant(raw)
+	if err != nil {
+		return nil, ErrParse
+	}
+	reference := &WorkspaceReference{}
+	switch name {
+	case "Id":
+		var id uint64
+		if err := json.Unmarshal(value, &id); err != nil {
+			return nil, ErrParse
+		}
+		reference.ID = &id
+	case "Index":
+		var index uint8
+		if err := json.Unmarshal(value, &index); err != nil {
+			return nil, ErrParse
+		}
+		reference.Index = &index
+	case "Name":
+		var workspaceName string
+		if err := json.Unmarshal(value, &workspaceName); err != nil {
+			return nil, ErrParse
+		}
+		reference.Name = &workspaceName
+	default:
+		return nil, ErrParse
+	}
+	return reference, nil
 }
 
 // variant splits an externally tagged enum value into its name and body. A
@@ -317,22 +529,117 @@ func EncodeRequest(r Request) []byte {
 			ID *uint64 `json:"id"`
 		}{a.WindowID}
 	case "FocusWorkspace":
-		var reference any = map[string]any{}
-		if a.Workspace != nil {
-			switch {
-			case a.Workspace.ID != nil:
-				reference = map[string]any{"Id": *a.Workspace.ID}
-			case a.Workspace.Index != nil:
-				reference = map[string]any{"Index": *a.Workspace.Index}
-			case a.Workspace.Name != nil:
-				reference = map[string]any{"Name": *a.Workspace.Name}
-			}
-		}
 		body = struct {
 			Reference any `json:"reference"`
-		}{reference}
+		}{workspaceReferenceValue(a.Workspace)}
+	case "FocusWindowInColumn":
+		body = struct {
+			Index uint8 `json:"index"`
+		}{}
+		if a.ColumnIndex != nil {
+			body = struct {
+				Index uint8 `json:"index"`
+			}{*a.ColumnIndex}
+		}
+	case "SetColumnDisplay":
+		body = struct {
+			Display string `json:"display"`
+		}{a.ColumnDisplay}
+	case "FullscreenWindow", "ToggleWindowedFullscreen", "ToggleWindowFloating", "MoveWindowToFloating", "MoveWindowToTiling",
+		"ConsumeOrExpelWindowLeft", "ConsumeOrExpelWindowRight",
+		"ToggleWindowUrgent", "SetWindowUrgent", "UnsetWindowUrgent":
+		body = struct {
+			ID *uint64 `json:"id"`
+		}{a.WindowID}
+	case "SetWorkspaceName":
+		name := ""
+		if a.WorkspaceName != nil {
+			name = *a.WorkspaceName
+		}
+		body = struct {
+			Name      string `json:"name"`
+			Workspace any    `json:"workspace"`
+		}{name, workspaceReferenceValue(a.Workspace)}
+	case "UnsetWorkspaceName":
+		body = struct {
+			Reference any `json:"reference"`
+		}{workspaceReferenceValue(a.Workspace)}
+	case "MoveWindowToWorkspace", "MoveColumnToWorkspace":
+		focus := false
+		if a.Focus != nil {
+			focus = *a.Focus
+		}
+		if a.Name == "MoveWindowToWorkspace" {
+			body = struct {
+				WindowID  *uint64 `json:"window_id"`
+				Reference any     `json:"reference"`
+				Focus     bool    `json:"focus"`
+			}{a.WindowID, workspaceReferenceValue(a.Workspace), focus}
+		} else {
+			body = struct {
+				Reference any  `json:"reference"`
+				Focus     bool `json:"focus"`
+			}{workspaceReferenceValue(a.Workspace), focus}
+		}
+	case "MoveWindowToWorkspaceDown", "MoveWindowToWorkspaceUp",
+		"MoveColumnToWorkspaceDown", "MoveColumnToWorkspaceUp":
+		focus := true
+		if a.Focus != nil {
+			focus = *a.Focus
+		}
+		body = struct {
+			Focus bool `json:"focus"`
+		}{focus}
+	case "MoveWindowToMonitor":
+		body = struct {
+			ID     *uint64 `json:"id"`
+			Output string  `json:"output"`
+		}{a.WindowID, a.Output}
+	case "MoveColumnToMonitor":
+		body = struct {
+			Output string `json:"output"`
+		}{a.Output}
+	case "MoveWorkspaceToMonitor":
+		body = struct {
+			Output    string `json:"output"`
+			Reference any    `json:"reference"`
+		}{a.Output, workspaceReferenceValue(a.Workspace)}
+	case "FocusMonitor":
+		body = struct {
+			Output string `json:"output"`
+		}{a.Output}
+	case "MoveFloatingWindow":
+		body = struct {
+			ID *uint64 `json:"id"`
+			X  any     `json:"x"`
+			Y  any     `json:"y"`
+		}{a.WindowID, positionChangeValue(a.X), positionChangeValue(a.Y)}
 	}
 	return marshal(map[string]any{"Action": map[string]any{a.Name: body}})
+}
+
+func positionChangeValue(change PositionChange) any {
+	kind := change.Kind
+	if kind == "" {
+		kind = PositionAdjustFixed
+	}
+	return map[string]float64{string(kind): change.Value}
+}
+
+func workspaceReferenceValue(reference *WorkspaceReference) any {
+	if reference == nil {
+		return nil
+	}
+	switch {
+	case reference.ID != nil:
+		return map[string]any{"Id": *reference.ID}
+	case reference.Index != nil:
+		return map[string]any{"Index": *reference.Index}
+	case reference.Name != nil:
+		return map[string]any{"Name": *reference.Name}
+	default:
+		return nil
+	}
 }
 
 // marshal writes JSON as serde_json does: '<', '>' and '&' are not escaped.

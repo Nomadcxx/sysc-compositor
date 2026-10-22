@@ -22,6 +22,442 @@ func TestNewWindowGoesRightOfFocusedColumn(t *testing.T) {
 	}
 }
 
+func TestConsumeAdjacentWindowIntoFocusedColumn(t *testing.T) {
+	ws := NewWorkspace(Bounds{Width: 1200, Height: 800}, 500, 16)
+	for _, id := range []uint64{1, 2, 3} {
+		ws.AddWindow(id)
+	}
+	if !ws.FocusWindow(1) {
+		t.Fatal("FocusWindow(1) = false, want true")
+	}
+	if !ws.ConsumeWindowIntoColumn() {
+		t.Fatal("ConsumeWindowIntoColumn() = false, want to consume the adjacent right column")
+	}
+
+	first, firstOK := ws.Placement(1)
+	consumed, consumedOK := ws.Placement(2)
+	third, thirdOK := ws.Placement(3)
+	if !firstOK || !consumedOK || !thirdOK {
+		t.Fatalf("placements present = (%t, %t, %t), want all windows", firstOK, consumedOK, thirdOK)
+	}
+	if first.X != consumed.X || first.Width != consumed.Width {
+		t.Errorf("focused and consumed windows occupy columns at x=%d and x=%d, want one column", first.X, consumed.X)
+	}
+	if third.X <= first.X {
+		t.Errorf("following column x=%d, want it after the focused column at x=%d", third.X, first.X)
+	}
+	if got, ok := ws.FocusedWindow(); !ok || got != 1 {
+		t.Errorf("FocusedWindow() = %d, %t, want focus to stay on window 1", got, ok)
+	}
+}
+
+func TestExpelBottomWindowIntoColumnOnRight(t *testing.T) {
+	ws := NewWorkspace(Bounds{Width: 1400, Height: 800}, 400, 16)
+	for _, id := range []uint64{1, 2, 3} {
+		ws.AddWindow(id)
+	}
+	if !ws.FocusWindow(1) || !ws.ConsumeWindowIntoColumn() {
+		t.Fatal("could not form a two-window focused column")
+	}
+	if !ws.ExpelWindowFromColumn() {
+		t.Fatal("ExpelWindowFromColumn() = false, want the bottom window to move right")
+	}
+	placements := ws.Placements()
+	if len(placements) != 3 {
+		t.Fatalf("placements = %d, want 3", len(placements))
+	}
+	for index, placement := range placements {
+		if placement.Column != uint32(index) || placement.Tile != 0 {
+			t.Errorf("placement %d = %+v, want a separate column at index %d", index, placement, index)
+		}
+	}
+	if got, ok := ws.FocusedWindow(); !ok || got != 1 {
+		t.Errorf("FocusedWindow() = %d, %t, want focus to stay on window 1", got, ok)
+	}
+}
+
+func TestConsumeOrExpelWindowRightUsesAdjacentColumnAndWorkspaceEdge(t *testing.T) {
+	ws := NewWorkspace(Bounds{Width: 1400, Height: 800}, 400, 16)
+	ws.AddWindow(1)
+	ws.AddWindow(2)
+	if !ws.FocusWindow(1) || !ws.ConsumeOrExpelWindowRight(nil) {
+		t.Fatal("ConsumeOrExpelWindowRight() = false, want single window consumed into adjacent column")
+	}
+	if placements := ws.Placements(); len(placements) != 2 || placements[0].Column != placements[1].Column {
+		t.Fatalf("placements after consume = %+v, want both windows in one column", placements)
+	}
+	if id, ok := ws.FocusedWindow(); !ok || id != 1 {
+		t.Fatalf("focused window after consume = %d, %t, want moved window 1", id, ok)
+	}
+	if !ws.FocusWindow(2) || !ws.ConsumeOrExpelWindowRight(nil) {
+		t.Fatal("ConsumeOrExpelWindowRight() = false, want active tile expelled into a new column")
+	}
+	placements := ws.Placements()
+	if len(placements) != 2 || placements[0].Column == placements[1].Column {
+		t.Fatalf("placements after expel = %+v, want two columns", placements)
+	}
+	if id, ok := ws.FocusedWindow(); !ok || id != 2 {
+		t.Fatalf("focused window after expel = %d, %t, want moved window 2", id, ok)
+	}
+
+	edge := NewWorkspace(Bounds{Width: 800, Height: 600}, 400, 16)
+	edge.AddWindow(9)
+	if edge.ConsumeOrExpelWindowRight(nil) || !slices.Equal(edge.WindowOrder(), []uint64{9}) {
+		t.Fatal("right edge action changed a lone window without an adjacent column")
+	}
+}
+
+func TestConsumeOrExpelWindowLeftMergesIntoPreviousColumn(t *testing.T) {
+	ws := NewWorkspace(Bounds{Width: 1800, Height: 800}, 400, 16)
+	for _, id := range []uint64{1, 2, 3} {
+		ws.AddWindow(id)
+	}
+	if !ws.FocusWindow(3) || !ws.ConsumeOrExpelWindowLeft(nil) {
+		t.Fatal("ConsumeOrExpelWindowLeft() = false, want single window consumed into previous column")
+	}
+	placements := ws.Placements()
+	if len(placements) != 3 || placements[1].Column != placements[2].Column {
+		t.Fatalf("placements after left consume = %+v, want windows 2 and 3 in one column", placements)
+	}
+	if id, ok := ws.FocusedWindow(); !ok || id != 3 {
+		t.Fatalf("focused window after left consume = %d, %t, want moved window 3", id, ok)
+	}
+}
+
+func TestTabbedColumnShowsOnlyItsActiveWindow(t *testing.T) {
+	ws := NewWorkspace(Bounds{Width: 1000, Height: 800}, 500, 16)
+	ws.AddWindow(1)
+	ws.AddWindow(2)
+	if !ws.FocusWindow(1) || !ws.ConsumeWindowIntoColumn() {
+		t.Fatal("could not form a two-window focused column")
+	}
+	if !ws.ToggleColumnTabbedDisplay() {
+		t.Fatal("ToggleColumnTabbedDisplay() = false, want true")
+	}
+	placements := ws.Placements()
+	if len(placements) != 2 {
+		t.Fatalf("placements = %d, want 2", len(placements))
+	}
+	if placements[0].X != placements[1].X || placements[0].Y != placements[1].Y ||
+		placements[0].Width != placements[1].Width || placements[0].Height != placements[1].Height {
+		t.Errorf("tab placements differ: %+v and %+v", placements[0], placements[1])
+	}
+	if !placements[0].Active || !placements[0].Visible || placements[1].Active || placements[1].Visible {
+		t.Errorf("tab visibility = (%+v, %+v), want only window 1 active and visible", placements[0], placements[1])
+	}
+	if !ws.FocusWindow(2) {
+		t.Fatal("FocusWindow(2) = false, want to activate the other tab")
+	}
+	placements = ws.Placements()
+	if placements[0].Visible || !placements[1].Active || !placements[1].Visible {
+		t.Errorf("tab visibility after focus = (%+v, %+v), want window 2 visible", placements[0], placements[1])
+	}
+}
+
+func TestColumnDisplayAndWindowFocusActions(t *testing.T) {
+	ws := NewWorkspace(Bounds{Width: 1000, Height: 800}, 500, 16)
+	ws.AddWindow(1)
+	ws.AddWindow(2)
+	if !ws.FocusWindow(1) || !ws.ConsumeWindowIntoColumn() {
+		t.Fatal("could not form a two-window focused column")
+	}
+	if !ws.SetColumnDisplay(ColumnDisplayTabbed) {
+		t.Fatal("SetColumnDisplay(tabbed) = false, want true")
+	}
+	if !ws.FocusWindowInColumn(2) {
+		t.Fatal("FocusWindowInColumn(2) = false, want to focus the second tile")
+	}
+	if got, ok := ws.FocusedWindow(); !ok || got != 2 {
+		t.Fatalf("FocusedWindow() = %d, %t, want 2", got, ok)
+	}
+	placements := ws.Placements()
+	if placements[0].Visible || !placements[1].Visible || !placements[1].Active {
+		t.Errorf("tab visibility = (%+v, %+v), want window 2 visible and active", placements[0], placements[1])
+	}
+	if !ws.SetColumnDisplay(ColumnDisplayNormal) {
+		t.Fatal("SetColumnDisplay(normal) = false, want true")
+	}
+	placements = ws.Placements()
+	if !placements[0].Visible || !placements[1].Visible || placements[0].Display != ColumnDisplayNormal {
+		t.Errorf("normal placements = (%+v, %+v), want both tiles visible", placements[0], placements[1])
+	}
+}
+
+func TestFocusWindowUpDownChangesTheActiveTile(t *testing.T) {
+	ws := NewWorkspace(Bounds{Width: 1000, Height: 800}, 500, 16)
+	for _, id := range []uint64{1, 2, 3} {
+		ws.AddWindow(id)
+	}
+	if !ws.FocusWindow(1) || !ws.ConsumeWindowIntoColumn() || !ws.FocusWindow(2) || !ws.ConsumeWindowIntoColumn() {
+		t.Fatal("could not form a three-window column")
+	}
+	if !ws.FocusWindowDown() {
+		t.Fatal("FocusWindowDown() = false, want the next tile focused")
+	}
+	if got, _ := ws.FocusedWindow(); got != 3 {
+		t.Fatalf("FocusedWindow() = %d after focus down, want 3", got)
+	}
+	if !ws.FocusWindowUp() {
+		t.Fatal("FocusWindowUp() = false, want the previous tile focused")
+	}
+	if got, _ := ws.FocusedWindow(); got != 2 {
+		t.Fatalf("FocusedWindow() = %d after focus up, want 2", got)
+	}
+	if !ws.FocusWindowInColumn(1) || ws.FocusWindowUp() {
+		t.Fatal("focus up at the top tile should stay at the top")
+	}
+}
+
+func TestMoveWindowUpDownReordersTilesAndKeepsFocus(t *testing.T) {
+	ws := NewWorkspace(Bounds{Width: 1000, Height: 800}, 500, 16)
+	for _, id := range []uint64{1, 2, 3} {
+		ws.AddWindow(id)
+	}
+	if !ws.FocusWindow(1) || !ws.ConsumeWindowIntoColumn() || !ws.FocusWindow(2) || !ws.ConsumeWindowIntoColumn() {
+		t.Fatal("could not form a three-window column")
+	}
+	if !ws.MoveWindowDown() {
+		t.Fatal("MoveWindowDown() = false, want active tile moved down")
+	}
+	if got, want := ws.WindowOrder(), []uint64{1, 3, 2}; !slices.Equal(got, want) {
+		t.Fatalf("WindowOrder() after move down = %v, want %v", got, want)
+	}
+	if got, _ := ws.FocusedWindow(); got != 2 {
+		t.Fatalf("FocusedWindow() after move down = %d, want moved window 2", got)
+	}
+	if !ws.MoveWindowUp() {
+		t.Fatal("MoveWindowUp() = false, want active tile moved up")
+	}
+	if got, want := ws.WindowOrder(), []uint64{1, 2, 3}; !slices.Equal(got, want) {
+		t.Fatalf("WindowOrder() after move up = %v, want %v", got, want)
+	}
+}
+
+func TestMoveFloatingWindowToOutputPreservesRelativePosition(t *testing.T) {
+	source := NewWorkspace(Bounds{X: 100, Y: 50, Width: 1000, Height: 800}, 500, 16)
+	target := NewWorkspace(Bounds{X: 1200, Y: 300, Width: 2000, Height: 1200}, 800, 16)
+	source.AddWindow(1)
+	if !source.SetWindowFloating(1, true, Bounds{X: 300, Y: 250, Width: 400, Height: 300}) {
+		t.Fatal("SetWindowFloating() = false, want source window floating")
+	}
+
+	if !source.MoveWindowTo(target, 1) {
+		t.Fatal("MoveWindowTo() = false, want floating window moved to target workspace")
+	}
+	placement, ok := target.Placement(1)
+	if !ok || !placement.Floating {
+		t.Fatalf("target placement = %+v, %t, want floating window", placement, ok)
+	}
+	if got, want := [4]int{placement.X, placement.Y, placement.Width, placement.Height}, [4]int{1600, 600, 400, 300}; got != want {
+		t.Errorf("target floating bounds = %v, want relative position and size %v", got, want)
+	}
+}
+
+func TestMoveFloatingWindowToSmallerOutputKeepsItVisible(t *testing.T) {
+	source := NewWorkspace(Bounds{X: 100, Y: 50, Width: 1000, Height: 800}, 500, 16)
+	target := NewWorkspace(Bounds{X: 1200, Y: 300, Width: 640, Height: 480}, 320, 16)
+	source.AddWindow(1)
+	if !source.SetWindowFloating(1, true, Bounds{X: 1050, Y: 800, Width: 400, Height: 300}) {
+		t.Fatal("SetWindowFloating() = false, want source window floating")
+	}
+
+	if !source.MoveWindowTo(target, 1) {
+		t.Fatal("MoveWindowTo() = false, want floating window moved to target workspace")
+	}
+	placement, ok := target.Placement(1)
+	if !ok || !placement.Floating {
+		t.Fatalf("target placement = %+v, %t, want floating window", placement, ok)
+	}
+	if got, want := [2]int{placement.X, placement.Y}, [2]int{1765, 705}; got != want {
+		t.Errorf("target floating position = %v, want edge-clamped position %v", got, want)
+	}
+}
+
+func TestFloatingFocusAndMoveWindowUpDownFollowNiri(t *testing.T) {
+	ws := NewWorkspace(Bounds{Width: 1200, Height: 800}, 500, 16)
+	for _, id := range []uint64{1, 2, 3} {
+		ws.AddWindow(id)
+	}
+	for _, window := range []struct {
+		id uint64
+		y  int
+	}{{1, 100}, {2, 300}, {3, 450}} {
+		if !ws.SetWindowFloating(window.id, true, Bounds{X: 100, Y: window.y, Width: 360, Height: 200}) {
+			t.Fatalf("SetWindowFloating(%d) = false, want floating window", window.id)
+		}
+	}
+	if !ws.FocusWindow(2) {
+		t.Fatal("FocusWindow(2) = false, want floating window 2 focused")
+	}
+	if !ws.FocusWindowDown() {
+		t.Fatal("FocusWindowDown() = false, want nearest lower floating window focused")
+	}
+	if got, _ := ws.FocusedWindow(); got != 3 {
+		t.Fatalf("FocusedWindow() after focus down = %d, want 3", got)
+	}
+	if !ws.FocusWindowUp() {
+		t.Fatal("FocusWindowUp() = false, want nearest upper floating window focused")
+	}
+	if got, _ := ws.FocusedWindow(); got != 2 {
+		t.Fatalf("FocusedWindow() after focus up = %d, want 2", got)
+	}
+	if !ws.MoveWindowDown() {
+		t.Fatal("MoveWindowDown() = false, want focused floating window moved")
+	}
+	if got, ok := ws.Placement(2); !ok || got.Y != 350 {
+		t.Fatalf("floating placement after move down = %+v, %t, want y=350", got, ok)
+	}
+	if !ws.MoveWindowUp() {
+		t.Fatal("MoveWindowUp() = false, want focused floating window moved")
+	}
+	if got, ok := ws.Placement(2); !ok || got.Y != 300 {
+		t.Fatalf("floating placement after move up = %+v, %t, want y=300", got, ok)
+	}
+}
+
+func TestFloatingWindowRetainsGeometryAndTiledPositionAcrossToggles(t *testing.T) {
+	ws := NewWorkspace(Bounds{Width: 1200, Height: 800}, 500, 16)
+	ws.AddWindow(1)
+	ws.AddWindow(2)
+	if !ws.FocusWindow(1) {
+		t.Fatal("FocusWindow(1) = false, want window 1 focused")
+	}
+	if !ws.SetWindowFloating(1, true, Bounds{X: 90, Y: 70, Width: 360, Height: 240}) {
+		t.Fatal("SetWindowFloating(1, true) = false, want to float the window")
+	}
+	placement, ok := ws.Placement(1)
+	if !ok || !placement.Floating || [4]int{placement.X, placement.Y, placement.Width, placement.Height} != [4]int{90, 70, 360, 240} {
+		t.Fatalf("floating placement = %+v, %t, want rectangle (90,70,360,240)", placement, ok)
+	}
+	if got, focused := ws.FocusedWindow(); !focused || got != 1 {
+		t.Errorf("FocusedWindow() = %d, %t, want floating window 1 to stay focused", got, focused)
+	}
+	if !ws.SetFloatingGeometry(1, Bounds{X: 140, Y: 110, Width: 420, Height: 300}) {
+		t.Fatal("SetFloatingGeometry() = false, want to retain a moved and resized rectangle")
+	}
+	if !ws.SetWindowFloating(1, false, Bounds{}) {
+		t.Fatal("SetWindowFloating(1, false) = false, want to restore tiled placement")
+	}
+	tiled, ok := ws.Placement(1)
+	if !ok || tiled.Floating || tiled.Column != 0 {
+		t.Fatalf("retiled placement = %+v, %t, want the original leading column", tiled, ok)
+	}
+	if !ws.SetWindowFloating(1, true, Bounds{}) {
+		t.Fatal("SetWindowFloating(1, true) = false, want to float the window again")
+	}
+	placement, ok = ws.Placement(1)
+	if !ok || [4]int{placement.X, placement.Y, placement.Width, placement.Height} != [4]int{140, 110, 420, 300} {
+		t.Errorf("remembered floating placement = %+v, %t, want rectangle (140,110,420,300)", placement, ok)
+	}
+}
+
+func TestReturningUnfocusedFloatingTabKeepsFocusOnRightColumn(t *testing.T) {
+	ws := NewWorkspace(Bounds{Width: 1200, Height: 800}, 400, 16)
+	for _, id := range []uint64{1, 2, 3} {
+		ws.AddWindow(id)
+	}
+	if !ws.FocusWindow(2) || !ws.ConsumeOrExpelWindowRight(nil) {
+		t.Fatal("could not tab window 3 into window 2's column")
+	}
+	ws.AddWindow(4)
+	if !ws.SetWindowFloating(3, true, Bounds{X: 500, Y: 80, Width: 300, Height: 200}) {
+		t.Fatal("SetWindowFloating(3, true) = false, want inactive tab floated")
+	}
+	if got, ok := ws.FocusedWindow(); !ok || got != 4 {
+		t.Fatalf("FocusedWindow() after floating tab = %d, %t, want right column window 4", got, ok)
+	}
+
+	if !ws.SetWindowFloating(3, false, Bounds{}) {
+		t.Fatal("SetWindowFloating(3, false) = false, want inactive tab restored")
+	}
+	if got, ok := ws.FocusedWindow(); !ok || got != 4 {
+		t.Errorf("FocusedWindow() after restoring tab = %d, %t, want right column window 4", got, ok)
+	}
+}
+
+func TestMoveFloatingWindowPositionChangesAndRetainsTiledPosition(t *testing.T) {
+	ws := NewWorkspace(Bounds{X: 100, Y: 50, Width: 1000, Height: 800}, 500, 16)
+	ws.AddWindow(1)
+	tiledBefore, _ := ws.Placement(1)
+	if ws.MoveFloatingWindow(1, PositionChange{Kind: PositionAdjustFixed, Value: 1}, PositionChange{Kind: PositionAdjustFixed, Value: 1}) {
+		t.Fatal("MoveFloatingWindow() adjusted an unset tiled position")
+	}
+	if !ws.MoveFloatingWindow(1, PositionChange{Kind: PositionSetFixed, Value: 120}, PositionChange{Kind: PositionSetFixed, Value: 80}) {
+		t.Fatal("MoveFloatingWindow() = false, want to store the initial floating position")
+	}
+	tiled, ok := ws.Placement(1)
+	if !ok || tiled.Floating || tiled.X != tiledBefore.X || tiled.Y != tiledBefore.Y {
+		t.Fatalf("tiled placement after storing float position = %+v, want tiled geometry unchanged", tiled)
+	}
+	if !ws.SetWindowFloating(1, true, Bounds{X: 700, Y: 600, Width: tiled.Width, Height: tiled.Height}) {
+		t.Fatal("SetWindowFloating() = false, want window 1 floating")
+	}
+	placement, ok := ws.Placement(1)
+	if !ok || !placement.Floating || [2]int{placement.X, placement.Y} != [2]int{220, 130} {
+		t.Fatalf("floating placement = %+v, want saved position (220,130)", placement)
+	}
+	if !ws.MoveFloatingWindow(1, PositionChange{Kind: PositionSetProportion, Value: 50}, PositionChange{Kind: PositionSetProportion, Value: 25}) {
+		t.Fatal("MoveFloatingWindow() = false, want proportional move")
+	}
+	if !ws.MoveFloatingWindow(1, PositionChange{Kind: PositionAdjustProportion, Value: 10}, PositionChange{Kind: PositionAdjustProportion, Value: -5}) {
+		t.Fatal("MoveFloatingWindow() = false, want proportional adjustment")
+	}
+	if !ws.MoveFloatingWindow(1, PositionChange{Kind: PositionAdjustFixed, Value: -20}, PositionChange{Kind: PositionAdjustFixed, Value: 10}) {
+		t.Fatal("MoveFloatingWindow() = false, want fixed adjustment")
+	}
+	placement, ok = ws.Placement(1)
+	if !ok || [2]int{placement.X, placement.Y} != [2]int{680, 220} {
+		t.Errorf("floating placement after position changes = %+v, want (680,220)", placement)
+	}
+}
+
+func TestFloatingResizeHonorsSizeHintsAndKeepsAnchoredEdges(t *testing.T) {
+	ws := NewWorkspace(Bounds{Width: 1200, Height: 800}, 500, 16)
+	ws.AddWindow(1)
+	if !ws.SetWindowSizeHints(1, 300, 500, 200, 400) {
+		t.Fatal("SetWindowSizeHints() = false, want to set floating bounds")
+	}
+	if !ws.SetWindowFloating(1, true, Bounds{X: 100, Y: 100, Width: 400, Height: 300}) {
+		t.Fatal("SetWindowFloating() = false, want window 1 floating")
+	}
+	if !ws.ResizeWindow(1, 400, 300, 100, 100, ResizeOptions{
+		ResizeWidth: true, ResizeHeight: true, AnchorRight: true, AnchorBottom: true,
+	}) {
+		t.Fatal("ResizeWindow() = false, want to resize the floating window")
+	}
+	got, ok := ws.Placement(1)
+	if !ok || [4]int{got.X, got.Y, got.Width, got.Height} != [4]int{200, 200, 300, 200} {
+		t.Errorf("floating resize = %+v, want clamped rectangle (200,200,300,200)", got)
+	}
+}
+
+func TestFocusSwitchBetweenFloatingAndTiledRestoresEachActiveWindow(t *testing.T) {
+	ws := NewWorkspace(Bounds{Width: 1200, Height: 800}, 500, 16)
+	ws.AddWindow(1)
+	ws.AddWindow(2)
+	if !ws.FocusWindow(1) || !ws.SetWindowFloating(1, true, Bounds{X: 90, Y: 70, Width: 360, Height: 240}) {
+		t.Fatal("could not float focused window 1")
+	}
+	if !ws.FocusTiling() {
+		t.Fatal("FocusTiling() = false, want tiled layer focused")
+	}
+	if got, ok := ws.FocusedWindow(); !ok || got != 2 {
+		t.Fatalf("tiled FocusedWindow() = %d, %t, want 2", got, ok)
+	}
+	if !ws.FocusFloating() {
+		t.Fatal("FocusFloating() = false, want previously focused float restored")
+	}
+	if got, ok := ws.FocusedWindow(); !ok || got != 1 {
+		t.Fatalf("floating FocusedWindow() = %d, %t, want 1", got, ok)
+	}
+	if !ws.SwitchFocusFloatingAndTiling() {
+		t.Fatal("SwitchFocusFloatingAndTiling() = false, want switch back to tiling")
+	}
+	if got, ok := ws.FocusedWindow(); !ok || got != 2 {
+		t.Errorf("switched FocusedWindow() = %d, %t, want tiled window 2", got, ok)
+	}
+}
+
 func TestMoveColumnKeepsWindowFocused(t *testing.T) {
 	ws := NewWorkspace(Bounds{Width: 1200, Height: 800}, 500, 16)
 	ws.AddWindow(1)

@@ -199,6 +199,12 @@ func eventStreamChanges(before, after niriSnapshot) [][]byte {
 	} else {
 		for i, workspace := range after.workspaces {
 			previous := before.workspaces[i]
+			if previous.IsUrgent != workspace.IsUrgent {
+				lines = append(lines, eventLine("WorkspaceUrgencyChanged", struct {
+					ID     uint64 `json:"id"`
+					Urgent bool   `json:"urgent"`
+				}{ID: workspace.ID, Urgent: workspace.IsUrgent}))
+			}
 			if previous.ActiveWindowID == nil && workspace.ActiveWindowID != nil ||
 				previous.ActiveWindowID != nil && workspace.ActiveWindowID == nil ||
 				previous.ActiveWindowID != nil && workspace.ActiveWindowID != nil &&
@@ -283,6 +289,12 @@ func eventStreamWindowChanges(before, after []ipc.Window) [][]byte {
 				FocusTimestamp *ipc.Timestamp `json:"focus_timestamp"`
 			}{ID: window.ID, FocusTimestamp: window.FocusTimestamp}))
 		}
+		if old.IsUrgent != window.IsUrgent {
+			lines = append(lines, eventLine("WindowUrgencyChanged", struct {
+				ID     uint64 `json:"id"`
+				Urgent bool   `json:"urgent"`
+			}{ID: window.ID, Urgent: window.IsUrgent}))
+		}
 	}
 	for _, window := range before {
 		if _, exists := seen[window.ID]; !exists {
@@ -323,8 +335,8 @@ func workspaceDetailsChanged(before, after []ipc.Workspace) bool {
 	}
 	for i := range before {
 		previous, current := before[i], after[i]
-		previous.IsActive, previous.IsFocused, previous.ActiveWindowID = false, false, nil
-		current.IsActive, current.IsFocused, current.ActiveWindowID = false, false, nil
+		previous.IsUrgent, previous.IsActive, previous.IsFocused, previous.ActiveWindowID = false, false, false, nil
+		current.IsUrgent, current.IsActive, current.IsFocused, current.ActiveWindowID = false, false, false, nil
 		if !reflect.DeepEqual(previous, current) {
 			return true
 		}

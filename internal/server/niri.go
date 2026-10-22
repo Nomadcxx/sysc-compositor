@@ -206,12 +206,16 @@ func toNiriWindow(window wlr.WindowInfo, tile wm.WindowSnapshot, output ipc.Outp
 	workspaceID := tile.WorkspaceID
 	result := ipc.Window{
 		ID: window.ID, Title: clonePointer(window.Title), AppID: clonePointer(window.AppID),
-		WorkspaceID: &workspaceID, IsFocused: window.IsFocused,
+		WorkspaceID: &workspaceID, IsFocused: window.IsFocused, IsFloating: tile.Tile.Floating,
+		IsUrgent: tile.IsUrgent,
 		Layout: ipc.WindowLayout{
-			PosInScrollingLayout: &([2]uint32{tile.Column + 1, 1}),
-			TileSize:             [2]float64{float64(tile.Tile.Width), float64(tile.Tile.Height)},
-			WindowSize:           [2]int32{int32(window.Width), int32(window.Height)},
+			TileSize:   [2]float64{float64(tile.Tile.Width), float64(tile.Tile.Height)},
+			WindowSize: [2]int32{int32(window.Width), int32(window.Height)},
 		},
+	}
+	if !tile.Tile.Floating {
+		position := [2]uint32{tile.Column + 1, tile.Tile.Tile + 1}
+		result.Layout.PosInScrollingLayout = &position
 	}
 	if window.PID > 0 {
 		pid := int32(window.PID)
@@ -240,8 +244,8 @@ func toNiriWorkspaces(model wm.Snapshot) []ipc.Workspace {
 	for _, workspace := range model.Workspaces {
 		output := workspace.Output
 		workspaces = append(workspaces, ipc.Workspace{
-			ID: workspace.ID, Idx: workspace.Index, Output: &output,
-			IsActive: workspace.IsActive, IsFocused: workspace.IsFocused,
+			ID: workspace.ID, Idx: workspace.Index, Name: clonePointer(workspace.Name), Output: &output,
+			IsUrgent: workspace.IsUrgent, IsActive: workspace.IsActive, IsFocused: workspace.IsFocused,
 			ActiveWindowID: clonePointer(workspace.ActiveWindowID),
 		})
 	}
@@ -354,10 +358,48 @@ func (h niriHandler) action(a ipc.Action) (ipc.Reply, func()) {
 		err = h.spawn.spawn(a.Command)
 	case "SpawnSh":
 		err = h.spawn.spawnSh(a.ShellCommand)
-	case "FocusWindow", "CloseWindow":
+	case "FocusWindow", "CloseWindow",
+		"FocusWindowInColumn", "FocusWindowDown", "FocusWindowUp", "MoveWindowDown", "MoveWindowUp",
+		"FullscreenWindow", "ToggleWindowedFullscreen",
+		"FocusColumnLeft", "FocusColumnRight", "FocusColumnFirst", "FocusColumnLast",
+		"MoveColumnLeft", "MoveColumnRight", "MoveColumnToFirst", "MoveColumnToLast",
+		"ConsumeWindowIntoColumn", "ExpelWindowFromColumn", "ConsumeOrExpelWindowLeft", "ConsumeOrExpelWindowRight",
+		"ToggleColumnTabbedDisplay", "SetColumnDisplay",
+		"ToggleWindowFloating", "MoveWindowToFloating", "MoveWindowToTiling",
+		"FocusFloating", "FocusTiling", "SwitchFocusBetweenFloatingAndTiling", "MoveFloatingWindow",
+		"MoveWindowToMonitorLeft", "MoveWindowToMonitorRight", "MoveWindowToMonitorDown",
+		"MoveWindowToMonitorUp", "MoveWindowToMonitorPrevious", "MoveWindowToMonitorNext", "MoveWindowToMonitor",
+		"MoveColumnToMonitorLeft", "MoveColumnToMonitorRight", "MoveColumnToMonitorDown",
+		"MoveColumnToMonitorUp", "MoveColumnToMonitorPrevious", "MoveColumnToMonitorNext", "MoveColumnToMonitor",
+		"MoveWindowToWorkspaceDown", "MoveWindowToWorkspaceUp", "MoveColumnToWorkspaceDown", "MoveColumnToWorkspaceUp",
+		"ToggleWindowUrgent", "SetWindowUrgent", "UnsetWindowUrgent":
 		return h.windowAction(a, 0)
-	case "FocusWorkspace":
+	case "FocusWorkspace", "MoveWindowToWorkspace", "MoveColumnToWorkspace":
 		target, ok := focusWorkspaceTarget(h.currentState(), a.Workspace)
+		if !ok {
+			return ipc.Reply{Ok: ipc.Handled}, nil
+		}
+		return h.windowAction(a, target)
+	case "MoveWorkspaceToMonitor":
+		state := h.currentState()
+		target, ok := focusedWorkspaceTarget(state)
+		if a.Workspace != nil {
+			target, ok = focusWorkspaceTarget(state, a.Workspace)
+		}
+		if !ok {
+			return ipc.Reply{Ok: ipc.Handled}, nil
+		}
+		return h.windowAction(a, target)
+	case "FocusMonitor", "FocusMonitorLeft", "FocusMonitorRight", "FocusMonitorUp", "FocusMonitorDown",
+		"FocusMonitorPrevious", "FocusMonitorNext", "MoveWorkspaceToMonitorLeft", "MoveWorkspaceToMonitorRight",
+		"MoveWorkspaceToMonitorUp", "MoveWorkspaceToMonitorDown", "MoveWorkspaceToMonitorPrevious", "MoveWorkspaceToMonitorNext":
+		return h.windowAction(a, 0)
+	case "SetWorkspaceName", "UnsetWorkspaceName":
+		state := h.currentState()
+		target, ok := focusedWorkspaceTarget(state)
+		if a.Workspace != nil {
+			target, ok = focusWorkspaceTarget(state, a.Workspace)
+		}
 		if !ok {
 			return ipc.Reply{Ok: ipc.Handled}, nil
 		}
@@ -397,13 +439,41 @@ func focusWorkspaceTarget(state niriSnapshot, reference *ipc.WorkspaceReference)
 			matches = workspace.Idx == *reference.Index && state.focusedOutput != nil &&
 				workspace.Output != nil && *workspace.Output == state.focusedOutput.Name
 		case reference.Name != nil:
-			matches = workspace.Name != nil && *workspace.Name == *reference.Name
+			matches = workspace.Name != nil && asciiEqualFold(*workspace.Name, *reference.Name)
 		}
 		if matches && workspace.Output != nil {
 			return workspace.ID, true
 		}
 	}
 	return 0, false
+}
+
+func focusedWorkspaceTarget(state niriSnapshot) (uint64, bool) {
+	for _, workspace := range state.workspaces {
+		if workspace.IsFocused && workspace.Output != nil {
+			return workspace.ID, true
+		}
+	}
+	return 0, false
+}
+
+func asciiEqualFold(a, b string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		left, right := a[i], b[i]
+		if left >= 'A' && left <= 'Z' {
+			left += 'a' - 'A'
+		}
+		if right >= 'A' && right <= 'Z' {
+			right += 'a' - 'A'
+		}
+		if left != right {
+			return false
+		}
+	}
+	return true
 }
 
 func (h niriHandler) serve(c *net.UnixConn) {

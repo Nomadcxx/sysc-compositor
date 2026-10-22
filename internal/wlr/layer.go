@@ -49,6 +49,8 @@ import "C"
 import (
 	"slices"
 	"unsafe"
+
+	"github.com/Nomadcxx/sysc-compositor/internal/config"
 )
 
 // Stacking order, bottom to top, as layer-shell defines it with the windows
@@ -78,13 +80,14 @@ func sceneLayer(layer C.enum_zwlr_layer_shell_v1_layer) int {
 
 // layerSurface is one layer-shell surface the compositor draws.
 type layerSurface struct {
-	surface    *C.struct_wlr_layer_surface_v1
-	scene      *C.struct_wlr_scene_layer_surface_v1
-	tree       *C.struct_wlr_scene_tree
-	layer      int
-	output     unsafe.Pointer // *wlr_output
-	outputName string
-	listeners  []*Listener
+	surface             *C.struct_wlr_layer_surface_v1
+	scene               *C.struct_wlr_scene_layer_surface_v1
+	tree                *C.struct_wlr_scene_tree
+	layer               int
+	output              unsafe.Pointer // *wlr_output
+	outputName          string
+	placeWithinBackdrop bool
+	listeners           []*Listener
 }
 
 type LayerKind uint8
@@ -226,12 +229,13 @@ func (c *Compositor) handleNewLayerSurface(data unsafe.Pointer) {
 		return
 	}
 	l := &layerSurface{
-		surface:    surface,
-		scene:      scene,
-		tree:       scene.tree,
-		layer:      layer,
-		output:     unsafe.Pointer(surface.output),
-		outputName: C.GoString(surface.output.name),
+		surface:             surface,
+		scene:               scene,
+		tree:                scene.tree,
+		layer:               layer,
+		output:              unsafe.Pointer(surface.output),
+		outputName:          C.GoString(surface.output.name),
+		placeWithinBackdrop: c.resolveLayerRules(C.GoString(surface.namespace)),
 	}
 	key := unsafe.Pointer(surface.surface)
 	c.layerSurfaces[key] = l
@@ -293,6 +297,10 @@ func (c *Compositor) handleNewLayerSurface(data unsafe.Pointer) {
 	})
 }
 
+func (c *Compositor) resolveLayerRules(namespace string) bool {
+	return config.ResolveLayerRules(c.layerRules, namespace)
+}
+
 // defaultOutput is the output under the pointer, else any enabled output.
 func (c *Compositor) defaultOutput() *C.struct_wlr_output {
 	if out := C.sysc_output_at(c.layout, c.cursor.x, c.cursor.y); out != nil {
@@ -342,10 +350,11 @@ func (c *Compositor) closeOutputLayers(output unsafe.Pointer) {
 
 // layerPlacement is where one layer surface sits, for tests.
 type layerPlacement struct {
-	layer     int
-	namespace string
-	mapped    bool
-	box       rect
+	layer               int
+	namespace           string
+	mapped              bool
+	placeWithinBackdrop bool
+	box                 rect
 }
 
 func (c *Compositor) layerPlacements() []layerPlacement {
@@ -354,9 +363,10 @@ func (c *Compositor) layerPlacements() []layerPlacement {
 		var x, y C.int
 		C.sysc_tree_coords_layer(l.tree, &x, &y)
 		out = append(out, layerPlacement{
-			layer:     l.layer,
-			namespace: C.GoString(l.surface.namespace),
-			mapped:    bool(l.surface.surface.mapped),
+			layer:               l.layer,
+			namespace:           C.GoString(l.surface.namespace),
+			mapped:              bool(l.surface.surface.mapped),
+			placeWithinBackdrop: l.placeWithinBackdrop,
 			box: rect{int(x), int(y),
 				int(l.surface.current.actual_width), int(l.surface.current.actual_height)},
 		})

@@ -12,6 +12,7 @@ import (
 // The lines are what Niri 26.04's `niri msg` writes (serde_json of
 // niri_ipc::Request).
 func TestDecodeRequest(t *testing.T) {
+	workspaceIndex := uint8(2)
 	for _, tc := range []struct {
 		line string
 		want Request
@@ -30,7 +31,7 @@ func TestDecodeRequest(t *testing.T) {
 		{`{"Action":{"ToggleDebugTint":{}}}`,
 			Request{Name: "Action", Action: &Action{Name: "ToggleDebugTint"}}},
 		{`{"Action":{"FocusWorkspace":{"reference":{"Index":2}}}}`,
-			Request{Name: "Action", Action: &Action{Name: "FocusWorkspace"}}},
+			Request{Name: "Action", Action: &Action{Name: "FocusWorkspace", Workspace: &WorkspaceReference{Index: &workspaceIndex}}}},
 	} {
 		got, err := DecodeRequest([]byte(tc.line))
 		if err != nil {
@@ -87,6 +88,99 @@ func TestWindowActionsRejectMalformedFields(t *testing.T) {
 		`{"Action":{"FocusWorkspace":{}}}`,
 		`{"Action":{"FocusWorkspace":{"reference":{"Id":7,"Index":1}}}}`,
 		`{"Action":{"FocusWorkspace":{"reference":{"Other":7}}}}`,
+	} {
+		if _, err := DecodeRequest([]byte(line)); err != ErrParse {
+			t.Errorf("DecodeRequest(%s) error = %v, want %v", line, err, ErrParse)
+		}
+	}
+}
+
+func TestM6ActionsRoundTripNiriWire(t *testing.T) {
+	for _, line := range []string{
+		`{"Action":{"MoveWindowToWorkspaceDown":{"focus":true}}}`,
+		`{"Action":{"MoveWindowToWorkspaceUp":{"focus":false}}}`,
+		`{"Action":{"MoveColumnToWorkspaceDown":{"focus":true}}}`,
+		`{"Action":{"MoveColumnToWorkspaceUp":{"focus":false}}}`,
+		`{"Action":{"FocusWindowDown":{}}}`,
+		`{"Action":{"FocusWindowUp":{}}}`,
+		`{"Action":{"MoveWindowDown":{}}}`,
+		`{"Action":{"MoveWindowUp":{}}}`,
+		`{"Action":{"FocusWindowInColumn":{"index":2}}}`,
+		`{"Action":{"ConsumeWindowIntoColumn":{}}}`,
+		`{"Action":{"ConsumeOrExpelWindowLeft":{"id":41}}}`,
+		`{"Action":{"ConsumeOrExpelWindowRight":{"id":null}}}`,
+		`{"Action":{"SetColumnDisplay":{"display":"Tabbed"}}}`,
+		`{"Action":{"FullscreenWindow":{"id":null}}}`,
+		`{"Action":{"MoveWindowToFloating":{"id":41}}}`,
+		`{"Action":{"FocusFloating":{}}}`,
+		`{"Action":{"SetWorkspaceName":{"name":"work","workspace":null}}}`,
+		`{"Action":{"UnsetWorkspaceName":{"reference":{"Name":"work"}}}}`,
+		`{"Action":{"MoveWindowToWorkspace":{"window_id":null,"reference":{"Name":"work"},"focus":true}}}`,
+		`{"Action":{"MoveWindowToMonitor":{"id":null,"output":"DP-2"}}}`,
+		`{"Action":{"MoveColumnToMonitor":{"output":"DP-2"}}}`,
+		`{"Action":{"MoveWorkspaceToMonitor":{"output":"DP-2","reference":{"Name":"work"}}}}`,
+		`{"Action":{"FocusMonitor":{"output":"DP-2"}}}`,
+		`{"Action":{"ToggleWindowUrgent":{"id":41}}}`,
+		`{"Action":{"SetWindowUrgent":{"id":41}}}`,
+		`{"Action":{"UnsetWindowUrgent":{"id":41}}}`,
+	} {
+		request, err := DecodeRequest([]byte(line))
+		if err != nil {
+			t.Fatalf("DecodeRequest(%s): %v", line, err)
+		}
+		if got := string(EncodeRequest(request)); got != line {
+			t.Errorf("round trip = %s, want %s", got, line)
+		}
+	}
+}
+
+func TestMoveFloatingWindowPositionChangesRoundTripNiriWire(t *testing.T) {
+	for _, line := range []string{
+		`{"Action":{"MoveFloatingWindow":{"id":41,"x":{"SetFixed":12.5},"y":{"SetProportion":75}}}}`,
+		`{"Action":{"MoveFloatingWindow":{"id":null,"x":{"AdjustFixed":40},"y":{"AdjustProportion":-10}}}}`,
+	} {
+		request, err := DecodeRequest([]byte(line))
+		if err != nil {
+			t.Fatalf("DecodeRequest(%s): %v", line, err)
+		}
+		if got := string(EncodeRequest(request)); got != line {
+			t.Errorf("round trip = %s, want %s", got, line)
+		}
+	}
+}
+
+func TestRelativeWorkspaceMoveDefaultsFocusWhenEncoding(t *testing.T) {
+	for _, name := range []string{
+		"MoveWindowToWorkspaceDown", "MoveWindowToWorkspaceUp",
+		"MoveColumnToWorkspaceDown", "MoveColumnToWorkspaceUp",
+	} {
+		got := string(EncodeRequest(Request{Name: "Action", Action: &Action{Name: name}}))
+		if !strings.Contains(got, `"focus":true`) {
+			t.Errorf("EncodeRequest(%s) = %s, want default focus=true", name, got)
+		}
+	}
+}
+
+func TestM6ActionsRejectMalformedFields(t *testing.T) {
+	for _, line := range []string{
+		`{"Action":{"FocusWindowInColumn":{"index":256}}}`,
+		`{"Action":{"SetColumnDisplay":{"display":"Tabbed","extra":true}}}`,
+		`{"Action":{"SetColumnDisplay":{"display":"Mosaic"}}}`,
+		`{"Action":{"MoveWindowToWorkspace":{"reference":{"Name":"work"},"focus":"yes"}}}`,
+		`{"Action":{"MoveWindowToWorkspaceDown":{}}}`,
+		`{"Action":{"MoveColumnToWorkspaceUp":{"focus":"no"}}}`,
+		`{"Action":{"MoveWindowToWorkspaceDown":{"focus":true,"extra":1}}}`,
+		`{"Action":{"MoveWindowToMonitor":{"output":4}}}`,
+		`{"Action":{"FocusFloating":{"extra":true}}}`,
+		`{"Action":{"SetWindowUrgent":{}}}`,
+		`{"Action":{"ToggleWindowUrgent":{"id":null}}}`,
+		`{"Action":{"ConsumeOrExpelWindowRight":{"id":"41"}}}`,
+		`{"Action":{"ConsumeOrExpelWindowLeft":{"id":41,"extra":true}}}`,
+		`{"Action":{"MoveFloatingWindow":{"id":1,"x":{"AdjustFixed":1}}}}`,
+		`{"Action":{"MoveFloatingWindow":{"id":"1","x":{"AdjustFixed":1},"y":{"AdjustFixed":1}}}}`,
+		`{"Action":{"MoveFloatingWindow":{"id":null,"x":{"Unknown":1},"y":{"AdjustFixed":1}}}}`,
+		`{"Action":{"MoveFloatingWindow":{"id":null,"x":{"SetFixed":1,"AdjustFixed":2},"y":{"AdjustFixed":1}}}}`,
+		`{"Action":{"MoveFloatingWindow":{"id":null,"x":{"AdjustFixed":1},"y":{"AdjustFixed":1},"extra":true}}}`,
 	} {
 		if _, err := DecodeRequest([]byte(line)); err != ErrParse {
 			t.Errorf("DecodeRequest(%s) error = %v, want %v", line, err, ErrParse)

@@ -12,11 +12,11 @@ Legend: `[ ]` missing · `[~]` partial · `[x]` done.
 |---|---|---|
 | Version | [x] | M2 — `sysc-compositor <version> (niri-ipc 26.4.0)` |
 | Outputs | [x] | M3 — wlroots output snapshots |
-| Workspaces | [x] | M3/M5 — stable per-output IDs, active plus trailing empty workspace, dynamic indices |
+| Workspaces | [x] | M3/M5/M6 — stable per-output IDs, names, active plus trailing empty workspace, dynamic indices |
 | Windows | [x] | M4 — mapped toplevels with stable IDs and logical geometry; offscreen centers fall back to the focused output |
 | Layers | [x] | M3 — mapped layer-shell surfaces |
 | KeyboardLayouts | [ ] | M9 |
-| FocusedOutput | [x] | M3 — active output follows keyboard focus; first connected output is the initial and disconnect fallback |
+| FocusedOutput | [x] | M3/M6 — active output follows keyboard focus; first connected output is the initial and disconnect fallback; monitor focus warps the pointer to output center |
 | FocusedWindow | [x] | M4 — actual keyboard-focused mapped window, otherwise null |
 | PickWindow | [ ] | M15 |
 | PickColor | [ ] | M15 |
@@ -32,7 +32,7 @@ Legend: `[ ]` missing · `[~]` partial · `[x]` done.
 | Event | Status | Milestone |
 |---|---|---|
 | WorkspacesChanged | [x] | M3 — workspace topology changes |
-| WorkspaceUrgencyChanged | [ ] | M6 |
+| WorkspaceUrgencyChanged | [x] | M6 — urgency state transitions and clearing on focus |
 | WorkspaceActivated | [x] | M3 — focus and activation changes |
 | WorkspaceActiveWindowChanged | [x] | M4 — retained layout-focused window per output workspace, even while a layer owns keyboard focus |
 | WindowsChanged | [x] | M4 — populated initial EventStream snapshot |
@@ -40,7 +40,7 @@ Legend: `[ ]` missing · `[~]` partial · `[x]` done.
 | WindowClosed | [x] | M4 — unmap/destroy |
 | WindowFocusChanged | [x] | M4 — focus changes and clear, following Niri event semantics |
 | WindowFocusTimestampChanged | [x] | M4 — monotonic timestamp after Niri's 750 ms debounce |
-| WindowUrgencyChanged | [ ] | M6 |
+| WindowUrgencyChanged | [x] | M6 — urgency actions and state transitions |
 | WindowLayoutsChanged | [x] | M5 — tile order, position, and size changes |
 | KeyboardLayoutsChanged | [~] | M3 — current XKB layout baseline; config support in M9 |
 | KeyboardLayoutSwitched | [~] | M3 — XKB layout changes; switch action in M9 |
@@ -84,7 +84,31 @@ Until implemented, decode and reply `Err` with `unimplemented: <Name>`. Tick whe
 |---|---|---|
 | FocusWindow | [x] | M4 — stable mapped-window ID |
 | CloseWindow | [x] | M4 — sends xdg-toplevel close for an explicit ID or the retained Niri layout focus |
-| FocusWorkspace | [~] | M4/M5 — stable ID and current-output index; named workspaces arrive with M6 |
+| FocusWorkspace | [x] | M4/M5/M6 — stable ID, current-output index, or named workspace |
+| FocusWindowDown/Up | [x] | M6 — adjacent tiled window or nearest floating window in the vertical direction |
+| MoveWindowDown/Up | [x] | M6 — reorder a tiled window within its column or move a floating window by 50 logical pixels |
+| MoveWindowToWorkspaceDown/Up | [x] | M6 — move the active window between adjacent workspaces, with focus following by default |
+| MoveColumnToWorkspaceDown/Up | [x] | M6 — move the focused column with its tabs; a focused floating window moves alone |
+| MoveWindowToWorkspace / MoveColumnToWorkspace | [x] | M6 — explicit index or name target, preserving stable window/workspace IDs |
+| SetWorkspaceName / UnsetWorkspaceName | [x] | M6 — explicit or focused workspace; names are unique case-insensitively |
+| MoveFloatingWindow | [x] | M6 — fixed/proportional position changes for an explicit or focused window; scene position and saved position across floating toggles verified |
+
+### M6 columns, floating, fullscreen, urgency, and monitors
+
+| Action | Status | Milestone |
+|---|---|---|
+| ConsumeWindowIntoColumn / ExpelWindowFromColumn | [x] | M6 — move windows into and out of a focused column |
+| ConsumeOrExpelWindowLeft/Right | [x] | M6 — directional consume/expel, including explicit-window IPC targets |
+| ToggleColumnTabbedDisplay / SetColumnDisplay | [x] | M6 — normal and tabbed columns; inactive tabs are hidden and excluded from hit testing |
+| FocusWindowInColumn | [x] | M6 — focus a tab by 1-based index |
+| ToggleWindowFloating / MoveWindowToFloating / MoveWindowToTiling | [x] | M6 — preserve floating placement and restore tiled geometry |
+| FocusFloating / FocusTiling / SwitchFocusBetweenFloatingAndTiling | [x] | M6 — switch keyboard focus between the two layouts |
+| FullscreenWindow / ToggleWindowedFullscreen | [x] | M6 — client fullscreen covers its output; windowed fullscreen sets XDG fullscreen state while retaining ordinary placement |
+| ToggleWindowUrgent / SetWindowUrgent / UnsetWindowUrgent | [x] | M6 — urgency updates flow into window and workspace snapshots and events |
+| FocusMonitor / FocusMonitorLeft/Right/Up/Down/Previous/Next | [x] | M6 — output selection and pointer warp; multi-output hardware behavior remains unproven on the one-output testbench |
+| MoveWindowToMonitor / MoveWindowToMonitorLeft/Right/Up/Down/Previous/Next | [x] | M6 — explicit output and relative-output moves |
+| MoveColumnToMonitor / MoveColumnToMonitorLeft/Right/Up/Down/Previous/Next | [x] | M6 — move a tiled column, or the focused floating window |
+| MoveWorkspaceToMonitor / MoveWorkspaceToMonitorLeft/Right/Up/Down/Previous/Next | [x] | M6 — move the selected or focused workspace between outputs |
 
 ### Window / column / workspace / monitor / floating / overview / cast / debug
 
@@ -99,19 +123,19 @@ Track the rest against niri-ipc 26.4.0 `Action` as they are implemented in M4–
 
 M5 applies `Spawn`, `SpawnSh`, `CloseWindow`, `FocusColumnLeft/Right/First/Last`,
 `MoveColumnLeft/Right/ToFirst/ToLast`, and `FocusWorkspace` by stable ID or current-output index.
-`FocusWorkspace` remains partial until named workspaces arrive in M6.
+M6 adds the window, column, floating, fullscreen, urgency, named-workspace, and monitor actions above.
 
 ## Config sections
 
 | Section | Status | Milestone |
 |---|---|---|
-| input | [~] | M2 keyboard xkb + repeat; M5 nested Mod defaults, core key binds, Mod+drag, and edge resize with tile dimensions retained across unmap/remap for the stable window ID; remaining input work is M6/M10 |
-| output | [~] | M3 accepted, M15 apply full |
+| input | [~] | M2 keyboard xkb + repeat; M5 nested Mod defaults, core key binds, Mod+drag, and edge resize with tile dimensions retained across unmap/remap for the stable window ID; M6 adds its keyboard action subset; remaining input work is M7/M10 |
+| output | [~] | M3 reports connected outputs, available/current modes, logical geometry, scale/transform, and VRR capability/state; M15 applies mode/refresh, scale, position, transform, power, and VRR settings |
 | layout | [~] | M5 gaps, default column width, scrolling columns, client min/max size bounds, centered window offsets, and retained pointer-resized column width/window height across focus, output geometry updates, and unmap/remap; remaining layout options later |
-| binds | [~] | M5 core key subset; unsupported actions and mouse/scroll triggers warn |
+| binds | [~] | M5 core key subset plus M6 window, workspace, urgency, and monitor actions; unsupported later actions and mouse/scroll triggers warn |
 | switch-events | [ ] | M9 |
-| window-rule | [ ] | M6 |
-| layer-rule | [ ] | M6 |
+| window-rule | [~] | M6 app-id/title match and exclude, ordered placement/fullscreen overrides, and default size fields; remaining Niri rule effects are unimplemented |
+| layer-rule | [~] | M6 namespace matching and `place-within-backdrop` classification for M7; remaining Niri layer-rule effects are unimplemented |
 | animations | [ ] | M8 |
 | gestures | [ ] | M7 |
 | overview | [ ] | M7 |
@@ -121,7 +145,7 @@ M5 applies `Spawn`, `SpawnSh`, `CloseWindow`, `FocusColumnLeft/Right/First/Last`
 | screenshot-path | [ ] | M11 |
 | prefer-no-csd | [ ] | M8 |
 | spawn-at-startup / spawn-sh-at-startup | [x] | M2 |
-| workspace | [ ] | M6 |
+| workspace | [~] | M6 named workspace declarations and output placement; remaining Niri workspace options are unimplemented |
 | xwayland-satellite | [ ] | M13 |
 | recent-windows | [ ] | M11 |
 | debug | [ ] | M15 |

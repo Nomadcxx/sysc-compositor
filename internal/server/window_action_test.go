@@ -2,6 +2,7 @@ package server
 
 import (
 	"bufio"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -120,6 +121,22 @@ func TestNiriWindowActionsOverSocket(t *testing.T) {
 			t.Fatalf("Niri action reply = %q, %v; want Handled", reply, err)
 		}
 	}
+	requestWireAction := func(line string) {
+		t.Helper()
+		conn, err := net.DialTimeout("unix", s.NiriSocket(), time.Second)
+		if err != nil {
+			t.Fatalf("connect Niri socket: %v", err)
+		}
+		defer conn.Close()
+		_ = conn.SetDeadline(time.Now().Add(3 * time.Second))
+		if _, err := conn.Write(append([]byte(line), '\n')); err != nil {
+			t.Fatalf("write Niri action: %v", err)
+		}
+		reply, err := bufio.NewReader(conn).ReadString('\n')
+		if err != nil || reply != `{"Ok":"Handled"}`+"\n" {
+			t.Fatalf("Niri action reply = %q, %v; want Handled", reply, err)
+		}
+	}
 	waitForState := func(check func(niriSnapshot) bool, what string) niriSnapshot {
 		t.Helper()
 		deadline := time.Now().Add(5 * time.Second)
@@ -151,6 +168,195 @@ func TestNiriWindowActionsOverSocket(t *testing.T) {
 	workspaceID := state.workspaces[0].ID
 	requestAction(ipc.Action{Name: "FocusWorkspace", Workspace: &ipc.WorkspaceReference{ID: &workspaceID}})
 	waitForState(func(state niriSnapshot) bool { return containsFocused(state, firstID) }, "FocusWorkspace target output")
+	workspaceName := "Work"
+	workspaceLookupName := "work"
+	requestAction(ipc.Action{Name: "SetWorkspaceName", WorkspaceName: &workspaceName})
+	waitForState(func(state niriSnapshot) bool {
+		for _, workspace := range state.workspaces {
+			if workspace.ID == workspaceID {
+				return workspace.Name != nil && *workspace.Name == workspaceName
+			}
+		}
+		return false
+	}, "SetWorkspaceName")
+	requestAction(ipc.Action{Name: "FocusWorkspace", Workspace: &ipc.WorkspaceReference{Name: &workspaceLookupName}})
+	waitForState(func(state niriSnapshot) bool { return containsFocused(state, firstID) }, "case-insensitive named workspace focus")
+	state = s.state.snapshot()
+	var targetWorkspaceID uint64
+	for _, workspace := range state.workspaces {
+		if workspace.Idx == 2 && workspace.Output != nil && state.focusedOutput != nil && *workspace.Output == state.focusedOutput.Name {
+			targetWorkspaceID = workspace.ID
+			break
+		}
+	}
+	if targetWorkspaceID == 0 {
+		t.Fatalf("missing trailing workspace for move: %+v", state.workspaces)
+	}
+	follow := true
+	requestAction(ipc.Action{
+		Name: "MoveWindowToWorkspace", WindowID: &firstID,
+		Workspace: &ipc.WorkspaceReference{ID: &targetWorkspaceID}, Focus: &follow,
+	})
+	waitForState(func(state niriSnapshot) bool {
+		for _, window := range state.windows {
+			if window.ID == firstID {
+				return window.WorkspaceID != nil && *window.WorkspaceID == targetWorkspaceID && window.IsFocused
+			}
+		}
+		return false
+	}, "MoveWindowToWorkspace with focus follow")
+	requestAction(ipc.Action{
+		Name: "MoveWindowToWorkspace", WindowID: &firstID,
+		Workspace: &ipc.WorkspaceReference{Name: &workspaceLookupName}, Focus: &follow,
+	})
+	waitForState(func(state niriSnapshot) bool {
+		for _, window := range state.windows {
+			if window.ID == firstID {
+				return window.WorkspaceID != nil && *window.WorkspaceID == workspaceID && window.IsFocused
+			}
+		}
+		return false
+	}, "move window back to named workspace")
+	state = s.state.snapshot()
+	var nextWorkspaceID uint64
+	for _, workspace := range state.workspaces {
+		if workspace.Idx == 2 && workspace.Output != nil && state.focusedOutput != nil && *workspace.Output == state.focusedOutput.Name {
+			nextWorkspaceID = workspace.ID
+			break
+		}
+	}
+	if nextWorkspaceID == 0 {
+		t.Fatalf("missing adjacent workspace for relative move: %+v", state.workspaces)
+	}
+	requestAction(ipc.Action{Name: "MoveWindowToWorkspaceDown", Focus: &follow})
+	waitForState(func(state niriSnapshot) bool {
+		for _, window := range state.windows {
+			if window.ID == firstID {
+				return window.WorkspaceID != nil && *window.WorkspaceID == nextWorkspaceID && window.IsFocused
+			}
+		}
+		return false
+	}, "move window to workspace down with focus follow")
+	requestAction(ipc.Action{Name: "MoveWindowToWorkspaceUp", Focus: &follow})
+	waitForState(func(state niriSnapshot) bool {
+		for _, window := range state.windows {
+			if window.ID == firstID {
+				return window.WorkspaceID != nil && *window.WorkspaceID == workspaceID && window.IsFocused
+			}
+		}
+		return false
+	}, "move window back up with focus follow")
+	requestAction(ipc.Action{Name: "MoveWindowToFloating", WindowID: &firstID})
+	waitForState(func(state niriSnapshot) bool {
+		for _, window := range state.windows {
+			if window.ID == firstID {
+				return window.IsFloating
+			}
+		}
+		return false
+	}, "MoveWindowToFloating")
+	state = s.state.snapshot()
+	var floatingPosition [2]float64
+	for _, window := range state.windows {
+		if window.ID == firstID && window.Layout.TilePosInWorkspaceView != nil {
+			floatingPosition = *window.Layout.TilePosInWorkspaceView
+		}
+	}
+	requestWireAction(fmt.Sprintf(`{"Action":{"MoveFloatingWindow":{"id":%d,"x":{"AdjustFixed":40},"y":{"AdjustFixed":-25}}}}`, firstID))
+	waitForState(func(state niriSnapshot) bool {
+		for _, window := range state.windows {
+			if window.ID == firstID && window.Layout.TilePosInWorkspaceView != nil {
+				position := *window.Layout.TilePosInWorkspaceView
+				return position == [2]float64{floatingPosition[0] + 40, floatingPosition[1] - 25}
+			}
+		}
+		return false
+	}, "MoveFloatingWindow relative position changes")
+	requestAction(ipc.Action{Name: "MoveFloatingWindow",
+		X: ipc.PositionChange{Kind: ipc.PositionAdjustFixed, Value: 10},
+		Y: ipc.PositionChange{Kind: ipc.PositionAdjustFixed, Value: 5},
+	})
+	waitForState(func(state niriSnapshot) bool {
+		for _, window := range state.windows {
+			if window.ID == firstID && window.Layout.TilePosInWorkspaceView != nil {
+				position := *window.Layout.TilePosInWorkspaceView
+				return position == [2]float64{floatingPosition[0] + 50, floatingPosition[1] - 20}
+			}
+		}
+		return false
+	}, "MoveFloatingWindow focused window")
+	requestAction(ipc.Action{Name: "MoveWindowToTiling", WindowID: &firstID})
+	waitForState(func(state niriSnapshot) bool {
+		for _, window := range state.windows {
+			if window.ID == firstID {
+				return !window.IsFloating
+			}
+		}
+		return false
+	}, "MoveWindowToTiling")
+	requestAction(ipc.Action{Name: "FocusWindow", WindowID: &firstID})
+	waitForState(func(state niriSnapshot) bool { return containsFocused(state, firstID) }, "FocusWindow before consume")
+	requestAction(ipc.Action{Name: "MoveColumnToFirst"})
+	requestAction(ipc.Action{Name: "ConsumeWindowIntoColumn"})
+	state = s.state.snapshot()
+	nextWorkspaceID = 0
+	for _, workspace := range state.workspaces {
+		if workspace.Idx == 2 && workspace.Output != nil && state.focusedOutput != nil && *workspace.Output == state.focusedOutput.Name {
+			nextWorkspaceID = workspace.ID
+			break
+		}
+	}
+	if nextWorkspaceID == 0 {
+		t.Fatalf("missing adjacent workspace for column move: %+v", state.workspaces)
+	}
+	requestAction(ipc.Action{Name: "MoveColumnToWorkspaceDown", Focus: &follow})
+	waitForState(func(state niriSnapshot) bool {
+		var moved int
+		for _, window := range state.windows {
+			if (window.ID == firstID || window.ID == secondID) && window.WorkspaceID != nil && *window.WorkspaceID == nextWorkspaceID {
+				moved++
+			}
+		}
+		return moved == 2
+	}, "move tabbed column to workspace down")
+	requestAction(ipc.Action{Name: "MoveColumnToWorkspaceUp", Focus: &follow})
+	waitForState(func(state niriSnapshot) bool {
+		var returned int
+		for _, window := range state.windows {
+			if (window.ID == firstID || window.ID == secondID) && window.WorkspaceID != nil && *window.WorkspaceID == workspaceID {
+				returned++
+			}
+		}
+		return returned == 2
+	}, "move tabbed column back to workspace up")
+	secondIndex := uint8(2)
+	requestAction(ipc.Action{Name: "FocusWindowInColumn", ColumnIndex: &secondIndex})
+	waitForState(func(state niriSnapshot) bool { return containsFocused(state, secondID) }, "FocusWindowInColumn after consume")
+	requestAction(ipc.Action{Name: "FocusWindow", WindowID: &firstID})
+	waitForState(func(state niriSnapshot) bool { return containsFocused(state, firstID) }, "restore focus before close")
+	requestAction(ipc.Action{Name: "ConsumeOrExpelWindowRight", WindowID: &secondID})
+	state = waitForState(func(state niriSnapshot) bool {
+		columns := make(map[uint64]uint32)
+		for _, window := range state.windows {
+			if window.ID == firstID || window.ID == secondID {
+				columns[window.ID] = window.Layout.PosInScrollingLayout[0]
+			}
+		}
+		return len(columns) == 2 && columns[firstID] != columns[secondID]
+	}, "ConsumeOrExpelWindowRight targeting an unfocused window")
+	if !containsFocused(state, firstID) {
+		t.Fatal("ConsumeOrExpelWindowRight changed focus from the unrelated window")
+	}
+	requestAction(ipc.Action{Name: "ConsumeOrExpelWindowLeft", WindowID: &secondID})
+	state = waitForState(func(state niriSnapshot) bool {
+		columns := make(map[uint64]uint32)
+		for _, window := range state.windows {
+			if window.ID == firstID || window.ID == secondID {
+				columns[window.ID] = window.Layout.PosInScrollingLayout[0]
+			}
+		}
+		return len(columns) == 2 && columns[firstID] == columns[secondID]
+	}, "ConsumeOrExpelWindowLeft targeting an unfocused window")
 	requestAction(ipc.Action{Name: "CloseWindow", WindowID: &firstID})
 	select {
 	case <-firstExited:

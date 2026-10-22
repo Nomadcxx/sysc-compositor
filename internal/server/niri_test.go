@@ -63,8 +63,8 @@ func TestNiriLayerSnapshotConversion(t *testing.T) {
 func TestNiriWindowSnapshotConversion(t *testing.T) {
 	title, appID := "Terminal", "org.example.Terminal"
 	logical := &ipc.LogicalOutput{X: -1920, Y: 10}
-	placement := wm.WindowSnapshot{ID: 12, Output: "DP-1", WorkspaceID: 7, Column: 3,
-		Tile: layout.Placement{ID: 12, X: -1900, Y: 50, Width: 1000, Height: 800}}
+	placement := wm.WindowSnapshot{ID: 12, Output: "DP-1", WorkspaceID: 7, Column: 3, IsUrgent: true,
+		Tile: layout.Placement{ID: 12, Column: 3, Tile: 2, X: -1900, Y: 50, Width: 1000, Height: 800}}
 	got := toNiriWindow(wlr.WindowInfo{
 		ID: 12, Title: &title, AppID: &appID, PID: 123,
 		X: -1890, Y: 60, Width: 800, Height: 600, Output: "DP-1", IsFocused: true,
@@ -74,10 +74,10 @@ func TestNiriWindowSnapshotConversion(t *testing.T) {
 	pid := int32(123)
 	focusTimestamp := &ipc.Timestamp{Secs: 8, Nanos: 23}
 	position := [2]float64{20, 40}
-	columnPosition := [2]uint32{4, 1}
+	columnPosition := [2]uint32{4, 3}
 	want := ipc.Window{
 		ID: 12, Title: &title, AppID: &appID, PID: &pid, WorkspaceID: &workspaceID,
-		IsFocused: true,
+		IsFocused: true, IsUrgent: true,
 		Layout: ipc.WindowLayout{
 			PosInScrollingLayout: &columnPosition,
 			TileSize:             [2]float64{1000, 800}, WindowSize: [2]int32{800, 600},
@@ -95,17 +95,33 @@ func TestNiriWindowSnapshotConversion(t *testing.T) {
 	}
 }
 
+func TestNiriFloatingWindowSnapshotConversion(t *testing.T) {
+	got := toNiriWindow(wlr.WindowInfo{ID: 5, Width: 400, Height: 300}, wm.WindowSnapshot{
+		ID: 5, WorkspaceID: 9, Tile: layout.Placement{ID: 5, Floating: true, X: 90, Y: 70, Width: 400, Height: 300},
+	}, ipc.Output{Name: "DP-1"})
+	if !got.IsFloating {
+		t.Errorf("IsFloating = false, want true for a floating placement")
+	}
+	if got.Layout.PosInScrollingLayout != nil {
+		t.Errorf("PosInScrollingLayout = %v, want nil for a floating placement", got.Layout.PosInScrollingLayout)
+	}
+	if got.Layout.TilePosInWorkspaceView == nil || *got.Layout.TilePosInWorkspaceView != [2]float64{90, 70} {
+		t.Errorf("TilePosInWorkspaceView = %v, want [90 70]", got.Layout.TilePosInWorkspaceView)
+	}
+}
+
 func TestNiriWorkspaceSnapshotConversion(t *testing.T) {
 	output := "DP-1"
+	workspaceName := "Work"
 	activeWindow := uint64(12)
 	got := toNiriWorkspaces(wm.Snapshot{Workspaces: []wm.WorkspaceSnapshot{
 		{ID: 41, Index: 1, Output: output},
-		{ID: 42, Index: 2, Output: output, IsActive: true, IsFocused: true, ActiveWindowID: &activeWindow},
+		{ID: 42, Index: 2, Output: output, Name: &workspaceName, IsActive: true, IsFocused: true, ActiveWindowID: &activeWindow, IsUrgent: true},
 		{ID: 43, Index: 3, Output: output},
 	}})
 	want := []ipc.Workspace{
 		{ID: 41, Idx: 1, Output: &output},
-		{ID: 42, Idx: 2, Output: &output, IsActive: true, IsFocused: true, ActiveWindowID: &activeWindow},
+		{ID: 42, Idx: 2, Name: &workspaceName, Output: &output, IsActive: true, IsFocused: true, ActiveWindowID: &activeWindow, IsUrgent: true},
 		{ID: 43, Idx: 3, Output: &output},
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -247,6 +263,90 @@ func TestNiriWindowActionsArePosted(t *testing.T) {
 	}
 }
 
+func TestNiriM6ActionsArePosted(t *testing.T) {
+	output := "DP-1"
+	focusedOutput := ipc.Output{Name: output}
+	name := "work"
+	selectedWindowID := uint64(41)
+	var posted []struct {
+		action      ipc.Action
+		workspaceID uint64
+	}
+	h := niriHandler{
+		snapshot: func() niriSnapshot {
+			return niriSnapshot{
+				focusedOutput: &focusedOutput,
+				workspaces: []ipc.Workspace{
+					{ID: 7, Idx: 1, Output: &output, IsFocused: true, Name: &name},
+					{ID: 8, Idx: 2, Output: &output},
+				},
+			}
+		},
+		postAction: func(action ipc.Action, workspaceID uint64) error {
+			posted = append(posted, struct {
+				action      ipc.Action
+				workspaceID uint64
+			}{action, workspaceID})
+			return nil
+		},
+	}
+	for _, tc := range []struct {
+		line        string
+		name        string
+		workspaceID uint64
+	}{
+		{`{"Action":{"ConsumeWindowIntoColumn":{}}}`, "ConsumeWindowIntoColumn", 0},
+		{`{"Action":{"MoveWindowToWorkspaceDown":{"focus":true}}}`, "MoveWindowToWorkspaceDown", 0},
+		{`{"Action":{"MoveWindowToWorkspaceUp":{"focus":false}}}`, "MoveWindowToWorkspaceUp", 0},
+		{`{"Action":{"MoveColumnToWorkspaceDown":{"focus":true}}}`, "MoveColumnToWorkspaceDown", 0},
+		{`{"Action":{"MoveColumnToWorkspaceUp":{"focus":false}}}`, "MoveColumnToWorkspaceUp", 0},
+		{`{"Action":{"FocusWindowDown":{}}}`, "FocusWindowDown", 0},
+		{`{"Action":{"FocusWindowUp":{}}}`, "FocusWindowUp", 0},
+		{`{"Action":{"MoveWindowDown":{}}}`, "MoveWindowDown", 0},
+		{`{"Action":{"MoveWindowUp":{}}}`, "MoveWindowUp", 0},
+		{`{"Action":{"ConsumeOrExpelWindowLeft":{"id":41}}}`, "ConsumeOrExpelWindowLeft", 0},
+		{`{"Action":{"ConsumeOrExpelWindowRight":{"id":null}}}`, "ConsumeOrExpelWindowRight", 0},
+		{`{"Action":{"FocusWindowInColumn":{"index":2}}}`, "FocusWindowInColumn", 0},
+		{`{"Action":{"SetColumnDisplay":{"display":"Tabbed"}}}`, "SetColumnDisplay", 0},
+		{`{"Action":{"FullscreenWindow":{"id":null}}}`, "FullscreenWindow", 0},
+		{`{"Action":{"ToggleWindowFloating":{"id":41}}}`, "ToggleWindowFloating", 0},
+		{`{"Action":{"SetWorkspaceName":{"name":"dev","workspace":null}}}`, "SetWorkspaceName", 7},
+		{`{"Action":{"MoveWindowToWorkspace":{"window_id":null,"reference":{"Name":"WORK"},"focus":true}}}`, "MoveWindowToWorkspace", 7},
+		{`{"Action":{"MoveWorkspaceToMonitor":{"output":"HDMI-A-1","reference":{"Name":"work"}}}}`, "MoveWorkspaceToMonitor", 7},
+		{`{"Action":{"MoveWorkspaceToMonitor":{"output":"HDMI-A-1","reference":null}}}`, "MoveWorkspaceToMonitor", 7},
+		{`{"Action":{"MoveWorkspaceToMonitorNext":{}}}`, "MoveWorkspaceToMonitorNext", 0},
+		{`{"Action":{"MoveColumnToMonitor":{"output":"HDMI-A-1"}}}`, "MoveColumnToMonitor", 0},
+		{`{"Action":{"FocusMonitor":{"output":"HDMI-A-1"}}}`, "FocusMonitor", 0},
+		{`{"Action":{"FocusMonitorNext":{}}}`, "FocusMonitorNext", 0},
+		{`{"Action":{"ToggleWindowUrgent":{"id":41}}}`, "ToggleWindowUrgent", 0},
+		{`{"Action":{"SetWindowUrgent":{"id":41}}}`, "SetWindowUrgent", 0},
+		{`{"Action":{"UnsetWindowUrgent":{"id":41}}}`, "UnsetWindowUrgent", 0},
+	} {
+		request, err := ipc.DecodeRequest([]byte(tc.line))
+		if err != nil {
+			t.Fatalf("DecodeRequest(%s): %v", tc.line, err)
+		}
+		reply, after := h.handle(request)
+		if string(reply.Ok) != string(ipc.Handled) || after == nil {
+			t.Fatalf("%s reply = %+v, after = %v; want Handled and posted operation", tc.name, reply, after != nil)
+		}
+		after()
+		got := posted[len(posted)-1]
+		if got.action.Name != tc.name || got.workspaceID != tc.workspaceID {
+			t.Errorf("posted = %+v, want action %s workspace ID %d", got, tc.name, tc.workspaceID)
+		}
+		if (tc.name == "MoveWorkspaceToMonitor" || tc.name == "FocusMonitor") && got.action.Output != "HDMI-A-1" {
+			t.Errorf("posted output = %q, want HDMI-A-1", got.action.Output)
+		}
+		if tc.name == "ConsumeOrExpelWindowLeft" && (got.action.WindowID == nil || *got.action.WindowID != selectedWindowID) {
+			t.Errorf("posted window ID = %v, want %d", got.action.WindowID, selectedWindowID)
+		}
+		if tc.name == "ConsumeOrExpelWindowRight" && got.action.WindowID != nil {
+			t.Errorf("posted window ID = %d, want nil", *got.action.WindowID)
+		}
+	}
+}
+
 func TestNiriSocketPath(t *testing.T) {
 	got, err := niriSocketPath("/run/user/1000", "wayland-1", 42)
 	if err != nil || got != "/run/user/1000/niri.wayland-1.42.sock" {
@@ -316,6 +416,36 @@ func TestEventStreamReportsWindowLayoutChanges(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("eventStreamChanges() did not report the changed window tile position")
+	}
+}
+
+func TestEventStreamReportsUrgencyTransitions(t *testing.T) {
+	windowID, workspaceID := uint64(42), uint64(7)
+	before := niriSnapshot{
+		workspaces: []ipc.Workspace{{ID: workspaceID, Idx: 1}},
+		windows:    []ipc.Window{{ID: windowID, WorkspaceID: &workspaceID}},
+	}
+	after := niriSnapshot{
+		workspaces: []ipc.Workspace{{ID: workspaceID, Idx: 1, IsUrgent: true}},
+		windows:    []ipc.Window{{ID: windowID, WorkspaceID: &workspaceID, IsUrgent: true}},
+	}
+	want := [][]byte{
+		eventLine("WorkspaceUrgencyChanged", struct {
+			ID     uint64 `json:"id"`
+			Urgent bool   `json:"urgent"`
+		}{ID: workspaceID, Urgent: true}),
+		eventLine("WindowUrgencyChanged", struct {
+			ID     uint64 `json:"id"`
+			Urgent bool   `json:"urgent"`
+		}{ID: windowID, Urgent: true}),
+	}
+	if got := eventStreamChanges(before, after); !reflect.DeepEqual(got, want) {
+		t.Fatalf("urgency events = %q, want %q", got, want)
+	}
+	if got := eventStreamChanges(after, before); len(got) != 2 ||
+		!strings.Contains(string(got[0]), `"WorkspaceUrgencyChanged":{"id":7,"urgent":false}`) ||
+		!strings.Contains(string(got[1]), `"WindowUrgencyChanged":{"id":42,"urgent":false}`) {
+		t.Fatalf("cleared urgency events = %q, want workspace then window clear events", got)
 	}
 }
 

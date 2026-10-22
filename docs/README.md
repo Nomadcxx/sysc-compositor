@@ -40,6 +40,7 @@ executed until the owner schedules the milestone they belong to.
 | [plans/2026-10-20-offscreen-focus-design.md](plans/2026-10-20-offscreen-focus-design.md) | design | `sysc-1436`: use the focused output when a mapped window center falls outside every output. |
 | [plans/2026-10-20-offscreen-focus.md](plans/2026-10-20-offscreen-focus.md) | plan | `sysc-1436`: regression-first fix for offscreen `FocusWindow` routing and output snapshots. |
 | [plans/2026-10-20-m5-layout.md](plans/2026-10-20-m5-layout.md) | plan | M5 implementation plan (`sysc-1270`): scrolling columns, per-output dynamic workspaces, core KDL binds, and nested laptop gate. |
+| [plans/2026-10-20-m6-window-policy.md](plans/2026-10-20-m6-window-policy.md) | plan | M6 implementation plan (`sysc-1271`): tabs, floating/fullscreen, named workspaces, monitor moves, M6 rules, urgency, and the laptop nested gate. |
 
 ## Reference sources (pinned 2026-10-16)
 

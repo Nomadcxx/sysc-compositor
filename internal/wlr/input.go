@@ -135,6 +135,9 @@ type toplevelView struct {
 	tree              *C.struct_wlr_scene_tree
 	listeners         []*Listener
 	mapped            bool
+	lastFullscreen    bool
+	lastGeometry      rect
+	rulesApplied      bool
 	id                uint64
 	touched           uint64
 	focusTimestamp    time.Duration
@@ -578,6 +581,14 @@ func (c *Compositor) startPointerGrab(view *toplevelView, mode pointerGrabMode,
 
 func (c *Compositor) clearPointerGrab() {
 	wasGrabbed := c.pointerGrab != nil
+	if c.pointerGrab != nil && c.pointerGrab.mode == grabMove && c.grabView != nil &&
+		c.grabView.tree != nil && c.model != nil {
+		x, y := c.grabView.treePosition()
+		geometry := c.grabView.geometry()
+		c.model.SetFloatingGeometry(c.grabView.id, layout.Bounds{
+			X: x, Y: y, Width: geometry.w, Height: geometry.h,
+		})
+	}
 	c.pointerGrab = nil
 	c.grabView = nil
 	c.grabButton = 0
@@ -721,15 +732,31 @@ func (c *Compositor) handleNewToplevel(data unsafe.Pointer) {
 		if !bool(toplevel.base.surface.mapped) {
 			return
 		}
+		geometry := view.geometry()
+		geometryChanged := geometry != view.lastGeometry
+		view.lastGeometry = geometry
+		fullscreen := bool(toplevel.current.fullscreen)
+		if fullscreen != view.lastFullscreen {
+			view.lastFullscreen = fullscreen
+			if !fullscreen && c.model != nil {
+				c.applyWorkspaceModel()
+			}
+		}
 		newlyMapped := !view.mapped
 		view.mapped = true
 		if newlyMapped {
 			if c.model != nil {
-				output := c.model.Snapshot().FocusedOutput
-				if output == "" {
-					output = c.FocusedOutputName()
+				clientFullscreen := bool(toplevel.current.fullscreen) || bool(toplevel.requested.fullscreen)
+				if !view.rulesApplied {
+					c.mapWindowWithRules(view, clientFullscreen)
+					view.rulesApplied = true
+				} else {
+					output := c.model.Snapshot().FocusedOutput
+					if output == "" {
+						output = c.FocusedOutputName()
+					}
+					c.mapWindowAfterUnmap(view, output, clientFullscreen)
 				}
-				c.model.MapWindow(view.id, output)
 			}
 			// Niri activates newly mapped windows (ActivateWindow::Smart); its
 			// dialog and activation-token heuristics come with M5.
@@ -737,6 +764,13 @@ func (c *Compositor) handleNewToplevel(data unsafe.Pointer) {
 		}
 		if c.syncWorkspaceWindowSizeHints(view) {
 			c.applyWorkspaceModel()
+		} else if geometryChanged && c.model != nil {
+			for _, window := range c.model.Snapshot().Windows {
+				if window.ID == view.id {
+					c.positionWorkspaceWindow(view, window)
+					break
+				}
+			}
 		}
 		c.notifyWindowStateChanged()
 		if newlyMapped && c.viewMapped != nil {

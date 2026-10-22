@@ -19,7 +19,7 @@ func TestPopupDrawsBesideItsParent(t *testing.T) {
 		clicked      bool
 		placed       []popupPlacement
 		output, geom rect
-		atX, atY     int
+		rootX, rootY int
 	)
 	c.viewMapped = func(v *toplevelView) {
 		if clicked {
@@ -28,11 +28,12 @@ func TestPopupDrawsBesideItsParent(t *testing.T) {
 		clicked = true
 		// Put the window in the output's bottom-right corner, so a popup at
 		// the layout origin cannot pass by accident, and click 40 px inside
-		// that corner, clear of the client's frame.
+		// that corner, clear of the client's frame. The layout may move the
+		// window back to its tile on a later commit, so the expected origin is
+		// read with the popups below, not taken from this placement.
 		out := c.layoutBox()
 		geom = v.geometry()
-		atX, atY = out.x+out.w-geom.w, out.y+out.h-geom.h
-		c.placeView(v, atX, atY)
+		c.placeView(v, out.x+out.w-geom.w, out.y+out.h-geom.h)
 		x, y := float64(out.x+out.w-40), float64(out.y+out.h-40)
 		for _, step := range []func() error{
 			func() error { return c.InjectPointerMotion("agent", x, y) },
@@ -49,6 +50,9 @@ func TestPopupDrawsBesideItsParent(t *testing.T) {
 				if c.Post(func() {
 					placed = c.popupPlacements()
 					output = c.layoutBox()
+					geom = v.geometry()
+					x, y := v.treePosition()
+					rootX, rootY = x-geom.x, y-geom.y
 					done <- len(placed) > 0
 				}) != nil || <-done {
 					break
@@ -80,14 +84,14 @@ func TestPopupDrawsBesideItsParent(t *testing.T) {
 		// move this popup; what the compositor owns is the box it hands over.
 		// It must be the output, measured from the window's surface origin,
 		// which sits the geometry offset (the client's shadow) above-left of
-		// where the window was placed.
+		// where the window is drawn.
 		if !p.hasConstraint {
 			t.Errorf("no constraint box for popup %+v", p.box)
 			continue
 		}
-		if p.rootX != atX-geom.x || p.rootY != atY-geom.y {
+		if p.rootX != rootX || p.rootY != rootY {
 			t.Errorf("root surface origin (%d,%d), want (%d,%d): the geometry offset was not applied",
-				p.rootX, p.rootY, atX-geom.x, atY-geom.y)
+				p.rootX, p.rootY, rootX, rootY)
 		}
 		got := rect{p.constraint.x + p.rootX, p.constraint.y + p.rootY, p.constraint.w, p.constraint.h}
 		if got != output {
