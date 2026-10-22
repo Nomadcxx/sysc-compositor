@@ -4,7 +4,9 @@ package testclient
 #cgo pkg-config: wayland-client
 
 #define _GNU_SOURCE
+#include <errno.h>
 #include <poll.h>
+#include <stdio.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
@@ -286,6 +288,20 @@ static struct wl_buffer *sysc_idle_buffer(struct wl_shm *shm, int width, int hei
 	return buffer;
 }
 
+// Describes why the connection failed, for test errors.
+static void sysc_client_error(struct sysc_idle_client *c, char *out, int size) {
+	const struct wl_interface *interface = NULL;
+	uint32_t id = 0;
+	int err = wl_display_get_error(c->display);
+	if (err == EPROTO) {
+		uint32_t code = wl_display_get_protocol_error(c->display, &interface, &id);
+		snprintf(out, size, "protocol error %u on %s#%u", code,
+			interface != NULL ? interface->name : "?", id);
+	} else {
+		snprintf(out, size, "%s", strerror(err));
+	}
+}
+
 static void sysc_idle_client_free(struct sysc_idle_client *c) {
 	if (c->display != NULL) {
 		wl_display_disconnect(c->display);
@@ -482,10 +498,16 @@ func StartToplevelClient(display string, timeout time.Duration) (*ToplevelClient
 	defer C.free(unsafe.Pointer(name))
 	var state *C.struct_sysc_idle_client
 	if code := int(C.sysc_idle_client_start(name, C.uint32_t(timeout.Milliseconds()), &state)); code != 0 {
+		detail := ""
 		if state != nil {
+			if state.display != nil {
+				var buf [256]C.char
+				C.sysc_client_error(state, &buf[0], C.int(len(buf)))
+				detail = ": " + C.GoString(&buf[0])
+			}
 			C.sysc_idle_client_free(state)
 		}
-		return nil, fmt.Errorf("Wayland idle client failed at step %d", code)
+		return nil, fmt.Errorf("Wayland toplevel client failed at step %d%s", code, detail)
 	}
 	return &ToplevelClient{state: state}, nil
 }
