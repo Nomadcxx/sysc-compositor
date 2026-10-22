@@ -1,6 +1,7 @@
 package wlr
 
 import (
+	"bytes"
 	"image/png"
 	"os"
 	"os/exec"
@@ -120,4 +121,49 @@ func TestScreencopyCapturesTheOutputAtItsSize(t *testing.T) {
 	if config.Width != int(mode.Width) || config.Height != int(mode.Height) {
 		t.Errorf("capture is %dx%d, want the output's %dx%d", config.Width, config.Height, mode.Width, mode.Height)
 	}
+}
+
+// TestScreenshotReadsBackAnOutputAndOffersItAsPNG: an output renders into a
+// buffer of its own size and reads back; the PNG is offered as the user
+// seat's clipboard and a data-control client reads the same bytes.
+func TestScreenshotReadsBackAnOutputAndOffersItAsPNG(t *testing.T) {
+	requireTools(t, "wl-paste")
+	c := newNested(t)
+	runTools(t, c, func(env []string) {
+		var data []byte
+		onCompositor(t, c, func() {
+			for pointer := range c.sceneOutputs {
+				img, err := c.captureOutput(pointer)
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				w, h := outputPixelSize(pointer)
+				if img.Bounds().Dx() != w || img.Bounds().Dy() != h {
+					t.Errorf("screenshot is %v, want the output's %dx%d", img.Bounds(), w, h)
+				}
+				if data, err = encodePNG(img); err != nil {
+					t.Error(err)
+					return
+				}
+				if err := c.setPNGSelection(data); err != nil {
+					t.Error(err)
+				}
+				return
+			}
+		})
+		if data == nil {
+			return
+		}
+		paste := exec.Command("wl-paste", "--type", "image/png")
+		paste.Env = env
+		out, err := paste.Output()
+		if err != nil {
+			t.Errorf("wl-paste: %v", err)
+			return
+		}
+		if !bytes.Equal(out, data) {
+			t.Errorf("clipboard holds %d bytes, want the %d-byte screenshot", len(out), len(data))
+		}
+	})
 }

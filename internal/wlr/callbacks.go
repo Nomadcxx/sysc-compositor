@@ -12,6 +12,8 @@ extern void sysc_background_effect_get(uintptr_t handle, struct wl_resource *man
 extern void sysc_background_effect_set_region(uintptr_t handle, struct wl_resource *resource,
 		struct wl_resource *region);
 extern void sysc_background_effect_resource_destroyed(uintptr_t handle);
+extern void sysc_png_source_send(uintptr_t handle, int fd);
+extern void sysc_png_source_destroyed(uintptr_t handle);
 */
 import "C"
 
@@ -52,6 +54,16 @@ func sysc_background_effect_set_region(handle C.uintptr_t, resource,
 //export sysc_background_effect_resource_destroyed
 func sysc_background_effect_resource_destroyed(handle C.uintptr_t) {
 	cgo.Handle(uintptr(handle)).Value().(*backgroundEffect).resourceDestroyed(uintptr(handle))
+}
+
+//export sysc_png_source_send
+func sysc_png_source_send(handle C.uintptr_t, fd C.int) {
+	sendPNG(uintptr(handle), int(fd))
+}
+
+//export sysc_png_source_destroyed
+func sysc_png_source_destroyed(handle C.uintptr_t) {
+	cgo.Handle(uintptr(handle)).Delete()
 }
 
 // liveHandles counts tokens Register has handed out and Unregister has not yet
