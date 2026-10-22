@@ -2,6 +2,7 @@ package wlr
 
 import (
 	"bytes"
+	"context"
 	"image/png"
 	"os"
 	"os/exec"
@@ -9,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Nomadcxx/sysc-compositor/internal/wlr/testclient"
 )
 
 // TestM11CaptureGlobalsAdvertised lists the capture and clipboard globals
@@ -32,21 +35,31 @@ func TestM11CaptureGlobalsAdvertised(t *testing.T) {
 	}
 }
 
-// runTools runs commands one after another against a running compositor,
-// each with the compositor's socket, and stops the compositor afterwards.
-func runTools(t *testing.T, c *Compositor, steps func(env []string)) {
+// runTools runs steps against a running compositor and stops the compositor
+// afterwards. Tools started through tool() get the compositor's socket and
+// are killed once the compositor stops, so a stuck tool cannot hang the test.
+func runTools(t *testing.T, c *Compositor, steps func(tool func(name string, args ...string) *exec.Cmd)) {
 	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	env := append(os.Environ(), "WAYLAND_DISPLAY="+c.SocketName())
+	tool := func(name string, args ...string) *exec.Cmd {
+		cmd := exec.CommandContext(ctx, name, args...)
+		cmd.Env = env
+		return cmd
+	}
 	watchdog := time.AfterFunc(10*time.Second, c.Terminate)
 	t.Cleanup(func() { watchdog.Stop() })
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		defer c.Terminate()
-		steps(append(os.Environ(), "WAYLAND_DISPLAY="+c.SocketName()))
+		steps(tool)
 	}()
 	if err := c.Run(); err != nil {
 		t.Fatal(err)
 	}
+	cancel()
 	<-done
 }
 
@@ -65,15 +78,18 @@ func requireTools(t *testing.T, tools ...string) {
 func TestDataControlServesTheSelectionWithoutFocus(t *testing.T) {
 	requireTools(t, "wl-copy", "wl-paste")
 	c := newNested(t)
-	runTools(t, c, func(env []string) {
-		copyCmd := exec.Command("wl-copy", "sysc-clipboard-probe")
-		copyCmd.Env = env
-		if out, err := copyCmd.CombinedOutput(); err != nil {
-			t.Errorf("wl-copy: %v: %s", err, out)
+	runTools(t, c, func(tool func(string, ...string) *exec.Cmd) {
+		// wl-copy serves the selection until replaced; in the foreground it
+		// can be stopped, and it holds no pipe the test waits on.
+		copyCmd := tool("wl-copy", "--foreground", "sysc-clipboard-probe")
+		if err := copyCmd.Start(); err != nil {
+			t.Errorf("wl-copy: %v", err)
 			return
 		}
-		paste := exec.Command("wl-paste", "--no-newline")
-		paste.Env = append(env, "WAYLAND_DEBUG=1")
+		defer func() { _ = copyCmd.Process.Kill(); _ = copyCmd.Wait() }()
+		time.Sleep(200 * time.Millisecond)
+		paste := tool("wl-paste", "--no-newline")
+		paste.Env = append(paste.Env, "WAYLAND_DEBUG=1")
 		var stderr strings.Builder
 		paste.Stderr = &stderr
 		out, err := paste.Output()
@@ -102,9 +118,8 @@ func TestScreencopyCapturesTheOutputAtItsSize(t *testing.T) {
 	name := outputs[0].Name
 	mode := outputs[0].Modes[*outputs[0].CurrentMode]
 	path := filepath.Join(t.TempDir(), "capture.png")
-	runTools(t, c, func(env []string) {
-		grim := exec.Command("grim", "-o", name, path)
-		grim.Env = env
+	runTools(t, c, func(tool func(string, ...string) *exec.Cmd) {
+		grim := tool("grim", "-o", name, path)
 		if out, err := grim.CombinedOutput(); err != nil {
 			t.Errorf("grim: %v: %s", err, out)
 		}
@@ -129,7 +144,7 @@ func TestScreencopyCapturesTheOutputAtItsSize(t *testing.T) {
 func TestScreenshotReadsBackAnOutputAndOffersItAsPNG(t *testing.T) {
 	requireTools(t, "wl-paste")
 	c := newNested(t)
-	runTools(t, c, func(env []string) {
+	runTools(t, c, func(tool func(string, ...string) *exec.Cmd) {
 		var data []byte
 		onCompositor(t, c, func() {
 			for pointer := range c.sceneOutputs {
@@ -155,9 +170,7 @@ func TestScreenshotReadsBackAnOutputAndOffersItAsPNG(t *testing.T) {
 		if data == nil {
 			return
 		}
-		paste := exec.Command("wl-paste", "--type", "image/png")
-		paste.Env = env
-		out, err := paste.Output()
+		out, err := tool("wl-paste", "--type", "image/png").Output()
 		if err != nil {
 			t.Errorf("wl-paste: %v", err)
 			return
@@ -196,7 +209,7 @@ func TestScreenshotScreenWritesThePNGAndReportsIt(t *testing.T) {
 	reports := make(chan *string, 2)
 	c.SetScreenshotHandler(func(path *string) { reports <- path })
 	var w, h int
-	runTools(t, c, func([]string) {
+	runTools(t, c, func(func(string, ...string) *exec.Cmd) {
 		onCompositor(t, c, func() {
 			for pointer := range c.sceneOutputs {
 				w, h = outputPixelSize(pointer)
@@ -240,5 +253,64 @@ func TestScreenshotScreenWritesThePNGAndReportsIt(t *testing.T) {
 	}
 	if config.Width != w || config.Height != h {
 		t.Errorf("written screenshot is %dx%d, want %dx%d", config.Width, config.Height, w, h)
+	}
+}
+
+// TestScreenshotWindowCapturesTheWindowAlone: the focused window is captured
+// at its own geometry, not the output's.
+func TestScreenshotWindowCapturesTheWindowAlone(t *testing.T) {
+	dir := t.TempDir()
+	c := newNested(t)
+	reports := make(chan *string, 1)
+	c.SetScreenshotHandler(func(path *string) { reports <- path })
+	mapped := make(chan *toplevelView, 1)
+	c.viewMapped = func(view *toplevelView) {
+		select {
+		case mapped <- view:
+		default:
+		}
+	}
+	path := filepath.Join(dir, "window.png")
+	runTools(t, c, func(func(string, ...string) *exec.Cmd) {
+		client, err := testclient.StartToplevelClient(c.SocketName(), time.Hour)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer client.Close()
+		var view *toplevelView
+		select {
+		case view = <-mapped:
+		case <-time.After(2 * time.Second):
+			t.Error("the toplevel never mapped")
+			return
+		}
+		onCompositor(t, c, func() {
+			c.focusView(view)
+			if err := c.ScreenshotWindow(nil, true, path); err != nil {
+				t.Error(err)
+			}
+		})
+		select {
+		case got := <-reports:
+			if got == nil || *got != path {
+				t.Errorf("reported %v, want the explicit path %q", got, path)
+			}
+		case <-time.After(5 * time.Second):
+			t.Error("no screenshot was reported")
+		}
+	})
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	config, err := png.DecodeConfig(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The test client maps a 200x150 buffer and sets no window geometry.
+	if config.Width != 200 || config.Height != 150 {
+		t.Errorf("window screenshot is %dx%d, want the window's 200x150", config.Width, config.Height)
 	}
 }

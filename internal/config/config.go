@@ -1164,8 +1164,8 @@ func (c *Config) binds(n *document.Node) error {
 					action.Focus = focus
 				}
 			}
-			if name == bind.ActionScreenshotScreen {
-				action.WriteToDisk, action.ShowPointer = true, true
+			if name == bind.ActionScreenshotScreen || name == bind.ActionScreenshotWindow {
+				action.WriteToDisk, action.ShowPointer = true, name == bind.ActionScreenshotScreen
 				for key, property := range actionNode.Properties {
 					value, ok := property.Value.(bool)
 					if !ok {

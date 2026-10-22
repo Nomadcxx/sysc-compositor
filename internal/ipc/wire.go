@@ -184,9 +184,9 @@ type Action struct {
 	Output           string
 	Focus            *bool
 	X, Y             PositionChange
-	WriteToDisk      bool    // ScreenshotScreen
-	ShowPointer      bool    // ScreenshotScreen
-	Path             *string // ScreenshotScreen
+	WriteToDisk      bool    // ScreenshotScreen, ScreenshotWindow
+	ShowPointer      bool    // ScreenshotScreen, ScreenshotWindow
+	Path             *string // ScreenshotScreen, ScreenshotWindow
 }
 
 // DecodeRequest decodes one request line.
@@ -382,6 +382,17 @@ func decodeAction(raw json.RawMessage) (Action, error) {
 			return Action{}, ErrParse
 		}
 		a.WriteToDisk, a.ShowPointer, a.Path = *f.WriteToDisk, *f.ShowPointer, f.Path
+	case "ScreenshotWindow":
+		var f struct {
+			ID          *uint64 `json:"id"`
+			WriteToDisk *bool   `json:"write_to_disk"`
+			ShowPointer *bool   `json:"show_pointer"`
+			Path        *string `json:"path"`
+		}
+		if err := strict(body, &f); err != nil || f.WriteToDisk == nil || f.ShowPointer == nil {
+			return Action{}, ErrParse
+		}
+		a.WindowID, a.WriteToDisk, a.ShowPointer, a.Path = f.ID, *f.WriteToDisk, *f.ShowPointer, f.Path
 	case "Quit":
 		var f struct {
 			SkipConfirmation *bool `json:"skip_confirmation"`
@@ -734,6 +745,13 @@ func EncodeRequest(r Request) []byte {
 			ShowPointer bool    `json:"show_pointer"`
 			Path        *string `json:"path"`
 		}{a.WriteToDisk, a.ShowPointer, a.Path}
+	case "ScreenshotWindow":
+		body = struct {
+			ID          *uint64 `json:"id"`
+			WriteToDisk bool    `json:"write_to_disk"`
+			ShowPointer bool    `json:"show_pointer"`
+			Path        *string `json:"path"`
+		}{a.WindowID, a.WriteToDisk, a.ShowPointer, a.Path}
 	case "Quit":
 		body = struct {
 			SkipConfirmation bool `json:"skip_confirmation"`

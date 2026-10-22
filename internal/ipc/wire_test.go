@@ -383,3 +383,18 @@ func TestScreenshotScreenActionRoundTrips(t *testing.T) {
 		t.Errorf("ScreenshotScreen without path = %+v, %v; want a nil path", noPath.Action, err)
 	}
 }
+
+func TestScreenshotWindowActionRoundTrips(t *testing.T) {
+	req, err := DecodeRequest([]byte(`{"Action":{"ScreenshotWindow":{"id":7,"write_to_disk":true,"show_pointer":false,"path":null}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := req.Action
+	if a.Name != "ScreenshotWindow" || a.WindowID == nil || *a.WindowID != 7 || !a.WriteToDisk || a.ShowPointer || a.Path != nil {
+		t.Fatalf("decoded %+v", a)
+	}
+	again, err := DecodeRequest(EncodeRequest(req))
+	if err != nil || again.Action.WindowID == nil || *again.Action.WindowID != 7 {
+		t.Errorf("re-decoded %+v, %v", again.Action, err)
+	}
+}
