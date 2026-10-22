@@ -10,6 +10,7 @@ package wlr
 #include <wlr/types/wlr_input_device.h>
 #include <wlr/types/wlr_keyboard.h>
 #include <wlr/types/wlr_pointer.h>
+#include <wlr/types/wlr_pointer_gestures_v1.h>
 #include <wlr/types/wlr_scene.h>
 #include <wlr/types/wlr_seat.h>
 #include <wlr/types/wlr_xdg_shell.h>
@@ -96,6 +97,7 @@ import (
 	"unsafe"
 
 	"github.com/Nomadcxx/sysc-compositor/internal/layout"
+	"github.com/Nomadcxx/sysc-compositor/internal/wm"
 )
 
 type pointerGrabMode uint8
@@ -121,6 +123,43 @@ type pointerGrab struct {
 	edges            uint32
 }
 
+type pointerSwipeState struct {
+	fingers         uint32
+	lastTimeMsec    uint32
+	gestureTime     time.Duration
+	forwarded       bool
+	axis            wm.SwipeAxis
+	selector        wm.SwipeAxisSelector
+	output          string
+	workspaceID     uint64
+	actionApplied   bool
+	scrollRemainder float64
+}
+
+func (s *pointerSwipeState) advanceGestureTime(timeMsec uint32) time.Duration {
+	s.gestureTime += time.Duration(uint32(timeMsec-s.lastTimeMsec)) * time.Millisecond
+	s.lastTimeMsec = timeMsec
+	return s.gestureTime
+}
+
+type dndEdgeScrollState struct {
+	drag        unsafe.Pointer
+	listeners   []*Listener
+	timer       *time.Timer
+	tracker     wm.DNDEdgeScrollTracker
+	output      string
+	workspaceID uint64
+	direction   int
+	remainder   float64
+	generation  uint64
+}
+
+type tiledWindowMoveState struct {
+	view    *toplevelView
+	button  uint32
+	started bool
+}
+
 func (g pointerGrab) resizeOptions() layout.ResizeOptions {
 	return layout.ResizeOptions{
 		ResizeWidth:  g.edges&(edgeLeft|edgeRight) != 0,
@@ -134,6 +173,7 @@ type toplevelView struct {
 	toplevel          *C.struct_wlr_xdg_toplevel
 	tree              *C.struct_wlr_scene_tree
 	listeners         []*Listener
+	overviewSurfaces  map[unsafe.Pointer]*overviewSurfaceListeners
 	mapped            bool
 	lastFullscreen    bool
 	lastGeometry      rect
@@ -222,6 +262,7 @@ func (c *Compositor) handleNewInput(data unsafe.Pointer) {
 			}
 		}
 		C.wlr_cursor_attach_input_device(c.cursor, device)
+		c.attachPointerGestureListeners(deviceKey, C.wlr_pointer_from_input_device(device))
 		c.pointerDevices[deviceKey] = true
 	default:
 		return
@@ -235,11 +276,15 @@ func (c *Compositor) handleNewInput(data unsafe.Pointer) {
 }
 
 func (c *Compositor) handleInputDestroy(device unsafe.Pointer) {
+	c.detachPointerGestureListeners(device)
 	if listener := c.inputDestroyListeners[device]; listener != nil {
 		c.drop(listener)
 		delete(c.inputDestroyListeners, device)
 	}
 	if c.pointerDevices[device] {
+		if c.tiledMove != nil {
+			c.cancelTiledWindowMove()
+		}
 		C.wlr_cursor_detach_input_device(c.cursor, (*C.struct_wlr_input_device)(device))
 		delete(c.pointerDevices, device)
 		c.clearPointerGrab()
@@ -250,6 +295,306 @@ func (c *Compositor) handleInputDestroy(device unsafe.Pointer) {
 	// The keyboard group lets a destroyed keyboard go by itself.
 	delete(c.keyboardDevices, device)
 	c.refreshCapabilities()
+}
+
+func (c *Compositor) attachPointerGestureListeners(device unsafe.Pointer, pointer *C.struct_wlr_pointer) {
+	if pointer == nil {
+		return
+	}
+	listeners := []*Listener{
+		AddListener(unsafe.Pointer(&pointer.events.swipe_begin), func(data unsafe.Pointer) {
+			c.handlePointerSwipeBegin(device, data)
+		}),
+		AddListener(unsafe.Pointer(&pointer.events.swipe_update), func(data unsafe.Pointer) {
+			c.handlePointerSwipeUpdate(device, data)
+		}),
+		AddListener(unsafe.Pointer(&pointer.events.swipe_end), func(data unsafe.Pointer) {
+			c.handlePointerSwipeEnd(device, data)
+		}),
+	}
+	c.pointerGestureListeners[device] = listeners
+	c.keep(listeners...)
+}
+
+func (c *Compositor) detachPointerGestureListeners(device unsafe.Pointer) {
+	if state := c.pointerSwipeStates[device]; state != nil {
+		if state.fingers == 4 && c.model != nil {
+			c.model.EndOverviewGesture(state.gestureTime)
+			c.syncOverviewScene()
+			c.notifyStateChanged()
+		} else if state.forwarded {
+			C.wlr_pointer_gestures_v1_send_swipe_end(c.pointerGestures, c.seat,
+				C.uint32_t(time.Now().UnixMilli()), true)
+		}
+	}
+	delete(c.pointerSwipeStates, device)
+	for _, listener := range c.pointerGestureListeners[device] {
+		c.drop(listener)
+	}
+	delete(c.pointerGestureListeners, device)
+}
+
+func (c *Compositor) handlePointerSwipeBegin(device, data unsafe.Pointer) {
+	event := (*C.struct_wlr_pointer_swipe_begin_event)(data)
+	state := &pointerSwipeState{fingers: uint32(event.fingers), lastTimeMsec: uint32(event.time_msec)}
+	c.pointerSwipeStates[device] = state
+	switch state.fingers {
+	case 3:
+		state.output = c.outputNameAt(float64(c.cursor.x), float64(c.cursor.y))
+		if state.output == "" && c.model != nil {
+			state.output = c.model.Snapshot().FocusedOutput
+		}
+		state.workspaceID = c.workspaceUnderGesture(state.output)
+	case 4:
+		if c.model != nil {
+			c.model.BeginOverviewGesture()
+			c.syncOverviewScene()
+			c.notifyStateChanged()
+		}
+	default:
+		state.forwarded = true
+		C.wlr_pointer_gestures_v1_send_swipe_begin(c.pointerGestures, c.seat,
+			event.time_msec, event.fingers)
+	}
+}
+
+func (c *Compositor) handlePointerSwipeUpdate(device, data unsafe.Pointer) {
+	event := (*C.struct_wlr_pointer_swipe_update_event)(data)
+	state := c.pointerSwipeStates[device]
+	if state == nil {
+		return
+	}
+	if state.forwarded {
+		C.wlr_pointer_gestures_v1_send_swipe_update(c.pointerGestures, c.seat,
+			event.time_msec, event.dx, event.dy)
+		return
+	}
+	if c.model == nil {
+		return
+	}
+	if state.fingers == 4 {
+		timestamp := state.advanceGestureTime(uint32(event.time_msec))
+		if c.model.UpdateOverviewGesture(-float64(event.dy), timestamp) {
+			c.syncOverviewScene()
+		}
+		return
+	}
+	axis, delta, selected := state.selector.Add(float64(event.dx), float64(event.dy))
+	if !selected {
+		return
+	}
+	newAxis := state.axis == wm.SwipeAxisNone
+	state.axis = axis
+	if axis == wm.SwipeAxisHorizontal {
+		state.scrollRemainder += delta
+		pixels := int(math.Trunc(state.scrollRemainder))
+		state.scrollRemainder -= float64(pixels)
+		if pixels != 0 && state.workspaceID != 0 && c.model.ScrollWorkspaceView(state.workspaceID, pixels) {
+			c.applyWorkspaceModel()
+		}
+		return
+	}
+	if newAxis && !state.actionApplied {
+		direction := -1
+		if delta < 0 {
+			direction = 1
+		}
+		state.actionApplied = c.model.FocusWorkspaceByDelta(state.output, direction)
+		if state.actionApplied {
+			c.applyWorkspaceModel()
+			c.activateWorkspaceFocus()
+		}
+	}
+}
+
+func (c *Compositor) handlePointerSwipeEnd(device, data unsafe.Pointer) {
+	event := (*C.struct_wlr_pointer_swipe_end_event)(data)
+	state := c.pointerSwipeStates[device]
+	delete(c.pointerSwipeStates, device)
+	if state == nil {
+		return
+	}
+	if state.forwarded {
+		C.wlr_pointer_gestures_v1_send_swipe_end(c.pointerGestures, c.seat,
+			event.time_msec, event.cancelled)
+		return
+	}
+	timestamp := state.advanceGestureTime(uint32(event.time_msec))
+	if state.fingers == 4 && c.model != nil && c.model.EndOverviewGesture(timestamp) {
+		c.syncOverviewScene()
+		c.notifyStateChanged()
+	}
+}
+
+func (c *Compositor) workspaceUnderGesture(output string) uint64 {
+	if c.model == nil {
+		return 0
+	}
+	if c.model.OverviewProgress() > 0 || c.model.OverviewOpen() {
+		if workspaceID, _, ok := c.model.OverviewWorkspaceUnder(output,
+			float64(c.cursor.x), float64(c.cursor.y), c.model.OverviewZoom(c.overviewConfig.Zoom)); ok {
+			return workspaceID
+		}
+		return 0
+	}
+	for _, workspace := range c.model.Snapshot().Workspaces {
+		if workspace.Output == output && workspace.IsActive {
+			return workspace.ID
+		}
+	}
+	return 0
+}
+
+func (c *Compositor) updateHotCorner() {
+	if c.model == nil {
+		return
+	}
+	output := c.outputNameAt(float64(c.cursor.x), float64(c.cursor.y))
+	if output == "" {
+		c.hotCornerTracker.Update("", layout.Bounds{}, float64(c.cursor.x), float64(c.cursor.y), wm.HotCorners{})
+		return
+	}
+	bounds, ok := c.outputLayoutBounds(output)
+	if !ok {
+		return
+	}
+	corners := wm.HotCorners{
+		TopLeft: c.hotCorners.TopLeft, TopRight: c.hotCorners.TopRight,
+		BottomLeft: c.hotCorners.BottomLeft, BottomRight: c.hotCorners.BottomRight,
+		Off: c.hotCorners.Off,
+	}
+	if c.hotCornerTracker.Update(output, bounds, float64(c.cursor.x), float64(c.cursor.y), corners) {
+		c.ToggleOverview()
+	}
+}
+
+func (c *Compositor) activeWorkspaceID(output string) uint64 {
+	if c.model == nil {
+		return 0
+	}
+	for _, workspace := range c.model.Snapshot().Workspaces {
+		if workspace.Output == output && workspace.IsActive {
+			return workspace.ID
+		}
+	}
+	return 0
+}
+
+func (c *Compositor) dndEdgeScrollTarget(output string, x, y float64) (uint64, layout.Bounds, bool) {
+	outputBounds, ok := c.outputLayoutBounds(output)
+	if !ok || c.model == nil {
+		return 0, layout.Bounds{}, false
+	}
+	if c.model.OverviewProgress() > 0 {
+		return c.model.OverviewWorkspaceUnder(output, x, y, c.model.OverviewZoom(c.overviewConfig.Zoom))
+	}
+	workspaceID := c.activeWorkspaceID(output)
+	return workspaceID, outputBounds, workspaceID != 0
+}
+
+func (c *Compositor) handleStartDrag(data unsafe.Pointer) {
+	drag := (*C.struct_wlr_drag)(data)
+	if c.dndScroll != nil {
+		c.destroyDndScrollState(c.dndScroll)
+	}
+	state := &dndEdgeScrollState{drag: unsafe.Pointer(drag)}
+	c.dndScroll = state
+	state.listeners = []*Listener{
+		AddListener(unsafe.Pointer(&drag.events.motion), func(unsafe.Pointer) {
+			c.updateDndEdgeScroll(state)
+		}),
+		AddListener(unsafe.Pointer(&drag.events.drop), func(unsafe.Pointer) {
+			c.stopDndEdgeScroll(state)
+		}),
+		AddListener(unsafe.Pointer(&drag.events.destroy), func(unsafe.Pointer) {
+			c.destroyDndScrollState(state)
+		}),
+	}
+	c.keep(state.listeners...)
+	c.updateDndEdgeScroll(state)
+}
+
+func (c *Compositor) updateDndEdgeScroll(state *dndEdgeScrollState) {
+	if state == nil || c.dndScroll != state {
+		return
+	}
+	x, y := float64(c.cursor.x), float64(c.cursor.y)
+	output := c.outputNameAt(x, y)
+	workspaceID, bounds, ok := c.dndEdgeScrollTarget(output, x, y)
+	direction, _ := wm.DNDEdgeScrollAt(bounds, x, y,
+		c.dndEdgeConfig.TriggerWidth, c.dndEdgeConfig.MaxSpeed)
+	if !ok || direction == 0 || workspaceID == 0 {
+		c.stopDndEdgeScroll(state)
+		return
+	}
+	if state.output == output && state.workspaceID == workspaceID && state.direction == direction {
+		return
+	}
+	c.stopDndEdgeScroll(state)
+	state.output, state.workspaceID, state.direction = output, workspaceID, direction
+	state.tracker.Update(time.Now(), bounds, x, y, c.dndEdgeConfig.TriggerWidth,
+		time.Duration(c.dndEdgeConfig.DelayMS)*time.Millisecond, c.dndEdgeConfig.MaxSpeed)
+	c.scheduleDndEdgeTick(state, time.Duration(c.dndEdgeConfig.DelayMS)*time.Millisecond)
+}
+
+func (c *Compositor) scheduleDndEdgeTick(state *dndEdgeScrollState, delay time.Duration) {
+	state.generation++
+	generation := state.generation
+	state.timer = time.AfterFunc(delay, func() {
+		_ = c.Post(func() { c.dndEdgeScrollTick(state, generation) })
+	})
+}
+
+func (c *Compositor) dndEdgeScrollTick(state *dndEdgeScrollState, generation uint64) {
+	if state == nil || c.dndScroll != state || state.generation != generation || state.direction == 0 {
+		return
+	}
+	state.timer = nil
+	x, y := float64(c.cursor.x), float64(c.cursor.y)
+	output := c.outputNameAt(x, y)
+	workspaceID, bounds, ok := c.dndEdgeScrollTarget(output, x, y)
+	direction, _ := wm.DNDEdgeScrollAt(bounds, x, y,
+		c.dndEdgeConfig.TriggerWidth, c.dndEdgeConfig.MaxSpeed)
+	if !ok || direction != state.direction || output != state.output || workspaceID != state.workspaceID {
+		c.updateDndEdgeScroll(state)
+		return
+	}
+	delta := state.tracker.Update(time.Now(), bounds, x, y, c.dndEdgeConfig.TriggerWidth,
+		time.Duration(c.dndEdgeConfig.DelayMS)*time.Millisecond, c.dndEdgeConfig.MaxSpeed)
+	state.remainder += delta
+	pixels := int(math.Trunc(state.remainder))
+	state.remainder -= float64(pixels)
+	if pixels != 0 && c.model.ScrollWorkspaceView(state.workspaceID, pixels) {
+		c.applyWorkspaceModel()
+	}
+	c.scheduleDndEdgeTick(state, 20*time.Millisecond)
+}
+
+func (c *Compositor) stopDndEdgeScroll(state *dndEdgeScrollState) {
+	if state == nil {
+		return
+	}
+	if state.timer != nil {
+		state.timer.Stop()
+		state.timer = nil
+	}
+	state.generation++
+	state.tracker.Reset()
+	state.output, state.workspaceID, state.direction, state.remainder = "", 0, 0, 0
+}
+
+func (c *Compositor) destroyDndScrollState(state *dndEdgeScrollState) {
+	if state == nil {
+		return
+	}
+	c.stopDndEdgeScroll(state)
+	for _, listener := range state.listeners {
+		c.drop(listener)
+	}
+	state.listeners = nil
+	if c.dndScroll == state {
+		c.dndScroll = nil
+	}
 }
 
 func (c *Compositor) handleCursorMotion(data unsafe.Pointer) {
@@ -267,7 +612,24 @@ func (c *Compositor) handleCursorMotionAbsolute(data unsafe.Pointer) {
 }
 
 func (c *Compositor) processCursorMotion(time C.uint32_t) {
+	c.updateHotCorner()
+	if c.model != nil && (c.model.OverviewProgress() > 0 || c.model.OverviewOpen()) {
+		C.wlr_seat_pointer_notify_clear_focus(c.seat)
+		c.showDefaultImage()
+		return
+	}
 	if c.pointerGrab != nil && c.grabView != nil && c.grabView.tree != nil {
+		if c.tiledMove != nil && c.tiledMove.view == c.grabView && c.model != nil {
+			_, started := c.model.UpdateWindowDrag(float64(c.cursor.x), float64(c.cursor.y),
+				c.outputNameAt(float64(c.cursor.x), float64(c.cursor.y)))
+			if started {
+				c.tiledMove.started = true
+				geometry := c.pointerGrab.geometry(float64(c.cursor.x), float64(c.cursor.y))
+				C.sysc_scene_tree_set_position(c.grabView.tree, C.int(geometry.x), C.int(geometry.y))
+			}
+			c.syncInsertHint()
+			return
+		}
 		geometry := c.pointerGrab.geometry(float64(c.cursor.x), float64(c.cursor.y))
 		if c.pointerGrab.mode == grabResize {
 			if c.model == nil || !c.model.ResizeWindow(c.grabView.id,
@@ -369,7 +731,9 @@ func (c *Compositor) handleCursorButton(data unsafe.Pointer) {
 	if !pressed {
 		if c.consumedPointerButtons[button] {
 			delete(c.consumedPointerButtons, button)
-			if c.grabButton == button {
+			if c.tiledMove != nil && c.tiledMove.button == button {
+				c.finishTiledWindowMove(true)
+			} else if c.grabButton == button {
 				c.clearPointerGrab()
 			}
 			C.wlr_seat_pointer_notify_frame(c.seat)
@@ -379,6 +743,14 @@ func (c *Compositor) handleCursorButton(data unsafe.Pointer) {
 		if c.pointerGrab != nil && (c.grabButton == 0 || c.grabButton == button) {
 			c.clearPointerGrab()
 		}
+	}
+	if pressed && c.model != nil && (c.model.OverviewProgress() > 0 || c.model.OverviewOpen()) {
+		c.consumedPointerButtons[button] = true
+		if button == uint32(C.BTN_LEFT) && !c.overviewSelectAt(float64(c.cursor.x), float64(c.cursor.y)) {
+			c.CloseOverview()
+		}
+		C.wlr_seat_pointer_notify_frame(c.seat)
+		return
 	}
 
 	if pressed && c.modifierActive(c.modKey) {
@@ -392,7 +764,15 @@ func (c *Compositor) handleCursorButton(data unsafe.Pointer) {
 				mode = grabResize
 				edges = c.resizeEdgesAt(view)
 			}
-			if mode != grabNone && (mode != grabResize || edges != 0) && c.startPointerGrab(view, mode, edges, button) {
+			if mode != grabNone && (mode != grabResize || edges != 0) {
+				if mode == grabMove && c.model != nil && !c.windowIsFloating(view.id) &&
+					c.model.BeginWindowDrag(view.id, float64(c.cursor.x), float64(c.cursor.y)) {
+					c.tiledMove = &tiledWindowMoveState{view: view, button: button}
+				}
+				if !c.startPointerGrab(view, mode, edges, button) {
+					c.cancelTiledWindowMove()
+					return
+				}
 				c.focusView(view)
 				c.consumedPointerButtons[button] = true
 				if mode == grabMove {
@@ -441,6 +821,45 @@ func (c *Compositor) surfaceAt(x, y float64) (*C.struct_wlr_surface, C.double, C
 func (c *Compositor) viewAtCursor() *toplevelView {
 	surface, _, _ := c.surfaceAt(float64(c.cursor.x), float64(c.cursor.y))
 	return c.viewForSurface(surface)
+}
+
+func (c *Compositor) windowIsFloating(id uint64) bool {
+	if c.model == nil {
+		return false
+	}
+	for _, window := range c.model.Snapshot().Windows {
+		if window.ID == id {
+			return window.Tile.Floating
+		}
+	}
+	return false
+}
+
+func (c *Compositor) finishTiledWindowMove(commit bool) {
+	move := c.tiledMove
+	if move == nil {
+		return
+	}
+	committed := false
+	if commit && move.started && c.model != nil {
+		committed = c.model.CommitWindowDrag()
+	} else if c.model != nil {
+		c.model.CancelWindowDrag()
+	}
+	c.tiledMove = nil
+	c.syncInsertHint()
+	c.clearPointerGrab()
+	c.applyWorkspaceModel()
+	if committed {
+		c.activateWorkspaceFocus()
+	}
+}
+
+func (c *Compositor) cancelTiledWindowMove() {
+	if c.tiledMove == nil {
+		return
+	}
+	c.finishTiledWindowMove(false)
 }
 
 func (c *Compositor) focusView(view *toplevelView) {
@@ -713,6 +1132,9 @@ func (c *Compositor) handleNewToplevel(data unsafe.Pointer) {
 	// wlroots clears a seat's pointer focus when the surface is destroyed,
 	// never on unmap, and a destroyed toplevel unmaps first.
 	add(unsafe.Pointer(&toplevel.base.surface.events.unmap), func(unsafe.Pointer) {
+		if c.tiledMove != nil && c.tiledMove.view == view {
+			c.cancelTiledWindowMove()
+		}
 		view.mapped = false
 		c.cancelPendingWindowFocus(view)
 		if c.model != nil {
@@ -720,6 +1142,7 @@ func (c *Compositor) handleNewToplevel(data unsafe.Pointer) {
 			c.applyWorkspaceModel()
 		}
 		c.releaseView(view)
+		c.syncOverviewScene()
 		c.notifyWindowStateChanged()
 	})
 	add(unsafe.Pointer(&toplevel.events.destroy), func(unsafe.Pointer) {
@@ -729,7 +1152,9 @@ func (c *Compositor) handleNewToplevel(data unsafe.Pointer) {
 	// buffer. This callback runs after the scene's commit listener, when the
 	// mapped view can be hit-tested.
 	add(unsafe.Pointer(&toplevel.base.surface.events.commit), func(unsafe.Pointer) {
+		c.syncOverviewSurfaceListeners(view)
 		if !bool(toplevel.base.surface.mapped) {
+			c.syncOverviewScene()
 			return
 		}
 		geometry := view.geometry()
@@ -773,6 +1198,7 @@ func (c *Compositor) handleNewToplevel(data unsafe.Pointer) {
 			}
 		}
 		c.notifyWindowStateChanged()
+		c.syncOverviewScene()
 		if newlyMapped && c.viewMapped != nil {
 			c.viewMapped(view)
 		}
@@ -909,9 +1335,15 @@ func (c *Compositor) handleToplevelDestroy(view *toplevelView) {
 	if view == nil {
 		return
 	}
+	if c.tiledMove != nil && c.tiledMove.view == view {
+		c.cancelTiledWindowMove()
+	}
 	if c.model != nil {
 		c.model.DestroyWindow(view.id)
 	}
+	view.mapped = false
+	c.dropOverviewSurfaceListeners(view, nil)
+	c.syncOverviewScene()
 	c.releaseView(view)
 	c.cancelPendingWindowFocus(view)
 	delete(c.views, unsafe.Pointer(view.toplevel))

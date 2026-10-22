@@ -133,6 +133,10 @@ type KeyboardLayouts struct {
 	CurrentIdx uint8    `json:"current_idx"`
 }
 
+type OverviewState struct {
+	IsOpen bool `json:"is_open"`
+}
+
 // WorkspaceReference is Niri's externally tagged workspace argument.
 type WorkspaceReference struct {
 	ID    *uint64
@@ -280,7 +284,8 @@ func decodeAction(raw json.RawMessage) (Action, error) {
 		}
 		a.WindowID = f.ID
 	case "FocusFloating", "FocusTiling", "SwitchFocusBetweenFloatingAndTiling",
-		"ConsumeWindowIntoColumn", "ExpelWindowFromColumn", "ToggleColumnTabbedDisplay":
+		"ConsumeWindowIntoColumn", "ExpelWindowFromColumn", "ToggleColumnTabbedDisplay",
+		"ToggleOverview", "OpenOverview", "CloseOverview":
 		if err := strict(body, &struct{}{}); err != nil {
 			return Action{}, ErrParse
 		}

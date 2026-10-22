@@ -30,6 +30,12 @@ func TestDecodeRequest(t *testing.T) {
 			Request{Name: "Action", Action: &Action{Name: "SpawnSh", ShellCommand: "echo hi; true"}}},
 		{`{"Action":{"ToggleDebugTint":{}}}`,
 			Request{Name: "Action", Action: &Action{Name: "ToggleDebugTint"}}},
+		{`{"Action":{"ToggleOverview":{}}}`,
+			Request{Name: "Action", Action: &Action{Name: "ToggleOverview"}}},
+		{`{"Action":{"OpenOverview":{}}}`,
+			Request{Name: "Action", Action: &Action{Name: "OpenOverview"}}},
+		{`{"Action":{"CloseOverview":{}}}`,
+			Request{Name: "Action", Action: &Action{Name: "CloseOverview"}}},
 		{`{"Action":{"FocusWorkspace":{"reference":{"Index":2}}}}`,
 			Request{Name: "Action", Action: &Action{Name: "FocusWorkspace", Workspace: &WorkspaceReference{Index: &workspaceIndex}}}},
 	} {
@@ -50,7 +56,10 @@ func TestDecodeRequestRejects(t *testing.T) {
 		`{"Action":{"Nope":{}}}`,
 		`{"Action":{"Quit":{}}}`,                                   // serde: missing field
 		`{"Action":{"Quit":{"skip_confirmation":true,"extra":1}}}`, // unknown field
-		`{"Action":{"Spawn":{"command":"kitty"}}}`,                 // not a list
+		`{"Action":{"ToggleOverview":{"extra":true}}}`,
+		`{"Action":{"OpenOverview":{"extra":true}}}`,
+		`{"Action":{"CloseOverview":{"extra":true}}}`,
+		`{"Action":{"Spawn":{"command":"kitty"}}}`, // not a list
 		`{"Action":"Quit"}`,
 	} {
 		if _, err := DecodeRequest([]byte(line)); err != ErrParse {
@@ -252,6 +261,7 @@ func TestStateResponseWire(t *testing.T) {
 		{"Windows", []Window{window}, `{"Ok":{"Windows":[{"id":9,"title":null,"app_id":null,"pid":null,"workspace_id":null,"is_focused":false,"is_floating":false,"is_urgent":false,"layout":{"pos_in_scrolling_layout":null,"tile_size":[0,0],"window_size":[0,0],"tile_pos_in_workspace_view":null,"window_offset_in_tile":[0,0]},"focus_timestamp":null}]}}`},
 		{"Layers", []LayerSurface{{Namespace: "sysc-shell:bar", Output: "DP-1", Layer: LayerTop, KeyboardInteractivity: LayerKeyboardNone}}, `{"Ok":{"Layers":[{"namespace":"sysc-shell:bar","output":"DP-1","layer":"Top","keyboard_interactivity":"None"}]}}`},
 		{"FocusedOutput", (*Output)(nil), `{"Ok":{"FocusedOutput":null}}`},
+		{"OverviewState", OverviewState{IsOpen: true}, `{"Ok":{"OverviewState":{"is_open":true}}}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			out, err := json.Marshal(Reply{Ok: SuccessValue(tc.name, tc.value)})

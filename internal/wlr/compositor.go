@@ -18,6 +18,7 @@ package wlr
 #include <wlr/types/wlr_keyboard.h>
 #include <wlr/types/wlr_keyboard_group.h>
 #include <wlr/types/wlr_pointer.h>
+#include <wlr/types/wlr_pointer_gestures_v1.h>
 #include <wlr/types/wlr_cursor.h>
 #include <wlr/types/wlr_data_device.h>
 #include <wlr/types/wlr_fractional_scale_v1.h>
@@ -105,51 +106,65 @@ import (
 // Compositor holds the wlroots object graph for one running server. Every
 // method must be called on the thread that ran LockOSThread.
 type Compositor struct {
-	display       *C.struct_wl_display
-	backend       *C.struct_wlr_backend
-	session       *C.struct_wlr_session
-	renderer      *C.struct_wlr_renderer
-	alloc         *C.struct_wlr_allocator
-	comp          *C.struct_wlr_compositor
-	layout        *C.struct_wlr_output_layout
-	scene         *C.struct_wlr_scene
-	seat          *C.struct_wlr_seat
-	xdgShell      *C.struct_wlr_xdg_shell
-	xdgActivation *C.struct_wlr_xdg_activation_v1
-	layerShell    *C.struct_wlr_layer_shell_v1
-	socketName    string
-	listeners     map[*Listener]struct{}
+	display         *C.struct_wl_display
+	backend         *C.struct_wlr_backend
+	session         *C.struct_wlr_session
+	renderer        *C.struct_wlr_renderer
+	alloc           *C.struct_wlr_allocator
+	comp            *C.struct_wlr_compositor
+	layout          *C.struct_wlr_output_layout
+	scene           *C.struct_wlr_scene
+	overviewTree    *C.struct_wlr_scene_tree
+	insertHintTree  *C.struct_wlr_scene_tree
+	insertHintNode  *C.struct_wlr_scene_rect
+	seat            *C.struct_wlr_seat
+	pointerGestures *C.struct_wlr_pointer_gestures_v1
+	xdgShell        *C.struct_wlr_xdg_shell
+	xdgActivation   *C.struct_wlr_xdg_activation_v1
+	layerShell      *C.struct_wlr_layer_shell_v1
+	socketName      string
+	listeners       map[*Listener]struct{}
 
-	loop                   *C.struct_wl_event_loop
-	cursor                 *C.struct_wlr_cursor
-	xcursorManager         *C.struct_wlr_xcursor_manager
-	sceneOutputs           map[unsafe.Pointer]*C.struct_wlr_scene_output
-	mapped                 map[unsafe.Pointer]bool
-	sceneTrees             map[unsafe.Pointer]*C.struct_wlr_scene_tree
-	layerTrees             [layerCount]*C.struct_wlr_scene_tree
-	layerSurfaces          map[unsafe.Pointer]*layerSurface // by wlr_surface
-	layerOrder             []*layerSurface                  // creation order
-	usable                 map[unsafe.Pointer]rect          // per wlr_output, after exclusive zones
-	requested              rect                             // last host-requested output size, for tests
-	drawn                  int                              // frames that ran the scene commit, for tests
-	popups                 map[*C.struct_wlr_xdg_popup]struct{}
-	views                  map[unsafe.Pointer]*toplevelView
-	pointerDevices         map[unsafe.Pointer]bool
-	keyboardDevices        map[unsafe.Pointer]bool
-	suppressedKeys         map[uint32]bool
-	keyboardGroup          *C.struct_wlr_keyboard_group
-	keyboard               *C.struct_wlr_keyboard // the group's, which the user seat hears
-	inputDestroyListeners  map[unsafe.Pointer]*Listener
-	modifiers              uint32
-	focusedView            *toplevelView
-	onDemandLayerFocus     *layerSurface
-	pointerGrab            *pointerGrab
-	grabView               *toplevelView
-	grabButton             uint32
-	pressedPointerButtons  map[uint32]bool
-	pointerSerialButtons   map[uint32]uint32
-	consumedPointerButtons map[uint32]bool
-	capabilities           int
+	loop                    *C.struct_wl_event_loop
+	cursor                  *C.struct_wlr_cursor
+	xcursorManager          *C.struct_wlr_xcursor_manager
+	sceneOutputs            map[unsafe.Pointer]*C.struct_wlr_scene_output
+	mapped                  map[unsafe.Pointer]bool
+	sceneTrees              map[unsafe.Pointer]*C.struct_wlr_scene_tree
+	layerTrees              [layerCount]*C.struct_wlr_scene_tree
+	overviewConfig          config.Overview
+	overviewBackdrops       []overviewBackdrop
+	overviewProjections     []overviewProjection
+	hotCorners              config.HotCorners
+	hotCornerTracker        wm.HotCornerTracker
+	dndEdgeConfig           config.DNDEdgeViewScroll
+	dndScroll               *dndEdgeScrollState
+	tiledMove               *tiledWindowMoveState
+	layerSurfaces           map[unsafe.Pointer]*layerSurface // by wlr_surface
+	layerOrder              []*layerSurface                  // creation order
+	usable                  map[unsafe.Pointer]rect          // per wlr_output, after exclusive zones
+	requested               rect                             // last host-requested output size, for tests
+	drawn                   int                              // frames that ran the scene commit, for tests
+	popups                  map[*C.struct_wlr_xdg_popup]struct{}
+	views                   map[unsafe.Pointer]*toplevelView
+	pointerDevices          map[unsafe.Pointer]bool
+	pointerGestureListeners map[unsafe.Pointer][]*Listener
+	pointerSwipeStates      map[unsafe.Pointer]*pointerSwipeState
+	keyboardDevices         map[unsafe.Pointer]bool
+	suppressedKeys          map[uint32]bool
+	keyboardGroup           *C.struct_wlr_keyboard_group
+	keyboard                *C.struct_wlr_keyboard // the group's, which the user seat hears
+	inputDestroyListeners   map[unsafe.Pointer]*Listener
+	modifiers               uint32
+	focusedView             *toplevelView
+	onDemandLayerFocus      *layerSurface
+	pointerGrab             *pointerGrab
+	grabView                *toplevelView
+	grabButton              uint32
+	pressedPointerButtons   map[uint32]bool
+	pointerSerialButtons    map[uint32]uint32
+	consumedPointerButtons  map[uint32]bool
+	capabilities            int
 	// drawnImage is the xcursor name the compositor last drew, or "" while
 	// a client's surface is the image. wlroots keeps its own copy private.
 	drawnImage                     string
@@ -210,12 +225,15 @@ type Options struct {
 	Workspaces   []wm.WorkspaceConfig
 	WindowRules  []config.WindowRule
 	LayerRules   []config.LayerRule
+	Overview     config.Overview
+	Gestures     config.Gestures
 }
 
 type LayoutOptions struct {
 	Gaps                  int
 	ColumnWidthProportion float64
 	FixedColumnWidth      int
+	InsertHint            config.InsertHint
 }
 
 // ErrNestedTestNeedsConsent is what NewWith returns inside a test binary unless
@@ -243,10 +261,20 @@ func NewWith(opts Options) (*Compositor, error) {
 			c.Destroy()
 		}
 	}()
+	defaults := config.Default()
+	if opts.Overview == (config.Overview{}) {
+		opts.Overview = defaults.Overview
+	}
+	c.overviewConfig = opts.Overview
+	c.hotCorners = opts.Gestures.HotCorners
+	c.dndEdgeConfig = opts.Gestures.DNDEdgeViewScroll
+	if c.dndEdgeConfig == (config.DNDEdgeViewScroll{}) {
+		c.dndEdgeConfig = defaults.Gestures.DNDEdgeViewScroll
+	}
 	c.model = wm.New(opts.Workspaces...)
 	c.windowRules = slices.Clone(opts.WindowRules)
 	c.layerRules = slices.Clone(opts.LayerRules)
-	c.layoutOptions = LayoutOptions{Gaps: 16, ColumnWidthProportion: 0.5}
+	c.layoutOptions = LayoutOptions{Gaps: 16, ColumnWidthProportion: 0.5, InsertHint: defaults.Layout.InsertHint}
 	if opts.Layout != nil {
 		c.layoutOptions = *opts.Layout
 	}
@@ -279,6 +307,8 @@ func NewWith(opts Options) (*Compositor, error) {
 	c.popups = map[*C.struct_wlr_xdg_popup]struct{}{}
 	c.views = map[unsafe.Pointer]*toplevelView{}
 	c.pointerDevices = map[unsafe.Pointer]bool{}
+	c.pointerGestureListeners = map[unsafe.Pointer][]*Listener{}
+	c.pointerSwipeStates = map[unsafe.Pointer]*pointerSwipeState{}
 	c.keyboardDevices = map[unsafe.Pointer]bool{}
 	c.suppressedKeys = map[uint32]bool{}
 	c.inputDestroyListeners = map[unsafe.Pointer]*Listener{}
@@ -315,6 +345,9 @@ func NewWith(opts Options) (*Compositor, error) {
 
 	C.wlr_subcompositor_create(c.display)
 	C.wlr_data_device_manager_create(c.display)
+	if c.pointerGestures = C.wlr_pointer_gestures_v1_create(c.display); c.pointerGestures == nil {
+		return nil, errors.New("wlr_pointer_gestures_v1_create failed")
+	}
 	C.wlr_viewporter_create(c.display)
 	if C.wlr_shm_create_with_renderer(c.display, C.sysc_shm_version, c.renderer) == nil {
 		return nil, errors.New("wlr_shm_create_with_renderer failed")
@@ -333,6 +366,9 @@ func NewWith(opts Options) (*Compositor, error) {
 	}
 	if !c.createLayerTrees() {
 		return nil, errors.New("wlr_scene_tree_create failed")
+	}
+	if !c.createOverviewTree() {
+		return nil, errors.New("overview scene tree create failed")
 	}
 	// xdg-output gives clients output names and logical geometry; waybar and
 	// grim refuse to start without it, and Niri advertises it.
@@ -375,6 +411,7 @@ func NewWith(opts Options) (*Compositor, error) {
 		AddListener(unsafe.Pointer(&c.cursor.events.axis), c.handleCursorAxis),
 		AddListener(unsafe.Pointer(&c.cursor.events.frame), c.handleCursorFrame),
 		AddListener(unsafe.Pointer(&c.seat.events.request_set_cursor), c.handleRequestSetCursor),
+		AddListener(unsafe.Pointer(&c.seat.events.start_drag), c.handleStartDrag),
 	)
 
 	if err := c.startPost(); err != nil {
@@ -462,6 +499,10 @@ func (c *Compositor) Destroy() {
 		c.focusTimer.Stop()
 		c.focusTimer = nil
 	}
+	if c.dndScroll != nil && c.dndScroll.timer != nil {
+		c.dndScroll.timer.Stop()
+		c.dndScroll.timer = nil
+	}
 	c.stopPost()
 	// Before any seat goes: wlroots frees a seat's popup grab twice when the
 	// seat is destroyed with the grab open (dismissGrabbedPopups).
@@ -518,6 +559,9 @@ func cCString(s string) *C.char { return C.CString(s) }
 // keep holds listeners until they are dropped or the compositor is destroyed.
 func (c *Compositor) keep(ls ...*Listener) {
 	for _, l := range ls {
+		if l == nil {
+			continue
+		}
 		c.listeners[l] = struct{}{}
 	}
 }
@@ -525,6 +569,9 @@ func (c *Compositor) keep(ls ...*Listener) {
 // drop destroys a listener whose object has gone and forgets it, so windows
 // and devices that come and go leave nothing behind.
 func (c *Compositor) drop(l *Listener) {
+	if l == nil {
+		return
+	}
 	l.Destroy()
 	delete(c.listeners, l)
 }

@@ -41,6 +41,8 @@ executed until the owner schedules the milestone they belong to.
 | [plans/2026-10-20-offscreen-focus.md](plans/2026-10-20-offscreen-focus.md) | plan | `sysc-1436`: regression-first fix for offscreen `FocusWindow` routing and output snapshots. |
 | [plans/2026-10-20-m5-layout.md](plans/2026-10-20-m5-layout.md) | plan | M5 implementation plan (`sysc-1270`): scrolling columns, per-output dynamic workspaces, core KDL binds, and nested laptop gate. |
 | [plans/2026-10-20-m6-window-policy.md](plans/2026-10-20-m6-window-policy.md) | plan | M6 implementation plan (`sysc-1271`): tabs, floating/fullscreen, named workspaces, monitor moves, M6 rules, urgency, and the laptop nested gate. |
+| [plans/2026-10-21-m7-overview-design.md](plans/2026-10-21-m7-overview-design.md) | design | Approved M7 design: compositor-owned overview projection, gestures, hot corners, insert hints, and drag edge scrolling. |
+| [plans/2026-10-21-m7-overview.md](plans/2026-10-21-m7-overview.md) | plan | M7 implementation plan (`sysc-1272`): overview rendering and IPC, gestures, hot corners, insert hints, DND edge scrolling, and the nested laptop gate. |
 
 ## Reference sources (pinned 2026-10-16)
 

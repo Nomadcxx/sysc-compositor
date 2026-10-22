@@ -85,7 +85,9 @@ func TestParseAction(t *testing.T) {
 		{name: "switch floating and tiling", kind: ActionSwitchFocusFloatingAndTiling, want: true},
 		{name: "fullscreen window", kind: ActionFullscreenWindow, want: true},
 		{name: "windowed fullscreen", kind: ActionToggleWindowedFullscreen, want: true},
-		{name: "unimplemented remains visible", kind: "toggle-overview", want: false},
+		{name: "toggle overview", kind: "toggle-overview", want: true},
+		{name: "open overview", kind: "open-overview", want: true},
+		{name: "close overview", kind: "close-overview", want: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

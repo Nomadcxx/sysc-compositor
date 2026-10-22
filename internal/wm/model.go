@@ -51,6 +51,8 @@ type fullscreenRestore struct {
 type Model struct {
 	outputs         map[string]*outputState
 	windows         map[uint64]windowState
+	overview        overviewState
+	windowDrag      *WindowDrag
 	resizedWindows  map[uint64]windowSize
 	floatingWindows map[uint64]layout.Bounds
 	fullscreenFloat map[uint64]fullscreenRestore
@@ -91,6 +93,7 @@ type WindowSnapshot struct {
 // Snapshot is a detached view of the compositor's layout state.
 type Snapshot struct {
 	FocusedOutput string
+	OverviewOpen  bool
 	Workspaces    []WorkspaceSnapshot
 	Windows       []WindowSnapshot
 }
@@ -302,6 +305,9 @@ func (m *Model) RemoveWindow(id uint64) (uint64, bool) {
 	state, ok := m.windows[id]
 	if !ok {
 		return 0, false
+	}
+	if m.windowDrag != nil && m.windowDrag.WindowID == id {
+		m.CancelWindowDrag()
 	}
 	delete(m.windows, id)
 	out := m.outputs[state.output]
@@ -698,6 +704,29 @@ func (m *Model) FocusWorkspace(output string, index uint8) bool {
 	m.reconcile(out)
 	m.clearFocusedUrgency()
 	return true
+}
+
+// FocusWorkspaceByDelta switches an output's active workspace by a relative index.
+func (m *Model) FocusWorkspaceByDelta(output string, delta int) bool {
+	state := m.outputs[output]
+	if state == nil || delta == 0 || len(state.workspaces) == 0 {
+		return false
+	}
+	index := min(max(state.active+delta, 0), len(state.workspaces)-1)
+	if index == state.active {
+		return false
+	}
+	state.active = index
+	m.focusedOutput = output
+	m.reconcile(state)
+	m.clearFocusedUrgency()
+	return true
+}
+
+// ScrollWorkspaceView moves one workspace's horizontal viewport without changing focus.
+func (m *Model) ScrollWorkspaceView(id uint64, delta int) bool {
+	workspace := m.workspaceByID(id)
+	return workspace != nil && workspace.strip.ScrollBy(delta)
 }
 
 // FocusWorkspaceID activates a workspace resolved from the compositor's
@@ -1223,7 +1252,7 @@ func (m *Model) ActiveWindow() (uint64, bool) {
 // Snapshot returns workspaces and windows in stable output/workspace order.
 func (m *Model) Snapshot() Snapshot {
 	names := m.outputNames()
-	snapshot := Snapshot{FocusedOutput: m.focusedOutput}
+	snapshot := Snapshot{FocusedOutput: m.focusedOutput, OverviewOpen: m.overview.open}
 	for _, name := range names {
 		out := m.outputs[name]
 		for i, workspace := range out.workspaces {

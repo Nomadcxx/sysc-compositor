@@ -50,8 +50,9 @@ func New(cfg *config.Config, configLoadFailed bool) (*Server, error) {
 	}, ModKey: cfg.Input.ModKey, ModKeyNested: cfg.Input.ModKeyNested,
 		Layout: &wlr.LayoutOptions{
 			Gaps: cfg.Layout.Gaps, ColumnWidthProportion: cfg.Layout.ColumnWidthProportion,
-			FixedColumnWidth: cfg.Layout.FixedColumnWidth,
+			FixedColumnWidth: cfg.Layout.FixedColumnWidth, InsertHint: cfg.Layout.InsertHint,
 		}, CursorTheme: cfg.Cursor.Theme, CursorSize: cfg.Cursor.Size, Binds: cfg.Binds,
+		Overview: cfg.Overview, Gestures: cfg.Gestures,
 		Workspaces: workspaces, WindowRules: cfg.WindowRules, LayerRules: cfg.LayerRules,
 	})
 	if err != nil {
@@ -127,6 +128,7 @@ func (s *Server) refreshNiriState() {
 	s.state.replace(niriSnapshot{
 		outputs: outputs, windows: windows, layers: wireLayers,
 		workspaces: workspaces, keyboardLayouts: keyboardLayouts, focusedOutput: focused,
+		overviewOpen: model.OverviewOpen,
 	})
 	s.events.publish(eventStreamChanges(before, s.state.snapshot()))
 }
@@ -198,6 +200,12 @@ func (s *Server) Run() error {
 			postAction: func(action ipc.Action, workspaceID uint64) error {
 				return s.c.Post(func() {
 					switch action.Name {
+					case "ToggleOverview":
+						s.c.ToggleOverview()
+					case "OpenOverview":
+						s.c.OpenOverview()
+					case "CloseOverview":
+						s.c.CloseOverview()
 					case "FocusWindow":
 						if action.WindowID != nil {
 							s.c.FocusWindow(*action.WindowID)

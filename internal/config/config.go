@@ -30,6 +30,8 @@ type Config struct {
 	Keyboard    Keyboard
 	Input       Input
 	Layout      Layout
+	Overview    Overview
+	Gestures    Gestures
 	Cursor      Cursor
 	Binds       []Binding
 	Workspaces  []WorkspaceConfig
@@ -45,6 +47,35 @@ type Layout struct {
 	Gaps                  int
 	ColumnWidthProportion float64
 	FixedColumnWidth      int
+	InsertHint            InsertHint
+}
+
+type Color struct{ R, G, B, A float64 }
+
+type Overview struct {
+	Zoom          float64
+	BackdropColor Color
+}
+
+type Gestures struct {
+	HotCorners        HotCorners
+	DNDEdgeViewScroll DNDEdgeViewScroll
+}
+
+type HotCorners struct {
+	TopLeft, TopRight, BottomLeft, BottomRight bool
+	Off                                        bool
+}
+
+type DNDEdgeViewScroll struct {
+	TriggerWidth float64
+	DelayMS      int
+	MaxSpeed     float64
+}
+
+type InsertHint struct {
+	Off   bool
+	Color Color
 }
 
 type Cursor struct {
@@ -64,7 +95,10 @@ type Keyboard struct {
 func Default() *Config {
 	return &Config{Environment: map[string]*string{},
 		Keyboard: Keyboard{RepeatDelay: 600, RepeatRate: 25},
-		Layout:   Layout{Gaps: 16, ColumnWidthProportion: 0.5},
+		Layout: Layout{Gaps: 16, ColumnWidthProportion: 0.5,
+			InsertHint: InsertHint{Color: Color{127.0 / 255, 200.0 / 255, 1, 128.0 / 255}}},
+		Overview: Overview{Zoom: 0.5, BackdropColor: Color{0.15, 0.15, 0.15, 1}},
+		Gestures: Gestures{DNDEdgeViewScroll: DNDEdgeViewScroll{TriggerWidth: 30, DelayMS: 100, MaxSpeed: 1500}},
 		Cursor:   Cursor{Theme: "default", Size: 24}}
 }
 
@@ -124,6 +158,10 @@ func decode(name string, nodes []*document.Node) (*Config, error) {
 			err = c.input(n)
 		case "layout":
 			err = c.layout(n)
+		case "overview":
+			err = c.overview(n)
+		case "gestures":
+			err = c.gestures(n)
 		case "cursor":
 			err = c.cursor(n)
 		case "binds":
@@ -309,9 +347,207 @@ func (c *Config) layout(n *document.Node) error {
 					c.Layout.ColumnWidthProportion = 0
 				}
 			}
+		case "insert-hint":
+			if err := c.insertHint(child); err != nil {
+				return fmt.Errorf("insert-hint: %w", err)
+			}
 		}
 	}
 	return nil
+}
+
+func (c *Config) overview(n *document.Node) error {
+	for _, child := range n.Children {
+		switch nodeName(child) {
+		case "zoom":
+			value, err := floatArg(child, 0, 1)
+			if err != nil {
+				return err
+			}
+			c.Overview.Zoom = value
+		case "backdrop-color":
+			value, err := colorArg(child)
+			if err != nil {
+				return fmt.Errorf("backdrop-color: %w", err)
+			}
+			c.Overview.BackdropColor = value
+		case "workspace-shadow":
+			c.addWarning("overview.workspace-shadow")
+		default:
+			return fmt.Errorf("unexpected node `%s`", nodeName(child))
+		}
+	}
+	return nil
+}
+
+func (c *Config) gestures(n *document.Node) error {
+	for _, child := range n.Children {
+		switch nodeName(child) {
+		case "hot-corners":
+			corners, err := parseHotCorners(child)
+			if err != nil {
+				return fmt.Errorf("hot-corners: %w", err)
+			}
+			c.Gestures.HotCorners = corners
+		case "dnd-edge-view-scroll":
+			if err := c.dndEdgeViewScroll(child); err != nil {
+				return fmt.Errorf("dnd-edge-view-scroll: %w", err)
+			}
+		case "dnd-edge-workspace-switch":
+			c.addWarning("gestures.dnd-edge-workspace-switch")
+		default:
+			return fmt.Errorf("unexpected node `%s`", nodeName(child))
+		}
+	}
+	return nil
+}
+
+func (c *Config) dndEdgeViewScroll(n *document.Node) error {
+	for _, child := range n.Children {
+		switch nodeName(child) {
+		case "trigger-width":
+			value, err := numberArg(child)
+			if err != nil || value < 0 || value > 65535 {
+				return fmt.Errorf("`trigger-width` must be a number from 0 to 65535")
+			}
+			c.Gestures.DNDEdgeViewScroll.TriggerWidth = value
+		case "delay-ms":
+			value, err := intArg(child, 0, 1<<16-1)
+			if err != nil {
+				return err
+			}
+			c.Gestures.DNDEdgeViewScroll.DelayMS = value
+		case "max-speed":
+			value, err := numberArg(child)
+			if err != nil || value < 0 || value > 1_000_000 {
+				return fmt.Errorf("`max-speed` must be a number from 0 to 1000000")
+			}
+			c.Gestures.DNDEdgeViewScroll.MaxSpeed = value
+		default:
+			return fmt.Errorf("unexpected node `%s`", nodeName(child))
+		}
+	}
+	return nil
+}
+
+func parseHotCorners(n *document.Node) (HotCorners, error) {
+	var corners HotCorners
+	for _, child := range n.Children {
+		if err := noValue(child); err != nil {
+			return HotCorners{}, err
+		}
+		switch nodeName(child) {
+		case "off":
+			corners.Off = true
+		case "top-left":
+			corners.TopLeft = true
+		case "top-right":
+			corners.TopRight = true
+		case "bottom-left":
+			corners.BottomLeft = true
+		case "bottom-right":
+			corners.BottomRight = true
+		default:
+			return HotCorners{}, fmt.Errorf("unexpected node `%s`", nodeName(child))
+		}
+	}
+	return corners, nil
+}
+
+func (c *Config) insertHint(n *document.Node) error {
+	for _, child := range n.Children {
+		switch nodeName(child) {
+		case "off":
+			if err := noValue(child); err != nil {
+				return err
+			}
+			c.Layout.InsertHint.Off = true
+		case "on":
+			if err := noValue(child); err != nil {
+				return err
+			}
+			c.Layout.InsertHint.Off = false
+		case "color":
+			value, err := colorArg(child)
+			if err != nil {
+				return fmt.Errorf("color: %w", err)
+			}
+			c.Layout.InsertHint.Color = value
+		case "gradient":
+			c.addWarning("layout.insert-hint.gradient")
+		default:
+			return fmt.Errorf("unexpected node `%s`", nodeName(child))
+		}
+	}
+	return nil
+}
+
+func noValue(n *document.Node) error {
+	if len(n.Arguments) != 0 || len(n.Properties) != 0 || len(n.Children) != 0 {
+		return fmt.Errorf("`%s` takes no arguments or properties", nodeName(n))
+	}
+	return nil
+}
+
+func colorArg(n *document.Node) (Color, error) {
+	if len(n.Arguments) == 1 {
+		value, ok := n.Arguments[0].Value.(string)
+		if !ok {
+			return Color{}, fmt.Errorf("color must be a hex string or four integers")
+		}
+		if len(n.Children) != 0 || len(n.Properties) != 0 {
+			return Color{}, fmt.Errorf("color cannot have children or properties")
+		}
+		return parseHexColor(value)
+	}
+	if len(n.Arguments) != 4 || len(n.Children) != 0 || len(n.Properties) != 0 {
+		return Color{}, fmt.Errorf("color needs a hex string or four integers")
+	}
+	var components [4]float64
+	for i, arg := range n.Arguments {
+		value, ok := arg.Value.(int64)
+		if !ok || value < 0 || value > 255 {
+			return Color{}, fmt.Errorf("color component %d must be an integer from 0 to 255", i+1)
+		}
+		components[i] = float64(value) / 255
+	}
+	return Color{components[0], components[1], components[2], components[3]}, nil
+}
+
+// ponytail: hex forms cover this config's colors; CSS names and rgb()/hsl() need a parser dependency.
+func parseHexColor(value string) (Color, error) {
+	if len(value) < 2 || value[0] != '#' {
+		return Color{}, fmt.Errorf("color %q must use #RGB, #RGBA, #RRGGBB, or #RRGGBBAA", value)
+	}
+	hex := value[1:]
+	var rgba [4]uint8
+	switch len(hex) {
+	case 3, 4:
+		for i := range hex {
+			nibble, err := strconv.ParseUint(hex[i:i+1], 16, 8)
+			if err != nil {
+				return Color{}, fmt.Errorf("invalid hex color %q", value)
+			}
+			rgba[i] = uint8(nibble * 17)
+		}
+		if len(hex) == 3 {
+			rgba[3] = 255
+		}
+	case 6, 8:
+		for i := range len(hex) / 2 {
+			component, err := strconv.ParseUint(hex[i*2:i*2+2], 16, 8)
+			if err != nil {
+				return Color{}, fmt.Errorf("invalid hex color %q", value)
+			}
+			rgba[i] = uint8(component)
+		}
+		if len(hex) == 6 {
+			rgba[3] = 255
+		}
+	default:
+		return Color{}, fmt.Errorf("color %q must use #RGB, #RGBA, #RRGGBB, or #RRGGBBAA", value)
+	}
+	return Color{float64(rgba[0]) / 255, float64(rgba[1]) / 255, float64(rgba[2]) / 255, float64(rgba[3]) / 255}, nil
 }
 
 func (c *Config) cursor(n *document.Node) error {
@@ -459,6 +695,17 @@ func intArg(n *document.Node, min, max int64) (int, error) {
 }
 
 func floatArg(n *document.Node, min, max float64) (float64, error) {
+	value, err := numberArg(n)
+	if err != nil {
+		return 0, err
+	}
+	if value <= min || value > max {
+		return 0, fmt.Errorf("`%s` must be greater than %v and at most %v", nodeName(n), min, max)
+	}
+	return value, nil
+}
+
+func numberArg(n *document.Node) (float64, error) {
 	if len(n.Arguments) != 1 {
 		return 0, fmt.Errorf("`%s` takes one number", nodeName(n))
 	}
@@ -471,8 +718,8 @@ func floatArg(n *document.Node, min, max float64) (float64, error) {
 	default:
 		return 0, fmt.Errorf("`%s` must be a number", nodeName(n))
 	}
-	if math.IsNaN(value) || math.IsInf(value, 0) || value <= min || value > max {
-		return 0, fmt.Errorf("`%s` must be greater than %v and at most %v", nodeName(n), min, max)
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return 0, fmt.Errorf("`%s` must be a finite number", nodeName(n))
 	}
 	return value, nil
 }

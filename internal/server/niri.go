@@ -58,6 +58,7 @@ type niriSnapshot struct {
 	layers           []ipc.LayerSurface
 	keyboardLayouts  *ipc.KeyboardLayouts
 	focusedOutput    *ipc.Output
+	overviewOpen     bool
 	configLoadFailed bool
 }
 
@@ -339,6 +340,8 @@ func (h niriHandler) handle(r ipc.Request) (ipc.Reply, func()) {
 		return ipc.Reply{Ok: ipc.SuccessValue("FocusedWindow", focused)}, nil
 	case "FocusedOutput":
 		return ipc.Reply{Ok: ipc.SuccessValue("FocusedOutput", h.currentState().focusedOutput)}, nil
+	case "OverviewState":
+		return ipc.Reply{Ok: ipc.SuccessValue("OverviewState", ipc.OverviewState{IsOpen: h.currentState().overviewOpen})}, nil
 	case "EventStream":
 		return ipc.Reply{Ok: ipc.Handled}, nil
 	case "Action":
@@ -358,6 +361,8 @@ func (h niriHandler) action(a ipc.Action) (ipc.Reply, func()) {
 		err = h.spawn.spawn(a.Command)
 	case "SpawnSh":
 		err = h.spawn.spawnSh(a.ShellCommand)
+	case "ToggleOverview", "OpenOverview", "CloseOverview":
+		return h.windowAction(a, 0)
 	case "FocusWindow", "CloseWindow",
 		"FocusWindowInColumn", "FocusWindowDown", "FocusWindowUp", "MoveWindowDown", "MoveWindowUp",
 		"FullscreenWindow", "ToggleWindowedFullscreen",
