@@ -29,6 +29,7 @@ type Server struct {
 	configSources []string
 	configWatcher *config.Watcher
 	sessionDBus   *session.DBus
+	screenSaver   *session.ScreenSaver
 	localeXKB     *config.Keyboard
 	watchStop     chan struct{}
 	watchStart    sync.Once
@@ -219,6 +220,16 @@ func (s *Server) Run() error {
 						s.c.SwitchLayout(action.Layout, action.LayoutIndex)
 					case "ToggleOverview":
 						s.c.ToggleOverview()
+					case "ToggleKeyboardShortcutsInhibit":
+						s.c.ToggleKeyboardShortcutsInhibit()
+					case "PowerOffMonitors":
+						if err := s.c.PowerOffMonitors(); err != nil {
+							os.Stderr.WriteString("sysc-compositor: PowerOffMonitors: " + err.Error() + "\n")
+						}
+					case "PowerOnMonitors":
+						if err := s.c.PowerOnMonitors(); err != nil {
+							os.Stderr.WriteString("sysc-compositor: PowerOnMonitors: " + err.Error() + "\n")
+						}
 					case "OpenOverview":
 						s.c.OpenOverview()
 					case "CloseOverview":
@@ -407,6 +418,10 @@ func (s *Server) Terminate() { s.c.Terminate() }
 // Destroy releases the compositor and every listener it owns.
 func (s *Server) Destroy() {
 	s.stopConfigWatcher()
+	if s.screenSaver != nil {
+		s.screenSaver.Close()
+		s.screenSaver = nil
+	}
 	if s.sessionDBus != nil {
 		s.sessionDBus.Close()
 		s.sessionDBus = nil

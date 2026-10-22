@@ -89,6 +89,7 @@ input {
     mod-key-nested "Super"
     keyboard { xkb { layout "us"; }; }
 }
+
 layout {
     gaps 16
     default-column-width { proportion 0.5; }
@@ -123,6 +124,65 @@ binds {
 	}
 	if len(cfg.UnappliedActions) != 0 {
 		t.Errorf("unapplied actions = %q, want none", cfg.UnappliedActions)
+	}
+}
+
+func TestBindRepeatDefaultsTrueAndCanBeDisabled(t *testing.T) {
+	cfg, err := Parse("bind-repeat.kdl", []byte(`
+binds {
+    Mod+Q { close-window; }
+    Mod+W repeat=false { close-window; }
+}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Binds) != 2 {
+		t.Fatalf("binds = %d, want 2", len(cfg.Binds))
+	}
+	if !cfg.Binds[0].Repeat {
+		t.Error("repeat defaults to false, want true")
+	}
+	if cfg.Binds[1].Repeat {
+		t.Error("repeat=false was not retained")
+	}
+}
+
+func TestBindRepeatRequiresBoolean(t *testing.T) {
+	if _, err := Parse("bind-repeat.kdl", []byte(`
+binds {
+    Mod+Q repeat="false" { close-window; }
+}
+`)); err == nil {
+		t.Fatal("string repeat property parsed, want boolean validation error")
+	}
+}
+
+func TestBindAllowWhenLockedDefaultsFalse(t *testing.T) {
+	cfg, err := Parse("bind-locked.kdl", []byte(`
+binds {
+    Mod+Q { close-window; }
+    XF86AudioMute allow-when-locked=true { spawn "wpctl" "set-mute" "@DEFAULT_AUDIO_SINK@" "toggle"; }
+}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Binds) != 2 {
+		t.Fatalf("binds = %d, want 2", len(cfg.Binds))
+	}
+	if cfg.Binds[0].AllowWhenLocked {
+		t.Error("allow-when-locked defaults to true, want false")
+	}
+	if !cfg.Binds[1].AllowWhenLocked {
+		t.Error("allow-when-locked=true was not retained")
+	}
+	if _, err := Parse("bind-locked.kdl", []byte(`
+binds {
+    Mod+Q allow-when-locked="yes" { close-window; }
+}
+`)); err == nil {
+		t.Error("string allow-when-locked parsed, want boolean validation error")
 	}
 }
 
@@ -886,5 +946,58 @@ func TestLocate(t *testing.T) {
 	}
 	if got := Locate("/from/flag.kdl", getenv); got != "/from/flag.kdl" {
 		t.Errorf("-c: %q", got)
+	}
+}
+
+func TestBlurDefaultsMatchNiriAndUnnamedFieldsStay(t *testing.T) {
+	cfg, err := Parse("blur.kdl", []byte(``))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (Blur{Passes: 3, Offset: 3, Noise: 0.02, Saturation: 1.5}); cfg.Blur != want {
+		t.Errorf("default blur = %+v, want Niri's %+v", cfg.Blur, want)
+	}
+	cfg, err = Parse("blur.kdl", []byte(`
+blur {
+    passes 2
+    noise 0
+    off
+    saturation 1.2
+}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (Blur{Off: true, Passes: 2, Offset: 3, Noise: 0, Saturation: 1.2}); cfg.Blur != want {
+		t.Errorf("partial blur = %+v, want %+v (offset keeps its default)", cfg.Blur, want)
+	}
+	for _, warning := range cfg.Warnings {
+		if warning == "blur" {
+			t.Error("blur is still reported as accepted but not applied")
+		}
+	}
+	if _, err := Parse("blur.kdl", []byte("blur {\n    noise 2\n}\n")); err == nil {
+		t.Error("noise 2 parsed, want a range error")
+	}
+}
+
+func TestBindAllowInhibitingAndToggleShortcutsInhibit(t *testing.T) {
+	cfg, err := Parse("bind-inhibit.kdl", []byte(`
+binds {
+    Mod+Q { close-window; }
+    Mod+Escape allow-inhibiting=false { toggle-keyboard-shortcuts-inhibit; }
+}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Binds) != 2 || len(cfg.UnappliedActions) != 0 {
+		t.Fatalf("binds = %+v, unapplied = %q", cfg.Binds, cfg.UnappliedActions)
+	}
+	if cfg.Binds[0].IgnoresInhibit {
+		t.Error("a bind without allow-inhibiting ignores inhibitors, want it inhibitable")
+	}
+	if !cfg.Binds[1].IgnoresInhibit || cfg.Binds[1].Actions[0].Name != "toggle-keyboard-shortcuts-inhibit" {
+		t.Errorf("toggle bind = %+v, want allow-inhibiting=false kept", cfg.Binds[1])
 	}
 }

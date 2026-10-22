@@ -4,6 +4,8 @@ package wlr
 #cgo pkg-config: wlroots-0.20 wayland-server xkbcommon
 #cgo CFLAGS: -DWLR_USE_UNSTABLE
 
+#include <stdint.h>
+#include <wayland-server-core.h>
 #include <xkbcommon/xkbcommon.h>
 #include <xkbcommon/xkbcommon-keysyms.h>
 #include <wlr/backend/session.h>
@@ -11,6 +13,18 @@ package wlr
 #include <wlr/types/wlr_keyboard.h>
 #include <wlr/types/wlr_keyboard_group.h>
 #include <wlr/types/wlr_seat.h>
+
+extern void sysc_listener_fire(uintptr_t handle, void *data);
+
+static int sysc_keyboard_repeat_timer(void *data) {
+	sysc_listener_fire((uintptr_t)data, NULL);
+	return 0;
+}
+
+static struct wl_event_source *sysc_keyboard_repeat_source(
+		struct wl_event_loop *loop, uintptr_t token) {
+	return wl_event_loop_add_timer(loop, sysc_keyboard_repeat_timer, (void *)token);
+}
 
 static size_t sysc_keyboard_layout_count(struct wlr_keyboard *keyboard) {
 	return keyboard == NULL || keyboard->keymap == NULL ? 0 :
@@ -317,6 +331,7 @@ func (c *Compositor) addKeyboard(kb *C.struct_wlr_keyboard) bool {
 func (c *Compositor) handleKeyboardKey(data unsafe.Pointer) {
 	event := (*C.struct_wlr_keyboard_key_event)(data)
 	keycode := uint32(event.keycode)
+	c.userActivity()
 	if event.state == C.WL_KEYBOARD_KEY_STATE_PRESSED {
 		// A key may have been released while the session was inactive. A fresh
 		// press starts a new suppression lifetime for this evdev keycode.
@@ -328,22 +343,35 @@ func (c *Compositor) handleKeyboardKey(data unsafe.Pointer) {
 			}
 			return
 		}
-		if c.dispatchKeyBinding(keycode) {
+		if binding, matched := c.dispatchKeyBinding(keycode); matched {
 			c.suppressedKeys[keycode] = true
+			if binding.Repeat {
+				c.startKeyboardRepeat(binding)
+			}
 			return
 		}
-	} else if c.suppressedKeys[keycode] {
-		delete(c.suppressedKeys, keycode)
-		return
+	} else {
+		c.stopKeyboardRepeat()
+		if c.suppressedKeys[keycode] {
+			delete(c.suppressedKeys, keycode)
+			return
+		}
 	}
 	C.wlr_seat_keyboard_notify_key(c.seat, event.time_msec, event.keycode,
 		C.uint32_t(event.state))
 }
 
-func (c *Compositor) dispatchKeyBinding(keycode uint32) bool {
+func (c *Compositor) dispatchKeyBinding(keycode uint32) (bind.Binding, bool) {
 	modifiers := c.activeBindModifiers()
-	for _, binding := range c.bindings {
+	for i := range c.bindings {
+		binding := c.bindings[i]
 		if binding.Chord.Trigger != bind.TriggerKey || binding.Chord.Modifiers != modifiers {
+			continue
+		}
+		if c.sessionLocked && !binding.AllowWhenLocked {
+			continue
+		}
+		if !binding.IgnoresInhibit && c.shortcutsInhibited() {
 			continue
 		}
 		name := C.CString(binding.Chord.Key)
@@ -352,12 +380,71 @@ func (c *Compositor) dispatchKeyBinding(keycode uint32) bool {
 		if !matches {
 			continue
 		}
-		for _, action := range binding.Actions {
-			c.executeBindAction(action)
-		}
-		return true
+		c.executeKeyBinding(binding)
+		return binding, true
 	}
-	return false
+	return bind.Binding{}, false
+}
+
+// executeKeyBinding runs a bind's actions. While the session is sealed only
+// spawn actions run, as Niri honours allow-when-locked for spawn alone.
+func (c *Compositor) executeKeyBinding(binding bind.Binding) {
+	for _, action := range binding.Actions {
+		if c.sessionLocked && action.Name != bind.ActionSpawn && action.Name != bind.ActionSpawnSh {
+			continue
+		}
+		c.executeBindAction(action)
+	}
+}
+
+func (c *Compositor) startKeyboardRepeat(binding bind.Binding) {
+	c.stopKeyboardRepeat()
+	rate := int(c.keyboard.repeat_info.rate)
+	if rate <= 0 {
+		return
+	}
+	token := Register(func(unsafe.Pointer) { c.handleKeyboardRepeat() })
+	source := C.sysc_keyboard_repeat_source(c.loop, C.uintptr_t(token))
+	if source == nil {
+		Unregister(token)
+		fmt.Fprintln(os.Stderr, "sysc-compositor: could not create keyboard bind repeat timer")
+		return
+	}
+	c.keyboardRepeatSource = source
+	c.keyboardRepeatToken = token
+	c.keyboardRepeatBinding = binding
+	// ponytail: Wayland timers use whole milliseconds, so round up to avoid
+	// exceeding the requested rate; fractional cadence needs deadline accumulation.
+	c.keyboardRepeatInterval = (1000 + rate - 1) / rate
+	if C.wl_event_source_timer_update(source, C.int(c.keyboard.repeat_info.delay)) < 0 {
+		c.stopKeyboardRepeat()
+		fmt.Fprintln(os.Stderr, "sysc-compositor: could not start keyboard bind repeat timer")
+	}
+}
+
+func (c *Compositor) handleKeyboardRepeat() {
+	source := c.keyboardRepeatSource
+	if source == nil {
+		return
+	}
+	c.executeKeyBinding(c.keyboardRepeatBinding)
+	if c.keyboardRepeatSource == source && C.wl_event_source_timer_update(source, C.int(c.keyboardRepeatInterval)) < 0 {
+		c.stopKeyboardRepeat()
+		fmt.Fprintln(os.Stderr, "sysc-compositor: could not restart keyboard bind repeat timer")
+	}
+}
+
+func (c *Compositor) stopKeyboardRepeat() {
+	if c.keyboardRepeatSource != nil {
+		C.wl_event_source_remove(c.keyboardRepeatSource)
+		c.keyboardRepeatSource = nil
+	}
+	if c.keyboardRepeatToken != 0 {
+		Unregister(c.keyboardRepeatToken)
+		c.keyboardRepeatToken = 0
+	}
+	c.keyboardRepeatBinding = bind.Binding{}
+	c.keyboardRepeatInterval = 0
 }
 
 func (c *Compositor) activeBindModifiers() bind.Modifiers {
@@ -521,6 +608,16 @@ func (c *Compositor) executeBindAction(action bind.Action) {
 		return
 	case bind.ActionToggleOverview:
 		c.ToggleOverview()
+	case bind.ActionToggleKeyboardShortcutsInhibit:
+		c.ToggleKeyboardShortcutsInhibit()
+	case bind.ActionPowerOffMonitors:
+		if err := c.PowerOffMonitors(); err != nil {
+			fmt.Fprintf(os.Stderr, "sysc-compositor: power-off-monitors: %v\n", err)
+		}
+	case bind.ActionPowerOnMonitors:
+		if err := c.PowerOnMonitors(); err != nil {
+			fmt.Fprintf(os.Stderr, "sysc-compositor: power-on-monitors: %v\n", err)
+		}
 		return
 	case bind.ActionOpenOverview:
 		c.OpenOverview()

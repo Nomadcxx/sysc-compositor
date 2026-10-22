@@ -39,7 +39,24 @@ type Config struct {
 	WindowRules  []WindowRule
 	LayerRules   []LayerRule
 	Animations   Animations
+	Blur         Blur
 	PreferNoCSD  bool
+}
+
+// Blur is the top-level blur section: how ext-background-effect frost is
+// drawn. A later section, or one in an include, changes only the fields it
+// names, as Niri merges blur parts.
+type Blur struct {
+	Off        bool
+	Passes     int
+	Offset     float64
+	Noise      float64
+	Saturation float64
+}
+
+// defaultBlur is Niri 26.04's (niri-config/src/appearance.rs).
+func defaultBlur() Blur {
+	return Blur{Passes: 3, Offset: 3, Noise: 0.02, Saturation: 1.5}
 }
 
 // LoadResult returns the decoded config and paths that can trigger a reload.
@@ -157,7 +174,8 @@ func Default() *Config {
 		Overview:   Overview{Zoom: 0.5, BackdropColor: Color{0.15, 0.15, 0.15, 1}},
 		Gestures:   Gestures{DNDEdgeViewScroll: DNDEdgeViewScroll{TriggerWidth: 30, DelayMS: 100, MaxSpeed: 1500}},
 		Cursor:     Cursor{Theme: "default", Size: 24},
-		Animations: defaultAnimations()}
+		Animations: defaultAnimations(),
+		Blur:       defaultBlur()}
 }
 
 // topLevel is every top-level node niri 26.04 decodes (niri-config/src/lib.rs).
@@ -239,6 +257,8 @@ func decode(name string, nodes []*document.Node) (*Config, error) {
 			}
 		case "animations":
 			err = c.animations(n)
+		case "blur":
+			err = c.blur(n)
 		case "overview":
 			err = c.overview(n)
 		case "gestures":
@@ -994,6 +1014,44 @@ func parseHexColor(value string) (Color, error) {
 	return Color{float64(rgba[0]) / 255, float64(rgba[1]) / 255, float64(rgba[2]) / 255, float64(rgba[3]) / 255}, nil
 }
 
+func (c *Config) blur(n *document.Node) error {
+	for _, child := range n.Children {
+		var err error
+		switch name := nodeName(child); name {
+		case "off", "on":
+			if err = noValue(child); err == nil {
+				c.Blur.Off = name == "off"
+			}
+		case "passes":
+			c.Blur.Passes, err = intArg(child, 1, 31)
+		case "offset":
+			c.Blur.Offset, err = blurNumber(child, 1000)
+		case "noise":
+			c.Blur.Noise, err = blurNumber(child, 1)
+		case "saturation":
+			c.Blur.Saturation, err = blurNumber(child, 10)
+		default:
+			err = fmt.Errorf("unknown setting %q", name)
+		}
+		if err != nil {
+			return fmt.Errorf("%s: %w", nodeName(child), err)
+		}
+	}
+	return nil
+}
+
+// blurNumber is a blur setting from 0 to max inclusive.
+func blurNumber(n *document.Node, max float64) (float64, error) {
+	value, err := numberArg(n)
+	if err != nil {
+		return 0, err
+	}
+	if value < 0 || value > max {
+		return 0, fmt.Errorf("`%s` must be from 0 to %v", nodeName(n), max)
+	}
+	return value, nil
+}
+
 func (c *Config) cursor(n *document.Node) error {
 	for _, child := range n.Children {
 		switch nodeName(child) {
@@ -1032,7 +1090,28 @@ func (c *Config) binds(n *document.Node) error {
 		if len(node.Children) == 0 {
 			return fmt.Errorf("bind %q: expected at least one action", nodeName(node))
 		}
-		binding := Binding{Chord: chord}
+		binding := Binding{Chord: chord, Repeat: true}
+		if property, ok := node.Properties["repeat"]; ok {
+			repeat, ok := property.Value.(bool)
+			if !ok {
+				return fmt.Errorf("bind %q: `repeat` must be boolean", nodeName(node))
+			}
+			binding.Repeat = repeat
+		}
+		if property, ok := node.Properties["allow-when-locked"]; ok {
+			allow, ok := property.Value.(bool)
+			if !ok {
+				return fmt.Errorf("bind %q: `allow-when-locked` must be boolean", nodeName(node))
+			}
+			binding.AllowWhenLocked = allow
+		}
+		if property, ok := node.Properties["allow-inhibiting"]; ok {
+			allow, ok := property.Value.(bool)
+			if !ok {
+				return fmt.Errorf("bind %q: `allow-inhibiting` must be boolean", nodeName(node))
+			}
+			binding.IgnoresInhibit = !allow
+		}
 		for _, actionNode := range node.Children {
 			name := nodeName(actionNode)
 			if !bind.IsSupportedAction(name) {

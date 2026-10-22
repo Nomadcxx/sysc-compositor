@@ -17,6 +17,48 @@ package testclient
 // test client. Version 2 carries the tiled states used by prefer-no-csd.
 static const struct wl_interface sysc_xdg_surface_interface;
 static const struct wl_interface sysc_xdg_toplevel_interface;
+static const struct wl_interface sysc_background_effect_surface_interface;
+
+static const struct wl_interface *sysc_background_effect_types[] = {
+	NULL,
+	&sysc_background_effect_surface_interface,
+	&wl_surface_interface,
+	&wl_region_interface,
+};
+static const struct wl_message sysc_background_effect_manager_requests[] = {
+	{"destroy", "", NULL},
+	{"get_background_effect", "no", sysc_background_effect_types + 1},
+};
+static const struct wl_message sysc_background_effect_manager_events[] = {
+	{"capabilities", "u", NULL},
+};
+static const struct wl_interface sysc_background_effect_manager_interface = {
+	"ext_background_effect_manager_v1", 1, 2,
+	sysc_background_effect_manager_requests, 1,
+	sysc_background_effect_manager_events,
+};
+static const struct wl_message sysc_background_effect_surface_requests[] = {
+	{"destroy", "", NULL},
+	{"set_blur_region", "?o", sysc_background_effect_types + 3},
+};
+static const struct wl_interface sysc_background_effect_surface_interface = {
+	"ext_background_effect_surface_v1", 1, 2,
+	sysc_background_effect_surface_requests, 0, NULL,
+};
+
+struct sysc_background_effect_state {
+	uint32_t capabilities;
+};
+static void sysc_background_effect_capabilities(void *data, struct wl_proxy *proxy,
+		uint32_t capabilities) {
+	((struct sysc_background_effect_state *)data)->capabilities = capabilities;
+}
+struct sysc_background_effect_manager_listener {
+	void (*capabilities)(void *, struct wl_proxy *, uint32_t);
+};
+static const struct sysc_background_effect_manager_listener sysc_background_effect_manager_listener = {
+	.capabilities = sysc_background_effect_capabilities,
+};
 
 static const struct wl_interface *sysc_xdg_wm_base_surface_types[] = {
 	&sysc_xdg_surface_interface, &wl_surface_interface,
@@ -147,7 +189,9 @@ struct sysc_client_globals {
 	struct wl_proxy *xdg_wm_base;
 	struct wl_proxy *xdg_decoration_manager;
 	struct wl_proxy *kde_server_decoration_manager;
+	struct wl_proxy *background_effect_manager;
 	struct sysc_decoration_state *kde_manager_state;
+	struct sysc_background_effect_state *background_effect_state;
 	bool bind_decoration;
 	bool bind_kde_decoration;
 };
@@ -180,6 +224,14 @@ static void sysc_client_global(void *data, struct wl_registry *registry,
 						(void (**)(void))&sysc_kde_server_decoration_manager_listener,
 						globals->kde_manager_state);
 			}
+		}
+	} else if (strcmp(interface, "ext_background_effect_manager_v1") == 0) {
+		globals->background_effect_manager = wl_registry_bind(registry, name,
+				&sysc_background_effect_manager_interface, 1);
+		if (globals->background_effect_manager != NULL && globals->background_effect_state != NULL) {
+			wl_proxy_add_listener(globals->background_effect_manager,
+					(void (**)(void))&sysc_background_effect_manager_listener,
+					globals->background_effect_state);
 		}
 	}
 }
@@ -304,6 +356,122 @@ static struct wl_buffer *sysc_client_buffer(struct wl_shm *shm, int width, int h
 			stride, WL_SHM_FORMAT_ARGB8888);
 	wl_shm_pool_destroy(pool);
 	return buffer;
+}
+
+struct sysc_background_effect_client {
+	struct wl_display *display;
+};
+
+static struct sysc_background_effect_client *sysc_background_effect_client_start(
+		const char *display_name, int *error) {
+	struct sysc_background_effect_client *client = calloc(1, sizeof(*client));
+	if (client == NULL) {
+		*error = 1;
+		return NULL;
+	}
+	client->display = wl_display_connect(display_name);
+	if (client->display == NULL) {
+		*error = 2;
+		free(client);
+		return NULL;
+	}
+	struct sysc_background_effect_state effect_state = {0};
+	struct sysc_client_globals globals = { .background_effect_state = &effect_state };
+	struct wl_registry *registry = wl_display_get_registry(client->display);
+	struct wl_surface *surface = NULL;
+	struct wl_buffer *buffer = NULL;
+	struct wl_region *region = NULL;
+	struct wl_proxy *effect = NULL;
+	if (registry == NULL || wl_registry_add_listener(registry,
+			&sysc_client_registry_listener, &globals) < 0) {
+		*error = 3;
+		goto fail;
+	}
+	if (wl_display_roundtrip(client->display) < 0) {
+		*error = 4;
+		goto fail;
+	}
+	if (wl_display_roundtrip(client->display) < 0) {
+		*error = 11;
+		goto fail;
+	}
+	if (globals.compositor == NULL || globals.shm == NULL ||
+			globals.background_effect_manager == NULL) {
+		*error = 5;
+		goto fail;
+	}
+	if (effect_state.capabilities != 1) {
+		*error = 6;
+		goto fail;
+	}
+	surface = wl_compositor_create_surface(globals.compositor);
+	buffer = sysc_client_buffer(globals.shm, 30, 20);
+	if (surface == NULL || buffer == NULL) {
+		*error = 7;
+		goto fail;
+	}
+	wl_surface_attach(surface, buffer, 0, 0);
+	wl_surface_commit(surface);
+	if (wl_display_roundtrip(client->display) < 0) {
+		*error = 8;
+		goto fail;
+	}
+	effect = wl_proxy_marshal_flags(globals.background_effect_manager, 1,
+			&sysc_background_effect_surface_interface,
+			wl_proxy_get_version(globals.background_effect_manager), 0, NULL, surface);
+	region = wl_compositor_create_region(globals.compositor);
+	if (effect == NULL || region == NULL) {
+		*error = 9;
+		goto fail;
+	}
+	wl_region_add(region, -5, -4, 15, 14);
+	wl_region_add(region, 20, 10, 20, 20);
+	wl_proxy_marshal_flags(effect, 1, NULL, wl_proxy_get_version(effect), 0, region);
+	wl_region_destroy(region);
+	region = NULL;
+	wl_surface_commit(surface);
+	if (wl_display_roundtrip(client->display) < 0) {
+		*error = 10;
+		goto fail;
+	}
+	if (globals.background_effect_manager != NULL) {
+		wl_proxy_marshal_flags(globals.background_effect_manager, 0, NULL,
+				wl_proxy_get_version(globals.background_effect_manager), WL_MARSHAL_FLAG_DESTROY);
+	}
+	if (registry != NULL) {
+		wl_registry_destroy(registry);
+	}
+	if (globals.compositor != NULL) {
+		wl_compositor_destroy(globals.compositor);
+	}
+	if (globals.shm != NULL) {
+		wl_shm_destroy(globals.shm);
+	}
+	if (effect != NULL) {
+		wl_proxy_marshal_flags(effect, 0, NULL, wl_proxy_get_version(effect), WL_MARSHAL_FLAG_DESTROY);
+	}
+	*error = 0;
+	return client;
+fail:
+	if (region != NULL) wl_region_destroy(region);
+	if (effect != NULL) wl_proxy_destroy(effect);
+	if (surface != NULL) wl_surface_destroy(surface);
+	if (buffer != NULL) wl_buffer_destroy(buffer);
+	if (registry != NULL) wl_registry_destroy(registry);
+	if (globals.background_effect_manager != NULL) wl_proxy_destroy(globals.background_effect_manager);
+	if (globals.compositor != NULL) wl_compositor_destroy(globals.compositor);
+	if (globals.shm != NULL) wl_shm_destroy(globals.shm);
+	wl_display_disconnect(client->display);
+	free(client);
+	return NULL;
+}
+
+static void sysc_background_effect_client_close(struct sysc_background_effect_client *client) {
+	if (client == NULL) {
+		return;
+	}
+	wl_display_disconnect(client->display);
+	free(client);
 }
 
 static int sysc_client_subsurface_sequence(const char *display_name, int keep_child,
@@ -773,6 +941,30 @@ import (
 	"fmt"
 	"unsafe"
 )
+
+// BackgroundEffectClient remains connected with its surface and effect alive
+// so the compositor test can inspect the committed region.
+type BackgroundEffectClient struct {
+	state *C.struct_sysc_background_effect_client
+}
+
+func StartBackgroundEffectClient(display string) (*BackgroundEffectClient, error) {
+	name := C.CString(display)
+	defer C.free(unsafe.Pointer(name))
+	var code C.int
+	state := C.sysc_background_effect_client_start(name, &code)
+	if state == nil {
+		return nil, fmt.Errorf("Wayland background-effect client failed at step %d", int(code))
+	}
+	return &BackgroundEffectClient{state: state}, nil
+}
+
+func (c *BackgroundEffectClient) Close() {
+	if c != nil && c.state != nil {
+		C.sysc_background_effect_client_close(c.state)
+		c.state = nil
+	}
+}
 
 // RunSubsurfaceSequence creates an xdg toplevel with a subsurface, commits a
 // new child buffer, then destroys the child while leaving the root mapped.

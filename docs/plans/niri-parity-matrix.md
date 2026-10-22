@@ -60,13 +60,13 @@ Until implemented, decode and reply `Err` with `unimplemented: <Name>`. Tick whe
 | Action | Status | Milestone |
 |---|---|---|
 | Quit | [~] | M2; no confirmation dialog yet, so it always quits (M11 overlay UI) |
-| PowerOffMonitors | [ ] | M15 |
-| PowerOnMonitors | [ ] | M15 |
+| PowerOffMonitors | [x] | M10 (owner Q8) — keeps output and workspace state; injected input is refused while every output is off, user input wakes them (`TestPowerOffPreservesOutputAndWorkspaceStateAndRestoresOnlyItsOutputs`, `TestIdleNotifiesOnlyUserActivityAndHonoursInhibitors`) |
+| PowerOnMonitors | [x] | M10 (owner Q8) — restores only the outputs PowerOffMonitors turned off |
 | Spawn | [~] | M2; no XDG_ACTIVATION_TOKEN until xdg-activation |
 | SpawnSh | [~] | M2; as Spawn |
 | DoScreenTransition | [ ] | M15 |
 | LoadConfigFile | [x] | M9 — reloads the active config or switches roots after a successful explicit load |
-| ToggleKeyboardShortcutsInhibit | [ ] | M10 |
+| ToggleKeyboardShortcutsInhibit | [x] | M10 — IPC action and `toggle-keyboard-shortcuts-inhibit` bind (`TestShortcutsInhibitPassesBindsToTheFocusedClient`) |
 | SwitchLayout | [x] | M9 — next, previous, or indexed XKB layout |
 | ShowHotkeyOverlay | [ ] | M11 |
 
@@ -143,12 +143,13 @@ M6 adds the window, column, floating, fullscreen, urgency, named-workspace, and 
 | switch-events | [x] | M9 — lid and tablet switch spawn actions; login1 also updates lid state |
 | window-rule | [~] | M6 app-id/title match and exclude, ordered placement/fullscreen overrides, and default size fields; M8 ordered `geometry-corner-radius` and `clip-to-geometry`; remaining Niri rule effects are unimplemented |
 | layer-rule | [~] | M6 parses namespace matching and `place-within-backdrop`; M7 does not render qualifying background surfaces within the overview backdrop or project background/bottom surfaces into workspace thumbnails; other Niri layer-rule effects remain unimplemented |
+| blur | [x] | M10 — off, passes, offset, noise and saturation with Niri's defaults, applied to SceneFX blur at start and on reload (`TestBlurDefaultsMatchNiriAndUnnamedFieldsStay`) |
 | animations | [~] | M8 applies the seven laptop spring kinds and animates overview, workspace, window, movement, and resize transitions; easing, slowdown, custom shaders, and four other recognized animation kinds warn and remain unapplied |
 | gestures | [~] | M7 swipe, hot-corner, and DND edge-scroll logic passes synthetic nested tests; physical touchpad input, bound-client forwarding of unsupported gestures, and live client DND remain unverified |
 | overview | [~] | M7 IPC, backdrop, window projection, and pointer selection; background/bottom layer projection and visual `place-within-backdrop` behavior remain unimplemented; spring animation is M8 |
 | hotkey-overlay | [ ] | M11 |
 | environment | [x] | M2 (applied to spawns) |
-| cursor | [~] | M5 theme/size and child environment; cursor-shape M10, per-output scale M15 |
+| cursor | [~] | M5 theme/size and child environment; M10 cursor-shape-v1 from the pointer's client; per-output scale M15 |
 | screenshot-path | [ ] | M11 |
 | prefer-no-csd | [x] | M8 exposes xdg-decoration and KDE server-decoration with server-side defaults; both accept client-side requests, and undecorated clients receive tiled-edge state |
 | spawn-at-startup / spawn-sh-at-startup | [x] | M2 |
@@ -172,6 +173,40 @@ Acceptance file: `/home/nomadx/.config/niri/config.kdl` + `sysc-shell.kdl`. Pars
 | `niri msg action quit --skip-confirmation` | [x] | M2 (sysc-greet) |
 | `niri msg action focus-window --id`, `close-window [--id]`, `focus-workspace <index|name>` | [x] | M4/M5; stable IDs, dynamic current-output indices, and mapped windows |
 
+## Wayland globals
+
+Design §7's globals beyond the M1 core, with the milestone each is assigned (owner decision Q9). A
+global is ticked only with its handler and a test (Q7). Versions follow the wlroots 0.20 managers.
+
+| Global | Status | Milestone | Proof |
+|---|---|---|---|
+| ext_session_lock_manager_v1 | [x] | M10 | `TestSessionLockCoversEveryOutputAndRoutesInputOnlyToLockSurfaces`, `TestLockerCrashKeepsSessionSealed` |
+| ext_idle_notifier_v1 | [x] | M10 | `TestIdleNotifiesOnlyUserActivityAndHonoursInhibitors` |
+| zwp_idle_inhibit_manager_v1 | [x] | M10 | same test (visible-surface inhibitor) |
+| wp_cursor_shape_manager_v1 | [x] | M10 | the pointer-shape test in `cursor_shape_test.go` |
+| ext_background_effect_manager_v1 | [x] | M10 | `TestBackgroundEffectDrawsFrostUnderTheRegion` (SceneFX blur, Niri's `blur {}`) |
+| zwp_keyboard_shortcuts_inhibit_manager_v1 | [x] | M10 | `TestShortcutsInhibitPassesBindsToTheFocusedClient` |
+| zwp_relative_pointer_manager_v1 | [x] | M10 | `TestLockedPointerStaysAndReportsRelativeMotion` |
+| zwp_pointer_constraints_v1 | [~] | M10 | lock tested; confine implemented, untested |
+| zwp_text_input_manager_v3 | [x] | M10 | `TestTextInputRelaysToTheInputMethod` |
+| zwp_input_method_manager_v2 | [~] | M10 | relay and popups tested; keyboard grab gets no keys until virtual-keyboard (M12, `sysc-1639`) |
+| zwlr_output_power_manager_v1 | [ ] | M10 | handler written, unwired: no packaged client to test it (`wlopm` is AUR-only) |
+| ext_data_control_manager_v1, zwlr_data_control_manager_v1 | [ ] | M11 | |
+| zwlr_screencopy_manager_v1 | [ ] | M11 | |
+| ext_image_copy_capture_manager_v1 (output source) | [ ] | M11 | |
+| wp_presentation | [ ] | M11 | |
+| wp_single_pixel_buffer_manager_v1 | [ ] | M11 | |
+| wp_alpha_modifier_v1 | [ ] | M11 | |
+| ext_foreign_toplevel_list_v1 | [ ] | M12 | |
+| zwlr_foreign_toplevel_manager_v1 | [ ] | M12 | |
+| foreign-toplevel image-capture source | [ ] | M12 | |
+| zwp_virtual_keyboard_manager_v1, zwlr_virtual_pointer_manager_v1 | [ ] | M12 | |
+| zwlr_gamma_control_manager_v1 | [ ] | M12 | |
+| wp_tearing_control_manager_v1 | [ ] | M12 | |
+| wp_linux_drm_syncobj_manager_v1 | [ ] | M12 | |
+| zwp_tablet_manager_v2 | [ ] | M12 | |
+| zwlr_output_manager_v1 | [ ] | M15 | |
+
 ## D-Bus
 
 | Name | Status | Milestone |
@@ -180,7 +215,7 @@ Acceptance file: `/home/nomadx/.config/niri/config.kdl` + `sysc-shell.kdl`. Pars
 | org.gnome.Mutter.ScreenCast | [ ] | M12 |
 | org.gnome.Shell.Screenshot | [ ] | M12 |
 | org.gnome.Shell.Introspect | [ ] | M12 |
-| org.freedesktop.ScreenSaver | [ ] | M10 |
+| org.freedesktop.ScreenSaver | [x] | M10 — Inhibit/UnInhibit at both of Niri's paths, cookies per caller, dropped when the caller leaves; started in `--session`, feeds idle inhibition (`TestScreenSaverInhibitsPerSenderAndDropsDepartedCallers`) |
 | org.freedesktop.a11y.KeyboardMonitor | [ ] | M14 |
 | locale1 client | [x] | M9 — XKB defaults and property changes, overridden by explicit KDL settings |
 | login1 | [x] | M9 — initial and changed lid state; sleep remains owned by wlroots |

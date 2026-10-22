@@ -37,7 +37,7 @@ func compositorOptions(cfg *config.Config, locale *config.Keyboard) wlr.Options 
 			FocusRing: cfg.Layout.FocusRing, Shadow: cfg.Layout.Shadow,
 		},
 		CursorTheme: cfg.Cursor.Theme, CursorSize: cfg.Cursor.Size, Binds: cfg.Binds,
-		Overview: cfg.Overview, Gestures: cfg.Gestures, Animations: cfg.Animations,
+		Overview: cfg.Overview, Gestures: cfg.Gestures, Animations: cfg.Animations, Blur: cfg.Blur,
 		PreferNoCSD: cfg.PreferNoCSD, Workspaces: workspaces,
 		WindowRules: cfg.WindowRules, LayerRules: cfg.LayerRules,
 	}

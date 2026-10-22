@@ -672,15 +672,17 @@ func (c *Compositor) destroyDndScrollState(state *dndEdgeScrollState) {
 func (c *Compositor) handleCursorMotion(data unsafe.Pointer) {
 	event := (*C.struct_wlr_pointer_motion_event)(data)
 	device := (*C.struct_wlr_input_device)(unsafe.Pointer(event.pointer))
-	C.wlr_cursor_move(c.cursor, device, event.delta_x, event.delta_y)
-	c.processCursorMotion(event.time_msec)
+	c.userActivity()
+	c.pointerMotion(device, event.time_msec, float64(event.delta_x), float64(event.delta_y),
+		float64(event.unaccel_dx), float64(event.unaccel_dy))
 }
 
 func (c *Compositor) handleCursorMotionAbsolute(data unsafe.Pointer) {
 	event := (*C.struct_wlr_pointer_motion_absolute_event)(data)
 	device := (*C.struct_wlr_input_device)(unsafe.Pointer(event.pointer))
-	C.wlr_cursor_warp_absolute(c.cursor, device, event.x, event.y)
-	c.processCursorMotion(event.time_msec)
+	c.userActivity()
+	dx, dy := c.absoluteDelta(device, event.x, event.y)
+	c.pointerMotion(device, event.time_msec, dx, dy, dx, dy)
 }
 
 func (c *Compositor) processCursorMotion(time C.uint32_t) {
@@ -753,6 +755,7 @@ func (c *Compositor) refocusPointer(time C.uint32_t) {
 	}
 	c.processCursorMotion(time)
 	C.wlr_seat_pointer_notify_frame(c.seat)
+	c.updatePointerConstraint()
 }
 
 // showDefaultImage draws the theme's default image, as over empty space.
@@ -807,6 +810,10 @@ func (c *Compositor) restoreCursorImage() {
 		c.drawnImage = ""
 		return
 	}
+	if c.cursorShape != "" {
+		c.showCursorImage(c.cursorShape)
+		return
+	}
 	c.showDefaultImage()
 }
 
@@ -814,6 +821,7 @@ func (c *Compositor) handleCursorButton(data unsafe.Pointer) {
 	event := (*C.struct_wlr_pointer_button_event)(data)
 	button := uint32(event.button)
 	pressed := event.state == C.WL_POINTER_BUTTON_STATE_PRESSED
+	c.userActivity()
 
 	if pressed {
 		c.pressedPointerButtons[button] = true
@@ -899,6 +907,7 @@ func (c *Compositor) handleCursorButton(data unsafe.Pointer) {
 
 func (c *Compositor) handleCursorAxis(data unsafe.Pointer) {
 	event := (*C.struct_wlr_pointer_axis_event)(data)
+	c.userActivity()
 	C.wlr_seat_pointer_notify_axis(c.seat, event.time_msec,
 		event.orientation, event.delta, event.delta_discrete,
 		event.source, event.relative_direction)
@@ -1009,6 +1018,16 @@ func (c *Compositor) focusLayerSurface(layer *layerSurface) {
 
 func (c *Compositor) updateKeyboardFocus() {
 	previousFocusedView := c.keyboardFocusedView()
+	if c.sessionLocked {
+		// Sealed: only a lock surface may hold user keyboard focus.
+		if surface := c.lockKeyboardSurface(); surface == nil {
+			C.wlr_seat_keyboard_notify_clear_focus(c.seat)
+		} else if c.seat.keyboard_state.focused_surface != surface {
+			C.sysc_seat_keyboard_focus(c.seat, surface, c.keyboard)
+		}
+		c.keyboardFocusChanged(previousFocusedView)
+		return
+	}
 	if layer := c.onDemandLayerFocus; layer != nil &&
 		(!bool(layer.surface.surface.mapped) || snapshotKeyboardMode(int(layer.surface.current.keyboard_interactive)) != LayerKeyboardOnDemandMode) {
 		c.onDemandLayerFocus = nil
@@ -1060,6 +1079,8 @@ func (c *Compositor) updateKeyboardFocus() {
 }
 
 func (c *Compositor) keyboardFocusChanged(previous *toplevelView) {
+	c.updateShortcutsInhibitors()
+	c.updateTextInputFocus()
 	current := c.keyboardFocusedView()
 	if current == previous {
 		return
@@ -1338,6 +1359,7 @@ func (c *Compositor) handleRequestSetCursor(data unsafe.Pointer) {
 			c.cursorSurfaceDestroy = nil
 		}
 		c.cursorSurface, c.cursorClientSet = event.surface, true
+		c.cursorShape = ""
 		c.cursorHotspotX, c.cursorHotspotY = int(event.hotspot_x), int(event.hotspot_y)
 		if event.surface != nil {
 			surface := event.surface

@@ -340,6 +340,24 @@ static void sysc_scene_tree_probe(struct wlr_scene_tree *tree,
 	wlr_scene_node_coords(&tree->node, &probe->origin_x, &probe->origin_y);
 	wlr_scene_node_for_each_buffer(&tree->node, sysc_scene_probe_buffer, probe);
 }
+
+// SceneFX forks struct wlr_scene, so Go code here never names it.
+static void sysc_scene_set_blur_data(void *scene, int passes, int radius, float noise,
+		float saturation) {
+	wlr_scene_set_blur_data(scene, passes, radius, noise, 1.0f, 1.0f, saturation);
+}
+
+static void sysc_scene_blur_box(struct wlr_scene_node *node, int *x, int *y, int *width, int *height) {
+	struct wlr_scene_blur *blur = wlr_scene_blur_from_node(node);
+	*x = node->x;
+	*y = node->y;
+	*width = blur->width;
+	*height = blur->height;
+}
+
+static void *sysc_scene_node_destroy_signal(struct wlr_scene_node *node) {
+	return &node->events.destroy;
+}
 */
 import "C"
 
@@ -391,6 +409,24 @@ func sceneFXCreateRect(parent unsafe.Pointer, width, height int, color [4]float3
 	return unsafe.Pointer(C.sysc_scene_rect_create_node((*C.struct_wlr_scene_tree)(parent), C.int(width), C.int(height), &rgba[0]))
 }
 
+// sceneFXSetBlurData sets the scene-wide blur. Brightness and contrast stay
+// neutral; Niri's blur section has no setting for them.
+func sceneFXSetBlurData(scene unsafe.Pointer, passes, radius int, noise, saturation float64) {
+	C.sysc_scene_set_blur_data(scene, C.int(passes), C.int(radius), C.float(noise), C.float(saturation))
+}
+
+func sceneFXCreateBlurNode(parent unsafe.Pointer, width, height int) unsafe.Pointer {
+	blur := C.wlr_scene_blur_create((*C.struct_wlr_scene_tree)(parent), C.int(width), C.int(height))
+	if blur == nil {
+		return nil
+	}
+	return unsafe.Pointer(&blur.node)
+}
+
+func sceneFXPlaceBelow(node, sibling unsafe.Pointer) {
+	C.wlr_scene_node_place_below((*C.struct_wlr_scene_node)(node), (*C.struct_wlr_scene_node)(sibling))
+}
+
 func sceneFXRectUpdateRing(node unsafe.Pointer, x, y, width, height, border int,
 	outer, inner [4]uint16, color [4]float32) {
 	rgba := [4]C.float{C.float(color[0]), C.float(color[1]), C.float(color[2]), C.float(color[3])}
@@ -424,6 +460,11 @@ func sceneFXNodeEnabled(node unsafe.Pointer) bool {
 	return bool(C.wlr_scene_node_coords((*C.struct_wlr_scene_node)(node), &x, &y))
 }
 
+// sceneFXNodeDestroySignal is the node's destroy signal, for a listener.
+func sceneFXNodeDestroySignal(node unsafe.Pointer) unsafe.Pointer {
+	return C.sysc_scene_node_destroy_signal((*C.struct_wlr_scene_node)(node))
+}
+
 func sceneFXNodeDestroy(node unsafe.Pointer) {
 	if node != nil {
 		C.wlr_scene_node_destroy((*C.struct_wlr_scene_node)(node))
@@ -433,6 +474,13 @@ func sceneFXNodeDestroy(node unsafe.Pointer) {
 func sceneFXSetWindowCorners(node, surface unsafe.Pointer, radii [4]uint16) {
 	C.sysc_scene_set_window_corners((*C.struct_wlr_scene_node)(node), (*C.struct_wlr_surface)(surface),
 		C.int(radii[0]), C.int(radii[1]), C.int(radii[2]), C.int(radii[3]))
+}
+
+// sceneFXBlurBox is a blur node's position in its parent and its size.
+func sceneFXBlurBox(node unsafe.Pointer) rect {
+	var x, y, width, height C.int
+	C.sysc_scene_blur_box((*C.struct_wlr_scene_node)(node), &x, &y, &width, &height)
+	return rect{int(x), int(y), int(width), int(height)}
 }
 
 func sceneFXRectSize(node unsafe.Pointer) (int, int) {

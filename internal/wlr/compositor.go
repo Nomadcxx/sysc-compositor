@@ -23,7 +23,14 @@ package wlr
 #include <wlr/types/wlr_data_device.h>
 #include <wlr/types/wlr_fractional_scale_v1.h>
 #include <wlr/types/wlr_layer_shell_v1.h>
+#include <wlr/types/wlr_idle_inhibit_v1.h>
+#include <wlr/types/wlr_idle_notify_v1.h>
+#include <wlr/types/wlr_keyboard_shortcuts_inhibit_v1.h>
+#include <wlr/types/wlr_input_method_v2.h>
 #include <wlr/types/wlr_linux_dmabuf_v1.h>
+#include <wlr/types/wlr_text_input_v3.h>
+#include <wlr/types/wlr_pointer_constraints_v1.h>
+#include <wlr/types/wlr_relative_pointer_v1.h>
 #include <wlr/types/wlr_output_layout.h>
 #include <wlr/types/wlr_scene.h>
 #include <wlr/types/wlr_seat.h>
@@ -139,6 +146,7 @@ type Compositor struct {
 	layerTrees              [layerCount]*C.struct_wlr_scene_tree
 	overviewConfig          config.Overview
 	animationConfig         config.Animations
+	blurConfig              config.Blur
 	animations              map[animationKey]*runningAnimation
 	animationTimer          *time.Timer
 	activeWorkspaces        map[string]activeWorkspace
@@ -153,10 +161,12 @@ type Compositor struct {
 	dndScroll               *dndEdgeScrollState
 	tiledMove               *tiledWindowMoveState
 	layerSurfaces           map[unsafe.Pointer]*layerSurface // by wlr_surface
-	layerOrder              []*layerSurface                  // creation order
-	usable                  map[unsafe.Pointer]rect          // per wlr_output, after exclusive zones
-	requested               rect                             // last host-requested output size, for tests
-	drawn                   int                              // frames that ran the scene commit, for tests
+	backgroundEffects       map[unsafe.Pointer]*backgroundEffect
+	backgroundEffectHandle  uintptr
+	layerOrder              []*layerSurface         // creation order
+	usable                  map[unsafe.Pointer]rect // per wlr_output, after exclusive zones
+	requested               rect                    // last host-requested output size, for tests
+	drawn                   int                     // frames that ran the scene commit, for tests
 	popups                  map[*C.struct_wlr_xdg_popup]struct{}
 	views                   map[unsafe.Pointer]*toplevelView
 	pointerDevices          map[unsafe.Pointer]bool
@@ -169,6 +179,10 @@ type Compositor struct {
 	keyboardGroup           *C.struct_wlr_keyboard_group
 	keyboard                *C.struct_wlr_keyboard // the group's, which the user seat hears
 	keyboardConfig          Keyboard
+	keyboardRepeatSource    *C.struct_wl_event_source
+	keyboardRepeatToken     uintptr
+	keyboardRepeatBinding   bind.Binding
+	keyboardRepeatInterval  int
 	inputDestroyListeners   map[unsafe.Pointer]*Listener
 	modifiers               uint32
 	focusedView             *toplevelView
@@ -187,6 +201,10 @@ type Compositor struct {
 	cursorHotspotX, cursorHotspotY int
 	cursorSurfaceDestroy           *Listener
 	cursorClientSet                bool
+	// cursorShape is the theme image the pointer's client last asked for
+	// through cursor-shape-v1, restored after a compositor grab; "" when it
+	// set a surface instead.
+	cursorShape string
 	// focusOriginX/Y is where the user seat's focused surface starts in
 	// layout coordinates, as of the last motion outside an implicit grab.
 	focusOriginX, focusOriginY C.double
@@ -202,6 +220,46 @@ type Compositor struct {
 	// injected is the table of seats fed by the compositor rather than the
 	// user's hardware, after the user seat (c.seat) in creation order.
 	injected []*injectedSeat
+
+	// Injected input is gated while the session is locked or every output
+	// is off (sysc-1260). injectedGated is the gate's last state, so held
+	// input is released once, as it closes.
+	sessionLocked bool
+	injectedGated bool
+	// powerOffActive is set between PowerOffMonitors and PowerOnMonitors;
+	// actionPoweredOff is the outputs PowerOffMonitors turned off, the only
+	// ones PowerOnMonitors turns back on.
+	powerOffActive   bool
+	actionPoweredOff map[unsafe.Pointer]struct{}
+
+	// The session lock (lock.go). lock is the live locker, or nil; the
+	// session can stay sealed (sessionLocked) with no locker after a crash.
+	lock          *sessionLock
+	lockTree      *C.struct_wlr_scene_tree
+	lockBackdrops map[unsafe.Pointer]*C.struct_wlr_scene_rect
+	// lockPendingOutputs are the enabled outputs that have not drawn a frame
+	// since the lock was accepted; `locked` waits for them. nil once sent.
+	lockPendingOutputs map[unsafe.Pointer]struct{}
+
+	// Idle (idle.go). idleInhibited is what the notifier was last told.
+	idleNotifier      *C.struct_wlr_idle_notifier_v1
+	idleInhibitors    map[*C.struct_wlr_idle_inhibitor_v1]*Listener
+	dbusIdleInhibited bool
+	idleInhibited     bool
+
+	shortcutsInhibitors map[*C.struct_wlr_keyboard_shortcuts_inhibitor_v1]*shortcutsInhibitor
+
+	// Pointer constraints (pointer_constraints.go). activeConstraint is on
+	// the surface with the user seat's pointer focus, or nil.
+	relativePointer    *C.struct_wlr_relative_pointer_manager_v1
+	pointerConstraints *C.struct_wlr_pointer_constraints_v1
+	activeConstraint   *C.struct_wlr_pointer_constraint_v1
+
+	// Text input relayed to the input method (text_input.go).
+	textInputs      map[*C.struct_wlr_text_input_v3]*textInput
+	activeTextInput *C.struct_wlr_text_input_v3
+	inputMethod     *C.struct_wlr_input_method_v2
+	inputPopups     map[*C.struct_wlr_input_popup_surface_v2]*inputPopup
 
 	// viewMapped, when set, runs on the compositor thread once a toplevel is
 	// mapped and hit-testable. It is the hook tests use to act once a client
@@ -243,6 +301,7 @@ type Options struct {
 	Overview     config.Overview
 	Gestures     config.Gestures
 	Animations   config.Animations
+	Blur         config.Blur
 	PreferNoCSD  bool
 }
 
@@ -283,6 +342,7 @@ func NewWith(opts Options) (*Compositor, error) {
 	}()
 	c.overviewConfig = opts.Overview
 	c.animationConfig = opts.Animations
+	c.blurConfig = opts.Blur
 	c.preferNoCSD = opts.PreferNoCSD
 	c.hotCorners = opts.Gestures.HotCorners
 	c.dndEdgeConfig = opts.Gestures.DNDEdgeViewScroll
@@ -313,6 +373,7 @@ func NewWith(opts Options) (*Compositor, error) {
 	c.activeWorkspaces = map[string]activeWorkspace{}
 	c.closingNodes = map[uint64]unsafe.Pointer{}
 	c.layerSurfaces = map[unsafe.Pointer]*layerSurface{}
+	c.backgroundEffects = map[unsafe.Pointer]*backgroundEffect{}
 	c.usable = map[unsafe.Pointer]rect{}
 	c.popups = map[*C.struct_wlr_xdg_popup]struct{}{}
 	c.views = map[unsafe.Pointer]*toplevelView{}
@@ -378,6 +439,7 @@ func NewWith(opts Options) (*Compositor, error) {
 	if c.scene = C.wlr_scene_create(); c.scene == nil {
 		return nil, errors.New("wlr_scene_create failed")
 	}
+	c.applyBlurConfig()
 	if !c.createLayerTrees() {
 		return nil, errors.New("wlr_scene_tree_create failed")
 	}
@@ -386,6 +448,24 @@ func NewWith(opts Options) (*Compositor, error) {
 	}
 	if !c.createOverviewTree() {
 		return nil, errors.New("overview scene tree create failed")
+	}
+	if !c.createSessionLock() {
+		return nil, errors.New("wlr_session_lock_manager_v1_create failed")
+	}
+	if !c.createIdle() {
+		return nil, errors.New("idle notify or idle inhibit manager create failed")
+	}
+	if !c.createCursorShape() {
+		return nil, errors.New("wlr_cursor_shape_manager_v1_create failed")
+	}
+	if !c.createShortcutsInhibit() {
+		return nil, errors.New("wlr_keyboard_shortcuts_inhibit_v1_create failed")
+	}
+	if !c.createPointerConstraints() {
+		return nil, errors.New("relative pointer or pointer constraints manager create failed")
+	}
+	if !c.createTextInput() {
+		return nil, errors.New("text input or input method manager create failed")
 	}
 	// xdg-output gives clients output names and logical geometry; waybar and
 	// grim refuse to start without it, and Niri advertises it.
@@ -400,6 +480,9 @@ func NewWith(opts Options) (*Compositor, error) {
 	}
 	if !bool(C.sysc_dmabuf_create(c.display, c.renderer, c.scene)) {
 		return nil, errors.New("wlr_linux_dmabuf_v1_create_with_renderer failed")
+	}
+	if err := c.createBackgroundEffectProtocol(); err != nil {
+		return nil, err
 	}
 	if c.seat = C.wlr_seat_create(c.display, cCString("seat0")); c.seat == nil {
 		return nil, errors.New("wlr_seat_create failed")
@@ -449,6 +532,9 @@ func normalizeOptions(opts Options) Options {
 	if opts.Animations == (config.Animations{}) {
 		opts.Animations = defaults.Animations
 	}
+	if opts.Blur == (config.Blur{}) {
+		opts.Blur = defaults.Blur
+	}
 	if opts.Gestures.DNDEdgeViewScroll == (config.DNDEdgeViewScroll{}) {
 		opts.Gestures.DNDEdgeViewScroll = defaults.Gestures.DNDEdgeViewScroll
 	}
@@ -492,6 +578,7 @@ func (c *Compositor) Reconfigure(opts Options) error {
 		c.keyboardConfig = opts.Keyboard
 	}
 
+	c.stopKeyboardRepeat()
 	c.modKey = modKey
 	c.bindings = slices.Clone(opts.Binds)
 	for i := range c.bindings {
@@ -500,6 +587,10 @@ func (c *Compositor) Reconfigure(opts Options) error {
 	c.layoutOptions = *opts.Layout
 	c.overviewConfig = opts.Overview
 	c.animationConfig = opts.Animations
+	if opts.Blur != c.blurConfig {
+		c.blurConfig = opts.Blur
+		c.applyBlurConfig()
+	}
 	c.hotCorners = opts.Gestures.HotCorners
 	c.dndEdgeConfig = opts.Gestures.DNDEdgeViewScroll
 	c.windowRules = slices.Clone(opts.WindowRules)
@@ -601,6 +692,7 @@ func (c *Compositor) Terminate() {
 // Destroy releases the compositor. Listeners added through AddListener are
 // removed first so no token outlives its wl_signal.
 func (c *Compositor) Destroy() {
+	c.stopKeyboardRepeat()
 	if c.focusTimer != nil {
 		c.focusTimer.Stop()
 		c.focusTimer = nil
@@ -631,6 +723,7 @@ func (c *Compositor) Destroy() {
 		sceneFXNodeDestroy(node)
 		delete(c.closingNodes, id)
 	}
+	c.destroyBackgroundEffects()
 	c.animations = nil
 	c.stopPost()
 	// Before any seat goes: wlroots frees a seat's popup grab twice when the
@@ -674,6 +767,7 @@ func (c *Compositor) Destroy() {
 		C.wl_display_destroy(c.display)
 		c.display = nil
 	}
+	c.destroyBackgroundEffectProtocol()
 }
 
 func (c *Compositor) destroyBackend() {

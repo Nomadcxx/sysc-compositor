@@ -3,9 +3,15 @@ package wlr
 /*
 #cgo pkg-config: wlroots-0.20 wayland-server
 #include <stdint.h>
+#include <wayland-server-core.h>
 
 extern void sysc_listener_fire(uintptr_t handle, void *data);
 extern void sysc_post_fire(uintptr_t token);
+extern void sysc_background_effect_get(uintptr_t handle, struct wl_resource *manager,
+		uint32_t id, struct wl_resource *surface);
+extern void sysc_background_effect_set_region(uintptr_t handle, struct wl_resource *resource,
+		struct wl_resource *region);
+extern void sysc_background_effect_resource_destroyed(uintptr_t handle);
 */
 import "C"
 
@@ -29,6 +35,23 @@ func sysc_listener_fire(handle C.uintptr_t, data unsafe.Pointer) {
 //export sysc_post_fire
 func sysc_post_fire(token C.uintptr_t) {
 	cgo.Handle(uintptr(token)).Value().(func(unsafe.Pointer))(nil)
+}
+
+//export sysc_background_effect_get
+func sysc_background_effect_get(handle C.uintptr_t, manager *C.struct_wl_resource,
+	id C.uint32_t, surface *C.struct_wl_resource) {
+	cgo.Handle(uintptr(handle)).Value().(*Compositor).getBackgroundEffect(manager, uint32(id), surface)
+}
+
+//export sysc_background_effect_set_region
+func sysc_background_effect_set_region(handle C.uintptr_t, resource,
+	region *C.struct_wl_resource) {
+	cgo.Handle(uintptr(handle)).Value().(*backgroundEffect).setRegion(resource, region)
+}
+
+//export sysc_background_effect_resource_destroyed
+func sysc_background_effect_resource_destroyed(handle C.uintptr_t) {
+	cgo.Handle(uintptr(handle)).Value().(*backgroundEffect).resourceDestroyed(uintptr(handle))
 }
 
 // liveHandles counts tokens Register has handed out and Unregister has not yet
