@@ -188,8 +188,8 @@ global is ticked only with its handler and a test (Q7). Versions follow the wlro
 | zwp_keyboard_shortcuts_inhibit_manager_v1 | [x] | M10 | `TestShortcutsInhibitPassesBindsToTheFocusedClient` |
 | zwp_relative_pointer_manager_v1 | [x] | M10 | `TestLockedPointerStaysAndReportsRelativeMotion` |
 | zwp_pointer_constraints_v1 | [~] | M10 | lock tested; confine implemented, untested |
-| zwp_text_input_manager_v3 | [ ] | M10 | |
-| zwp_input_method_manager_v2 | [ ] | M10 | |
+| zwp_text_input_manager_v3 | [x] | M10 | `TestTextInputRelaysToTheInputMethod` |
+| zwp_input_method_manager_v2 | [~] | M10 | relay and popups tested; keyboard grab gets no keys until virtual-keyboard (M12, `sysc-1639`) |
 | zwlr_output_power_manager_v1 | [ ] | M10 | handler written, unwired: no packaged client to test it (`wlopm` is AUR-only) |
 | ext_data_control_manager_v1, zwlr_data_control_manager_v1 | [ ] | M11 | |
 | zwlr_screencopy_manager_v1 | [ ] | M11 | |
