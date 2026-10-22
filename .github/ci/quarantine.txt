@@ -31,3 +31,8 @@ TestTiledModDragShowsInsertHintAndCommitsOnRelease sysc-1638
 TestOverviewProjectionSurvivesBufferCommitAndUnmap sysc-1640
 # M8: a window remap animation test that fails in lane 2 (sysc-1642).
 TestWindowOpenAndCloseAnimateReferencedBuffers sysc-1642
+# M10 tests. Bind repeat needs the nested Mod key; the gate test's user-key
+# half shares the lost fake-keyboard keys (both sysc-1638).
+TestKeyBindingRepeatFalseRunsOnlyOnPress sysc-1638
+TestKeyBindingRepeatHonorsDelayRateAndRelease sysc-1638
+TestInjectedInputIsReleasedAndBlockedByLockOrBlanking sysc-1638
