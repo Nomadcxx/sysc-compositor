@@ -535,7 +535,8 @@ static int sysc_idle_client_dispatch(struct sysc_idle_client *c, int timeout_ms)
 	int ready = poll(&pfd, 1, timeout_ms);
 	if (ready <= 0) {
 		wl_display_cancel_read(c->display);
-		return ready == 0 ? 0 : -1;
+		// Go preempts threads with SIGURG, which interrupts poll.
+		return ready == 0 || errno == EINTR ? 0 : -1;
 	}
 	if (wl_display_read_events(c->display) < 0 || wl_display_dispatch_pending(c->display) < 0) {
 		return -1;
