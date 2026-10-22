@@ -74,7 +74,7 @@ Until implemented, decode and reply `Err` with `unimplemented: <Name>`. Tick whe
 
 | Action | Status | Milestone |
 |---|---|---|
-| Screenshot | [ ] | M11 |
+| Screenshot | [~] | M11 — interactive UI: frozen outputs, dimmed outside a dragged selection, Space/Return capture, Escape cancel (`TestScreenshotUISelectsAndCapturesARegion`); keyboard moves and hint text wait for the text-rendering decision |
 | ScreenshotScreen | [~] | M11 — PNG to clipboard and screenshot-path, IPC and bind; the pointer is not drawn yet |
 | ScreenshotWindow | [~] | M11 — the window alone at its output scale, IPC (with id) and bind; the pointer is not drawn yet |
 

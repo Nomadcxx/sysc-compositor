@@ -106,3 +106,32 @@
 - Data control serves sysc-clipboard.
 - Screenshots match Niri's paths, clipboard and event.
 - The text-dependent UIs land per the owner's text decision, or are recorded as waiting on it.
+
+## Execution record (2026-10-22)
+
+PR #32 delivers Tasks 1–3. Task 4 waits for the owner's text-rendering decision. The nested tests
+ran in CI lane 2; the pure ones also ran locally, one named test per command.
+
+| Item | Proof |
+|---|---|
+| Capture and clipboard globals (Task 1) | `TestM11CaptureGlobalsAdvertised`, `TestDataControlServesTheSelectionWithoutFocus`, `TestScreencopyCapturesTheOutputAtItsSize` |
+| Output read-back, PNG clipboard | `TestScreenshotReadsBackAnOutputAndOffersItAsPNG` |
+| `screenshot-path`, `ScreenshotScreen`, `ScreenshotCaptured` | `TestScreenshotPathDefaultsToNiriAndTakesNull`, `TestScreenshotPathExpandsStrftimeAndHome`, `TestScreenshotScreenWritesThePNGAndReportsIt`, `TestScreenshotScreenActionRoundTrips`, `TestScreenshotScreenBindProperties` |
+| `ScreenshotWindow` | `TestScreenshotWindowCapturesTheWindowAlone`, `TestScreenshotWindowActionRoundTrips`, `TestScreenshotWindowBindDefaultsHideThePointer` |
+| Interactive UI, text-free (Task 3) | `TestScreenshotUISelectsAndCapturesARegion`, `TestScreenshotActionRoundTrips`, `TestScreenshotBindTakesShowPointerOnly` |
+
+**Found along the way:**
+- **No client could set the clipboard** (`sysc-1645`): the user seat ignored selection requests.
+  Fixed and merged on its own as #33.
+- **`runClient` lost a fast client's output** by closing the pipe before draining it.
+- **The data-control test hung lane 2**: `wl-copy` forked and held the test's pipes.
+
+**Open:**
+- **The pointer is not drawn into screenshots** (`show-pointer`), because the pointer is not part of
+  the scene.
+- **The UI has no keyboard selection moves yet.**
+- **Untested here:** presentation-time, single-pixel-buffer and alpha-modifier are advertised and
+  scene-handled. Ext-image-copy-capture likewise has no capture test of its own.
+- **Task 4:** the hotkey overlay, recent windows, the screenshot hint and the exit dialog wait for the
+  text-rendering decision.
+- **Nested gate** with grim and sysc-clipboard on the laptop.
