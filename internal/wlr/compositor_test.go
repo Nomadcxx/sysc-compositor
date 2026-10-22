@@ -46,6 +46,30 @@ func TestNestedNeedsConsent(t *testing.T) {
 	}
 }
 
+// TestFailedStartReleasesTheSocket: a NewWith that fails after taking a
+// Wayland socket gives it back, so one failing test cannot use up every
+// wayland-N name for the tests after it. WLR_BACKENDS names no real backend,
+// so no compositor is built and nothing reaches the desktop.
+func TestFailedStartReleasesTheSocket(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_RUNTIME_DIR", dir)
+	t.Setenv("SYSC_NESTED_TESTS", "1")
+	t.Setenv("WLR_BACKENDS", "sysc-no-such-backend")
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	if c, err := New(); err == nil {
+		c.Destroy()
+		t.Fatal("New() succeeded with no usable backend")
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		t.Errorf("failed start left %s in XDG_RUNTIME_DIR", entry.Name())
+	}
+}
+
 // TestTerminateAfterDestroyIsSafe: a watchdog timer that outlives its test
 // calls Terminate after Destroy has freed the display. That must do nothing,
 // not hand a nil display to libwayland.

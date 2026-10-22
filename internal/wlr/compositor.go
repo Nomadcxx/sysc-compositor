@@ -70,9 +70,14 @@ static bool sysc_fractional_scale_create(struct wl_display *display) {
 }
 
 // dmabuf feedback comes from the scene: it tells clients which buffers can be
-// scanned out on the output they are on.
+// scanned out on the output they are on. A renderer with no dmabuf texture
+// formats (pixman) serves wl_shm clients only, so the global is left out, as
+// wlr_renderer_init_wl_display does.
 static bool sysc_dmabuf_create(struct wl_display *display,
 		struct wlr_renderer *renderer, struct wlr_scene *scene) {
+	if (wlr_renderer_get_texture_formats(renderer, WLR_BUFFER_CAP_DMABUF) == NULL) {
+		return true;
+	}
 	struct wlr_linux_dmabuf_v1 *dmabuf = wlr_linux_dmabuf_v1_create_with_renderer(
 			display, sysc_dmabuf_version, renderer);
 	if (dmabuf == NULL) {
@@ -230,6 +235,14 @@ func NewWith(opts Options) (*Compositor, error) {
 		return nil, ErrNestedTestNeedsConsent
 	}
 	c := &Compositor{}
+	// Destroy takes a half-built compositor apart, so a failed start leaves no
+	// socket, display or backend behind.
+	built := false
+	defer func() {
+		if !built {
+			c.Destroy()
+		}
+	}()
 	c.model = wm.New(opts.Workspaces...)
 	c.windowRules = slices.Clone(opts.WindowRules)
 	c.layerRules = slices.Clone(opts.LayerRules)
@@ -333,7 +346,7 @@ func NewWith(opts Options) (*Compositor, error) {
 		return nil, errors.New("wlr_fractional_scale_manager_v1_create failed")
 	}
 	if !bool(C.sysc_dmabuf_create(c.display, c.renderer, c.scene)) {
-		return nil, errors.New("wlr_linux_dmabuf_v1_create_with_renderer failed: the renderer offers no dmabuf formats")
+		return nil, errors.New("wlr_linux_dmabuf_v1_create_with_renderer failed")
 	}
 	if c.seat = C.wlr_seat_create(c.display, cCString("seat0")); c.seat == nil {
 		return nil, errors.New("wlr_seat_create failed")
@@ -370,6 +383,7 @@ func NewWith(opts Options) (*Compositor, error) {
 	if !bool(C.wlr_backend_start(c.backend)) {
 		return nil, errors.New("wlr_backend_start failed")
 	}
+	built = true
 	return c, nil
 }
 
