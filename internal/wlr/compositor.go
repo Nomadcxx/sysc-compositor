@@ -487,6 +487,7 @@ func NewWith(opts Options) (*Compositor, error) {
 	if c.seat = C.wlr_seat_create(c.display, cCString("seat0")); c.seat == nil {
 		return nil, errors.New("wlr_seat_create failed")
 	}
+	c.watchSelectionRequests()
 	if err := c.startKeyboardGroup(opts.Keyboard); err != nil {
 		return nil, err
 	}
