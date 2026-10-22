@@ -210,7 +210,8 @@ func (s *Server) Run() error {
 	}
 	if s.niri != nil {
 		h := niriHandler{
-			quit: s.c.Terminate, spawn: s.spawn, snapshot: s.state.snapshot,
+			quit:  func(skip bool) { _ = s.c.Post(func() { s.c.Quit(skip) }) },
+			spawn: s.spawn, snapshot: s.state.snapshot,
 			stream: func(conn net.Conn) { s.state.serveEventStream(s.events, conn) },
 			postAction: func(action ipc.Action, workspaceID uint64) error {
 				return s.c.Post(func() {

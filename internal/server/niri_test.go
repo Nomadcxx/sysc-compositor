@@ -132,8 +132,8 @@ func TestNiriWorkspaceSnapshotConversion(t *testing.T) {
 }
 
 func TestNiriHandler(t *testing.T) {
-	quits := 0
-	h := niriHandler{quit: func() { quits++ }, spawn: newSpawner("w", "", nil, config.Default().Cursor)}
+	var quits []bool
+	h := niriHandler{quit: func(skip bool) { quits = append(quits, skip) }, spawn: newSpawner("w", "", nil, config.Default().Cursor)}
 	for _, tc := range []struct {
 		line, want string
 		after      bool
@@ -148,6 +148,7 @@ func TestNiriHandler(t *testing.T) {
 		{`{"Action":{"Spawn":{"command":["true"]}}}`, `{"Ok":"Handled"}`, false},
 		{`{"Action":{"SpawnSh":{"command":"true"}}}`, `{"Ok":"Handled"}`, false},
 		{`{"Action":{"Quit":{"skip_confirmation":true}}}`, `{"Ok":"Handled"}`, true},
+		{`{"Action":{"Quit":{"skip_confirmation":false}}}`, `{"Ok":"Handled"}`, true},
 	} {
 		r, err := ipc.DecodeRequest([]byte(tc.line))
 		if err != nil {
@@ -162,8 +163,8 @@ func TestNiriHandler(t *testing.T) {
 			after()
 		}
 	}
-	if quits != 1 {
-		t.Errorf("quit ran %d times, want once, after its reply", quits)
+	if !reflect.DeepEqual(quits, []bool{true, false}) {
+		t.Errorf("quit ran with %v, want skip_confirmation true then false, each after its reply", quits)
 	}
 	reply, _ := h.handle(ipc.Request{Name: "Version"})
 	if !strings.Contains(string(reply.Ok), "(niri-ipc 26.4.0)") {

@@ -140,6 +140,10 @@ func (c *Compositor) sealSession() {
 	c.dismissGrabbedPopups(c.seat)
 	C.wlr_scene_node_raise_to_top(&c.lockTree.node)
 	C.wlr_scene_node_set_enabled(&c.lockTree.node, true)
+	if c.exitDialog.tree != nil {
+		// Niri draws the exit dialog over the lock screen.
+		C.wlr_scene_node_raise_to_top(&c.exitDialog.tree.node)
+	}
 	for pointer := range c.sceneOutputs {
 		c.arrangeLockOutput(pointer)
 	}

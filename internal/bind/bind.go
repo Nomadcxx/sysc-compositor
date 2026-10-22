@@ -50,6 +50,9 @@ type Action struct {
 	// for screenshot-screen and false for screenshot-window.
 	WriteToDisk bool
 	ShowPointer bool
+	// SkipConfirmation is quit's skip-confirmation: quit without the exit
+	// dialog.
+	SkipConfirmation bool
 }
 
 type Binding struct {
@@ -96,6 +99,7 @@ const (
 	ActionScreenshotScreen               = "screenshot-screen"
 	ActionScreenshotWindow               = "screenshot-window"
 	ActionScreenshot                     = "screenshot"
+	ActionQuit                           = "quit"
 	ActionOpenOverview                   = "open-overview"
 	ActionCloseOverview                  = "close-overview"
 	ActionMoveWindowToFloating           = "move-window-to-floating"
@@ -273,7 +277,7 @@ func ParseAction(name string, args []string) (Action, bool, error) {
 		ActionFullscreenWindow, ActionToggleWindowedFullscreen,
 		ActionToggleOverview, ActionOpenOverview, ActionCloseOverview,
 		ActionToggleKeyboardShortcutsInhibit, ActionPowerOffMonitors, ActionPowerOnMonitors,
-		ActionScreenshotScreen, ActionScreenshotWindow, ActionScreenshot:
+		ActionScreenshotScreen, ActionScreenshotWindow, ActionScreenshot, ActionQuit:
 		if len(args) != 0 {
 			return Action{}, true, fmt.Errorf("%s takes no arguments", name)
 		}
@@ -393,7 +397,7 @@ func IsSupportedAction(name string) bool {
 		ActionFullscreenWindow, ActionToggleWindowedFullscreen,
 		ActionToggleOverview, ActionOpenOverview, ActionCloseOverview,
 		ActionToggleKeyboardShortcutsInhibit, ActionPowerOffMonitors, ActionPowerOnMonitors,
-		ActionScreenshotScreen, ActionScreenshotWindow, ActionScreenshot,
+		ActionScreenshotScreen, ActionScreenshotWindow, ActionScreenshot, ActionQuit,
 		ActionSetWorkspaceName, ActionUnsetWorkspaceName,
 		ActionMoveWindowToWorkspace, ActionMoveWindowToWorkspaceDown, ActionMoveWindowToWorkspaceUp,
 		ActionMoveColumnToWorkspace, ActionMoveColumnToWorkspaceDown, ActionMoveColumnToWorkspaceUp,

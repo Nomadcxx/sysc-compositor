@@ -128,6 +128,8 @@ type Animations struct {
 	OverviewOpenClose      Animation
 	WorkspaceSwitch        Animation
 	HorizontalViewMovement Animation
+	// ExitConfirmationOpenClose drives the exit dialog's fade and zoom.
+	ExitConfirmationOpenClose Animation
 }
 
 type Overview struct {
@@ -504,13 +506,14 @@ func defaultAnimations() Animations {
 		return Animation{Spring: &SpringConfig{DampingRatio: 1, Stiffness: stiffness, Epsilon: epsilon}}
 	}
 	return Animations{
-		WindowOpen:             Animation{Unsupported: true}, // Niri's default is easing.
-		WindowClose:            Animation{Unsupported: true}, // Niri's default is easing.
-		WindowResize:           spring(800, 0.0001),
-		WindowMovement:         spring(800, 0.0001),
-		OverviewOpenClose:      spring(800, 0.0001),
-		WorkspaceSwitch:        spring(1000, 0.0001),
-		HorizontalViewMovement: spring(800, 0.0001),
+		WindowOpen:                Animation{Unsupported: true}, // Niri's default is easing.
+		WindowClose:               Animation{Unsupported: true}, // Niri's default is easing.
+		WindowResize:              spring(800, 0.0001),
+		WindowMovement:            spring(800, 0.0001),
+		OverviewOpenClose:         spring(800, 0.0001),
+		WorkspaceSwitch:           spring(1000, 0.0001),
+		HorizontalViewMovement:    spring(800, 0.0001),
+		ExitConfirmationOpenClose: Animation{Spring: &SpringConfig{DampingRatio: 0.6, Stiffness: 500, Epsilon: 0.01}},
 	}
 }
 
@@ -534,13 +537,14 @@ func (c *Config) animations(n *document.Node) error {
 				return fmt.Errorf("`slowdown` must be a number from 0 to %d", int64(math.MaxInt32))
 			}
 			c.addWarning("animations.slowdown")
-		case "window-open", "window-close", "window-resize", "window-movement", "overview-open-close", "workspace-switch", "horizontal-view-movement":
+		case "window-open", "window-close", "window-resize", "window-movement", "overview-open-close", "workspace-switch", "horizontal-view-movement",
+			"exit-confirmation-open-close":
 			setting, err := c.parseAnimation(name, child)
 			if err != nil {
 				return fmt.Errorf("%s: %w", name, err)
 			}
 			c.setAnimation(name, setting)
-		case "config-notification-open-close", "exit-confirmation-open-close", "screenshot-ui-open", "recent-windows-close":
+		case "config-notification-open-close", "screenshot-ui-open", "recent-windows-close":
 			c.addWarning("animations." + name)
 		default:
 			return fmt.Errorf("unexpected node `%s`", name)
@@ -629,6 +633,8 @@ func defaultAnimation(name string) Animation {
 		return defaults.OverviewOpenClose
 	case "workspace-switch":
 		return defaults.WorkspaceSwitch
+	case "exit-confirmation-open-close":
+		return defaults.ExitConfirmationOpenClose
 	default:
 		return defaults.HorizontalViewMovement
 	}
@@ -650,6 +656,8 @@ func (c *Config) setAnimation(name string, setting Animation) {
 		c.Animations.WorkspaceSwitch = setting
 	case "horizontal-view-movement":
 		c.Animations.HorizontalViewMovement = setting
+	case "exit-confirmation-open-close":
+		c.Animations.ExitConfirmationOpenClose = setting
 	}
 }
 
@@ -1182,6 +1190,15 @@ func (c *Config) binds(n *document.Node) error {
 					default:
 						return fmt.Errorf("bind %q action %s: unexpected property `%s`", nodeName(node), name, key)
 					}
+				}
+			}
+			if name == bind.ActionQuit {
+				for key, property := range actionNode.Properties {
+					value, ok := property.Value.(bool)
+					if key != "skip-confirmation" || !ok {
+						return fmt.Errorf("bind %q action %s: unexpected property `%s`", nodeName(node), name, key)
+					}
+					action.SkipConfirmation = value
 				}
 			}
 			if chord.Trigger != bind.TriggerKey {
