@@ -1058,3 +1058,16 @@ func TestScreenshotWindowBindDefaultsHideThePointer(t *testing.T) {
 		t.Errorf("screenshot-window = %+v, want write-to-disk true and show-pointer false as in Niri", a)
 	}
 }
+
+func TestScreenshotBindTakesShowPointerOnly(t *testing.T) {
+	cfg, err := Parse("shot.kdl", []byte("binds {\n    Print { screenshot show-pointer=false; }\n}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Binds) != 1 || cfg.Binds[0].Actions[0].ShowPointer {
+		t.Fatalf("binds = %+v, unapplied = %q", cfg.Binds, cfg.UnappliedActions)
+	}
+	if _, err := Parse("shot.kdl", []byte("binds {\n    Print { screenshot write-to-disk=false; }\n}\n")); err == nil {
+		t.Error("screenshot took write-to-disk, which Niri's screenshot action does not have")
+	}
+}

@@ -398,3 +398,17 @@ func TestScreenshotWindowActionRoundTrips(t *testing.T) {
 		t.Errorf("re-decoded %+v, %v", again.Action, err)
 	}
 }
+
+func TestScreenshotActionRoundTrips(t *testing.T) {
+	req, err := DecodeRequest([]byte(`{"Action":{"Screenshot":{"show_pointer":false,"path":"/tmp/s.png"}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a := req.Action; a.Name != "Screenshot" || a.ShowPointer || a.Path == nil || *a.Path != "/tmp/s.png" {
+		t.Fatalf("decoded %+v", a)
+	}
+	again, err := DecodeRequest(EncodeRequest(req))
+	if err != nil || again.Action.Path == nil || *again.Action.Path != "/tmp/s.png" {
+		t.Errorf("re-decoded %+v, %v", again.Action, err)
+	}
+}

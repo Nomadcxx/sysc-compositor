@@ -3,6 +3,7 @@ package wlr
 import (
 	"bytes"
 	"context"
+	"image"
 	"image/png"
 	"os"
 	"os/exec"
@@ -331,5 +332,80 @@ func TestScreenshotWindowCapturesTheWindowAlone(t *testing.T) {
 	// The test client maps a 200x150 buffer and sets no window geometry.
 	if config.Width != 200 || config.Height != 150 {
 		t.Errorf("window screenshot is %dx%d, want the window's 200x150", config.Width, config.Height)
+	}
+}
+
+// TestScreenshotUISelectsAndCapturesARegion: the screenshot UI freezes the
+// outputs, a pointer drag selects a region, and Space captures exactly that
+// region to the given path. While open it takes the user's keys.
+func TestScreenshotUISelectsAndCapturesARegion(t *testing.T) {
+	dir := t.TempDir()
+	c := newNested(t)
+	reports := make(chan *string, 1)
+	c.SetScreenshotHandler(func(path *string) { reports <- path })
+	path := filepath.Join(dir, "region.png")
+	var want image.Rectangle
+	var scale float64
+	runTools(t, c, func(func(string, ...string) *exec.Cmd) {
+		var pointer *fakePointer
+		var keyboard *fakeKeyboard
+		defer onCompositor(t, c, func() {
+			if pointer != nil {
+				pointer.remove()
+			}
+			if keyboard != nil {
+				keyboard.remove()
+			}
+		})
+		onCompositor(t, c, func() {
+			pointer = c.addFakePointer()
+			keyboard = c.addFakeKeyboard()
+			if err := c.Screenshot(path); err != nil {
+				t.Error(err)
+				return
+			}
+			if !c.ScreenshotUIOpen() || len(c.shotUI.frames) == 0 {
+				t.Error("the screenshot UI did not open with frozen frames")
+				return
+			}
+			var box image.Rectangle
+			for output, frame := range c.shotUI.frames {
+				box, scale = frame.box, frame.scale
+				c.shotUI.output = output
+			}
+			want = image.Rect(box.Min.X+20, box.Min.Y+30, box.Min.X+120, box.Min.Y+90)
+			pointer.moveTo(float64(want.Min.X), float64(want.Min.Y))
+			pointer.button(btnLeft, true)
+			pointer.moveTo(float64(want.Max.X), float64(want.Max.Y))
+			pointer.button(btnLeft, false)
+			if c.shotUI.selection != want {
+				t.Errorf("selection = %v, want the dragged %v", c.shotUI.selection, want)
+			}
+			keyboard.key(57, true) // KEY_SPACE
+			keyboard.key(57, false)
+			if c.ScreenshotUIOpen() {
+				t.Error("Space did not confirm the screenshot")
+			}
+		})
+		select {
+		case got := <-reports:
+			if got == nil || *got != path {
+				t.Errorf("reported %v, want %q", got, path)
+			}
+		case <-time.After(5 * time.Second):
+			t.Error("no screenshot was reported")
+		}
+	})
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	config, err := png.DecodeConfig(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w, h := int(float64(want.Dx())*scale), int(float64(want.Dy())*scale); config.Width != w || config.Height != h {
+		t.Errorf("region screenshot is %dx%d, want %dx%d", config.Width, config.Height, w, h)
 	}
 }

@@ -1164,8 +1164,8 @@ func (c *Config) binds(n *document.Node) error {
 					action.Focus = focus
 				}
 			}
-			if name == bind.ActionScreenshotScreen || name == bind.ActionScreenshotWindow {
-				action.WriteToDisk, action.ShowPointer = true, name == bind.ActionScreenshotScreen
+			if name == bind.ActionScreenshotScreen || name == bind.ActionScreenshotWindow || name == bind.ActionScreenshot {
+				action.WriteToDisk, action.ShowPointer = true, name != bind.ActionScreenshotWindow
 				for key, property := range actionNode.Properties {
 					value, ok := property.Value.(bool)
 					if !ok {
@@ -1173,6 +1173,9 @@ func (c *Config) binds(n *document.Node) error {
 					}
 					switch key {
 					case "write-to-disk":
+						if name == bind.ActionScreenshot {
+							return fmt.Errorf("bind %q action %s: unexpected property `%s`", nodeName(node), name, key)
+						}
 						action.WriteToDisk = value
 					case "show-pointer":
 						action.ShowPointer = value

@@ -23,41 +23,47 @@ package wlr
 #include <scenefx/types/wlr_scene.h>
 
 // Renders an output's scene into a swapchain of its own, so the output's
-// buffers and damage tracking are untouched, and reads it back as
-// ARGB8888 (B, G, R, A bytes) with a stride of width * 4. A fresh buffer has
-// no age, so the scene draws all of it.
-static bool sysc_screenshot_output(void *scene_output, struct wlr_output *output,
-		struct wlr_allocator *alloc, struct wlr_renderer *renderer, void *data) {
+// buffers and damage tracking are untouched, and returns the buffer locked;
+// the caller unlocks it. A fresh buffer has no age, so the scene draws all of
+// it. (Only wlr_scene_output_commit skips an output that needs no frame.)
+static struct wlr_buffer *sysc_render_output(void *scene_output, struct wlr_output *output,
+		struct wlr_allocator *alloc) {
 	struct wlr_drm_format_set formats = {0};
 	if (!wlr_drm_format_set_add(&formats, DRM_FORMAT_XRGB8888, DRM_FORMAT_MOD_INVALID)) {
-		return false;
+		return NULL;
 	}
 	struct wlr_swapchain *swapchain = wlr_swapchain_create(alloc, output->width, output->height,
 		wlr_drm_format_set_get(&formats, DRM_FORMAT_XRGB8888));
 	wlr_drm_format_set_finish(&formats);
 	if (swapchain == NULL) {
-		return false;
+		return NULL;
 	}
-	// build_state renders whatever the buffer's age leaves undrawn; a fresh
-	// buffer has none, so all of it. (Only wlr_scene_output_commit skips an
-	// output that needs no frame.)
 	struct wlr_scene_output_state_options options = { .swapchain = swapchain };
 	struct wlr_output_state state;
 	wlr_output_state_init(&state);
-	bool ok = false;
+	struct wlr_buffer *buffer = NULL;
 	if (wlr_scene_output_build_state(scene_output, &state, &options) &&
 			(state.committed & WLR_OUTPUT_STATE_BUFFER) && state.buffer != NULL) {
-		struct wlr_texture *texture = wlr_texture_from_buffer(renderer, state.buffer);
-		if (texture != NULL) {
-			struct wlr_texture_read_pixels_options read = {
-				.data = data, .format = DRM_FORMAT_ARGB8888, .stride = output->width * 4,
-			};
-			ok = wlr_texture_read_pixels(texture, &read);
-			wlr_texture_destroy(texture);
-		}
+		buffer = wlr_buffer_lock(state.buffer);
 	}
 	wlr_output_state_finish(&state);
 	wlr_swapchain_destroy(swapchain);
+	return buffer;
+}
+
+// Reads a box of a buffer back as ARGB8888 (B, G, R, A bytes), w * 4 a row.
+static bool sysc_read_buffer(struct wlr_renderer *renderer, struct wlr_buffer *buffer,
+		int x, int y, int w, int h, void *data) {
+	struct wlr_texture *texture = wlr_texture_from_buffer(renderer, buffer);
+	if (texture == NULL) {
+		return false;
+	}
+	struct wlr_texture_read_pixels_options read = {
+		.data = data, .format = DRM_FORMAT_ARGB8888, .stride = (uint32_t)w * 4,
+		.src_box = { .x = x, .y = y, .width = w, .height = h },
+	};
+	bool ok = wlr_texture_read_pixels(texture, &read);
+	wlr_texture_destroy(texture);
 	return ok;
 }
 
@@ -200,26 +206,50 @@ import (
 // captureOutput renders one output as it would next be shown and returns it
 // as an image. It runs on the compositor thread.
 func (c *Compositor) captureOutput(pointer unsafe.Pointer) (*image.NRGBA, error) {
+	buffer, err := c.renderOutput(pointer)
+	if err != nil {
+		return nil, err
+	}
+	defer C.wlr_buffer_unlock(buffer)
+	w, h := outputPixelSize(pointer)
+	return c.readBuffer(buffer, image.Rect(0, 0, w, h))
+}
+
+// renderOutput renders an output's scene into a buffer of its own, returned
+// locked.
+func (c *Compositor) renderOutput(pointer unsafe.Pointer) (*C.struct_wlr_buffer, error) {
 	so, ok := c.sceneOutputs[pointer]
 	if !ok {
 		return nil, errors.New("wlr: no such output")
 	}
 	output := (*C.struct_wlr_output)(pointer)
-	width, height := int(output.width), int(output.height)
-	if width <= 0 || height <= 0 {
+	if output.width <= 0 || output.height <= 0 {
 		return nil, errors.New("wlr: the output has no size")
 	}
-	pixels := C.malloc(C.size_t(width * height * 4))
+	buffer := C.sysc_render_output(unsafe.Pointer(so), output, c.alloc)
+	if buffer == nil {
+		return nil, fmt.Errorf("wlr: rendering output %q for a screenshot failed", C.GoString(output.name))
+	}
+	return buffer, nil
+}
+
+// readBuffer reads box of an XRGB buffer back as an opaque image.
+func (c *Compositor) readBuffer(buffer *C.struct_wlr_buffer, box image.Rectangle) (*image.NRGBA, error) {
+	w, h := box.Dx(), box.Dy()
+	if w <= 0 || h <= 0 {
+		return nil, errors.New("wlr: an empty screenshot")
+	}
+	pixels := C.malloc(C.size_t(w * h * 4))
 	if pixels == nil {
 		return nil, errors.New("wlr: out of memory for a screenshot")
 	}
 	defer C.free(pixels)
-	if !bool(C.sysc_screenshot_output(unsafe.Pointer(so), output, c.alloc, c.renderer, pixels)) {
-		return nil, fmt.Errorf("wlr: rendering output %q for a screenshot failed", C.GoString(output.name))
+	if !bool(C.sysc_read_buffer(c.renderer, buffer, C.int(box.Min.X), C.int(box.Min.Y), C.int(w), C.int(h), pixels)) {
+		return nil, errors.New("wlr: reading the screenshot back failed")
 	}
-	img := image.NewNRGBA(image.Rect(0, 0, width, height))
-	src := unsafe.Slice((*byte)(pixels), width*height*4)
-	for i := 0; i < width*height; i++ {
+	img := image.NewNRGBA(image.Rect(0, 0, w, h))
+	src := unsafe.Slice((*byte)(pixels), w*h*4)
+	for i := 0; i < w*h; i++ {
 		// ARGB8888 is B, G, R, A in memory. XRGB content has no alpha.
 		img.Pix[i*4], img.Pix[i*4+1], img.Pix[i*4+2], img.Pix[i*4+3] = src[i*4+2], src[i*4+1], src[i*4], 0xff
 	}

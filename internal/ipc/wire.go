@@ -382,6 +382,15 @@ func decodeAction(raw json.RawMessage) (Action, error) {
 			return Action{}, ErrParse
 		}
 		a.WriteToDisk, a.ShowPointer, a.Path = *f.WriteToDisk, *f.ShowPointer, f.Path
+	case "Screenshot":
+		var f struct {
+			ShowPointer *bool   `json:"show_pointer"`
+			Path        *string `json:"path"`
+		}
+		if err := strict(body, &f); err != nil || f.ShowPointer == nil {
+			return Action{}, ErrParse
+		}
+		a.ShowPointer, a.Path = *f.ShowPointer, f.Path
 	case "ScreenshotWindow":
 		var f struct {
 			ID          *uint64 `json:"id"`
@@ -745,6 +754,11 @@ func EncodeRequest(r Request) []byte {
 			ShowPointer bool    `json:"show_pointer"`
 			Path        *string `json:"path"`
 		}{a.WriteToDisk, a.ShowPointer, a.Path}
+	case "Screenshot":
+		body = struct {
+			ShowPointer bool    `json:"show_pointer"`
+			Path        *string `json:"path"`
+		}{a.ShowPointer, a.Path}
 	case "ScreenshotWindow":
 		body = struct {
 			ID          *uint64 `json:"id"`

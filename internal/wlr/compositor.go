@@ -99,6 +99,7 @@ import "C"
 
 import (
 	"errors"
+	"image"
 	"os"
 	"slices"
 	"testing"
@@ -149,6 +150,8 @@ type Compositor struct {
 	blurConfig              config.Blur
 	screenshotPattern       *string
 	screenshotTaken         func(path *string)
+	shotUI                  *screenshotUI
+	lastShotSelection       image.Rectangle
 	animations              map[animationKey]*runningAnimation
 	animationTimer          *time.Timer
 	activeWorkspaces        map[string]activeWorkspace

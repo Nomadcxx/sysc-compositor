@@ -133,6 +133,7 @@ func (c *Compositor) handleNewSessionLock(data unsafe.Pointer) {
 // sealSession closes the session to everything but lock surfaces.
 func (c *Compositor) sealSession() {
 	c.setSessionLocked(true)
+	c.closeScreenshotUI()
 	c.stopKeyboardRepeat()
 	c.cancelTiledWindowMove()
 	c.clearPointerGrab()
