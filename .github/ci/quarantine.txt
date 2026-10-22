@@ -29,3 +29,5 @@ TestNestedKeyboardBindNamesAndMovesWindowToNamedWorkspace sysc-1638
 # that is flaky in lane 2 (sysc-1640).
 TestTiledModDragShowsInsertHintAndCommitsOnRelease sysc-1638
 TestOverviewProjectionSurvivesBufferCommitAndUnmap sysc-1640
+# M8: a window remap animation test that fails in lane 2 (sysc-1642).
+TestWindowOpenAndCloseAnimateReferencedBuffers sysc-1642
