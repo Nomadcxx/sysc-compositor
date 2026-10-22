@@ -125,12 +125,12 @@ func (c *Compositor) Screenshot(showPointer bool, path string) error {
 		C.sysc_shot_tree_destroy(tree)
 		return errors.New("wlr: no output to screenshot")
 	}
+	c.shotUI = ui
 	c.freezePointer(ui)
 	ui.hints = C.sysc_shot_tree_create(tree, nil)
 	for pointer, frame := range ui.frames {
 		c.placeShotHint(pointer, frame, ui.hints)
 	}
-	c.shotUI = ui
 	c.cancelTiledWindowMove()
 	c.clearPointerGrab()
 	ui.selection, ui.output = c.initialShotSelection()
