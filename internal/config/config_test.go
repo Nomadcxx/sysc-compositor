@@ -948,3 +948,35 @@ func TestLocate(t *testing.T) {
 		t.Errorf("-c: %q", got)
 	}
 }
+
+func TestBlurDefaultsMatchNiriAndUnnamedFieldsStay(t *testing.T) {
+	cfg, err := Parse("blur.kdl", []byte(``))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (Blur{Passes: 3, Offset: 3, Noise: 0.02, Saturation: 1.5}); cfg.Blur != want {
+		t.Errorf("default blur = %+v, want Niri's %+v", cfg.Blur, want)
+	}
+	cfg, err = Parse("blur.kdl", []byte(`
+blur {
+    passes 2
+    noise 0
+    off
+    saturation 1.2
+}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (Blur{Off: true, Passes: 2, Offset: 3, Noise: 0, Saturation: 1.2}); cfg.Blur != want {
+		t.Errorf("partial blur = %+v, want %+v (offset keeps its default)", cfg.Blur, want)
+	}
+	for _, warning := range cfg.Warnings {
+		if warning == "blur" {
+			t.Error("blur is still reported as accepted but not applied")
+		}
+	}
+	if _, err := Parse("blur.kdl", []byte("blur {\n    noise 2\n}\n")); err == nil {
+		t.Error("noise 2 parsed, want a range error")
+	}
+}

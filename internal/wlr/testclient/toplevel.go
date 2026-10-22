@@ -18,6 +18,7 @@ package testclient
 // other protocols here.
 static const struct wl_interface sysc_idle_xdg_surface_interface;
 static const struct wl_interface sysc_cursor_shape_device_interface;
+static const struct wl_interface sysc_effect_surface_interface;
 static const struct wl_interface sysc_idle_xdg_toplevel_interface;
 static const struct wl_interface sysc_idle_notification_interface;
 static const struct wl_interface sysc_idle_inhibitor_interface;
@@ -28,6 +29,8 @@ static const struct wl_interface *sysc_idle_types[] = {
 	&sysc_idle_notification_interface, NULL, &wl_seat_interface,
 	&sysc_idle_inhibitor_interface, &wl_surface_interface,
 	&sysc_cursor_shape_device_interface, &wl_pointer_interface,
+	&sysc_effect_surface_interface, &wl_surface_interface,
+	&wl_region_interface,
 };
 static const struct wl_message sysc_idle_wm_base_requests[] = {
 	{"destroy", "", NULL},
@@ -101,6 +104,23 @@ static const struct wl_interface sysc_cursor_shape_device_interface = {
 	"wp_cursor_shape_device_v1", 1, 2, sysc_cursor_shape_device_requests, 0, NULL,
 };
 
+static const struct wl_message sysc_effect_manager_requests[] = {
+	{"destroy", "", NULL},
+	{"get_background_effect", "no", sysc_idle_types + 10},
+};
+static const struct wl_message sysc_effect_manager_events[] = {{"capabilities", "u", NULL}};
+static const struct wl_interface sysc_effect_manager_interface = {
+	"ext_background_effect_manager_v1", 1, 2, sysc_effect_manager_requests,
+	1, sysc_effect_manager_events,
+};
+static const struct wl_message sysc_effect_surface_requests[] = {
+	{"destroy", "", NULL},
+	{"set_blur_region", "?o", sysc_idle_types + 12},
+};
+static const struct wl_interface sysc_effect_surface_interface = {
+	"ext_background_effect_surface_v1", 1, 2, sysc_effect_surface_requests, 0, NULL,
+};
+
 #define SYSC_IDLE_EVENTS 32
 
 struct sysc_idle_client {
@@ -109,6 +129,7 @@ struct sysc_idle_client {
 	struct wl_shm *shm;
 	struct wl_seat *seat;
 	struct wl_proxy *wm_base, *notifier, *inhibit_manager, *cursor_shape_manager;
+	struct wl_proxy *effect_manager, *effect;
 	struct wl_pointer *pointer;
 	struct wl_proxy *cursor_shape_device;
 	uint32_t enter_serial;
@@ -140,6 +161,8 @@ static void sysc_idle_global(void *data, struct wl_registry *registry,
 		c->notifier = wl_registry_bind(registry, name, &sysc_idle_notifier_interface, 1);
 	} else if (strcmp(interface, "zwp_idle_inhibit_manager_v1") == 0) {
 		c->inhibit_manager = wl_registry_bind(registry, name, &sysc_idle_inhibit_manager_interface, 1);
+	} else if (strcmp(interface, "ext_background_effect_manager_v1") == 0) {
+		c->effect_manager = wl_registry_bind(registry, name, &sysc_effect_manager_interface, 1);
 	} else if (strcmp(interface, "wp_cursor_shape_manager_v1") == 0) {
 		c->cursor_shape_manager = wl_registry_bind(registry, name, &sysc_cursor_shape_manager_interface, 1);
 	}
@@ -341,6 +364,32 @@ static int sysc_idle_client_pop(struct sysc_idle_client *c) {
 	return event;
 }
 
+// Sets the toplevel's blur region (rects as x, y, width, height quads) and
+// commits the surface.
+static int sysc_client_set_blur_region(struct sysc_idle_client *c, const int32_t *rects, int count) {
+	if (c->effect_manager == NULL) {
+		return 1;
+	}
+	if (c->effect == NULL) {
+		c->effect = wl_proxy_marshal_flags(c->effect_manager, 1, &sysc_effect_surface_interface,
+				1, 0, NULL, c->surface);
+		if (c->effect == NULL) {
+			return 2;
+		}
+	}
+	struct wl_region *region = wl_compositor_create_region(c->compositor);
+	if (region == NULL) {
+		return 3;
+	}
+	for (int i = 0; i < count; i++) {
+		wl_region_add(region, rects[4*i], rects[4*i+1], rects[4*i+2], rects[4*i+3]);
+	}
+	wl_proxy_marshal_flags(c->effect, 1, NULL, 1, 0, region);
+	wl_region_destroy(region);
+	wl_surface_commit(c->surface);
+	return wl_display_roundtrip(c->display) < 0 ? 4 : 0;
+}
+
 // Sets a cursor shape against the latest pointer enter serial.
 static int sysc_client_set_cursor_shape(struct sysc_idle_client *c, uint32_t shape) {
 	if (c->cursor_shape_manager == NULL) {
@@ -453,6 +502,20 @@ func (c *ToplevelClient) WaitPointerEnter(timeout time.Duration) bool {
 func (c *ToplevelClient) SetCursorShape(shape uint32) error {
 	if code := int(C.sysc_client_set_cursor_shape(c.state, C.uint32_t(shape))); code != 0 {
 		return fmt.Errorf("Wayland cursor-shape request failed at step %d", code)
+	}
+	return nil
+}
+
+// SetBlurRegion sets the toplevel's ext-background-effect blur region, as
+// x, y, width, height quads in surface coordinates, and commits.
+func (c *ToplevelClient) SetBlurRegion(rects ...[4]int32) error {
+	flat := make([]C.int32_t, 0, 4*len(rects)+1)
+	for _, r := range rects {
+		flat = append(flat, C.int32_t(r[0]), C.int32_t(r[1]), C.int32_t(r[2]), C.int32_t(r[3]))
+	}
+	flat = append(flat, 0)
+	if code := int(C.sysc_client_set_blur_region(c.state, &flat[0], C.int(len(rects)))); code != 0 {
+		return fmt.Errorf("Wayland blur region request failed at step %d", code)
 	}
 	return nil
 }

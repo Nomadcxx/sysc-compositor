@@ -141,6 +141,7 @@ type Compositor struct {
 	layerTrees              [layerCount]*C.struct_wlr_scene_tree
 	overviewConfig          config.Overview
 	animationConfig         config.Animations
+	blurConfig              config.Blur
 	animations              map[animationKey]*runningAnimation
 	animationTimer          *time.Timer
 	activeWorkspaces        map[string]activeWorkspace
@@ -281,6 +282,7 @@ type Options struct {
 	Overview     config.Overview
 	Gestures     config.Gestures
 	Animations   config.Animations
+	Blur         config.Blur
 	PreferNoCSD  bool
 }
 
@@ -321,6 +323,7 @@ func NewWith(opts Options) (*Compositor, error) {
 	}()
 	c.overviewConfig = opts.Overview
 	c.animationConfig = opts.Animations
+	c.blurConfig = opts.Blur
 	c.preferNoCSD = opts.PreferNoCSD
 	c.hotCorners = opts.Gestures.HotCorners
 	c.dndEdgeConfig = opts.Gestures.DNDEdgeViewScroll
@@ -417,6 +420,7 @@ func NewWith(opts Options) (*Compositor, error) {
 	if c.scene = C.wlr_scene_create(); c.scene == nil {
 		return nil, errors.New("wlr_scene_create failed")
 	}
+	c.applyBlurConfig()
 	if !c.createLayerTrees() {
 		return nil, errors.New("wlr_scene_tree_create failed")
 	}
@@ -500,6 +504,9 @@ func normalizeOptions(opts Options) Options {
 	if opts.Animations == (config.Animations{}) {
 		opts.Animations = defaults.Animations
 	}
+	if opts.Blur == (config.Blur{}) {
+		opts.Blur = defaults.Blur
+	}
 	if opts.Gestures.DNDEdgeViewScroll == (config.DNDEdgeViewScroll{}) {
 		opts.Gestures.DNDEdgeViewScroll = defaults.Gestures.DNDEdgeViewScroll
 	}
@@ -552,6 +559,10 @@ func (c *Compositor) Reconfigure(opts Options) error {
 	c.layoutOptions = *opts.Layout
 	c.overviewConfig = opts.Overview
 	c.animationConfig = opts.Animations
+	if opts.Blur != c.blurConfig {
+		c.blurConfig = opts.Blur
+		c.applyBlurConfig()
+	}
 	c.hotCorners = opts.Gestures.HotCorners
 	c.dndEdgeConfig = opts.Gestures.DNDEdgeViewScroll
 	c.windowRules = slices.Clone(opts.WindowRules)

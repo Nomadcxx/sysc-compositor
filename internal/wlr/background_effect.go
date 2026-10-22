@@ -25,6 +25,7 @@ import "C"
 
 import (
 	"errors"
+	"math"
 	"runtime/cgo"
 	"unsafe"
 )
@@ -141,8 +142,19 @@ func (e *backgroundEffect) resourceDestroyed(handle uintptr) {
 	cgo.Handle(handle).Delete()
 }
 
+// applyBlurConfig hands the blur section to SceneFX and redraws every
+// effect: `off` removes the frost nodes, and any other change rebuilds them.
+func (c *Compositor) applyBlurConfig() {
+	blur := c.blurConfig
+	sceneFXSetBlurData(unsafe.Pointer(c.scene), blur.Passes, int(math.Round(blur.Offset)),
+		blur.Noise, blur.Saturation)
+	for _, effect := range c.backgroundEffects {
+		c.syncBackgroundEffect(effect, true)
+	}
+}
+
 func (c *Compositor) syncBackgroundEffect(effect *backgroundEffect, rebuild bool) {
-	if effect.surface == nil {
+	if effect.surface == nil || c.blurConfig.Off {
 		c.clearBackgroundEffectNodes(effect)
 		return
 	}
