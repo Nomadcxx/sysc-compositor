@@ -59,12 +59,14 @@ func (s *Server) startConfigWatcher() {
 		if s.configWatcher == nil {
 			return
 		}
+		stop := make(chan struct{})
+		s.watchStop = stop
 		s.watchWG.Add(1)
 		go func() {
 			defer s.watchWG.Done()
 			for {
 				select {
-				case <-s.watchStop:
+				case <-stop:
 					return
 				case <-s.configWatcher.Events():
 					s.reloadWatchedConfigs()
@@ -74,9 +76,14 @@ func (s *Server) startConfigWatcher() {
 	})
 }
 
+// stopConfigWatcher is safe on a Server whose watcher never started, and no
+// watcher starts after it.
 func (s *Server) stopConfigWatcher() {
+	s.watchStart.Do(func() {})
 	s.watchClose.Do(func() {
-		close(s.watchStop)
+		if s.watchStop != nil {
+			close(s.watchStop)
+		}
 		if s.configWatcher != nil {
 			s.configWatcher.Close()
 		}

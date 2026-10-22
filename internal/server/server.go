@@ -64,7 +64,7 @@ func New(load config.LoadResult, configLoadFailed bool) (*Server, error) {
 	s := &Server{
 		c: c, cfg: cfg, configPath: load.Root, configSources: slices.Clone(load.Sources),
 		state: newNiriState(configLoadFailed), events: newEventHub(),
-		stopping: make(chan struct{}), watchStop: make(chan struct{}),
+		stopping: make(chan struct{}),
 	}
 	c.SetStateChanged(s.refreshNiriState)
 	if err := s.startControl(); err != nil {
@@ -411,6 +411,12 @@ func (s *Server) Destroy() {
 		s.sessionDBus.Close()
 		s.sessionDBus = nil
 	}
+	if s.events != nil {
+		// EventStream handlers outlive the request half-close. Stop them before
+		// the Unix listener waits for its accepted connections to return. A
+		// closed hub refuses new streams, and a reload's late events are dropped.
+		s.events.close()
+	}
 	if s.niri != nil {
 		_ = s.niri.Close()
 		s.niri = nil
@@ -419,11 +425,6 @@ func (s *Server) Destroy() {
 	s.destroying = true
 	s.reloadMu.Unlock()
 	s.reloadWG.Wait()
-	if s.events != nil {
-		// EventStream handlers outlive the request half-close. Stop them before
-		// the Unix listener waits for its accepted connections to return.
-		s.events.close()
-	}
 	if s.ctl != nil {
 		// Unblock connections waiting on posted work before closing them:
 		// once the loop has stopped, that work never runs.
