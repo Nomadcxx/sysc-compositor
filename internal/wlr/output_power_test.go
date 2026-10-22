@@ -81,7 +81,8 @@ func TestInjectedInputIsReleasedAndBlockedByLockOrBlanking(t *testing.T) {
 		t.Fatal(err)
 	}
 	type inputGate interface {
-		setSessionLocked(bool)
+		sealSession()
+		unsealSession()
 		injectedInputBlocked() bool
 		PowerOffMonitors() error
 		PowerOnMonitors() error
@@ -103,13 +104,15 @@ func TestInjectedInputIsReleasedAndBlockedByLockOrBlanking(t *testing.T) {
 		if err := c.InjectPointerMotion("agent", x, y); err != nil {
 			t.Errorf("initial injected motion: %v", err)
 		}
-		if err := c.InjectKey("agent", keyA, true); err != nil {
-			t.Errorf("initial injected key press: %v", err)
-		}
+		// The press gives the agent seat keyboard focus, so the key after it
+		// is delivered as a key event, not only in the enter's held keys.
 		if err := c.InjectPointerButton("agent", btnLeft, true); err != nil {
 			t.Errorf("initial injected button press: %v", err)
 		}
-		gate.setSessionLocked(true)
+		if err := c.InjectKey("agent", keyA, true); err != nil {
+			t.Errorf("initial injected key press: %v", err)
+		}
+		gate.sealSession()
 		if !gate.injectedInputBlocked() {
 			t.Error("session lock did not block injected input")
 		}
@@ -143,7 +146,7 @@ func TestInjectedInputIsReleasedAndBlockedByLockOrBlanking(t *testing.T) {
 			keyboard.key(keyA, true)
 			keyboard.key(keyA, false)
 		}
-		gate.setSessionLocked(false)
+		gate.unsealSession()
 		if err := c.InjectKey("agent", keyA, true); err != nil {
 			t.Errorf("injected key press after unlock: %v", err)
 		}
@@ -202,8 +205,10 @@ func TestInjectedInputIsReleasedAndBlockedByLockOrBlanking(t *testing.T) {
 	if got, want := strings.Join(agentKeys, " "), "30/1 30/0 30/1 30/0"; got != want {
 		t.Errorf("agent key events = %q, want %q", got, want)
 	}
-	if got, want := strings.Join(userKeys, " "), "30/1 30/0 30/1 30/0"; got != want {
-		t.Errorf("seat0 key events while lock and blank gates were active = %q, want %q", got, want)
+	// The seal keeps the user's keys from the window (no lock surface is
+	// mapped here); after unlock and blanking they reach it again.
+	if got, want := strings.Join(userKeys, " "), "30/1 30/0"; got != want {
+		t.Errorf("seat0 key events = %q, want only the pair after unlock %q", got, want)
 	}
 	if got, want := strings.Join(agentButtons, " "), "272/1 272/0 272/1 272/0"; got != want {
 		t.Errorf("agent button events = %q, want %q", got, want)
