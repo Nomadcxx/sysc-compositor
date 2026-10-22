@@ -845,7 +845,7 @@ func (c *ToplevelClient) Next(timeout time.Duration) (string, error) {
 			return "", nil
 		}
 		if C.sysc_idle_client_dispatch(c.state, C.int(left.Milliseconds())) < 0 {
-			return "", fmt.Errorf("Wayland toplevel client connection broke")
+			return "", fmt.Errorf("Wayland toplevel client connection broke: %s", c.failure())
 		}
 	}
 }
@@ -998,6 +998,13 @@ func (c *ToplevelClient) TextInputState(wait time.Duration) (entered, active boo
 	}
 	return bool(C.sysc_client_text_entered(c.state)), bool(C.sysc_client_im_active(c.state)),
 		C.GoString(C.sysc_client_im_surrounding(c.state)), C.GoString(C.sysc_client_ti_committed(c.state))
+}
+
+// failure describes why the connection broke.
+func (c *ToplevelClient) failure() string {
+	var buf [256]C.char
+	C.sysc_client_error(c.state, &buf[0], C.int(len(buf)))
+	return C.GoString(&buf[0])
 }
 
 // Close disconnects.
