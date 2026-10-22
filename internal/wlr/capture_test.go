@@ -101,8 +101,8 @@ func TestDataControlServesTheSelectionWithoutFocus(t *testing.T) {
 		}
 		if !offered {
 			log := copyErr.String()
-			if len(log) > 4000 {
-				log = log[:4000]
+			if len(log) > 6000 {
+				log = log[len(log)-6000:]
 			}
 			t.Errorf("wl-copy never offered the selection; its protocol log:\n%s", log)
 			return
