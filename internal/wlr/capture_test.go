@@ -82,6 +82,7 @@ func TestDataControlServesTheSelectionWithoutFocus(t *testing.T) {
 		// wl-copy serves the selection until replaced; in the foreground it
 		// can be stopped, and it holds no pipe the test waits on.
 		copyCmd := tool("wl-copy", "--foreground", "sysc-clipboard-probe")
+		copyCmd.Env = append(copyCmd.Env, "WAYLAND_DEBUG=1")
 		var copyErr strings.Builder
 		copyCmd.Stderr = &copyErr
 		if err := copyCmd.Start(); err != nil {
@@ -99,7 +100,11 @@ func TestDataControlServesTheSelectionWithoutFocus(t *testing.T) {
 			}
 		}
 		if !offered {
-			t.Errorf("wl-copy never offered the selection: %s", copyErr.String())
+			log := copyErr.String()
+			if len(log) > 4000 {
+				log = log[:4000]
+			}
+			t.Errorf("wl-copy never offered the selection; its protocol log:\n%s", log)
 			return
 		}
 		paste := tool("wl-paste", "--no-newline")
