@@ -419,9 +419,12 @@ func (c *Compositor) Run() error {
 	return nil
 }
 
-// Terminate asks Run to return. It is safe to call from a signal goroutine
-// because wl_display_terminate only writes a flag on the display.
-func (c *Compositor) Terminate() { C.wl_display_terminate(c.display) }
+// Terminate asks Run to return. It is safe from any goroutine and at any
+// time: the terminate is posted to the compositor thread, and once Destroy
+// has run there is no loop left to stop, so the call does nothing.
+func (c *Compositor) Terminate() {
+	_ = c.Post(func() { C.wl_display_terminate(c.display) })
+}
 
 // Destroy releases the compositor. Listeners added through AddListener are
 // removed first so no token outlives its wl_signal.

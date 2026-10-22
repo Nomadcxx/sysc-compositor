@@ -46,6 +46,26 @@ func TestNestedNeedsConsent(t *testing.T) {
 	}
 }
 
+// TestTerminateAfterDestroyIsSafe: a watchdog timer that outlives its test
+// calls Terminate after Destroy has freed the display. That must do nothing,
+// not hand a nil display to libwayland.
+func TestTerminateAfterDestroyIsSafe(t *testing.T) {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	c, err := New()
+	if err != nil {
+		t.Skipf("no nested wayland session available: %v", err)
+	}
+	c.Destroy()
+	c.Terminate()
+	done := make(chan struct{})
+	go func() {
+		c.Terminate()
+		close(done)
+	}()
+	<-done
+}
+
 // TestOutputsEnabled is the check that foot already failed for once: a client
 // refuses to start when the compositor advertises no output, so a build that
 // compiles and connects is still not a build a client can use.

@@ -59,8 +59,8 @@ func runClient(t *testing.T, c *Compositor, argv []string, env []string, stop fu
 	exited := make(chan struct{})
 	go func() {
 		_ = cmd.Wait()
-		close(exited)
 		c.Terminate()
+		close(exited)
 	}()
 	timeout := time.AfterFunc(5*time.Second, c.Terminate)
 	if err := c.Run(); err != nil {
