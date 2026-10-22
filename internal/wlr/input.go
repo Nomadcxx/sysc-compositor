@@ -96,6 +96,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/Nomadcxx/sysc-compositor/internal/config"
 	"github.com/Nomadcxx/sysc-compositor/internal/layout"
 	"github.com/Nomadcxx/sysc-compositor/internal/wm"
 )
@@ -170,18 +171,44 @@ func (g pointerGrab) resizeOptions() layout.ResizeOptions {
 }
 
 type toplevelView struct {
-	toplevel          *C.struct_wlr_xdg_toplevel
-	tree              *C.struct_wlr_scene_tree
-	listeners         []*Listener
-	overviewSurfaces  map[unsafe.Pointer]*overviewSurfaceListeners
-	mapped            bool
-	lastFullscreen    bool
-	lastGeometry      rect
-	rulesApplied      bool
-	id                uint64
-	touched           uint64
-	focusTimestamp    time.Duration
-	hasFocusTimestamp bool
+	toplevel                *C.struct_wlr_xdg_toplevel
+	tree                    *C.struct_wlr_scene_tree
+	appearance              config.WindowRuleResult
+	shadowNode              unsafe.Pointer
+	focusRingNode           unsafe.Pointer
+	cornerRadii             config.CornerRadius
+	clipToGeometry          bool
+	presentationOpacity     float64
+	openAnimationStarted    bool
+	openAnimationFinished   bool
+	presentationVisible     bool
+	workspaceID             uint64
+	workspaceActive         bool
+	workspaceIndex          int
+	outputName              string
+	resizeSnapshot          unsafe.Pointer
+	resizeBaseWidth         int
+	resizeBaseHeight        int
+	resizeWidth             float64
+	resizeHeight            float64
+	resizeScaleX            float64
+	resizeScaleY            float64
+	resizeTargetWidth       int
+	resizeTargetHeight      int
+	closeSnapshot           unsafe.Pointer
+	closeSnapshotTimer      *time.Timer
+	closeSnapshotGeneration uint64
+	listeners               []*Listener
+	overviewSurfaces        map[unsafe.Pointer]*overviewSurfaceListeners
+	mapped                  bool
+	fullscreen              bool
+	lastFullscreen          bool
+	lastGeometry            rect
+	rulesApplied            bool
+	id                      uint64
+	touched                 uint64
+	focusTimestamp          time.Duration
+	hasFocusTimestamp       bool
 }
 
 type pointerGeometry struct {
@@ -347,7 +374,10 @@ func (c *Compositor) handlePointerSwipeBegin(device, data unsafe.Pointer) {
 		state.workspaceID = c.workspaceUnderGesture(state.output)
 	case 4:
 		if c.model != nil {
-			c.model.BeginOverviewGesture()
+			progress, _, _ := c.animationValue(animationKey{property: "overview"},
+				c.model.OverviewProgress(), time.Now())
+			c.cancelAnimation(animationKey{property: "overview"})
+			c.model.BeginOverviewGestureAt(progress)
 			c.syncOverviewScene()
 			c.notifyStateChanged()
 		}
@@ -420,9 +450,13 @@ func (c *Compositor) handlePointerSwipeEnd(device, data unsafe.Pointer) {
 		return
 	}
 	timestamp := state.advanceGestureTime(uint32(event.time_msec))
-	if state.fingers == 4 && c.model != nil && c.model.EndOverviewGesture(timestamp) {
-		c.syncOverviewScene()
-		c.notifyStateChanged()
+	if state.fingers == 4 && c.model != nil {
+		from, to, velocity, ok := c.model.FinishOverviewGestureAnimation(timestamp)
+		if ok {
+			c.animateOverviewProgress(from, to, velocity)
+			c.syncOverviewScene()
+			c.notifyStateChanged()
+		}
 	}
 }
 
@@ -885,6 +919,7 @@ func (c *Compositor) focusView(view *toplevelView) {
 		// layout focus still changes the workspace's active window.
 		c.notifyWindowStateChanged()
 	}
+	c.syncFocusRings()
 }
 
 func (c *Compositor) focusSurfaceAtCursor() {
@@ -1088,7 +1123,7 @@ func (c *Compositor) handleNewToplevel(data unsafe.Pointer) {
 		return
 	}
 	c.nextViewID++
-	view := &toplevelView{toplevel: toplevel, tree: tree, id: c.nextViewID}
+	view := &toplevelView{toplevel: toplevel, tree: tree, id: c.nextViewID, presentationOpacity: 1}
 	c.views[unsafe.Pointer(toplevel)] = view
 	add := func(signal Signal, fn func(unsafe.Pointer)) {
 		listener := AddListener(signal, fn)
@@ -1101,6 +1136,10 @@ func (c *Compositor) handleNewToplevel(data unsafe.Pointer) {
 			return
 		}
 		c.drop(initialCommit)
+		if c.preferNoCSD && !bool(toplevel.requested.fullscreen) {
+			C.wlr_xdg_toplevel_set_tiled(toplevel,
+				C.uint32_t(C.WLR_EDGE_TOP|C.WLR_EDGE_RIGHT|C.WLR_EDGE_BOTTOM|C.WLR_EDGE_LEFT))
+		}
 		// kitty --start-as=fullscreen asks before its first commit.
 		if bool(toplevel.requested.fullscreen) {
 			c.applyFullscreen(view)
@@ -1135,13 +1174,37 @@ func (c *Compositor) handleNewToplevel(data unsafe.Pointer) {
 		if c.tiledMove != nil && c.tiledMove.view == view {
 			c.cancelTiledWindowMove()
 		}
+		if view.closeSnapshot == nil && view.presentationVisible {
+			if snapshot, count := sceneFXCloneView(unsafe.Pointer(c.windowAnimationTree), unsafe.Pointer(view.tree)); count > 0 {
+				view.closeSnapshot = snapshot
+			}
+		}
 		view.mapped = false
+		view.presentationVisible = false
+		view.openAnimationStarted = false
+		view.openAnimationFinished = false
+		view.presentationOpacity = 1
+		if view.closeSnapshotTimer != nil {
+			view.closeSnapshotTimer.Stop()
+			view.closeSnapshotTimer = nil
+		}
+		view.closeSnapshotGeneration++
+		c.cancelViewAnimations(view)
+		c.cancelResizeAnimation(view)
+		c.setViewAppearanceEnabled(view, false)
 		c.cancelPendingWindowFocus(view)
 		if c.model != nil {
 			c.model.RemoveWindow(view.id)
 			c.applyWorkspaceModel()
 		}
 		c.releaseView(view)
+		if view.closeSnapshot != nil {
+			snapshot := view.closeSnapshot
+			view.closeSnapshot = nil
+			owner := c.nextAnimationOwner()
+			c.closingNodes[owner] = snapshot
+			c.startCloseSnapshot(owner, snapshot)
+		}
 		c.syncOverviewScene()
 		c.notifyWindowStateChanged()
 	})
@@ -1190,13 +1253,9 @@ func (c *Compositor) handleNewToplevel(data unsafe.Pointer) {
 		if c.syncWorkspaceWindowSizeHints(view) {
 			c.applyWorkspaceModel()
 		} else if geometryChanged && c.model != nil {
-			for _, window := range c.model.Snapshot().Windows {
-				if window.ID == view.id {
-					c.positionWorkspaceWindow(view, window)
-					break
-				}
-			}
+			c.applyWorkspaceModel()
 		}
+		c.applyViewAppearance(view)
 		c.notifyWindowStateChanged()
 		c.syncOverviewScene()
 		if newlyMapped && c.viewMapped != nil {
@@ -1285,6 +1344,7 @@ func (v *toplevelView) treePosition() (int, int) {
 // coordinates, for tests.
 func (c *Compositor) placeView(view *toplevelView, x, y int) {
 	C.sysc_scene_tree_set_position(view.tree, C.int(x), C.int(y))
+	c.syncViewDecorations(view)
 }
 
 // geometry is a view's window geometry: its offset inside the surface (the
@@ -1292,6 +1352,20 @@ func (c *Compositor) placeView(view *toplevelView, x, y int) {
 func (view *toplevelView) geometry() rect {
 	g := view.toplevel.base.geometry
 	return rect{int(g.x), int(g.y), int(g.width), int(g.height)}
+}
+
+func (view *toplevelView) sceneNode() unsafe.Pointer {
+	if view == nil || view.tree == nil {
+		return nil
+	}
+	return unsafe.Pointer(&view.tree.node)
+}
+
+func (view *toplevelView) surfacePointer() unsafe.Pointer {
+	if view == nil || view.toplevel == nil {
+		return nil
+	}
+	return unsafe.Pointer(view.toplevel.base.surface)
 }
 
 // viewCenter is a mapped view's centre in layout coordinates.
@@ -1329,11 +1403,22 @@ func (c *Compositor) releaseView(view *toplevelView) {
 	} else {
 		c.updateKeyboardFocus()
 	}
+	c.syncFocusRings()
 }
 
 func (c *Compositor) handleToplevelDestroy(view *toplevelView) {
 	if view == nil {
 		return
+	}
+	c.cancelViewAnimations(view)
+	c.cancelResizeAnimation(view)
+	if view.closeSnapshotTimer != nil {
+		view.closeSnapshotTimer.Stop()
+		view.closeSnapshotTimer = nil
+	}
+	if view.closeSnapshot != nil {
+		sceneFXNodeDestroy(view.closeSnapshot)
+		view.closeSnapshot = nil
 	}
 	if c.tiledMove != nil && c.tiledMove.view == view {
 		c.cancelTiledWindowMove()
@@ -1346,6 +1431,7 @@ func (c *Compositor) handleToplevelDestroy(view *toplevelView) {
 	c.syncOverviewScene()
 	c.releaseView(view)
 	c.cancelPendingWindowFocus(view)
+	c.destroyViewAppearance(view)
 	delete(c.views, unsafe.Pointer(view.toplevel))
 	for _, listener := range view.listeners {
 		c.drop(listener)

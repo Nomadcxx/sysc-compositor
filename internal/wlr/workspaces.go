@@ -302,19 +302,36 @@ func (c *Compositor) activeWindowSnapshot() (wm.WindowSnapshot, bool) {
 	return wm.WindowSnapshot{}, false
 }
 
-func (c *Compositor) positionWorkspaceWindow(view *toplevelView, window wm.WindowSnapshot) {
-	if view == nil || view.tree == nil || view.toplevel == nil || window.Fullscreen {
-		return
+func workspaceIndex(workspaces []wm.WorkspaceSnapshot, id uint64) int {
+	for _, workspace := range workspaces {
+		if workspace.ID == id {
+			return int(workspace.Index)
+		}
 	}
+	return 0
+}
 
+func (c *Compositor) windowSceneTarget(view *toplevelView, window wm.WindowSnapshot) (x, y, width, height int) {
+	geometry := view.geometry()
 	placement := window.Tile
-	x, y := placement.X, placement.Y
+	x, y = placement.X, placement.Y
+	width, height = placement.Width, placement.Height
+	if width <= 0 {
+		width = geometry.w
+	}
+	if height <= 0 {
+		height = geometry.h
+	}
 	if !placement.Floating {
-		geometry := view.geometry()
 		x += (placement.Width - geometry.w) / 2
 		y += (placement.Height - geometry.h) / 2
 	}
-	C.sysc_workspace_set_position(view.tree, C.int(x), C.int(y))
+	if window.Fullscreen {
+		if bounds, ok := c.outputLayoutBounds(window.Output); ok {
+			return bounds.X, bounds.Y, bounds.Width, bounds.Height
+		}
+	}
+	return x, y, width, height
 }
 
 func (c *Compositor) defaultColumnWidth(available int) int {
@@ -340,9 +357,26 @@ func (c *Compositor) applyWorkspaceModel() {
 		c.syncWorkspaceWindowSizeHints(view)
 	}
 	snapshot := c.model.Snapshot()
-	activeWorkspace := make(map[uint64]bool, len(snapshot.Workspaces))
+	activeWorkspaceByID := make(map[uint64]bool, len(snapshot.Workspaces))
 	for _, workspace := range snapshot.Workspaces {
-		activeWorkspace[workspace.ID] = workspace.IsActive
+		activeWorkspaceByID[workspace.ID] = workspace.IsActive
+	}
+	activeWindowIDs := activeWindowIDsForWorkspaces(snapshot.Workspaces)
+	nextActive := make(map[string]activeWorkspace)
+	switched := make(map[string]int)
+	for _, workspace := range snapshot.Workspaces {
+		if !workspace.IsActive {
+			continue
+		}
+		current := activeWorkspace{id: workspace.ID, index: int(workspace.Index)}
+		if previous, ok := c.activeWorkspaces[workspace.Output]; ok && previous.id != current.id {
+			direction := 1
+			if current.index < previous.index {
+				direction = -1
+			}
+			switched[workspace.Output] = direction
+		}
+		nextActive[workspace.Output] = current
 	}
 	windows := make(map[uint64]wm.WindowSnapshot, len(snapshot.Windows))
 	for _, window := range snapshot.Windows {
@@ -354,7 +388,7 @@ func (c *Compositor) applyWorkspaceModel() {
 			continue
 		}
 		window, exists := windows[view.id]
-		if !exists || !activeWorkspace[window.WorkspaceID] || !window.Fullscreen {
+		if !exists || !activeWorkspaceByID[window.WorkspaceID] || !window.Fullscreen {
 			continue
 		}
 		// The WM model owns output assignment. A client request is applied to
@@ -369,20 +403,112 @@ func (c *Compositor) applyWorkspaceModel() {
 		if view == nil || view.tree == nil || !view.mapped {
 			continue
 		}
+		view.workspaceActive = activeWindowIDs[view.id]
 		window, exists := windows[view.id]
 		if !exists {
-			C.sysc_workspace_set_enabled(view.tree, false)
+			c.cancelViewAnimations(view)
+			c.cancelResizeAnimation(view)
+			view.presentationVisible = false
+			c.setViewSceneEnabled(view, false)
+			c.setViewAppearanceEnabled(view, false)
 			continue
 		}
-		visible := activeWorkspace[window.WorkspaceID] && window.Tile.Visible
+		oldVisible := view.presentationVisible
+		oldWorkspaceID, oldOutput := view.workspaceID, view.outputName
+		newlyTracked := oldWorkspaceID == 0
+		visible := activeWorkspaceByID[window.WorkspaceID] && window.Tile.Visible
 		if fullscreen := fullscreenByOutput[window.Output]; fullscreen != nil {
 			visible = fullscreen == view
 		}
-		C.sysc_workspace_set_enabled(view.tree, C.bool(visible))
-		if window.Fullscreen {
+		view.fullscreen = window.Fullscreen
+		view.workspaceID = window.WorkspaceID
+		view.workspaceIndex = workspaceIndex(snapshot.Workspaces, window.WorkspaceID)
+		view.outputName = window.Output
+		targetX, targetY, targetWidth, targetHeight := c.windowSceneTarget(view, window)
+		if view.fullscreen {
+			c.cancelResizeAnimation(view)
+			c.cancelAnimation(animationKey{owner: view.id, property: "x"})
+			c.cancelAnimation(animationKey{owner: view.id, property: "y"})
+			view.presentationVisible = visible
+			c.setViewSceneEnabled(view, visible)
+			c.setViewAppearanceEnabled(view, visible)
+		} else if direction, changed := switched[window.Output]; changed && oldOutput == window.Output && oldVisible && !visible && oldWorkspaceID == window.WorkspaceID {
+			c.cancelResizeAnimation(view)
+			view.presentationVisible = false
+			c.setViewSceneEnabled(view, true)
+			if targetWidth > 0 && targetHeight > 0 {
+				C.sysc_workspace_set_size(view.toplevel, C.int(targetWidth), C.int(targetHeight))
+			}
+			x, y := view.treePosition()
+			height := c.workspaceBounds(window.Output).Height
+			if height <= 0 {
+				height = 1
+			}
+			c.animateViewPosition(view, x, y-direction*height, c.animationConfig.WorkspaceSwitch, func() {
+				if !view.presentationVisible {
+					c.setViewSceneEnabled(view, false)
+				}
+			})
+		} else if direction, changed := switched[window.Output]; changed && oldOutput == window.Output && !oldVisible && visible && !newlyTracked {
+			c.cancelResizeAnimation(view)
+			view.presentationVisible = true
+			height := c.workspaceBounds(window.Output).Height
+			if height <= 0 {
+				height = 1
+			}
+			c.setViewScenePosition(view, targetX, targetY+direction*height)
+			c.setViewSceneEnabled(view, true)
+			c.animateViewPosition(view, targetX, targetY, c.animationConfig.WorkspaceSwitch, nil)
+			if targetWidth > 0 && targetHeight > 0 {
+				C.sysc_workspace_set_size(view.toplevel, C.int(targetWidth), C.int(targetHeight))
+			}
+		} else {
+			view.presentationVisible = visible
+			if !visible {
+				c.cancelAnimation(animationKey{owner: view.id, property: "x"})
+				c.cancelAnimation(animationKey{owner: view.id, property: "y"})
+				c.cancelResizeAnimation(view)
+				c.setViewSceneEnabled(view, false)
+				c.setViewAppearanceEnabled(view, false)
+				if targetWidth > 0 && targetHeight > 0 {
+					C.sysc_workspace_set_size(view.toplevel, C.int(targetWidth), C.int(targetHeight))
+				}
+				continue
+			}
+			if newlyTracked {
+				c.setViewScenePosition(view, targetX, targetY)
+				c.setViewSceneEnabled(view, true)
+			} else {
+				kind := c.animationConfig.WindowMovement
+				geometry := view.geometry()
+				if targetWidth != geometry.w || targetHeight != geometry.h {
+					kind = c.animationConfig.WindowResize
+				} else if currentX, currentY := view.treePosition(); targetX != currentX && targetY == currentY {
+					kind = c.animationConfig.HorizontalViewMovement
+				}
+				if oldVisible && oldOutput == window.Output {
+					c.animateViewPosition(view, targetX, targetY, kind, nil)
+				} else {
+					c.setViewScenePosition(view, targetX, targetY)
+				}
+				c.setViewSceneEnabled(view, true)
+				if oldVisible && view.openAnimationFinished && targetWidth > 0 && targetHeight > 0 {
+					c.animateViewSize(view, targetWidth, targetHeight, c.animationConfig.WindowResize)
+				} else {
+					c.cancelResizeAnimation(view)
+				}
+			}
+			if targetWidth > 0 && targetHeight > 0 {
+				C.sysc_workspace_set_size(view.toplevel, C.int(targetWidth), C.int(targetHeight))
+			}
+		}
+		if visible && !view.openAnimationStarted {
+			c.startWindowOpen(view)
+		}
+		if view.fullscreen {
 			if bounds, ok := c.outputLayoutBounds(window.Output); ok {
 				if x, y := view.treePosition(); x != bounds.X || y != bounds.Y {
-					c.placeView(view, bounds.X, bounds.Y)
+					c.setViewScenePosition(view, bounds.X, bounds.Y)
 				}
 				if int(view.toplevel.scheduled.width) != bounds.Width || int(view.toplevel.scheduled.height) != bounds.Height {
 					C.sysc_workspace_set_size(view.toplevel, C.int(bounds.Width), C.int(bounds.Height))
@@ -390,10 +516,16 @@ func (c *Compositor) applyWorkspaceModel() {
 			}
 			continue
 		}
-		placement := window.Tile
-		c.positionWorkspaceWindow(view, window)
-		if placement.Width > 0 && placement.Height > 0 {
-			C.sysc_workspace_set_size(view.toplevel, C.int(placement.Width), C.int(placement.Height))
+	}
+	c.activeWorkspaces = nextActive
+	for _, view := range c.views {
+		if view == nil || view.tree == nil {
+			continue
+		}
+		if view.mapped {
+			c.applyViewAppearance(view)
+		} else {
+			c.syncViewDecorations(view)
 		}
 	}
 	// Workspace activation can change while the mapped-window snapshots stay

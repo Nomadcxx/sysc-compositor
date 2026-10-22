@@ -162,6 +162,36 @@ func TestOverviewGestureTracksProgressAndSettles(t *testing.T) {
 	}
 }
 
+func TestFinishOverviewGesturePreservesProgressAndReleaseVelocity(t *testing.T) {
+	m := New()
+	m.AddOutput("DP-1", layout.Bounds{Width: 1920, Height: 1080}, 800, 16)
+	m.BeginOverviewGesture()
+	if !m.UpdateOverviewGesture(150, 100*time.Millisecond) {
+		t.Fatal("UpdateOverviewGesture() = false")
+	}
+	from, to, velocity, ok := m.FinishOverviewGestureAnimation(110 * time.Millisecond)
+	if !ok || from != 0.5 || to != 1 || velocity <= 0 {
+		t.Fatalf("FinishOverviewGestureAnimation() = (%v, %v, %v, %v), want (0.5, 1, positive, true)", from, to, velocity, ok)
+	}
+	if got := m.OverviewProgress(); got != from {
+		t.Errorf("OverviewProgress() after finish = %v, want gesture progress %v", got, from)
+	}
+	if !m.OverviewOpen() {
+		t.Error("OverviewOpen() = false, want the target state committed")
+	}
+}
+
+func TestBeginOverviewGestureAtUsesPresentedProgress(t *testing.T) {
+	m := New()
+	m.BeginOverviewGestureAt(0.3)
+	if got := m.OverviewProgress(); got != 0.3 {
+		t.Fatalf("OverviewProgress() = %v, want 0.3", got)
+	}
+	if !m.UpdateOverviewGesture(60, 100*time.Millisecond) || m.OverviewProgress() != 0.5 {
+		t.Fatalf("OverviewProgress() after gesture update = %v, want 0.5", m.OverviewProgress())
+	}
+}
+
 func TestHotCornerEntryDefaultsExplicitOffAndReentry(t *testing.T) {
 	left := layout.Bounds{X: -1000, Y: 0, Width: 1000, Height: 800}
 	right := layout.Bounds{X: 0, Y: 0, Width: 1000, Height: 800}

@@ -130,6 +130,7 @@ import "C"
 
 import (
 	"slices"
+	"time"
 	"unsafe"
 
 	"github.com/Nomadcxx/sysc-compositor/internal/config"
@@ -176,27 +177,51 @@ func (c *Compositor) createOverviewTree() bool {
 }
 
 func (c *Compositor) ToggleOverview() bool {
-	if c.model == nil || !c.model.ToggleOverview() {
+	if c.model == nil {
 		return false
 	}
+	from, velocity, _ := c.animationValue(animationKey{property: "overview"},
+		c.model.OverviewProgress(), time.Now())
+	if !c.model.ToggleOverview() {
+		return false
+	}
+	to := c.model.OverviewProgress()
+	c.model.SetOverviewAnimationProgress(from)
+	c.animateOverviewProgress(from, to, velocity)
 	c.syncOverviewScene()
 	c.notifyStateChanged()
 	return true
 }
 
 func (c *Compositor) OpenOverview() bool {
-	if c.model == nil || !c.model.OpenOverview() {
+	if c.model == nil {
 		return false
 	}
+	from, velocity, _ := c.animationValue(animationKey{property: "overview"},
+		c.model.OverviewProgress(), time.Now())
+	if !c.model.OpenOverview() {
+		return false
+	}
+	to := c.model.OverviewProgress()
+	c.model.SetOverviewAnimationProgress(from)
+	c.animateOverviewProgress(from, to, velocity)
 	c.syncOverviewScene()
 	c.notifyStateChanged()
 	return true
 }
 
 func (c *Compositor) CloseOverview() bool {
-	if c.model == nil || !c.model.CloseOverview() {
+	if c.model == nil {
 		return false
 	}
+	from, velocity, _ := c.animationValue(animationKey{property: "overview"},
+		c.model.OverviewProgress(), time.Now())
+	if !c.model.CloseOverview() {
+		return false
+	}
+	to := c.model.OverviewProgress()
+	c.model.SetOverviewAnimationProgress(from)
+	c.animateOverviewProgress(from, to, velocity)
 	c.syncOverviewScene()
 	c.notifyStateChanged()
 	return true

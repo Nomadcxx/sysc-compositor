@@ -106,24 +106,29 @@ import (
 // Compositor holds the wlroots object graph for one running server. Every
 // method must be called on the thread that ran LockOSThread.
 type Compositor struct {
-	display         *C.struct_wl_display
-	backend         *C.struct_wlr_backend
-	session         *C.struct_wlr_session
-	renderer        *C.struct_wlr_renderer
-	alloc           *C.struct_wlr_allocator
-	comp            *C.struct_wlr_compositor
-	layout          *C.struct_wlr_output_layout
-	scene           *C.struct_wlr_scene
-	overviewTree    *C.struct_wlr_scene_tree
-	insertHintTree  *C.struct_wlr_scene_tree
-	insertHintNode  *C.struct_wlr_scene_rect
-	seat            *C.struct_wlr_seat
-	pointerGestures *C.struct_wlr_pointer_gestures_v1
-	xdgShell        *C.struct_wlr_xdg_shell
-	xdgActivation   *C.struct_wlr_xdg_activation_v1
-	layerShell      *C.struct_wlr_layer_shell_v1
-	socketName      string
-	listeners       map[*Listener]struct{}
+	display              *C.struct_wl_display
+	backend              *C.struct_wlr_backend
+	session              *C.struct_wlr_session
+	renderer             *C.struct_wlr_renderer
+	alloc                *C.struct_wlr_allocator
+	comp                 *C.struct_wlr_compositor
+	layout               *C.struct_wlr_output_layout
+	scene                *C.struct_wlr_scene
+	xdgDecorationManager unsafe.Pointer
+	kdeDecorationManager unsafe.Pointer
+	windowShadowTree     *C.struct_wlr_scene_tree
+	windowAnimationTree  *C.struct_wlr_scene_tree
+	windowFocusTree      *C.struct_wlr_scene_tree
+	overviewTree         *C.struct_wlr_scene_tree
+	insertHintTree       *C.struct_wlr_scene_tree
+	insertHintNode       *C.struct_wlr_scene_rect
+	seat                 *C.struct_wlr_seat
+	pointerGestures      *C.struct_wlr_pointer_gestures_v1
+	xdgShell             *C.struct_wlr_xdg_shell
+	xdgActivation        *C.struct_wlr_xdg_activation_v1
+	layerShell           *C.struct_wlr_layer_shell_v1
+	socketName           string
+	listeners            map[*Listener]struct{}
 
 	loop                    *C.struct_wl_event_loop
 	cursor                  *C.struct_wlr_cursor
@@ -133,6 +138,13 @@ type Compositor struct {
 	sceneTrees              map[unsafe.Pointer]*C.struct_wlr_scene_tree
 	layerTrees              [layerCount]*C.struct_wlr_scene_tree
 	overviewConfig          config.Overview
+	animationConfig         config.Animations
+	animations              map[animationKey]*runningAnimation
+	animationTimer          *time.Timer
+	activeWorkspaces        map[string]activeWorkspace
+	closingNodes            map[uint64]unsafe.Pointer
+	nextAnimationID         uint64
+	preferNoCSD             bool
 	overviewBackdrops       []overviewBackdrop
 	overviewProjections     []overviewProjection
 	hotCorners              config.HotCorners
@@ -227,6 +239,8 @@ type Options struct {
 	LayerRules   []config.LayerRule
 	Overview     config.Overview
 	Gestures     config.Gestures
+	Animations   config.Animations
+	PreferNoCSD  bool
 }
 
 type LayoutOptions struct {
@@ -234,6 +248,8 @@ type LayoutOptions struct {
 	ColumnWidthProportion float64
 	FixedColumnWidth      int
 	InsertHint            config.InsertHint
+	FocusRing             config.FocusRing
+	Shadow                config.Shadow
 }
 
 // ErrNestedTestNeedsConsent is what NewWith returns inside a test binary unless
@@ -266,6 +282,11 @@ func NewWith(opts Options) (*Compositor, error) {
 		opts.Overview = defaults.Overview
 	}
 	c.overviewConfig = opts.Overview
+	if opts.Animations == (config.Animations{}) {
+		opts.Animations = defaults.Animations
+	}
+	c.animationConfig = opts.Animations
+	c.preferNoCSD = opts.PreferNoCSD
 	c.hotCorners = opts.Gestures.HotCorners
 	c.dndEdgeConfig = opts.Gestures.DNDEdgeViewScroll
 	if c.dndEdgeConfig == (config.DNDEdgeViewScroll{}) {
@@ -274,7 +295,12 @@ func NewWith(opts Options) (*Compositor, error) {
 	c.model = wm.New(opts.Workspaces...)
 	c.windowRules = slices.Clone(opts.WindowRules)
 	c.layerRules = slices.Clone(opts.LayerRules)
-	c.layoutOptions = LayoutOptions{Gaps: 16, ColumnWidthProportion: 0.5, InsertHint: defaults.Layout.InsertHint}
+	c.layoutOptions = LayoutOptions{
+		Gaps: 16, ColumnWidthProportion: 0.5,
+		InsertHint: defaults.Layout.InsertHint,
+		FocusRing:  defaults.Layout.FocusRing,
+		Shadow:     defaults.Layout.Shadow,
+	}
 	if opts.Layout != nil {
 		c.layoutOptions = *opts.Layout
 	}
@@ -302,6 +328,9 @@ func NewWith(opts Options) (*Compositor, error) {
 	c.sceneOutputs = map[unsafe.Pointer]*C.struct_wlr_scene_output{}
 	c.mapped = map[unsafe.Pointer]bool{}
 	c.sceneTrees = map[unsafe.Pointer]*C.struct_wlr_scene_tree{}
+	c.animations = map[animationKey]*runningAnimation{}
+	c.activeWorkspaces = map[string]activeWorkspace{}
+	c.closingNodes = map[uint64]unsafe.Pointer{}
 	c.layerSurfaces = map[unsafe.Pointer]*layerSurface{}
 	c.usable = map[unsafe.Pointer]rect{}
 	c.popups = map[*C.struct_wlr_xdg_popup]struct{}{}
@@ -330,9 +359,9 @@ func NewWith(opts Options) (*Compositor, error) {
 		c.bindings[i].Chord = c.bindings[i].Chord.ResolveMod(c.modKey)
 	}
 
-	c.renderer = C.wlr_renderer_autocreate(c.backend)
+	c.renderer = (*C.struct_wlr_renderer)(createSceneFXRenderer(unsafe.Pointer(c.backend)))
 	if c.renderer == nil {
-		return nil, errors.New("wlr_renderer_autocreate failed")
+		return nil, errors.New("fx_renderer_create failed")
 	}
 
 	c.alloc = C.wlr_allocator_autocreate(c.backend, c.renderer)
@@ -358,6 +387,9 @@ func NewWith(opts Options) (*Compositor, error) {
 	if c.xdgShell = C.wlr_xdg_shell_create(c.display, C.uint32_t(C.sysc_xdg_version)); c.xdgShell == nil {
 		return nil, errors.New("wlr_xdg_shell_create failed")
 	}
+	if err := c.createDecorationManager(); err != nil {
+		return nil, err
+	}
 	if c.xdgActivation = C.wlr_xdg_activation_v1_create(c.display); c.xdgActivation == nil {
 		return nil, errors.New("wlr_xdg_activation_v1_create failed")
 	}
@@ -366,6 +398,9 @@ func NewWith(opts Options) (*Compositor, error) {
 	}
 	if !c.createLayerTrees() {
 		return nil, errors.New("wlr_scene_tree_create failed")
+	}
+	if !c.createAppearanceTrees() {
+		return nil, errors.New("window appearance scene tree create failed")
 	}
 	if !c.createOverviewTree() {
 		return nil, errors.New("overview scene tree create failed")
@@ -503,6 +538,29 @@ func (c *Compositor) Destroy() {
 		c.dndScroll.timer.Stop()
 		c.dndScroll.timer = nil
 	}
+	if c.animationTimer != nil {
+		c.animationTimer.Stop()
+		c.animationTimer = nil
+	}
+	for _, view := range c.views {
+		if view.closeSnapshotTimer != nil {
+			view.closeSnapshotTimer.Stop()
+			view.closeSnapshotTimer = nil
+		}
+		if view.closeSnapshot != nil {
+			sceneFXNodeDestroy(view.closeSnapshot)
+			view.closeSnapshot = nil
+		}
+		if view.resizeSnapshot != nil {
+			sceneFXNodeDestroy(view.resizeSnapshot)
+			view.resizeSnapshot = nil
+		}
+	}
+	for id, node := range c.closingNodes {
+		sceneFXNodeDestroy(node)
+		delete(c.closingNodes, id)
+	}
+	c.animations = nil
 	c.stopPost()
 	// Before any seat goes: wlroots frees a seat's popup grab twice when the
 	// seat is destroyed with the grab open (dismissGrabbedPopups).

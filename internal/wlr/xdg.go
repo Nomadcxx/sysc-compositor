@@ -136,7 +136,10 @@ func (c *Compositor) handleNewPopup(data unsafe.Pointer) {
 			C.wlr_xdg_popup_destroy(popup)
 			return
 		}
-		c.trackXDGTree(popup.base, C.sysc_scene_xdg_create(parent, popup.base))
+		tree := c.trackXDGTree(popup.base, C.sysc_scene_xdg_create(parent, popup.base))
+		if view := c.viewForSurface(popup.parent); tree != nil && view != nil && view.clipToGeometry {
+			sceneFXSetSubsurfaceClip(unsafe.Pointer(&tree.node), false, 0, 0, 0, 0)
+		}
 		c.unconstrainPopup(popup)
 	})
 	reposition = AddListener(unsafe.Pointer(&popup.events.reposition), func(unsafe.Pointer) {
@@ -151,6 +154,17 @@ func (c *Compositor) handleNewPopup(data unsafe.Pointer) {
 		}
 	})
 	c.keep(commit, reposition, destroy)
+}
+
+func (c *Compositor) clearPopupClips(view *toplevelView) {
+	for popup := range c.popups {
+		if c.viewForSurface(popup.parent) != view {
+			continue
+		}
+		if tree := c.sceneTrees[unsafe.Pointer(popup.base)]; tree != nil {
+			sceneFXSetSubsurfaceClip(unsafe.Pointer(&tree.node), false, 0, 0, 0, 0)
+		}
+	}
 }
 
 // dismissGrabbedPopups destroys every popup holding a grab on seat, or on any

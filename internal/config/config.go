@@ -37,6 +37,8 @@ type Config struct {
 	Workspaces  []WorkspaceConfig
 	WindowRules []WindowRule
 	LayerRules  []LayerRule
+	Animations  Animations
+	PreferNoCSD bool
 }
 
 type Input struct {
@@ -48,9 +50,49 @@ type Layout struct {
 	ColumnWidthProportion float64
 	FixedColumnWidth      int
 	InsertHint            InsertHint
+	FocusRing             FocusRing
+	Shadow                Shadow
 }
 
 type Color struct{ R, G, B, A float64 }
+
+type FocusRing struct {
+	Off                        bool
+	Width                      float64
+	ActiveColor, InactiveColor Color
+}
+
+type Shadow struct {
+	On               bool
+	Softness, Spread float64
+	OffsetX, OffsetY float64
+	Color            Color
+}
+
+type CornerRadius [4]float64
+
+type SpringConfig struct {
+	DampingRatio float64
+	Stiffness    uint32
+	Epsilon      float64
+}
+
+type Animation struct {
+	Off         bool
+	Spring      *SpringConfig
+	Unsupported bool
+}
+
+type Animations struct {
+	Off                    bool
+	WindowOpen             Animation
+	WindowClose            Animation
+	WindowResize           Animation
+	WindowMovement         Animation
+	OverviewOpenClose      Animation
+	WorkspaceSwitch        Animation
+	HorizontalViewMovement Animation
+}
 
 type Overview struct {
 	Zoom          float64
@@ -96,10 +138,13 @@ func Default() *Config {
 	return &Config{Environment: map[string]*string{},
 		Keyboard: Keyboard{RepeatDelay: 600, RepeatRate: 25},
 		Layout: Layout{Gaps: 16, ColumnWidthProportion: 0.5,
-			InsertHint: InsertHint{Color: Color{127.0 / 255, 200.0 / 255, 1, 128.0 / 255}}},
-		Overview: Overview{Zoom: 0.5, BackdropColor: Color{0.15, 0.15, 0.15, 1}},
-		Gestures: Gestures{DNDEdgeViewScroll: DNDEdgeViewScroll{TriggerWidth: 30, DelayMS: 100, MaxSpeed: 1500}},
-		Cursor:   Cursor{Theme: "default", Size: 24}}
+			InsertHint: InsertHint{Color: Color{127.0 / 255, 200.0 / 255, 1, 128.0 / 255}},
+			FocusRing:  FocusRing{Width: 4, ActiveColor: Color{127.0 / 255, 200.0 / 255, 1, 1}, InactiveColor: Color{80.0 / 255, 80.0 / 255, 80.0 / 255, 1}},
+			Shadow:     Shadow{Softness: 30, Spread: 5, OffsetY: 5, Color: Color{0, 0, 0, 119.0 / 255}}},
+		Overview:   Overview{Zoom: 0.5, BackdropColor: Color{0.15, 0.15, 0.15, 1}},
+		Gestures:   Gestures{DNDEdgeViewScroll: DNDEdgeViewScroll{TriggerWidth: 30, DelayMS: 100, MaxSpeed: 1500}},
+		Cursor:     Cursor{Theme: "default", Size: 24},
+		Animations: defaultAnimations()}
 }
 
 // topLevel is every top-level node niri 26.04 decodes (niri-config/src/lib.rs).
@@ -158,6 +203,17 @@ func decode(name string, nodes []*document.Node) (*Config, error) {
 			err = c.input(n)
 		case "layout":
 			err = c.layout(n)
+		case "prefer-no-csd":
+			if len(n.Arguments) == 0 {
+				err = noValue(n)
+				if err == nil {
+					c.PreferNoCSD = true
+				}
+			} else {
+				c.PreferNoCSD, err = boolArg(n)
+			}
+		case "animations":
+			err = c.animations(n)
 		case "overview":
 			err = c.overview(n)
 		case "gestures":
@@ -351,9 +407,349 @@ func (c *Config) layout(n *document.Node) error {
 			if err := c.insertHint(child); err != nil {
 				return fmt.Errorf("insert-hint: %w", err)
 			}
+		case "focus-ring":
+			if err := c.focusRing(child); err != nil {
+				return fmt.Errorf("focus-ring: %w", err)
+			}
+		case "shadow":
+			if err := c.shadow(child); err != nil {
+				return fmt.Errorf("shadow: %w", err)
+			}
+		default:
+			c.addWarning("layout." + nodeName(child))
 		}
 	}
 	return nil
+}
+
+func defaultAnimations() Animations {
+	spring := func(stiffness uint32, epsilon float64) Animation {
+		return Animation{Spring: &SpringConfig{DampingRatio: 1, Stiffness: stiffness, Epsilon: epsilon}}
+	}
+	return Animations{
+		WindowOpen:             Animation{Unsupported: true}, // Niri's default is easing.
+		WindowClose:            Animation{Unsupported: true}, // Niri's default is easing.
+		WindowResize:           spring(800, 0.0001),
+		WindowMovement:         spring(800, 0.0001),
+		OverviewOpenClose:      spring(800, 0.0001),
+		WorkspaceSwitch:        spring(1000, 0.0001),
+		HorizontalViewMovement: spring(800, 0.0001),
+	}
+}
+
+func (c *Config) animations(n *document.Node) error {
+	if len(n.Arguments) != 0 || len(n.Properties) != 0 {
+		return fmt.Errorf("animations takes child nodes only")
+	}
+	var off, on bool
+	for _, child := range n.Children {
+		name := nodeName(child)
+		switch name {
+		case "off", "on":
+			if err := noValue(child); err != nil {
+				return err
+			}
+			off = off || name == "off"
+			on = on || name == "on"
+		case "slowdown":
+			value, err := numberArg(child)
+			if err != nil || value < 0 || value > math.MaxInt32 {
+				return fmt.Errorf("`slowdown` must be a number from 0 to %d", int64(math.MaxInt32))
+			}
+			c.addWarning("animations.slowdown")
+		case "window-open", "window-close", "window-resize", "window-movement", "overview-open-close", "workspace-switch", "horizontal-view-movement":
+			setting, err := c.parseAnimation(name, child)
+			if err != nil {
+				return fmt.Errorf("%s: %w", name, err)
+			}
+			c.setAnimation(name, setting)
+		case "config-notification-open-close", "exit-confirmation-open-close", "screenshot-ui-open", "recent-windows-close":
+			c.addWarning("animations." + name)
+		default:
+			return fmt.Errorf("unexpected node `%s`", name)
+		}
+	}
+	if off {
+		c.Animations.Off = true
+	}
+	if on {
+		c.Animations.Off = false
+	}
+	return nil
+}
+
+func (c *Config) parseAnimation(name string, node *document.Node) (Animation, error) {
+	if len(node.Arguments) != 0 || len(node.Properties) != 0 {
+		return Animation{}, fmt.Errorf("takes child nodes only")
+	}
+	setting := defaultAnimation(name)
+	sawSpring, sawEasing := false, false
+	for _, child := range node.Children {
+		switch nodeName(child) {
+		case "off":
+			if err := noValue(child); err != nil {
+				return Animation{}, err
+			}
+			setting.Off = true
+		case "spring":
+			if sawEasing {
+				return Animation{}, fmt.Errorf("cannot combine spring and easing settings")
+			}
+			if sawSpring {
+				return Animation{}, fmt.Errorf("duplicate spring node")
+			}
+			spring, err := parseSpringConfig(child)
+			if err != nil {
+				return Animation{}, err
+			}
+			setting.Spring = &spring
+			setting.Unsupported = false
+			sawSpring = true
+		case "duration-ms", "curve":
+			if sawSpring {
+				return Animation{}, fmt.Errorf("cannot combine spring and easing settings")
+			}
+			if err := validateEasingChild(child); err != nil {
+				return Animation{}, err
+			}
+			setting.Spring = nil
+			setting.Unsupported = true
+			sawEasing = true
+			c.addWarning("animations." + name + ".easing")
+		case "custom-shader":
+			if name != "window-open" && name != "window-close" && name != "window-resize" {
+				return Animation{}, fmt.Errorf("unexpected node `custom-shader`")
+			}
+			if len(child.Properties) != 0 || len(child.Children) != 0 {
+				return Animation{}, fmt.Errorf("`custom-shader` takes one string argument")
+			}
+			if _, err := stringArgs(child, 1, 1); err != nil {
+				return Animation{}, err
+			}
+			c.addWarning("animations." + name + ".custom-shader")
+		default:
+			return Animation{}, fmt.Errorf("unexpected node `%s`", nodeName(child))
+		}
+	}
+	if setting.Unsupported && !setting.Off && !sawEasing {
+		c.addWarning("animations." + name + ".easing")
+	}
+	return setting, nil
+}
+
+func defaultAnimation(name string) Animation {
+	defaults := defaultAnimations()
+	switch name {
+	case "window-open":
+		return defaults.WindowOpen
+	case "window-close":
+		return defaults.WindowClose
+	case "window-resize":
+		return defaults.WindowResize
+	case "window-movement":
+		return defaults.WindowMovement
+	case "overview-open-close":
+		return defaults.OverviewOpenClose
+	case "workspace-switch":
+		return defaults.WorkspaceSwitch
+	default:
+		return defaults.HorizontalViewMovement
+	}
+}
+
+func (c *Config) setAnimation(name string, setting Animation) {
+	switch name {
+	case "window-open":
+		c.Animations.WindowOpen = setting
+	case "window-close":
+		c.Animations.WindowClose = setting
+	case "window-resize":
+		c.Animations.WindowResize = setting
+	case "window-movement":
+		c.Animations.WindowMovement = setting
+	case "overview-open-close":
+		c.Animations.OverviewOpenClose = setting
+	case "workspace-switch":
+		c.Animations.WorkspaceSwitch = setting
+	case "horizontal-view-movement":
+		c.Animations.HorizontalViewMovement = setting
+	}
+}
+
+func validateEasingChild(node *document.Node) error {
+	if nodeName(node) == "duration-ms" {
+		if len(node.Children) != 0 || len(node.Properties) != 0 {
+			return fmt.Errorf("`duration-ms` takes one number")
+		}
+		_, err := intArg(node, 0, math.MaxUint32)
+		return err
+	}
+	if len(node.Arguments) != 1 || len(node.Children) != 0 || len(node.Properties) != 0 {
+		return fmt.Errorf("`curve` takes one easing name")
+	}
+	if _, ok := node.Arguments[0].Value.(string); !ok {
+		return fmt.Errorf("`curve` must be a string")
+	}
+	return nil
+}
+
+func parseSpringConfig(node *document.Node) (SpringConfig, error) {
+	if len(node.Arguments) != 0 || len(node.Children) != 0 {
+		return SpringConfig{}, fmt.Errorf("spring takes properties only")
+	}
+	var result SpringConfig
+	seen := map[string]bool{}
+	for key, property := range node.Properties {
+		seen[key] = true
+		switch key {
+		case "damping-ratio", "epsilon":
+			value, ok := numericValue(property.Value)
+			if !ok {
+				return SpringConfig{}, fmt.Errorf("%s must be a number", key)
+			}
+			if key == "damping-ratio" {
+				if value < 0.1 || value > 10 {
+					return SpringConfig{}, fmt.Errorf("damping ratio must be between 0.1 and 10")
+				}
+				result.DampingRatio = value
+			} else {
+				if value < 0.00001 || value > 0.1 {
+					return SpringConfig{}, fmt.Errorf("epsilon must be between 0.00001 and 0.1")
+				}
+				result.Epsilon = value
+			}
+		case "stiffness":
+			value, ok := property.Value.(int64)
+			if !ok || value < 1 || value > math.MaxUint32 {
+				return SpringConfig{}, fmt.Errorf("stiffness must be a whole number from 1 to %d", uint64(math.MaxUint32))
+			}
+			result.Stiffness = uint32(value)
+		default:
+			return SpringConfig{}, fmt.Errorf("unexpected property `%s`", key)
+		}
+	}
+	for _, key := range []string{"damping-ratio", "stiffness", "epsilon"} {
+		if !seen[key] {
+			return SpringConfig{}, fmt.Errorf("missing property `%s`", key)
+		}
+	}
+	return result, nil
+}
+
+func numericValue(value any) (float64, bool) {
+	var number float64
+	switch value := value.(type) {
+	case int64:
+		number = float64(value)
+	case float64:
+		number = value
+	default:
+		return 0, false
+	}
+	return number, !math.IsNaN(number) && !math.IsInf(number, 0)
+}
+
+func (c *Config) focusRing(node *document.Node) error {
+	if len(node.Arguments) != 0 || len(node.Properties) != 0 {
+		return fmt.Errorf("focus-ring takes child nodes only")
+	}
+	for _, child := range node.Children {
+		switch nodeName(child) {
+		case "off", "on":
+			if err := noValue(child); err != nil {
+				return err
+			}
+			c.Layout.FocusRing.Off = nodeName(child) == "off"
+		case "width":
+			value, err := boundedNumber(child, 0, 65535)
+			if err != nil {
+				return err
+			}
+			c.Layout.FocusRing.Width = value
+		case "active-color", "inactive-color":
+			value, err := colorArg(child)
+			if err != nil {
+				return fmt.Errorf("%s: %w", nodeName(child), err)
+			}
+			if nodeName(child) == "active-color" {
+				c.Layout.FocusRing.ActiveColor = value
+			} else {
+				c.Layout.FocusRing.InactiveColor = value
+			}
+		case "urgent-color", "active-gradient", "inactive-gradient", "urgent-gradient":
+			c.addWarning("layout.focus-ring." + nodeName(child))
+		default:
+			return fmt.Errorf("unexpected node `%s`", nodeName(child))
+		}
+	}
+	return nil
+}
+
+func (c *Config) shadow(node *document.Node) error {
+	if len(node.Arguments) != 0 || len(node.Properties) != 0 {
+		return fmt.Errorf("shadow takes child nodes only")
+	}
+	for _, child := range node.Children {
+		switch nodeName(child) {
+		case "off", "on":
+			if err := noValue(child); err != nil {
+				return err
+			}
+			c.Layout.Shadow.On = nodeName(child) == "on"
+		case "softness":
+			value, err := boundedNumber(child, 0, 1024)
+			if err != nil {
+				return err
+			}
+			c.Layout.Shadow.Softness = value
+		case "spread":
+			value, err := boundedNumber(child, -1024, 1024)
+			if err != nil {
+				return err
+			}
+			c.Layout.Shadow.Spread = value
+		case "offset":
+			if len(child.Arguments) != 0 || len(child.Children) != 0 {
+				return fmt.Errorf("offset takes x and y properties only")
+			}
+			for key, property := range child.Properties {
+				value, ok := numericValue(property.Value)
+				if !ok || value < -65535 || value > 65535 {
+					return fmt.Errorf("offset %s must be a number from -65535 to 65535", key)
+				}
+				switch key {
+				case "x":
+					c.Layout.Shadow.OffsetX = value
+				case "y":
+					c.Layout.Shadow.OffsetY = value
+				default:
+					return fmt.Errorf("unexpected offset property `%s`", key)
+				}
+			}
+		case "color":
+			value, err := colorArg(child)
+			if err != nil {
+				return fmt.Errorf("color: %w", err)
+			}
+			c.Layout.Shadow.Color = value
+		case "inactive-color", "draw-behind-window":
+			c.addWarning("layout.shadow." + nodeName(child))
+		default:
+			return fmt.Errorf("unexpected node `%s`", nodeName(child))
+		}
+	}
+	return nil
+}
+
+func boundedNumber(node *document.Node, minValue, maxValue float64) (float64, error) {
+	value, err := numberArg(node)
+	if err != nil {
+		return 0, err
+	}
+	if value < minValue || value > maxValue {
+		return 0, fmt.Errorf("`%s` must be a number from %v to %v", nodeName(node), minValue, maxValue)
+	}
+	return value, nil
 }
 
 func (c *Config) overview(n *document.Node) error {
@@ -706,7 +1102,7 @@ func floatArg(n *document.Node, min, max float64) (float64, error) {
 }
 
 func numberArg(n *document.Node) (float64, error) {
-	if len(n.Arguments) != 1 {
+	if len(n.Arguments) != 1 || len(n.Children) != 0 || len(n.Properties) != 0 {
 		return 0, fmt.Errorf("`%s` takes one number", nodeName(n))
 	}
 	var value float64

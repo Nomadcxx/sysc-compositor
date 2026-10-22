@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 	"unsafe"
+
+	"github.com/Nomadcxx/sysc-compositor/internal/config"
 )
 
 // newNested builds a compositor against the live session's Wayland display.
@@ -23,6 +25,11 @@ func newNestedWith(t *testing.T, opts Options) *Compositor {
 	t.Helper()
 	runtime.LockOSThread()
 	t.Cleanup(runtime.UnlockOSThread)
+	if opts.Animations == (config.Animations{}) {
+		// Existing nested tests focus on lifecycle/layout behavior; M8 animation
+		// checks opt into spring values explicitly.
+		opts.Animations.Off = true
+	}
 	c, err := NewWith(opts)
 	if err != nil {
 		t.Skipf("no nested wayland session available: %v", err)
