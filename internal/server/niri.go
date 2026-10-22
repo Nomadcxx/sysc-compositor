@@ -376,7 +376,8 @@ func (h niriHandler) action(a ipc.Action) (ipc.Reply, func()) {
 		err = h.spawn.spawnSh(a.ShellCommand)
 	case "SwitchLayout":
 		return h.windowAction(a, 0)
-	case "ToggleOverview", "OpenOverview", "CloseOverview", "ToggleKeyboardShortcutsInhibit":
+	case "ToggleOverview", "OpenOverview", "CloseOverview", "ToggleKeyboardShortcutsInhibit",
+		"PowerOffMonitors", "PowerOnMonitors":
 		return h.windowAction(a, 0)
 	case "FocusWindow", "CloseWindow",
 		"FocusWindowInColumn", "FocusWindowDown", "FocusWindowUp", "MoveWindowDown", "MoveWindowUp",

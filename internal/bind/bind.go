@@ -86,6 +86,8 @@ const (
 	ActionToggleWindowFloating           = "toggle-window-floating"
 	ActionToggleOverview                 = "toggle-overview"
 	ActionToggleKeyboardShortcutsInhibit = "toggle-keyboard-shortcuts-inhibit"
+	ActionPowerOffMonitors               = "power-off-monitors"
+	ActionPowerOnMonitors                = "power-on-monitors"
 	ActionOpenOverview                   = "open-overview"
 	ActionCloseOverview                  = "close-overview"
 	ActionMoveWindowToFloating           = "move-window-to-floating"
@@ -262,7 +264,7 @@ func ParseAction(name string, args []string) (Action, bool, error) {
 		ActionFocusFloating, ActionFocusTiling, ActionSwitchFocusFloatingAndTiling,
 		ActionFullscreenWindow, ActionToggleWindowedFullscreen,
 		ActionToggleOverview, ActionOpenOverview, ActionCloseOverview,
-		ActionToggleKeyboardShortcutsInhibit:
+		ActionToggleKeyboardShortcutsInhibit, ActionPowerOffMonitors, ActionPowerOnMonitors:
 		if len(args) != 0 {
 			return Action{}, true, fmt.Errorf("%s takes no arguments", name)
 		}
@@ -381,7 +383,7 @@ func IsSupportedAction(name string) bool {
 		ActionFocusFloating, ActionFocusTiling, ActionSwitchFocusFloatingAndTiling,
 		ActionFullscreenWindow, ActionToggleWindowedFullscreen,
 		ActionToggleOverview, ActionOpenOverview, ActionCloseOverview,
-		ActionToggleKeyboardShortcutsInhibit,
+		ActionToggleKeyboardShortcutsInhibit, ActionPowerOffMonitors, ActionPowerOnMonitors,
 		ActionSetWorkspaceName, ActionUnsetWorkspaceName,
 		ActionMoveWindowToWorkspace, ActionMoveWindowToWorkspaceDown, ActionMoveWindowToWorkspaceUp,
 		ActionMoveColumnToWorkspace, ActionMoveColumnToWorkspaceDown, ActionMoveColumnToWorkspaceUp,

@@ -222,6 +222,14 @@ func (s *Server) Run() error {
 						s.c.ToggleOverview()
 					case "ToggleKeyboardShortcutsInhibit":
 						s.c.ToggleKeyboardShortcutsInhibit()
+					case "PowerOffMonitors":
+						if err := s.c.PowerOffMonitors(); err != nil {
+							os.Stderr.WriteString("sysc-compositor: PowerOffMonitors: " + err.Error() + "\n")
+						}
+					case "PowerOnMonitors":
+						if err := s.c.PowerOnMonitors(); err != nil {
+							os.Stderr.WriteString("sysc-compositor: PowerOnMonitors: " + err.Error() + "\n")
+						}
 					case "OpenOverview":
 						s.c.OpenOverview()
 					case "CloseOverview":

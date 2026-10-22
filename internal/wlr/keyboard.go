@@ -610,6 +610,14 @@ func (c *Compositor) executeBindAction(action bind.Action) {
 		c.ToggleOverview()
 	case bind.ActionToggleKeyboardShortcutsInhibit:
 		c.ToggleKeyboardShortcutsInhibit()
+	case bind.ActionPowerOffMonitors:
+		if err := c.PowerOffMonitors(); err != nil {
+			fmt.Fprintf(os.Stderr, "sysc-compositor: power-off-monitors: %v\n", err)
+		}
+	case bind.ActionPowerOnMonitors:
+		if err := c.PowerOnMonitors(); err != nil {
+			fmt.Fprintf(os.Stderr, "sysc-compositor: power-on-monitors: %v\n", err)
+		}
 		return
 	case bind.ActionOpenOverview:
 		c.OpenOverview()
