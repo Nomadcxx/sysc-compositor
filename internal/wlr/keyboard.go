@@ -331,6 +331,7 @@ func (c *Compositor) addKeyboard(kb *C.struct_wlr_keyboard) bool {
 func (c *Compositor) handleKeyboardKey(data unsafe.Pointer) {
 	event := (*C.struct_wlr_keyboard_key_event)(data)
 	keycode := uint32(event.keycode)
+	c.userActivity()
 	if event.state == C.WL_KEYBOARD_KEY_STATE_PRESSED {
 		// A key may have been released while the session was inactive. A fresh
 		// press starts a new suppression lifetime for this evdev keycode.

@@ -141,7 +141,9 @@ func TestM10InputIdleGlobalsAdvertised(t *testing.T) {
 	globals, _ := advertised(runClient(t, c, []string{"wayland-info"}, nil, nil))
 	want := map[string]int{
 		"ext_background_effect_manager_v1": 1,
+		"ext_idle_notifier_v1":             1,
 		"ext_session_lock_manager_v1":      1,
+		"zwp_idle_inhibit_manager_v1":      1,
 	}
 	for iface, version := range want {
 		if got, ok := globals[iface]; !ok || got < version {

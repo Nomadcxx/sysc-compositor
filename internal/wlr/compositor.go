@@ -23,6 +23,8 @@ package wlr
 #include <wlr/types/wlr_data_device.h>
 #include <wlr/types/wlr_fractional_scale_v1.h>
 #include <wlr/types/wlr_layer_shell_v1.h>
+#include <wlr/types/wlr_idle_inhibit_v1.h>
+#include <wlr/types/wlr_idle_notify_v1.h>
 #include <wlr/types/wlr_linux_dmabuf_v1.h>
 #include <wlr/types/wlr_output_layout.h>
 #include <wlr/types/wlr_scene.h>
@@ -229,6 +231,12 @@ type Compositor struct {
 	// since the lock was accepted; `locked` waits for them. nil once sent.
 	lockPendingOutputs map[unsafe.Pointer]struct{}
 
+	// Idle (idle.go). idleInhibited is what the notifier was last told.
+	idleNotifier      *C.struct_wlr_idle_notifier_v1
+	idleInhibitors    map[*C.struct_wlr_idle_inhibitor_v1]*Listener
+	dbusIdleInhibited bool
+	idleInhibited     bool
+
 	// viewMapped, when set, runs on the compositor thread once a toplevel is
 	// mapped and hit-testable. It is the hook tests use to act once a client
 	// is on screen.
@@ -416,6 +424,9 @@ func NewWith(opts Options) (*Compositor, error) {
 	}
 	if !c.createSessionLock() {
 		return nil, errors.New("wlr_session_lock_manager_v1_create failed")
+	}
+	if !c.createIdle() {
+		return nil, errors.New("idle notify or idle inhibit manager create failed")
 	}
 	// xdg-output gives clients output names and logical geometry; waybar and
 	// grim refuse to start without it, and Niri advertises it.

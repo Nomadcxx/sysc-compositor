@@ -672,6 +672,7 @@ func (c *Compositor) destroyDndScrollState(state *dndEdgeScrollState) {
 func (c *Compositor) handleCursorMotion(data unsafe.Pointer) {
 	event := (*C.struct_wlr_pointer_motion_event)(data)
 	device := (*C.struct_wlr_input_device)(unsafe.Pointer(event.pointer))
+	c.userActivity()
 	C.wlr_cursor_move(c.cursor, device, event.delta_x, event.delta_y)
 	c.processCursorMotion(event.time_msec)
 }
@@ -679,6 +680,7 @@ func (c *Compositor) handleCursorMotion(data unsafe.Pointer) {
 func (c *Compositor) handleCursorMotionAbsolute(data unsafe.Pointer) {
 	event := (*C.struct_wlr_pointer_motion_absolute_event)(data)
 	device := (*C.struct_wlr_input_device)(unsafe.Pointer(event.pointer))
+	c.userActivity()
 	C.wlr_cursor_warp_absolute(c.cursor, device, event.x, event.y)
 	c.processCursorMotion(event.time_msec)
 }
@@ -814,6 +816,7 @@ func (c *Compositor) handleCursorButton(data unsafe.Pointer) {
 	event := (*C.struct_wlr_pointer_button_event)(data)
 	button := uint32(event.button)
 	pressed := event.state == C.WL_POINTER_BUTTON_STATE_PRESSED
+	c.userActivity()
 
 	if pressed {
 		c.pressedPointerButtons[button] = true
@@ -899,6 +902,7 @@ func (c *Compositor) handleCursorButton(data unsafe.Pointer) {
 
 func (c *Compositor) handleCursorAxis(data unsafe.Pointer) {
 	event := (*C.struct_wlr_pointer_axis_event)(data)
+	c.userActivity()
 	C.wlr_seat_pointer_notify_axis(c.seat, event.time_msec,
 		event.orientation, event.delta, event.delta_discrete,
 		event.source, event.relative_direction)

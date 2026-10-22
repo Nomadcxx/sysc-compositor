@@ -482,6 +482,7 @@ func (c *Compositor) handleNewOutput(data unsafe.Pointer) {
 			c.drawn++
 		}
 		c.lockFrameDone(data)
+		c.updateIdleInhibit()
 	})
 	c.keep(frame)
 	c.arrangeLayers(data)

@@ -10,9 +10,25 @@ import (
 	"github.com/Nomadcxx/sysc-compositor/internal/wlr"
 )
 
-// StartSessionDBus starts the locale1 and login1 clients for --session only.
+// StartSessionDBus starts the locale1 and login1 clients and the
+// org.freedesktop.ScreenSaver service, for --session only. The compositor
+// owns that name (owner decision Q8) so idle inhibition works with no shell.
+// Neither failing stops the session.
 func (s *Server) StartSessionDBus() {
-	if s.sessionDBus != nil || s.c == nil {
+	if s.c == nil {
+		return
+	}
+	if s.screenSaver == nil {
+		screenSaver, err := session.StartScreenSaver(func(inhibited bool) {
+			s.postSessionUpdate(func() { s.c.SetIdleInhibitedByDBus(inhibited) })
+		})
+		if err != nil {
+			os.Stderr.WriteString("sysc-compositor: org.freedesktop.ScreenSaver: " + err.Error() + "\n")
+		} else {
+			s.screenSaver = screenSaver
+		}
+	}
+	if s.sessionDBus != nil {
 		return
 	}
 	watcher, err := session.StartDBus(func(keyboard config.Keyboard) {
