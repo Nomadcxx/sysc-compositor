@@ -18,3 +18,10 @@ TestVTSwitchChordIsConsumed sysc-1638
 TestFractionalScaleFollowsOutput sysc-1638
 TestDmabufClientMaps sysc-1638
 TestExclusiveZoneShrinksUsableArea sysc-1638
+# M6 tests of the same nested Mod-key family.
+TestFloatingBindsMoveMappedWindowBetweenLayers sysc-1638
+TestModDragPersistsFloatingWindowPositionOnRelease sysc-1638
+TestNestedKeyboardBindConsumeOrExpelWindowRight sysc-1638
+TestNestedKeyboardBindFocusesAndMovesTabbedWindowsVertically sysc-1638
+TestNestedKeyboardBindMovesColumnAndWindowBetweenWorkspaces sysc-1638
+TestNestedKeyboardBindNamesAndMovesWindowToNamedWorkspace sysc-1638
