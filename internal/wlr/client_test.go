@@ -146,6 +146,8 @@ func TestM10InputIdleGlobalsAdvertised(t *testing.T) {
 		"wp_cursor_shape_manager_v1":                1,
 		"zwp_idle_inhibit_manager_v1":               1,
 		"zwp_keyboard_shortcuts_inhibit_manager_v1": 1,
+		"zwp_pointer_constraints_v1":                1,
+		"zwp_relative_pointer_manager_v1":           1,
 	}
 	for iface, version := range want {
 		if got, ok := globals[iface]; !ok || got < version {

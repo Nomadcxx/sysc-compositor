@@ -139,6 +139,7 @@ func (c *Compositor) sealSession() {
 		c.arrangeLockOutput(pointer)
 	}
 	C.wlr_seat_pointer_notify_clear_focus(c.seat)
+	c.updatePointerConstraint()
 	c.updateKeyboardFocus()
 	c.refocusPointer(nowMsec())
 }

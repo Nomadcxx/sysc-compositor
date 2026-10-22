@@ -27,6 +27,8 @@ package wlr
 #include <wlr/types/wlr_idle_notify_v1.h>
 #include <wlr/types/wlr_keyboard_shortcuts_inhibit_v1.h>
 #include <wlr/types/wlr_linux_dmabuf_v1.h>
+#include <wlr/types/wlr_pointer_constraints_v1.h>
+#include <wlr/types/wlr_relative_pointer_v1.h>
 #include <wlr/types/wlr_output_layout.h>
 #include <wlr/types/wlr_scene.h>
 #include <wlr/types/wlr_seat.h>
@@ -245,6 +247,12 @@ type Compositor struct {
 
 	shortcutsInhibitors map[*C.struct_wlr_keyboard_shortcuts_inhibitor_v1]*shortcutsInhibitor
 
+	// Pointer constraints (pointer_constraints.go). activeConstraint is on
+	// the surface with the user seat's pointer focus, or nil.
+	relativePointer    *C.struct_wlr_relative_pointer_manager_v1
+	pointerConstraints *C.struct_wlr_pointer_constraints_v1
+	activeConstraint   *C.struct_wlr_pointer_constraint_v1
+
 	// viewMapped, when set, runs on the compositor thread once a toplevel is
 	// mapped and hit-testable. It is the hook tests use to act once a client
 	// is on screen.
@@ -444,6 +452,9 @@ func NewWith(opts Options) (*Compositor, error) {
 	}
 	if !c.createShortcutsInhibit() {
 		return nil, errors.New("wlr_keyboard_shortcuts_inhibit_v1_create failed")
+	}
+	if !c.createPointerConstraints() {
+		return nil, errors.New("relative pointer or pointer constraints manager create failed")
 	}
 	// xdg-output gives clients output names and logical geometry; waybar and
 	// grim refuse to start without it, and Niri advertises it.

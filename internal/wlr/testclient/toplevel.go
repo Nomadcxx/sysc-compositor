@@ -22,6 +22,8 @@ static const struct wl_interface sysc_idle_xdg_surface_interface;
 static const struct wl_interface sysc_cursor_shape_device_interface;
 static const struct wl_interface sysc_effect_surface_interface;
 static const struct wl_interface sysc_shortcuts_inhibitor_interface;
+static const struct wl_interface sysc_relative_pointer_interface;
+static const struct wl_interface sysc_locked_pointer_interface;
 static const struct wl_interface sysc_idle_xdg_toplevel_interface;
 static const struct wl_interface sysc_idle_notification_interface;
 static const struct wl_interface sysc_idle_inhibitor_interface;
@@ -35,6 +37,9 @@ static const struct wl_interface *sysc_idle_types[] = {
 	&sysc_effect_surface_interface, &wl_surface_interface,
 	&wl_region_interface,
 	&sysc_shortcuts_inhibitor_interface, &wl_surface_interface, &wl_seat_interface,
+	&sysc_relative_pointer_interface, &wl_pointer_interface,
+	&sysc_locked_pointer_interface, &wl_surface_interface, &wl_pointer_interface,
+	&wl_region_interface, NULL,
 };
 static const struct wl_message sysc_idle_wm_base_requests[] = {
 	{"destroy", "", NULL},
@@ -143,6 +148,41 @@ static const struct wl_interface sysc_shortcuts_inhibitor_interface = {
 	2, sysc_shortcuts_inhibitor_events,
 };
 
+static const struct wl_message sysc_relative_pointer_manager_requests[] = {
+	{"destroy", "", NULL},
+	{"get_relative_pointer", "no", sysc_idle_types + 16},
+};
+static const struct wl_interface sysc_relative_pointer_manager_interface = {
+	"zwp_relative_pointer_manager_v1", 1, 2, sysc_relative_pointer_manager_requests, 0, NULL,
+};
+static const struct wl_message sysc_relative_pointer_requests[] = {{"destroy", "", NULL}};
+static const struct wl_message sysc_relative_pointer_events[] = {
+	{"relative_motion", "uuffff", NULL},
+};
+static const struct wl_interface sysc_relative_pointer_interface = {
+	"zwp_relative_pointer_v1", 1, 1, sysc_relative_pointer_requests, 1, sysc_relative_pointer_events,
+};
+static const struct wl_message sysc_pointer_constraints_requests[] = {
+	{"destroy", "", NULL},
+	{"lock_pointer", "noo?ou", sysc_idle_types + 18},
+	{"confine_pointer", "noo?ou", NULL},
+};
+static const struct wl_interface sysc_pointer_constraints_interface = {
+	"zwp_pointer_constraints_v1", 1, 3, sysc_pointer_constraints_requests, 0, NULL,
+};
+static const struct wl_message sysc_locked_pointer_requests[] = {
+	{"destroy", "", NULL},
+	{"set_cursor_position_hint", "ff", NULL},
+	{"set_region", "?o", NULL},
+};
+static const struct wl_message sysc_locked_pointer_events[] = {
+	{"locked", "", NULL},
+	{"unlocked", "", NULL},
+};
+static const struct wl_interface sysc_locked_pointer_interface = {
+	"zwp_locked_pointer_v1", 1, 3, sysc_locked_pointer_requests, 2, sysc_locked_pointer_events,
+};
+
 #define SYSC_IDLE_EVENTS 32
 
 struct sysc_idle_client {
@@ -153,6 +193,9 @@ struct sysc_idle_client {
 	struct wl_proxy *wm_base, *notifier, *inhibit_manager, *cursor_shape_manager;
 	struct wl_proxy *effect_manager, *effect;
 	struct wl_proxy *shortcuts_manager, *shortcuts_inhibitor;
+	struct wl_proxy *relative_manager, *relative_pointer, *constraints, *locked_pointer;
+	bool pointer_locked;
+	double relative_dx, relative_dy;
 	struct wl_pointer *pointer;
 	struct wl_proxy *cursor_shape_device;
 	uint32_t enter_serial;
@@ -184,6 +227,11 @@ static void sysc_idle_global(void *data, struct wl_registry *registry,
 		c->notifier = wl_registry_bind(registry, name, &sysc_idle_notifier_interface, 1);
 	} else if (strcmp(interface, "zwp_idle_inhibit_manager_v1") == 0) {
 		c->inhibit_manager = wl_registry_bind(registry, name, &sysc_idle_inhibit_manager_interface, 1);
+	} else if (strcmp(interface, "zwp_relative_pointer_manager_v1") == 0) {
+		c->relative_manager = wl_registry_bind(registry, name,
+				&sysc_relative_pointer_manager_interface, 1);
+	} else if (strcmp(interface, "zwp_pointer_constraints_v1") == 0) {
+		c->constraints = wl_registry_bind(registry, name, &sysc_pointer_constraints_interface, 1);
 	} else if (strcmp(interface, "zwp_keyboard_shortcuts_inhibit_manager_v1") == 0) {
 		c->shortcuts_manager = wl_registry_bind(registry, name,
 				&sysc_shortcuts_inhibit_manager_interface, 1);
@@ -267,6 +315,22 @@ static const struct wl_pointer_listener sysc_pointer_listener = {
 	.axis = sysc_pointer_axis,
 };
 
+static void sysc_seat_capabilities(void *data, struct wl_seat *seat, uint32_t caps) {
+	struct sysc_idle_client *c = data;
+	if ((caps & WL_SEAT_CAPABILITY_POINTER) && c->pointer == NULL) {
+		c->pointer = wl_seat_get_pointer(seat);
+		if (c->pointer != NULL) {
+			wl_pointer_add_listener(c->pointer, &sysc_pointer_listener, c);
+		}
+	}
+}
+static void sysc_seat_name(void *data, struct wl_seat *seat, const char *name) {
+}
+static const struct wl_seat_listener sysc_seat_listener = {
+	.capabilities = sysc_seat_capabilities,
+	.name = sysc_seat_name,
+};
+
 static struct wl_buffer *sysc_idle_buffer(struct wl_shm *shm, int width, int height) {
 	int stride = width * 4, size = stride * height;
 	int fd = memfd_create("sysc-idle-test", MFD_CLOEXEC);
@@ -331,10 +395,9 @@ static int sysc_idle_client_start(const char *display_name, uint32_t timeout_ms,
 		return 4;
 	}
 	wl_proxy_add_listener(c->wm_base, (void (**)(void))&sysc_idle_wm_base_listener, c);
-	if ((c->pointer = wl_seat_get_pointer(c->seat)) == NULL ||
-			wl_pointer_add_listener(c->pointer, &sysc_pointer_listener, c) < 0) {
-		return 11;
-	}
+	// The pointer is taken once the seat has one: asking earlier is a
+	// missing_capability error on a seat with no pointer device yet.
+	wl_seat_add_listener(c->seat, &sysc_seat_listener, c);
 	c->surface = wl_compositor_create_surface(c->compositor);
 	c->xdg_surface = wl_proxy_marshal_flags(c->wm_base, 2, &sysc_idle_xdg_surface_interface,
 			1, 0, NULL, c->surface);
@@ -430,6 +493,59 @@ static int sysc_client_set_blur_region(struct sysc_idle_client *c, const int32_t
 	return wl_display_roundtrip(c->display) < 0 ? 4 : 0;
 }
 
+static void sysc_relative_motion(void *data, struct wl_proxy *proxy, uint32_t hi, uint32_t lo,
+		wl_fixed_t dx, wl_fixed_t dy, wl_fixed_t udx, wl_fixed_t udy) {
+	struct sysc_idle_client *c = data;
+	c->relative_dx += wl_fixed_to_double(dx);
+	c->relative_dy += wl_fixed_to_double(dy);
+}
+static const struct {
+	void (*relative_motion)(void *, struct wl_proxy *, uint32_t, uint32_t,
+		wl_fixed_t, wl_fixed_t, wl_fixed_t, wl_fixed_t);
+} sysc_relative_pointer_listener = { sysc_relative_motion };
+
+static void sysc_pointer_locked(void *data, struct wl_proxy *proxy) {
+	((struct sysc_idle_client *)data)->pointer_locked = true;
+}
+static void sysc_pointer_unlocked(void *data, struct wl_proxy *proxy) {
+	((struct sysc_idle_client *)data)->pointer_locked = false;
+}
+static const struct {
+	void (*locked)(void *, struct wl_proxy *);
+	void (*unlocked)(void *, struct wl_proxy *);
+} sysc_locked_pointer_listener = { sysc_pointer_locked, sysc_pointer_unlocked };
+
+// Takes relative motion and asks for a persistent pointer lock on the toplevel.
+static int sysc_client_lock_pointer(struct sysc_idle_client *c) {
+	if (c->relative_manager == NULL || c->constraints == NULL || c->pointer == NULL) {
+		return 1;
+	}
+	c->relative_pointer = wl_proxy_marshal_flags(c->relative_manager, 1,
+			&sysc_relative_pointer_interface, 1, 0, NULL, c->pointer);
+	c->locked_pointer = wl_proxy_marshal_flags(c->constraints, 1,
+			&sysc_locked_pointer_interface, 1, 0, NULL, c->surface, c->pointer, NULL,
+			(uint32_t)2);
+	if (c->relative_pointer == NULL || c->locked_pointer == NULL) {
+		return 2;
+	}
+	wl_proxy_add_listener(c->relative_pointer, (void (**)(void))&sysc_relative_pointer_listener, c);
+	wl_proxy_add_listener(c->locked_pointer, (void (**)(void))&sysc_locked_pointer_listener, c);
+	return wl_display_roundtrip(c->display) < 0 ? 3 : 0;
+}
+
+// Destroys the pointer lock.
+static int sysc_client_unlock_pointer(struct sysc_idle_client *c) {
+	if (c->locked_pointer != NULL) {
+		wl_proxy_marshal_flags(c->locked_pointer, 0, NULL, 1, WL_MARSHAL_FLAG_DESTROY);
+		c->locked_pointer = NULL;
+	}
+	return wl_display_roundtrip(c->display) < 0 ? 1 : 0;
+}
+
+static bool sysc_client_pointer_locked(struct sysc_idle_client *c) { return c->pointer_locked; }
+static double sysc_client_relative_dx(struct sysc_idle_client *c) { return c->relative_dx; }
+static double sysc_client_relative_dy(struct sysc_idle_client *c) { return c->relative_dy; }
+
 // Asks to inhibit compositor shortcuts on the toplevel for the user seat.
 static int sysc_client_inhibit_shortcuts(struct sysc_idle_client *c) {
 	if (c->shortcuts_manager == NULL) {
@@ -445,7 +561,7 @@ static int sysc_client_inhibit_shortcuts(struct sysc_idle_client *c) {
 
 // Sets a cursor shape against the latest pointer enter serial.
 static int sysc_client_set_cursor_shape(struct sysc_idle_client *c, uint32_t shape) {
-	if (c->cursor_shape_manager == NULL) {
+	if (c->cursor_shape_manager == NULL || c->pointer == NULL) {
 		return 1;
 	}
 	if (c->cursor_shape_device == NULL) {
@@ -586,6 +702,47 @@ func (c *ToplevelClient) InhibitShortcuts() error {
 		return fmt.Errorf("Wayland shortcuts inhibit request failed at step %d", code)
 	}
 	return nil
+}
+
+// LockPointer takes relative motion and asks for a persistent pointer lock
+// on the toplevel.
+func (c *ToplevelClient) LockPointer() error {
+	if code := int(C.sysc_client_lock_pointer(c.state)); code != 0 {
+		return fmt.Errorf("Wayland pointer lock request failed at step %d", code)
+	}
+	return nil
+}
+
+// UnlockPointer destroys the pointer lock.
+func (c *ToplevelClient) UnlockPointer() error {
+	if code := int(C.sysc_client_unlock_pointer(c.state)); code != 0 {
+		return fmt.Errorf("Wayland pointer unlock failed at step %d", code)
+	}
+	return nil
+}
+
+// WaitPointerLocked dispatches until the lock reports `locked`, or the
+// timeout passes.
+func (c *ToplevelClient) WaitPointerLocked(timeout time.Duration) bool {
+	for deadline := time.Now().Add(timeout); !bool(C.sysc_client_pointer_locked(c.state)); {
+		left := time.Until(deadline)
+		if left <= 0 || C.sysc_idle_client_dispatch(c.state, C.int(left.Milliseconds())) < 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// RelativeMotion dispatches for up to wait and returns the relative motion
+// summed since the lock was taken.
+func (c *ToplevelClient) RelativeMotion(wait time.Duration) (float64, float64) {
+	for deadline := time.Now().Add(wait); ; {
+		left := time.Until(deadline)
+		if left <= 0 || C.sysc_idle_client_dispatch(c.state, C.int(left.Milliseconds())) < 0 {
+			break
+		}
+	}
+	return float64(C.sysc_client_relative_dx(c.state)), float64(C.sysc_client_relative_dy(c.state))
 }
 
 // Close disconnects.

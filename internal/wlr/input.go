@@ -673,16 +673,16 @@ func (c *Compositor) handleCursorMotion(data unsafe.Pointer) {
 	event := (*C.struct_wlr_pointer_motion_event)(data)
 	device := (*C.struct_wlr_input_device)(unsafe.Pointer(event.pointer))
 	c.userActivity()
-	C.wlr_cursor_move(c.cursor, device, event.delta_x, event.delta_y)
-	c.processCursorMotion(event.time_msec)
+	c.pointerMotion(device, event.time_msec, float64(event.delta_x), float64(event.delta_y),
+		float64(event.unaccel_dx), float64(event.unaccel_dy))
 }
 
 func (c *Compositor) handleCursorMotionAbsolute(data unsafe.Pointer) {
 	event := (*C.struct_wlr_pointer_motion_absolute_event)(data)
 	device := (*C.struct_wlr_input_device)(unsafe.Pointer(event.pointer))
 	c.userActivity()
-	C.wlr_cursor_warp_absolute(c.cursor, device, event.x, event.y)
-	c.processCursorMotion(event.time_msec)
+	dx, dy := c.absoluteDelta(device, event.x, event.y)
+	c.pointerMotion(device, event.time_msec, dx, dy, dx, dy)
 }
 
 func (c *Compositor) processCursorMotion(time C.uint32_t) {
@@ -755,6 +755,7 @@ func (c *Compositor) refocusPointer(time C.uint32_t) {
 	}
 	c.processCursorMotion(time)
 	C.wlr_seat_pointer_notify_frame(c.seat)
+	c.updatePointerConstraint()
 }
 
 // showDefaultImage draws the theme's default image, as over empty space.
