@@ -391,6 +391,18 @@ func sceneFXCreateRect(parent unsafe.Pointer, width, height int, color [4]float3
 	return unsafe.Pointer(C.sysc_scene_rect_create_node((*C.struct_wlr_scene_tree)(parent), C.int(width), C.int(height), &rgba[0]))
 }
 
+func sceneFXCreateBlurNode(parent unsafe.Pointer, width, height int) unsafe.Pointer {
+	blur := C.wlr_scene_blur_create((*C.struct_wlr_scene_tree)(parent), C.int(width), C.int(height))
+	if blur == nil {
+		return nil
+	}
+	return unsafe.Pointer(&blur.node)
+}
+
+func sceneFXPlaceBelow(node, sibling unsafe.Pointer) {
+	C.wlr_scene_node_place_below((*C.struct_wlr_scene_node)(node), (*C.struct_wlr_scene_node)(sibling))
+}
+
 func sceneFXRectUpdateRing(node unsafe.Pointer, x, y, width, height, border int,
 	outer, inner [4]uint16, color [4]float32) {
 	rgba := [4]C.float{C.float(color[0]), C.float(color[1]), C.float(color[2]), C.float(color[3])}

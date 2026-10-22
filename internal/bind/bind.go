@@ -50,6 +50,7 @@ type Action struct {
 type Binding struct {
 	Chord   Chord
 	Actions []Action
+	Repeat  bool
 }
 
 const (

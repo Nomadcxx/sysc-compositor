@@ -1032,7 +1032,14 @@ func (c *Config) binds(n *document.Node) error {
 		if len(node.Children) == 0 {
 			return fmt.Errorf("bind %q: expected at least one action", nodeName(node))
 		}
-		binding := Binding{Chord: chord}
+		binding := Binding{Chord: chord, Repeat: true}
+		if property, ok := node.Properties["repeat"]; ok {
+			repeat, ok := property.Value.(bool)
+			if !ok {
+				return fmt.Errorf("bind %q: `repeat` must be boolean", nodeName(node))
+			}
+			binding.Repeat = repeat
+		}
 		for _, actionNode := range node.Children {
 			name := nodeName(actionNode)
 			if !bind.IsSupportedAction(name) {

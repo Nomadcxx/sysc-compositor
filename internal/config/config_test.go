@@ -89,6 +89,7 @@ input {
     mod-key-nested "Super"
     keyboard { xkb { layout "us"; }; }
 }
+
 layout {
     gaps 16
     default-column-width { proportion 0.5; }
@@ -123,6 +124,37 @@ binds {
 	}
 	if len(cfg.UnappliedActions) != 0 {
 		t.Errorf("unapplied actions = %q, want none", cfg.UnappliedActions)
+	}
+}
+
+func TestBindRepeatDefaultsTrueAndCanBeDisabled(t *testing.T) {
+	cfg, err := Parse("bind-repeat.kdl", []byte(`
+binds {
+    Mod+Q { close-window; }
+    Mod+W repeat=false { close-window; }
+}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Binds) != 2 {
+		t.Fatalf("binds = %d, want 2", len(cfg.Binds))
+	}
+	if !cfg.Binds[0].Repeat {
+		t.Error("repeat defaults to false, want true")
+	}
+	if cfg.Binds[1].Repeat {
+		t.Error("repeat=false was not retained")
+	}
+}
+
+func TestBindRepeatRequiresBoolean(t *testing.T) {
+	if _, err := Parse("bind-repeat.kdl", []byte(`
+binds {
+    Mod+Q repeat="false" { close-window; }
+}
+`)); err == nil {
+		t.Fatal("string repeat property parsed, want boolean validation error")
 	}
 }
 

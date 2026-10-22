@@ -153,10 +153,12 @@ type Compositor struct {
 	dndScroll               *dndEdgeScrollState
 	tiledMove               *tiledWindowMoveState
 	layerSurfaces           map[unsafe.Pointer]*layerSurface // by wlr_surface
-	layerOrder              []*layerSurface                  // creation order
-	usable                  map[unsafe.Pointer]rect          // per wlr_output, after exclusive zones
-	requested               rect                             // last host-requested output size, for tests
-	drawn                   int                              // frames that ran the scene commit, for tests
+	backgroundEffects       map[unsafe.Pointer]*backgroundEffect
+	backgroundEffectHandle  uintptr
+	layerOrder              []*layerSurface         // creation order
+	usable                  map[unsafe.Pointer]rect // per wlr_output, after exclusive zones
+	requested               rect                    // last host-requested output size, for tests
+	drawn                   int                     // frames that ran the scene commit, for tests
 	popups                  map[*C.struct_wlr_xdg_popup]struct{}
 	views                   map[unsafe.Pointer]*toplevelView
 	pointerDevices          map[unsafe.Pointer]bool
@@ -169,6 +171,10 @@ type Compositor struct {
 	keyboardGroup           *C.struct_wlr_keyboard_group
 	keyboard                *C.struct_wlr_keyboard // the group's, which the user seat hears
 	keyboardConfig          Keyboard
+	keyboardRepeatSource    *C.struct_wl_event_source
+	keyboardRepeatToken     uintptr
+	keyboardRepeatBinding   bind.Binding
+	keyboardRepeatInterval  int
 	inputDestroyListeners   map[unsafe.Pointer]*Listener
 	modifiers               uint32
 	focusedView             *toplevelView
@@ -313,6 +319,7 @@ func NewWith(opts Options) (*Compositor, error) {
 	c.activeWorkspaces = map[string]activeWorkspace{}
 	c.closingNodes = map[uint64]unsafe.Pointer{}
 	c.layerSurfaces = map[unsafe.Pointer]*layerSurface{}
+	c.backgroundEffects = map[unsafe.Pointer]*backgroundEffect{}
 	c.usable = map[unsafe.Pointer]rect{}
 	c.popups = map[*C.struct_wlr_xdg_popup]struct{}{}
 	c.views = map[unsafe.Pointer]*toplevelView{}
@@ -400,6 +407,9 @@ func NewWith(opts Options) (*Compositor, error) {
 	}
 	if !bool(C.sysc_dmabuf_create(c.display, c.renderer, c.scene)) {
 		return nil, errors.New("wlr_linux_dmabuf_v1_create_with_renderer failed")
+	}
+	if err := c.createBackgroundEffectProtocol(); err != nil {
+		return nil, err
 	}
 	if c.seat = C.wlr_seat_create(c.display, cCString("seat0")); c.seat == nil {
 		return nil, errors.New("wlr_seat_create failed")
@@ -492,6 +502,7 @@ func (c *Compositor) Reconfigure(opts Options) error {
 		c.keyboardConfig = opts.Keyboard
 	}
 
+	c.stopKeyboardRepeat()
 	c.modKey = modKey
 	c.bindings = slices.Clone(opts.Binds)
 	for i := range c.bindings {
@@ -601,6 +612,7 @@ func (c *Compositor) Terminate() {
 // Destroy releases the compositor. Listeners added through AddListener are
 // removed first so no token outlives its wl_signal.
 func (c *Compositor) Destroy() {
+	c.stopKeyboardRepeat()
 	if c.focusTimer != nil {
 		c.focusTimer.Stop()
 		c.focusTimer = nil
@@ -631,6 +643,7 @@ func (c *Compositor) Destroy() {
 		sceneFXNodeDestroy(node)
 		delete(c.closingNodes, id)
 	}
+	c.destroyBackgroundEffects()
 	c.animations = nil
 	c.stopPost()
 	// Before any seat goes: wlroots frees a seat's popup grab twice when the
@@ -674,6 +687,7 @@ func (c *Compositor) Destroy() {
 		C.wl_display_destroy(c.display)
 		c.display = nil
 	}
+	c.destroyBackgroundEffectProtocol()
 }
 
 func (c *Compositor) destroyBackend() {

@@ -8,3 +8,5 @@ package wlr
 
 //go:generate mkdir -p protocols
 //go:generate wayland-scanner server-header ../../protocols/wlr-layer-shell-unstable-v1.xml protocols/wlr-layer-shell-unstable-v1-protocol.h
+//go:generate wayland-scanner server-header ../../protocols/ext-background-effect-v1.xml protocols/ext-background-effect-v1-protocol.h
+//go:generate wayland-scanner server-header ../../protocols/wlr-output-power-management-unstable-v1.xml protocols/wlr-output-power-management-unstable-v1-protocol.h

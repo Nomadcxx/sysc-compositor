@@ -15,6 +15,7 @@ package wlr
 #include <wlr/render/wlr_renderer.h>
 #include <wlr/types/wlr_output.h>
 #include <wlr/types/wlr_output_layout.h>
+#include <wlr/types/wlr_output_power_management_v1.h>
 #include <wlr/types/wlr_scene.h>
 #include <wayland-server-protocol.h>
 
@@ -91,6 +92,15 @@ static bool sysc_output_set_scale(struct wlr_output *output, float scale) {
 	struct wlr_output_state state;
 	wlr_output_state_init(&state);
 	wlr_output_state_set_scale(&state, scale);
+	bool ok = wlr_output_commit_state(output, &state);
+	wlr_output_state_finish(&state);
+	return ok;
+}
+
+static bool sysc_output_set_enabled(struct wlr_output *output, bool enabled) {
+	struct wlr_output_state state;
+	wlr_output_state_init(&state);
+	wlr_output_state_set_enabled(&state, enabled);
 	bool ok = wlr_output_commit_state(output, &state);
 	wlr_output_state_finish(&state);
 	return ok;
@@ -183,6 +193,7 @@ import "C"
 
 import (
 	"errors"
+	"fmt"
 	"sort"
 	"unsafe"
 )
@@ -345,6 +356,79 @@ func (c *Compositor) OutputSnapshot() []OutputSnapshot {
 	return out
 }
 
+func (c *Compositor) outputIsEnabled(pointer unsafe.Pointer) bool {
+	return pointer != nil && bool((*C.struct_wlr_output)(pointer).enabled)
+}
+
+func (c *Compositor) setOutputPower(pointer unsafe.Pointer, enabled bool) error {
+	if _, live := c.sceneOutputs[pointer]; !live {
+		return errors.New("wlr: output is not managed by this compositor")
+	}
+	if c.outputIsEnabled(pointer) == enabled {
+		return nil
+	}
+	output := (*C.struct_wlr_output)(pointer)
+	if !bool(C.sysc_output_set_enabled(output, C.bool(enabled))) {
+		return fmt.Errorf("wlr: setting output %q power=%t failed", C.GoString(output.name), enabled)
+	}
+	c.updateInjectedInputGate()
+	return nil
+}
+
+// PowerOffMonitors disables active outputs without removing their scene or
+// layout entries. PowerOnMonitors can therefore restore the exact prior set.
+func (c *Compositor) PowerOffMonitors() error {
+	c.powerOffActive = true
+	if c.actionPoweredOff == nil {
+		c.actionPoweredOff = make(map[unsafe.Pointer]struct{})
+	}
+	var failures []error
+	for pointer := range c.sceneOutputs {
+		if !c.outputIsEnabled(pointer) {
+			continue
+		}
+		if err := c.setOutputPower(pointer, false); err != nil {
+			failures = append(failures, err)
+			continue
+		}
+		c.actionPoweredOff[pointer] = struct{}{}
+	}
+	c.updateInjectedInputGate()
+	return errors.Join(failures...)
+}
+
+// PowerOnMonitors restores only outputs disabled by PowerOffMonitors. A
+// protocol client that explicitly enabled one has already taken ownership.
+func (c *Compositor) PowerOnMonitors() error {
+	c.powerOffActive = false
+	remaining := make(map[unsafe.Pointer]struct{})
+	var failures []error
+	for pointer := range c.actionPoweredOff {
+		if _, live := c.sceneOutputs[pointer]; !live || c.outputIsEnabled(pointer) {
+			continue
+		}
+		if err := c.setOutputPower(pointer, true); err != nil {
+			failures = append(failures, err)
+			remaining[pointer] = struct{}{}
+		}
+	}
+	c.actionPoweredOff = remaining
+	c.updateInjectedInputGate()
+	return errors.Join(failures...)
+}
+
+func (c *Compositor) handleOutputPowerSetMode(data unsafe.Pointer) {
+	event := (*C.struct_wlr_output_power_v1_set_mode_event)(data)
+	pointer := unsafe.Pointer(event.output)
+	enabled := event.mode == C.ZWLR_OUTPUT_POWER_V1_MODE_ON
+	if enabled {
+		delete(c.actionPoweredOff, pointer)
+	}
+	if err := c.setOutputPower(pointer, enabled); err != nil {
+		fmt.Fprintf(os.Stderr, "sysc-compositor: output power request: %v\n", err)
+	}
+}
+
 // FocusedOutputName reports the active output, falling back to the first
 // connected output when no active output is set or its output disconnects.
 func (c *Compositor) FocusedOutputName() string {
@@ -434,6 +518,17 @@ func (c *Compositor) handleNewOutput(data unsafe.Pointer) {
 		}
 	})
 	c.keep(destroy)
+	if c.powerOffActive {
+		if err := c.setOutputPower(data, false); err != nil {
+			fmt.Fprintf(os.Stderr, "sysc-compositor: power off new output: %v\n", err)
+		} else {
+			if c.actionPoweredOff == nil {
+				c.actionPoweredOff = make(map[unsafe.Pointer]struct{})
+			}
+			c.actionPoweredOff[data] = struct{}{}
+		}
+	}
+	c.updateInjectedInputGate()
 	c.refreshState()
 }
 
@@ -445,7 +540,15 @@ func destroyOutput(output unsafe.Pointer) {
 
 // EnabledOutputs reports how many backend outputs are up. It is the number a
 // client means by "monitors".
-func (c *Compositor) EnabledOutputs() int { return len(c.sceneOutputs) }
+func (c *Compositor) EnabledOutputs() int {
+	count := 0
+	for pointer := range c.sceneOutputs {
+		if c.outputIsEnabled(pointer) {
+			count++
+		}
+	}
+	return count
+}
 
 // setOutputScale sets every output's scale, for tests.
 func (c *Compositor) setOutputScale(scale float64) error {

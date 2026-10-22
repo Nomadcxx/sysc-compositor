@@ -286,3 +286,168 @@ func TestCloseWindowBindSendsCloseAndConsumesKey(t *testing.T) {
 	}
 	t.Fatal("close bind did not send xdg_toplevel.close")
 }
+
+func TestKeyBindingRepeatHonorsDelayRateAndRelease(t *testing.T) {
+	repeatable := keyBind(t, "Mod+F", bind.ActionToggleWindowFloating)
+	repeatable.Repeat = true
+	c := newNestedWith(t, Options{
+		Keyboard: Keyboard{RepeatDelay: 300, RepeatRate: 10},
+		Binds:    []bind.Binding{repeatable},
+	})
+	var keyboard *fakeKeyboard
+	t.Cleanup(func() {
+		if keyboard != nil {
+			keyboard.remove()
+		}
+	})
+	c.viewMapped = func(view *toplevelView) {
+		keyboard = c.addFakeKeyboard()
+		if keyboard == nil {
+			t.Error("could not attach fake keyboard")
+			c.Terminate()
+			return
+		}
+		c.focusView(view)
+		keyboard.key(56, true) // Left Alt is Mod in the nested backend.
+		keyboard.key(33, true) // Repeatable Mod+F.
+		keyboard.key(30, true) // A is forwarded once while the bind is held.
+		window, found := findWindowSnapshot(c.WorkspaceSnapshot().Windows, view.id)
+		if !found || !window.Tile.Floating {
+			t.Error("bind's initial press did not run immediately")
+		}
+		go func() {
+			pressedAt := time.Now()
+			lastFloating := true
+			var transitions []time.Duration
+			for time.Since(pressedAt) < 2*time.Second && len(transitions) < 2 {
+				time.Sleep(10 * time.Millisecond) // Poll the compositor state without sampling a timer boundary.
+				floating, found := readWindowFloating(c, view)
+				if !found {
+					t.Error("mapped window disappeared while repeat was held")
+					break
+				}
+				if floating != lastFloating {
+					transitions = append(transitions, time.Since(pressedAt))
+					lastFloating = floating
+				}
+			}
+			if len(transitions) != 2 {
+				t.Errorf("floating state transitions while holding bind = %v, want two repeats", transitions)
+			} else {
+				if transitions[0] < 250*time.Millisecond {
+					t.Errorf("first repeat fired after %v, before the configured 300 ms delay", transitions[0])
+				}
+				if interval := transitions[1] - transitions[0]; interval < 50*time.Millisecond || interval > 400*time.Millisecond {
+					t.Errorf("repeat interval = %v, want the configured 100 ms interval", interval)
+				}
+			}
+			_ = c.Post(func() { keyboard.key(33, false) })   // A release cancels bind repeat.
+			stopAt := time.Now().Add(350 * time.Millisecond) // Observe more than three configured repeat intervals.
+			for time.Now().Before(stopAt) {
+				time.Sleep(10 * time.Millisecond)
+				floating, found := readWindowFloating(c, view)
+				if !found || !floating {
+					t.Error("bind repeated after its key was released")
+					break
+				}
+			}
+			_ = c.Post(func() {
+				keyboard.key(56, false)
+				keyboard.key(30, false)
+				c.Terminate()
+			})
+		}()
+	}
+	var keys []string
+	runClient(t, c, []string{"weston-terminal"}, []string{"WAYLAND_DEBUG=client"}, func(line string) bool {
+		if m := reKey.FindStringSubmatch(line); m != nil {
+			keys = append(keys, m[1]+"/"+m[2])
+		}
+		return false
+	})
+	if keyboard == nil {
+		t.Fatal("weston-terminal never mapped")
+	}
+	var aPresses, fEvents int
+	for _, key := range keys {
+		if key == "30/1" {
+			aPresses++
+		}
+		if strings.HasPrefix(key, "33/") {
+			fEvents++
+		}
+	}
+	if aPresses != 1 || fEvents != 0 {
+		t.Errorf("client key events = %v, want one A press and no repeatable bind key events", keys)
+	}
+}
+
+func TestKeyBindingRepeatFalseRunsOnlyOnPress(t *testing.T) {
+	nonRepeating := keyBind(t, "Mod+F", bind.ActionToggleWindowFloating)
+	c := newNestedWith(t, Options{
+		Keyboard: Keyboard{RepeatDelay: 200, RepeatRate: 20},
+		Binds:    []bind.Binding{nonRepeating},
+	})
+	var keyboard *fakeKeyboard
+	t.Cleanup(func() {
+		if keyboard != nil {
+			keyboard.remove()
+		}
+	})
+	c.viewMapped = func(view *toplevelView) {
+		keyboard = c.addFakeKeyboard()
+		if keyboard == nil {
+			t.Error("could not attach fake keyboard")
+			c.Terminate()
+			return
+		}
+		c.focusView(view)
+		keyboard.key(56, true)
+		keyboard.key(33, true)
+		window, found := findWindowSnapshot(c.WorkspaceSnapshot().Windows, view.id)
+		if !found || !window.Tile.Floating {
+			t.Error("repeat=false bind's initial press did not run")
+		}
+		go func() {
+			// The delay plus two repeat intervals would expose an accidental timer.
+			stopAt := time.Now().Add(400 * time.Millisecond)
+			for time.Now().Before(stopAt) {
+				time.Sleep(10 * time.Millisecond)
+				floating, found := readWindowFloating(c, view)
+				if !found || !floating {
+					t.Error("repeat=false bind repeated while held")
+					break
+				}
+			}
+			_ = c.Post(func() {
+				keyboard.key(33, false)
+				keyboard.key(56, false)
+				c.Terminate()
+			})
+		}()
+	}
+	runClient(t, c, []string{"weston-terminal"}, nil, nil)
+	if keyboard == nil {
+		t.Fatal("weston-terminal never mapped")
+	}
+}
+
+func readWindowFloating(c *Compositor, view *toplevelView) (bool, bool) {
+	type result struct {
+		floating bool
+		found    bool
+	}
+	ready := make(chan result, 1)
+	if err := c.Post(func() {
+		window, found := findWindowSnapshot(c.WorkspaceSnapshot().Windows, view.id)
+		ready <- result{floating: window.Tile.Floating, found: found}
+	}); err != nil {
+		return false, false
+	}
+	select {
+	case got := <-ready:
+		return got.floating, got.found
+	case <-time.After(time.Second):
+		return false, false
+	}
+}
