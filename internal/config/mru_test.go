@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"testing"
 
@@ -21,18 +22,24 @@ func TestRecentWindowsDefaultsToNiri(t *testing.T) {
 		t.Errorf("previews = %+v", r.Previews)
 	}
 	alt, shift := bind.Modifiers(bind.ModifierAlt), bind.Modifiers(bind.ModifierShift)
-	want := []MRUBind{
-		{Chord: bind.Chord{Key: "Tab", Modifiers: alt}},
-		{Chord: bind.Chord{Key: "Tab", Modifiers: alt | shift}, Backward: true},
-		{Chord: bind.Chord{Key: "grave", Modifiers: alt}, FilterAppID: true},
-		{Chord: bind.Chord{Key: "grave", Modifiers: alt | shift}, Backward: true, FilterAppID: true},
-		{Chord: bind.Chord{Key: "Tab", UsesMod: true}},
-		{Chord: bind.Chord{Key: "Tab", Modifiers: shift, UsesMod: true}, Backward: true},
-		{Chord: bind.Chord{Key: "grave", UsesMod: true}, FilterAppID: true},
-		{Chord: bind.Chord{Key: "grave", Modifiers: shift, UsesMod: true}, Backward: true, FilterAppID: true},
+	want := []bind.Binding{
+		mruBinding(bind.Chord{Key: "Tab", Modifiers: alt}, false, "", "all"),
+		mruBinding(bind.Chord{Key: "Tab", Modifiers: alt | shift}, true, "", "all"),
+		mruBinding(bind.Chord{Key: "grave", Modifiers: alt}, false, "", "app-id"),
+		mruBinding(bind.Chord{Key: "grave", Modifiers: alt | shift}, true, "", "app-id"),
+		mruBinding(bind.Chord{Key: "Tab", UsesMod: true}, false, "", "all"),
+		mruBinding(bind.Chord{Key: "Tab", Modifiers: shift, UsesMod: true}, true, "", "all"),
+		mruBinding(bind.Chord{Key: "grave", UsesMod: true}, false, "", "app-id"),
+		mruBinding(bind.Chord{Key: "grave", Modifiers: shift, UsesMod: true}, true, "", "app-id"),
 	}
-	if !slices.Equal(r.Binds, want) {
+	if !reflect.DeepEqual(r.Binds, want) {
 		t.Errorf("binds = %+v\nwant %+v", r.Binds, want)
+	}
+	if !reflect.DeepEqual(r.Binds[3], bind.Binding{
+		Chord: bind.Chord{Key: "grave", Modifiers: alt | shift}, Repeat: true,
+		Actions: []bind.Action{{Name: bind.ActionMRUAdvance, Backward: true, MRUFilter: "app-id"}},
+	}) {
+		t.Errorf("Alt+Shift+grave = %+v", r.Binds[3])
 	}
 	spring := Default().Animations.RecentWindowsClose.Spring
 	if spring == nil || *spring != (SpringConfig{DampingRatio: 1, Stiffness: 800, Epsilon: 0.001}) {
@@ -91,13 +98,14 @@ animations {
 		t.Errorf("previews = %+v", r.Previews)
 	}
 	alt := bind.Modifiers(bind.ModifierAlt)
-	want := []MRUBind{
-		{Chord: bind.Chord{Key: "grave", Modifiers: alt}, FilterAppID: true},
-		{Chord: bind.Chord{Key: "Tab", Modifiers: bind.Modifiers(bind.ModifierSuper)}, Backward: true,
-			Scope: MRUScopeOutput, IgnoresInhibit: true},
-		{Chord: bind.Chord{Key: "Tab", Modifiers: alt}, Scope: MRUScopeWorkspace},
+	inhibitable := mruBinding(bind.Chord{Key: "Tab", Modifiers: bind.Modifiers(bind.ModifierSuper)}, true, "output", "all")
+	inhibitable.IgnoresInhibit = true
+	want := []bind.Binding{
+		mruBinding(bind.Chord{Key: "grave", Modifiers: alt}, false, "", "app-id"),
+		inhibitable,
+		mruBinding(bind.Chord{Key: "Tab", Modifiers: alt}, false, "workspace", "all"),
 	}
-	if !slices.Equal(r.Binds, want) {
+	if !reflect.DeepEqual(r.Binds, want) {
 		t.Errorf("binds = %+v\nwant %+v", r.Binds, want)
 	}
 	if spring := cfg.Animations.RecentWindowsClose.Spring; spring == nil || spring.Stiffness != 300 {

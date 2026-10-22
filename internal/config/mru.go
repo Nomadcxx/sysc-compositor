@@ -17,7 +17,9 @@ type RecentWindows struct {
 	DebounceMS, OpenDelayMS int
 	Highlight               MRUHighlight
 	Previews                MRUPreviews
-	Binds                   []MRUBind
+	// Binds open and drive the switcher: each runs one mru-advance, as
+	// Niri turns MruBinds into Binds.
+	Binds []bind.Binding
 }
 
 type MRUHighlight struct {
@@ -29,29 +31,18 @@ type MRUPreviews struct {
 	MaxHeight, MaxScale float64
 }
 
-// MRUScope is the windows the switcher lists.
-type MRUScope string
-
-const (
-	MRUScopeAll       MRUScope = "all"
-	MRUScopeOutput    MRUScope = "output"
-	MRUScopeWorkspace MRUScope = "workspace"
-)
-
-// MRUBind is one recent-windows bind: next-window, or previous-window when
-// Backward. An empty Scope keeps the switcher's last scope; FilterAppID lists
-// only the selected window's app id.
-type MRUBind struct {
-	Chord          bind.Chord
-	Backward       bool
-	Scope          MRUScope
-	FilterAppID    bool
-	IgnoresInhibit bool
+// mruBinding is a recent-windows bind: next-window, or previous-window when
+// backward. A next-window or previous-window without filter= lists every app
+// id, and one without scope= keeps the switcher's scope.
+func mruBinding(chord bind.Chord, backward bool, scope, filter string) bind.Binding {
+	return bind.Binding{Chord: chord, Repeat: true, Actions: []bind.Action{{
+		Name: bind.ActionMRUAdvance, Backward: backward, MRUScope: scope, MRUFilter: filter,
+	}}}
 }
 
 // defaultRecentWindows is Niri 26.04's (niri-config/src/recent_windows.rs).
 func defaultRecentWindows() RecentWindows {
-	var binds []MRUBind
+	var binds []bind.Binding
 	for _, base := range []bind.Chord{
 		{Modifiers: bind.Modifiers(bind.ModifierAlt)},
 		{UsesMod: true},
@@ -63,7 +54,11 @@ func defaultRecentWindows() RecentWindows {
 				if backward {
 					chord.Modifiers |= bind.Modifiers(bind.ModifierShift)
 				}
-				binds = append(binds, MRUBind{Chord: chord, Backward: backward, FilterAppID: key == "grave"})
+				filter := "all"
+				if key == "grave" {
+					filter = "app-id"
+				}
+				binds = append(binds, mruBinding(chord, backward, "", filter))
 			}
 		}
 	}
@@ -103,14 +98,14 @@ func (c *Config) recentWindows(n *document.Node) error {
 		case "previews":
 			err = r.previews(child)
 		case "binds":
-			var binds []MRUBind
+			var binds []bind.Binding
 			if binds, err = mruBinds(child); err == nil {
 				if !c.sawMRUBinds {
 					c.sawMRUBinds = true
 					r.Binds = nil
 				}
-				r.Binds = slices.DeleteFunc(r.Binds, func(old MRUBind) bool {
-					return slices.ContainsFunc(binds, func(b MRUBind) bool { return b.Chord == old.Chord })
+				r.Binds = slices.DeleteFunc(r.Binds, func(old bind.Binding) bool {
+					return slices.ContainsFunc(binds, func(b bind.Binding) bool { return b.Chord == old.Chord })
 				})
 				r.Binds = append(r.Binds, binds...)
 			}
@@ -170,17 +165,17 @@ func (r *RecentWindows) previews(n *document.Node) error {
 	return nil
 }
 
-func mruBinds(n *document.Node) ([]MRUBind, error) {
+func mruBinds(n *document.Node) ([]bind.Binding, error) {
 	if len(n.Arguments) != 0 || len(n.Properties) != 0 {
 		return nil, fmt.Errorf("`binds` takes child nodes only")
 	}
-	var binds []MRUBind
+	var binds []bind.Binding
 	for _, node := range n.Children {
 		b, err := mruBind(node)
 		if err != nil {
 			return nil, fmt.Errorf("bind %q: %w", nodeName(node), err)
 		}
-		if slices.ContainsFunc(binds, func(seen MRUBind) bool { return seen.Chord == b.Chord }) {
+		if slices.ContainsFunc(binds, func(seen bind.Binding) bool { return seen.Chord == b.Chord }) {
 			return nil, fmt.Errorf("duplicate bind %q", nodeName(node))
 		}
 		binds = append(binds, b)
@@ -188,65 +183,69 @@ func mruBinds(n *document.Node) ([]MRUBind, error) {
 	return binds, nil
 }
 
-func mruBind(node *document.Node) (MRUBind, error) {
+func mruBind(node *document.Node) (bind.Binding, error) {
 	chord, err := bind.ParseChord(nodeName(node))
 	if err != nil {
-		return MRUBind{}, err
+		return bind.Binding{}, err
 	}
 	// The switcher stays open while any modifier is held, so Niri requires one.
 	if chord.Modifiers == 0 && !chord.UsesMod {
-		return MRUBind{}, fmt.Errorf("keybind must have a modifier key")
+		return bind.Binding{}, fmt.Errorf("keybind must have a modifier key")
 	}
 	if chord.Trigger != bind.TriggerKey {
-		return MRUBind{}, fmt.Errorf("key must be a keyboard key")
+		return bind.Binding{}, fmt.Errorf("key must be a keyboard key")
 	}
 	if len(node.Arguments) != 0 {
-		return MRUBind{}, fmt.Errorf("no arguments expected for this node")
+		return bind.Binding{}, fmt.Errorf("no arguments expected for this node")
 	}
-	b := MRUBind{Chord: chord}
+	ignoresInhibit := false
 	for key, property := range node.Properties {
 		switch key {
 		case "allow-inhibiting":
 			allow, ok := property.Value.(bool)
 			if !ok {
-				return MRUBind{}, fmt.Errorf("`allow-inhibiting` must be boolean")
+				return bind.Binding{}, fmt.Errorf("`allow-inhibiting` must be boolean")
 			}
-			b.IgnoresInhibit = !allow
+			ignoresInhibit = !allow
 		case "hotkey-overlay-title":
 			// Niri's hotkey overlay lists the general binds only.
 			if _, ok := property.Value.(string); !ok && property.Value != nil {
-				return MRUBind{}, fmt.Errorf("`hotkey-overlay-title` must be a string or null")
+				return bind.Binding{}, fmt.Errorf("`hotkey-overlay-title` must be a string or null")
 			}
 		default:
-			return MRUBind{}, fmt.Errorf("unexpected property `%s`", key)
+			return bind.Binding{}, fmt.Errorf("unexpected property `%s`", key)
 		}
 	}
 	if len(node.Children) != 1 {
-		return MRUBind{}, fmt.Errorf("expected exactly one action")
+		return bind.Binding{}, fmt.Errorf("expected exactly one action")
 	}
 	action := node.Children[0]
+	backward := false
 	switch nodeName(action) {
 	case "next-window":
 	case "previous-window":
-		b.Backward = true
+		backward = true
 	default:
-		return MRUBind{}, fmt.Errorf("unexpected action `%s`", nodeName(action))
+		return bind.Binding{}, fmt.Errorf("unexpected action `%s`", nodeName(action))
 	}
 	if len(action.Arguments) != 0 || len(action.Children) != 0 {
-		return MRUBind{}, fmt.Errorf("`%s` takes properties only", nodeName(action))
+		return bind.Binding{}, fmt.Errorf("`%s` takes properties only", nodeName(action))
 	}
+	scope, filter := "", "all"
 	for key, property := range action.Properties {
 		value, ok := property.Value.(string)
 		switch {
 		case key == "scope" && ok && (value == "all" || value == "output" || value == "workspace"):
-			b.Scope = MRUScope(value)
+			scope = value
 		case key == "filter" && ok && value == "app-id":
-			b.FilterAppID = true
+			filter = value
 		case key == "scope" || key == "filter":
-			return MRUBind{}, fmt.Errorf("invalid `%s` %v", key, property.Value)
+			return bind.Binding{}, fmt.Errorf("invalid `%s` %v", key, property.Value)
 		default:
-			return MRUBind{}, fmt.Errorf("unexpected property `%s`", key)
+			return bind.Binding{}, fmt.Errorf("unexpected property `%s`", key)
 		}
 	}
+	b := mruBinding(chord, backward, scope, filter)
+	b.IgnoresInhibit = ignoresInhibit
 	return b, nil
 }
