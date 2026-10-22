@@ -25,3 +25,7 @@ TestNestedKeyboardBindConsumeOrExpelWindowRight sysc-1638
 TestNestedKeyboardBindFocusesAndMovesTabbedWindowsVertically sysc-1638
 TestNestedKeyboardBindMovesColumnAndWindowBetweenWorkspaces sysc-1638
 TestNestedKeyboardBindNamesAndMovesWindowToNamedWorkspace sysc-1638
+# M7 tests: a tiled Mod-drag (sysc-1638), and an overview projection test
+# that is flaky in lane 2 (sysc-1640).
+TestTiledModDragShowsInsertHintAndCommitsOnRelease sysc-1638
+TestOverviewProjectionSurvivesBufferCommitAndUnmap sysc-1640
