@@ -372,6 +372,9 @@ func (c *Compositor) setOutputPower(pointer unsafe.Pointer, enabled bool) error 
 	if !bool(C.sysc_output_set_enabled(output, C.bool(enabled))) {
 		return fmt.Errorf("wlr: setting output %q power=%t failed", C.GoString(output.name), enabled)
 	}
+	if !enabled {
+		c.lockOutputGone(pointer)
+	}
 	c.updateInjectedInputGate()
 	return nil
 }
@@ -478,9 +481,11 @@ func (c *Compositor) handleNewOutput(data unsafe.Pointer) {
 		if C.sysc_repaint_scene_output(so) {
 			c.drawn++
 		}
+		c.lockFrameDone(data)
 	})
 	c.keep(frame)
 	c.arrangeLayers(data)
+	c.arrangeLockOutput(data)
 
 	// A nested output is sized by the host: Niri tiles the window and the
 	// backend asks for that size. Ignoring the request leaves the output at
@@ -497,6 +502,7 @@ func (c *Compositor) handleNewOutput(data unsafe.Pointer) {
 	commit := AddListener(unsafe.Pointer(&output.events.commit), func(event unsafe.Pointer) {
 		if bool(C.sysc_commit_changed_geometry((*C.struct_wlr_output_event_commit)(event))) {
 			c.arrangeLayers(data)
+			c.arrangeLockOutput(data)
 			c.refreshState()
 		}
 	})
@@ -508,6 +514,7 @@ func (c *Compositor) handleNewOutput(data unsafe.Pointer) {
 		c.closeOutputLayers(data)
 		delete(c.sceneOutputs, data)
 		delete(c.usable, data)
+		c.lockOutputGone(data)
 		c.removeWorkspaceOutput(name)
 		c.refreshState()
 		c.drop(frame)

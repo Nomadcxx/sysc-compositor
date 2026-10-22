@@ -1040,6 +1040,13 @@ func (c *Config) binds(n *document.Node) error {
 			}
 			binding.Repeat = repeat
 		}
+		if property, ok := node.Properties["allow-when-locked"]; ok {
+			allow, ok := property.Value.(bool)
+			if !ok {
+				return fmt.Errorf("bind %q: `allow-when-locked` must be boolean", nodeName(node))
+			}
+			binding.AllowWhenLocked = allow
+		}
 		for _, actionNode := range node.Children {
 			name := nodeName(actionNode)
 			if !bind.IsSupportedAction(name) {

@@ -51,6 +51,9 @@ type Binding struct {
 	Chord   Chord
 	Actions []Action
 	Repeat  bool
+	// AllowWhenLocked lets the bind's spawn actions run while the session is
+	// locked (Niri's allow-when-locked=true).
+	AllowWhenLocked bool
 }
 
 const (

@@ -367,6 +367,9 @@ func (c *Compositor) dispatchKeyBinding(keycode uint32) (bind.Binding, bool) {
 		if binding.Chord.Trigger != bind.TriggerKey || binding.Chord.Modifiers != modifiers {
 			continue
 		}
+		if c.sessionLocked && !binding.AllowWhenLocked {
+			continue
+		}
 		name := C.CString(binding.Chord.Key)
 		matches := bool(C.sysc_keysym_matches(c.keyboard, C.uint32_t(keycode), name))
 		C.free(unsafe.Pointer(name))
@@ -379,8 +382,13 @@ func (c *Compositor) dispatchKeyBinding(keycode uint32) (bind.Binding, bool) {
 	return bind.Binding{}, false
 }
 
+// executeKeyBinding runs a bind's actions. While the session is sealed only
+// spawn actions run, as Niri honours allow-when-locked for spawn alone.
 func (c *Compositor) executeKeyBinding(binding bind.Binding) {
 	for _, action := range binding.Actions {
+		if c.sessionLocked && action.Name != bind.ActionSpawn && action.Name != bind.ActionSpawnSh {
+			continue
+		}
 		c.executeBindAction(action)
 	}
 }

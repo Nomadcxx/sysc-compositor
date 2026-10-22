@@ -1009,6 +1009,16 @@ func (c *Compositor) focusLayerSurface(layer *layerSurface) {
 
 func (c *Compositor) updateKeyboardFocus() {
 	previousFocusedView := c.keyboardFocusedView()
+	if c.sessionLocked {
+		// Sealed: only a lock surface may hold user keyboard focus.
+		if surface := c.lockKeyboardSurface(); surface == nil {
+			C.wlr_seat_keyboard_notify_clear_focus(c.seat)
+		} else if c.seat.keyboard_state.focused_surface != surface {
+			C.sysc_seat_keyboard_focus(c.seat, surface, c.keyboard)
+		}
+		c.keyboardFocusChanged(previousFocusedView)
+		return
+	}
 	if layer := c.onDemandLayerFocus; layer != nil &&
 		(!bool(layer.surface.surface.mapped) || snapshotKeyboardMode(int(layer.surface.current.keyboard_interactive)) != LayerKeyboardOnDemandMode) {
 		c.onDemandLayerFocus = nil

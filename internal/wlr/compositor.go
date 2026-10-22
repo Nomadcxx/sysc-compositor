@@ -220,6 +220,15 @@ type Compositor struct {
 	powerOffActive   bool
 	actionPoweredOff map[unsafe.Pointer]struct{}
 
+	// The session lock (lock.go). lock is the live locker, or nil; the
+	// session can stay sealed (sessionLocked) with no locker after a crash.
+	lock          *sessionLock
+	lockTree      *C.struct_wlr_scene_tree
+	lockBackdrops map[unsafe.Pointer]*C.struct_wlr_scene_rect
+	// lockPendingOutputs are the enabled outputs that have not drawn a frame
+	// since the lock was accepted; `locked` waits for them. nil once sent.
+	lockPendingOutputs map[unsafe.Pointer]struct{}
+
 	// viewMapped, when set, runs on the compositor thread once a toplevel is
 	// mapped and hit-testable. It is the hook tests use to act once a client
 	// is on screen.
@@ -404,6 +413,9 @@ func NewWith(opts Options) (*Compositor, error) {
 	}
 	if !c.createOverviewTree() {
 		return nil, errors.New("overview scene tree create failed")
+	}
+	if !c.createSessionLock() {
+		return nil, errors.New("wlr_session_lock_manager_v1_create failed")
 	}
 	// xdg-output gives clients output names and logical geometry; waybar and
 	// grim refuse to start without it, and Niri advertises it.
