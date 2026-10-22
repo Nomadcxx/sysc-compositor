@@ -374,6 +374,8 @@ func (c *Compositor) handleKeyboardKey(data unsafe.Pointer) {
 			return
 		}
 	}
+	// Typing into the focused window marks it recently used at once.
+	c.applyPendingWindowFocus()
 	C.wlr_seat_keyboard_notify_key(c.seat, event.time_msec, event.keycode,
 		C.uint32_t(event.state))
 }
@@ -558,6 +560,9 @@ func (c *Compositor) executeBindAction(action bind.Action) {
 		if workspaceID, ok := c.focusedWorkspaceID(); ok {
 			c.SetWorkspaceName(workspaceID, action.WorkspaceName)
 		}
+		return
+	case bind.ActionFocusWindowPrevious:
+		c.FocusWindowPrevious()
 		return
 	case bind.ActionUnsetWorkspaceName:
 		if workspaceID, ok := c.focusedWorkspaceID(); ok {

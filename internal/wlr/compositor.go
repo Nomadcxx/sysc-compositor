@@ -219,6 +219,7 @@ type Compositor struct {
 	activeOutputName           string
 	stateChanged               func()
 	lastWindowState            []WindowInfo
+	recentWindows              config.RecentWindows
 	focusTimer                 *time.Timer
 	pendingFocus               *toplevelView
 	pendingFocusStamp          time.Duration
@@ -317,6 +318,8 @@ type Options struct {
 	OverlayBinds               []config.OverlayBind
 	HotkeyOverlay              config.HotkeyOverlay
 	ShowHotkeyOverlayAtStartup bool
+	// RecentWindows is the recent-windows section; nil is Niri's default.
+	RecentWindows *config.RecentWindows
 }
 
 type LayoutOptions struct {
@@ -358,6 +361,7 @@ func NewWith(opts Options) (*Compositor, error) {
 	c.animationConfig = opts.Animations
 	c.blurConfig = opts.Blur
 	c.screenshotPattern = opts.ScreenshotPath
+	c.recentWindows = *opts.RecentWindows
 	c.hotkeyOverlay.open = opts.ShowHotkeyOverlayAtStartup
 	c.configureHotkeyOverlay(opts.OverlayBinds, opts.HotkeyOverlay)
 	c.preferNoCSD = opts.PreferNoCSD
@@ -559,6 +563,9 @@ func normalizeOptions(opts Options) Options {
 	if opts.Gestures.DNDEdgeViewScroll == (config.DNDEdgeViewScroll{}) {
 		opts.Gestures.DNDEdgeViewScroll = defaults.Gestures.DNDEdgeViewScroll
 	}
+	if opts.RecentWindows == nil {
+		opts.RecentWindows = &defaults.RecentWindows
+	}
 	if opts.Layout == nil {
 		opts.Layout = &LayoutOptions{
 			Gaps: defaults.Layout.Gaps, ColumnWidthProportion: 0.5,
@@ -609,6 +616,7 @@ func (c *Compositor) Reconfigure(opts Options) error {
 	c.overviewConfig = opts.Overview
 	c.animationConfig = opts.Animations
 	c.screenshotPattern = opts.ScreenshotPath
+	c.recentWindows = *opts.RecentWindows
 	c.configureHotkeyOverlay(opts.OverlayBinds, opts.HotkeyOverlay)
 	if opts.Blur != c.blurConfig {
 		c.blurConfig = opts.Blur

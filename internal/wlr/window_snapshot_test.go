@@ -273,3 +273,58 @@ func TestWindowFocusTimestampIgnoresStaleTimerPost(t *testing.T) {
 		t.Fatal("stale timer callback committed the newer timestamp before its debounce elapsed")
 	}
 }
+
+// FocusWindowPrevious returns to the most recently used window, committing
+// the pending stamp of the window it leaves, as Niri's does; a key that
+// reaches the focused window commits its stamp at once, and debounce-ms 0
+// stamps without waiting.
+func TestFocusWindowPreviousCommitsTheWindowItLeaves(t *testing.T) {
+	if _, err := exec.LookPath("weston-terminal"); err != nil {
+		t.Skipf("weston-terminal unavailable: %v", err)
+	}
+	c := newNested(t)
+	var views []*toplevelView
+	c.viewMapped = func(view *toplevelView) {
+		views = append(views, view)
+		if len(views) != 3 {
+			return
+		}
+		defer c.Terminate()
+		a, b, third := views[0], views[1], views[2]
+		for _, view := range views {
+			c.focusView(view)
+			c.applyPendingWindowFocus()
+		}
+		c.focusView(a)
+		if c.pendingFocus != a {
+			t.Fatal("refocusing a stamped window did not wait for the debounce")
+		}
+		if !c.FocusWindowPrevious() || c.focusedView != third {
+			t.Fatalf("focus-window-previous from the first window focused %d, want %d", c.focusedView.id, third.id)
+		}
+		if !c.FocusWindowPrevious() || c.focusedView != a {
+			t.Fatalf("a second focus-window-previous focused %d, want the first window %d", c.focusedView.id, a.id)
+		}
+
+		keyboard := c.addFakeKeyboard()
+		defer keyboard.remove()
+		c.focusView(b)
+		before := b.focusTimestamp
+		keyboard.key(keyA, true)
+		keyboard.key(keyA, false)
+		if c.pendingFocus != nil || b.focusTimestamp <= before {
+			t.Error("a key sent to the focused window did not commit its focus stamp")
+		}
+
+		c.recentWindows.DebounceMS = 0
+		before = third.focusTimestamp
+		c.focusView(third)
+		if c.pendingFocus != nil || third.focusTimestamp <= before {
+			t.Error("debounce-ms 0 did not stamp the focused window at once")
+		}
+	}
+	runClient(t, c, []string{"sh", "-c", "weston-terminal & weston-terminal & weston-terminal & wait"}, nil, nil)
+	if len(views) != 3 {
+		t.Fatalf("mapped windows = %d, want three", len(views))
+	}
+}

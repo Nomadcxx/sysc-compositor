@@ -41,6 +41,7 @@ func compositorOptions(cfg *config.Config, locale *config.Keyboard) wlr.Options 
 		ScreenshotPath: cfg.ScreenshotPath,
 		OverlayBinds:   cfg.OverlayBinds, HotkeyOverlay: cfg.HotkeyOverlay,
 		ShowHotkeyOverlayAtStartup: !cfg.HotkeyOverlay.SkipAtStartup,
+		RecentWindows:              &cfg.RecentWindows,
 		PreferNoCSD:                cfg.PreferNoCSD, Workspaces: workspaces,
 		WindowRules: cfg.WindowRules, LayerRules: cfg.LayerRules,
 	}

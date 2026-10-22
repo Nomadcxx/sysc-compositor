@@ -286,6 +286,8 @@ func (s *Server) Run() error {
 						s.c.FocusColumnLeft()
 					case "FocusColumnRight":
 						s.c.FocusColumnRight()
+					case "FocusWindowPrevious":
+						s.c.FocusWindowPrevious()
 					case "FocusColumnFirst":
 						s.c.FocusColumnFirst()
 					case "FocusColumnLast":

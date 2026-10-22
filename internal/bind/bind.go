@@ -89,6 +89,7 @@ const (
 	ActionFocusWindowInColumn            = "focus-window-in-column"
 	ActionFocusWindowDown                = "focus-window-down"
 	ActionFocusWindowUp                  = "focus-window-up"
+	ActionFocusWindowPrevious            = "focus-window-previous"
 	ActionMoveWindowDown                 = "move-window-down"
 	ActionMoveWindowUp                   = "move-window-up"
 	ActionToggleWindowFloating           = "toggle-window-floating"
@@ -272,6 +273,7 @@ func ParseAction(name string, args []string) (Action, bool, error) {
 		ActionConsumeWindowIntoColumn, ActionExpelWindowFromColumn,
 		ActionConsumeOrExpelWindowLeft, ActionConsumeOrExpelWindowRight,
 		ActionToggleColumnTabbedDisplay, ActionFocusWindowDown, ActionFocusWindowUp,
+		ActionFocusWindowPrevious,
 		ActionMoveWindowDown, ActionMoveWindowUp, ActionToggleWindowFloating,
 		ActionMoveWindowToFloating, ActionMoveWindowToTiling,
 		ActionFocusFloating, ActionFocusTiling, ActionSwitchFocusFloatingAndTiling,
@@ -392,7 +394,8 @@ func IsSupportedAction(name string) bool {
 		ActionConsumeWindowIntoColumn, ActionExpelWindowFromColumn,
 		ActionConsumeOrExpelWindowLeft, ActionConsumeOrExpelWindowRight,
 		ActionToggleColumnTabbedDisplay, ActionSetColumnDisplay, ActionFocusWindowInColumn,
-		ActionFocusWindowDown, ActionFocusWindowUp, ActionMoveWindowDown, ActionMoveWindowUp,
+		ActionFocusWindowDown, ActionFocusWindowUp, ActionFocusWindowPrevious,
+		ActionMoveWindowDown, ActionMoveWindowUp,
 		ActionToggleWindowFloating, ActionMoveWindowToFloating, ActionMoveWindowToTiling,
 		ActionFocusFloating, ActionFocusTiling, ActionSwitchFocusFloatingAndTiling,
 		ActionFullscreenWindow, ActionToggleWindowedFullscreen,

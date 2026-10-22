@@ -382,8 +382,8 @@ func (h niriHandler) action(a ipc.Action) (ipc.Reply, func()) {
 		"PowerOffMonitors", "PowerOnMonitors":
 		return h.windowAction(a, 0)
 	case "FocusWindow", "CloseWindow",
-		"FocusWindowInColumn", "FocusWindowDown", "FocusWindowUp", "MoveWindowDown", "MoveWindowUp",
-		"FullscreenWindow", "ToggleWindowedFullscreen",
+		"FocusWindowInColumn", "FocusWindowDown", "FocusWindowUp", "FocusWindowPrevious",
+		"MoveWindowDown", "MoveWindowUp", "FullscreenWindow", "ToggleWindowedFullscreen",
 		"FocusColumnLeft", "FocusColumnRight", "FocusColumnFirst", "FocusColumnLast",
 		"MoveColumnLeft", "MoveColumnRight", "MoveColumnToFirst", "MoveColumnToLast",
 		"ConsumeWindowIntoColumn", "ExpelWindowFromColumn", "ConsumeOrExpelWindowLeft", "ConsumeOrExpelWindowRight",

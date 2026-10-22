@@ -39,6 +39,7 @@ type Config struct {
 	// hotkey overlay lists them; HotkeyOverlay is its section.
 	OverlayBinds  []OverlayBind
 	HotkeyOverlay HotkeyOverlay
+	RecentWindows RecentWindows
 	Workspaces    []WorkspaceConfig
 	WindowRules   []WindowRule
 	LayerRules    []LayerRule
@@ -48,6 +49,10 @@ type Config struct {
 	// ScreenshotPath is the strftime pattern screenshots are written to; nil
 	// (`screenshot-path null`) keeps them in the clipboard only.
 	ScreenshotPath *string
+
+	// sawMRUBinds is set once a recent-windows binds block has replaced the
+	// default switcher binds.
+	sawMRUBinds bool
 }
 
 // DefaultScreenshotPath is Niri 26.04's (niri-config/src/misc.rs).
@@ -134,6 +139,8 @@ type Animations struct {
 	HorizontalViewMovement Animation
 	// ExitConfirmationOpenClose drives the exit dialog's fade and zoom.
 	ExitConfirmationOpenClose Animation
+	// RecentWindowsClose fades the window switcher out.
+	RecentWindowsClose Animation
 }
 
 // HotkeyOverlay is Niri's hotkey-overlay section.
@@ -206,6 +213,7 @@ func Default() *Config {
 		Cursor:         Cursor{Theme: "default", Size: 24},
 		Animations:     defaultAnimations(),
 		Blur:           defaultBlur(),
+		RecentWindows:  defaultRecentWindows(),
 		ScreenshotPath: func() *string { p := DefaultScreenshotPath; return &p }()}
 }
 
@@ -302,6 +310,8 @@ func decode(name string, nodes []*document.Node) (*Config, error) {
 			err = c.binds(n)
 		case "hotkey-overlay":
 			err = c.hotkeyOverlay(n)
+		case "recent-windows":
+			err = c.recentWindows(n)
 		case "switch-events":
 			err = c.switchEvents(n)
 		case "workspace":
@@ -538,6 +548,7 @@ func defaultAnimations() Animations {
 		WorkspaceSwitch:           spring(1000, 0.0001),
 		HorizontalViewMovement:    spring(800, 0.0001),
 		ExitConfirmationOpenClose: Animation{Spring: &SpringConfig{DampingRatio: 0.6, Stiffness: 500, Epsilon: 0.01}},
+		RecentWindowsClose:        spring(800, 0.001),
 	}
 }
 
@@ -562,13 +573,13 @@ func (c *Config) animations(n *document.Node) error {
 			}
 			c.addWarning("animations.slowdown")
 		case "window-open", "window-close", "window-resize", "window-movement", "overview-open-close", "workspace-switch", "horizontal-view-movement",
-			"exit-confirmation-open-close":
+			"exit-confirmation-open-close", "recent-windows-close":
 			setting, err := c.parseAnimation(name, child)
 			if err != nil {
 				return fmt.Errorf("%s: %w", name, err)
 			}
 			c.setAnimation(name, setting)
-		case "config-notification-open-close", "screenshot-ui-open", "recent-windows-close":
+		case "config-notification-open-close", "screenshot-ui-open":
 			c.addWarning("animations." + name)
 		default:
 			return fmt.Errorf("unexpected node `%s`", name)
@@ -659,6 +670,8 @@ func defaultAnimation(name string) Animation {
 		return defaults.WorkspaceSwitch
 	case "exit-confirmation-open-close":
 		return defaults.ExitConfirmationOpenClose
+	case "recent-windows-close":
+		return defaults.RecentWindowsClose
 	default:
 		return defaults.HorizontalViewMovement
 	}
@@ -682,6 +695,8 @@ func (c *Config) setAnimation(name string, setting Animation) {
 		c.Animations.HorizontalViewMovement = setting
 	case "exit-confirmation-open-close":
 		c.Animations.ExitConfirmationOpenClose = setting
+	case "recent-windows-close":
+		c.Animations.RecentWindowsClose = setting
 	}
 }
 
