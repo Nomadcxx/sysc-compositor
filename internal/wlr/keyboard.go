@@ -333,6 +333,12 @@ func (c *Compositor) handleKeyboardKey(data unsafe.Pointer) {
 	keycode := uint32(event.keycode)
 	c.userActivity()
 	if event.state == C.WL_KEYBOARD_KEY_STATE_PRESSED {
+		// Niri closes the hotkey overlay after the press is handled, so a
+		// press still reaches its bind or client, and one that opens the
+		// overlay leaves it open.
+		if c.hotkeyOverlay.open {
+			defer c.hideHotkeyOverlay()
+		}
 		// A key may have been released while the session was inactive. A fresh
 		// press starts a new suppression lifetime for this evdev keycode.
 		delete(c.suppressedKeys, keycode)
@@ -507,6 +513,10 @@ func (c *Compositor) executeBindAction(action bind.Action) {
 	}
 	if action.Name == bind.ActionQuit {
 		c.Quit(action.SkipConfirmation)
+		return
+	}
+	if action.Name == bind.ActionShowHotkeyOverlay {
+		c.ShowHotkeyOverlay()
 		return
 	}
 	if action.Name == bind.ActionSpawn {

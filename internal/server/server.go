@@ -222,6 +222,8 @@ func (s *Server) Run() error {
 						s.c.SwitchLayout(action.Layout, action.LayoutIndex)
 					case "ToggleOverview":
 						s.c.ToggleOverview()
+					case "ShowHotkeyOverlay":
+						s.c.ShowHotkeyOverlay()
 					case "ToggleKeyboardShortcutsInhibit":
 						s.c.ToggleKeyboardShortcutsInhibit()
 					case "ScreenshotScreen":

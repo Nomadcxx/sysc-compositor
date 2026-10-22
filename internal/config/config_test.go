@@ -34,6 +34,9 @@ func TestGreeterConfig(t *testing.T) {
 	if !c.Animations.Off {
 		t.Error("greeter animations should be off")
 	}
+	if !c.HotkeyOverlay.SkipAtStartup {
+		t.Error("the greeter must not show the hotkey overlay at startup")
+	}
 }
 
 func TestParse(t *testing.T) {
@@ -1120,6 +1123,50 @@ animations {
 	for _, w := range cfg.Warnings {
 		if w == "animations.exit-confirmation-open-close" {
 			t.Error("exit-confirmation-open-close is still reported as not applied")
+		}
+	}
+}
+
+func TestHotkeyOverlaySectionAndBindTitles(t *testing.T) {
+	cfg, err := Parse("overlay.kdl", []byte(`
+hotkey-overlay {
+    skip-at-startup
+    hide-not-bound
+}
+binds {
+    Mod+T hotkey-overlay-title="Terminal" { spawn "foot"; }
+    Mod+R hotkey-overlay-title=null { switch-preset-column-width; }
+    Ctrl+Alt+Delete { quit skip-confirmation=true; }
+}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.HotkeyOverlay != (HotkeyOverlay{SkipAtStartup: true, HideNotBound: true}) {
+		t.Errorf("hotkey-overlay = %+v", cfg.HotkeyOverlay)
+	}
+	if len(cfg.OverlayBinds) != 3 {
+		t.Fatalf("overlay binds = %+v", cfg.OverlayBinds)
+	}
+	if b := cfg.OverlayBinds[0]; b.Action != "spawn" || len(b.Args) != 1 || b.Title == nil || *b.Title != "Terminal" {
+		t.Errorf("titled spawn = %+v", b)
+	}
+	// An action this compositor does not apply still reaches the overlay.
+	if b := cfg.OverlayBinds[1]; b.Action != "switch-preset-column-width" || !b.TitleHidden || b.Title != nil {
+		t.Errorf("null-titled bind = %+v", b)
+	}
+	if b := cfg.OverlayBinds[2]; b.Action != "quit" || !b.SkipConfirmation {
+		t.Errorf("quit = %+v", b)
+	}
+	for _, w := range cfg.Warnings {
+		if w == "hotkey-overlay" {
+			t.Error("hotkey-overlay is still reported as not applied")
+		}
+	}
+	for _, bad := range []string{"hotkey-overlay { show-always; }", "hotkey-overlay { skip-at-startup true; }",
+		"binds {\n    Mod+T hotkey-overlay-title=1 { spawn \"foot\"; }\n}"} {
+		if _, err := Parse("overlay.kdl", []byte(bad+"\n")); err == nil {
+			t.Errorf("%q was accepted", bad)
 		}
 	}
 }

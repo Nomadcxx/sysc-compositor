@@ -487,6 +487,7 @@ func (c *Compositor) handleNewOutput(data unsafe.Pointer) {
 	c.keep(frame)
 	c.arrangeLayers(data)
 	c.arrangeLockOutput(data)
+	c.syncHotkeyOverlay()
 
 	// A nested output is sized by the host: Niri tiles the window and the
 	// backend asks for that size. Ignoring the request leaves the output at
@@ -504,6 +505,7 @@ func (c *Compositor) handleNewOutput(data unsafe.Pointer) {
 		if bool(C.sysc_commit_changed_geometry((*C.struct_wlr_output_event_commit)(event))) {
 			c.arrangeLayers(data)
 			c.arrangeLockOutput(data)
+			c.syncHotkeyOverlay()
 			c.refreshState()
 		}
 	})
@@ -516,6 +518,7 @@ func (c *Compositor) handleNewOutput(data unsafe.Pointer) {
 		delete(c.sceneOutputs, data)
 		delete(c.usable, data)
 		c.lockOutputGone(data)
+		c.syncHotkeyOverlay()
 		c.removeWorkspaceOutput(name)
 		c.refreshState()
 		c.drop(frame)

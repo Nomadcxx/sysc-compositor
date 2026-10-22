@@ -35,12 +35,16 @@ type Config struct {
 	SwitchEvents SwitchEvents
 	Cursor       Cursor
 	Binds        []Binding
-	Workspaces   []WorkspaceConfig
-	WindowRules  []WindowRule
-	LayerRules   []LayerRule
-	Animations   Animations
-	Blur         Blur
-	PreferNoCSD  bool
+	// OverlayBinds is every bind in order, applied here or not, as the
+	// hotkey overlay lists them; HotkeyOverlay is its section.
+	OverlayBinds  []OverlayBind
+	HotkeyOverlay HotkeyOverlay
+	Workspaces    []WorkspaceConfig
+	WindowRules   []WindowRule
+	LayerRules    []LayerRule
+	Animations    Animations
+	Blur          Blur
+	PreferNoCSD   bool
 	// ScreenshotPath is the strftime pattern screenshots are written to; nil
 	// (`screenshot-path null`) keeps them in the clipboard only.
 	ScreenshotPath *string
@@ -130,6 +134,24 @@ type Animations struct {
 	HorizontalViewMovement Animation
 	// ExitConfirmationOpenClose drives the exit dialog's fade and zoom.
 	ExitConfirmationOpenClose Animation
+}
+
+// HotkeyOverlay is Niri's hotkey-overlay section.
+type HotkeyOverlay struct {
+	SkipAtStartup bool
+	HideNotBound  bool
+}
+
+// OverlayBind is a bind as the hotkey overlay sees it: its key, its first
+// action with the arguments and properties that tell actions apart, and its
+// hotkey-overlay-title (Title set, or TitleHidden for null).
+type OverlayBind struct {
+	Chord            bind.Chord
+	Action           string
+	Args             []string
+	SkipConfirmation bool
+	Title            *string
+	TitleHidden      bool
 }
 
 type Overview struct {
@@ -278,6 +300,8 @@ func decode(name string, nodes []*document.Node) (*Config, error) {
 			err = c.cursor(n)
 		case "binds":
 			err = c.binds(n)
+		case "hotkey-overlay":
+			err = c.hotkeyOverlay(n)
 		case "switch-events":
 			err = c.switchEvents(n)
 		case "workspace":
@@ -1109,6 +1133,7 @@ func (c *Config) binds(n *document.Node) error {
 		c.Warnings = append(c.Warnings, "binds")
 	}
 	var parsed []Binding
+	var overlay []OverlayBind
 	overrides := make(map[bind.Chord]struct{}, len(n.Children))
 	for _, node := range n.Children {
 		chord, err := bind.ParseChord(nodeName(node))
@@ -1122,6 +1147,11 @@ func (c *Config) binds(n *document.Node) error {
 		if len(node.Children) == 0 {
 			return fmt.Errorf("bind %q: expected at least one action", nodeName(node))
 		}
+		entry, err := overlayBind(chord, node)
+		if err != nil {
+			return fmt.Errorf("bind %q: %w", nodeName(node), err)
+		}
+		overlay = append(overlay, entry)
 		binding := Binding{Chord: chord, Repeat: true}
 		if property, ok := node.Properties["repeat"]; ok {
 			repeat, ok := property.Value.(bool)
@@ -1218,6 +1248,56 @@ func (c *Config) binds(n *document.Node) error {
 		}
 	}
 	c.Binds = append(kept, parsed...)
+	keptOverlay := c.OverlayBinds[:0]
+	for _, entry := range c.OverlayBinds {
+		if _, replaced := overrides[entry.Chord]; !replaced {
+			keptOverlay = append(keptOverlay, entry)
+		}
+	}
+	c.OverlayBinds = append(keptOverlay, overlay...)
+	return nil
+}
+
+// overlayBind reads what the hotkey overlay needs from a bind node.
+func overlayBind(chord bind.Chord, node *document.Node) (OverlayBind, error) {
+	action := node.Children[0]
+	entry := OverlayBind{Chord: chord, Action: nodeName(action)}
+	// Arguments that are not strings or integers belong to actions this
+	// compositor does not apply; the overlay only names them.
+	entry.Args, _ = actionArgs(action)
+	if skip, ok := action.Properties["skip-confirmation"]; ok && entry.Action == bind.ActionQuit {
+		entry.SkipConfirmation, _ = skip.Value.(bool)
+	}
+	if property, ok := node.Properties["hotkey-overlay-title"]; ok {
+		switch title := property.Value.(type) {
+		case nil:
+			entry.TitleHidden = true
+		case string:
+			entry.Title = &title
+		default:
+			return entry, fmt.Errorf("`hotkey-overlay-title` must be a string or null")
+		}
+	}
+	return entry, nil
+}
+
+func (c *Config) hotkeyOverlay(n *document.Node) error {
+	if len(n.Arguments) != 0 || len(n.Properties) != 0 {
+		return fmt.Errorf("`%s` takes child nodes only", nodeName(n))
+	}
+	for _, child := range n.Children {
+		if err := noValue(child); err != nil {
+			return err
+		}
+		switch nodeName(child) {
+		case "skip-at-startup":
+			c.HotkeyOverlay.SkipAtStartup = true
+		case "hide-not-bound":
+			c.HotkeyOverlay.HideNotBound = true
+		default:
+			return fmt.Errorf("unexpected node `%s`", nodeName(child))
+		}
+	}
 	return nil
 }
 

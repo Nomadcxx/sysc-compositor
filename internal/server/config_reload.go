@@ -39,7 +39,9 @@ func compositorOptions(cfg *config.Config, locale *config.Keyboard) wlr.Options 
 		CursorTheme: cfg.Cursor.Theme, CursorSize: cfg.Cursor.Size, Binds: cfg.Binds,
 		Overview: cfg.Overview, Gestures: cfg.Gestures, Animations: cfg.Animations, Blur: cfg.Blur,
 		ScreenshotPath: cfg.ScreenshotPath,
-		PreferNoCSD:    cfg.PreferNoCSD, Workspaces: workspaces,
+		OverlayBinds:   cfg.OverlayBinds, HotkeyOverlay: cfg.HotkeyOverlay,
+		ShowHotkeyOverlayAtStartup: !cfg.HotkeyOverlay.SkipAtStartup,
+		PreferNoCSD:                cfg.PreferNoCSD, Workspaces: workspaces,
 		WindowRules: cfg.WindowRules, LayerRules: cfg.LayerRules,
 	}
 }
