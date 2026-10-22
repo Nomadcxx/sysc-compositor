@@ -33,8 +33,11 @@ for pkg in ./internal/wlr ./internal/server; do
 		echo "::error::$pkg: failed or skipped outside the quarantine: $(echo $unexpected)"
 		status=1
 	fi
-	if grep -qE '^panic: |^panic: test timed out' "$log" || { [ $passed = 0 ] && [ -z "$bad" ]; }; then
-		echo "::error::$pkg: go test failed without a failing test to name (build failure, panic or timeout)"
+	# A crash ends the test binary early, so later tests never ran: it fails
+	# the lane even when every test that did fail is quarantined.
+	if grep -qE '^(panic: |fatal error: |SIGSEGV|SIGABRT|SIGBUS|SIGILL|SIGFPE)' "$log" ||
+		{ [ $passed = 0 ] && [ -z "$bad" ]; }; then
+		echo "::error::$pkg: the test binary crashed or failed without a failing test to name"
 		status=1
 	fi
 	for name in $quarantine; do
