@@ -353,8 +353,11 @@ func (c *Compositor) handleKeyboardKey(data unsafe.Pointer) {
 			c.suppressedKeys[keycode] = true
 			return
 		}
-		if c.shotUIKey(keycode) {
+		if c.shotUI != nil {
 			c.suppressedKeys[keycode] = true
+			if binding, ok := c.shotUIKey(keycode); ok && binding.Repeat {
+				c.startKeyboardRepeat(binding)
+			}
 			return
 		}
 		if binding, matched := c.dispatchKeyBinding(keycode); matched {
@@ -384,6 +387,15 @@ func (c *Compositor) keysymIs(keycode uint32, name string) bool {
 }
 
 func (c *Compositor) dispatchKeyBinding(keycode uint32) (bind.Binding, bool) {
+	binding, ok := c.matchKeyBinding(keycode)
+	if ok {
+		c.executeKeyBinding(binding)
+	}
+	return binding, ok
+}
+
+// matchKeyBinding is the bind a user key press triggers now, if any.
+func (c *Compositor) matchKeyBinding(keycode uint32) (bind.Binding, bool) {
 	modifiers := c.activeBindModifiers()
 	for i := range c.bindings {
 		binding := c.bindings[i]
@@ -402,7 +414,6 @@ func (c *Compositor) dispatchKeyBinding(keycode uint32) (bind.Binding, bool) {
 		if !matches {
 			continue
 		}
-		c.executeKeyBinding(binding)
 		return binding, true
 	}
 	return bind.Binding{}, false
@@ -423,6 +434,10 @@ func allowedWhenLocked(binding bind.Binding) bool {
 // executeKeyBinding runs a bind's actions. While the session is sealed only
 // spawn actions, which Niri's allow-when-locked covers, and quit run.
 func (c *Compositor) executeKeyBinding(binding bind.Binding) {
+	if c.shotUI != nil {
+		c.runShotBinding(binding)
+		return
+	}
 	for _, action := range binding.Actions {
 		if c.sessionLocked && action.Name != bind.ActionSpawn && action.Name != bind.ActionSpawnSh &&
 			action.Name != bind.ActionQuit {

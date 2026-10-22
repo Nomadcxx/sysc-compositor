@@ -1076,6 +1076,12 @@ func (m *Model) workspaceIndex(output *outputState, id uint64) int {
 	return 0
 }
 
+// OutputInDirection is the output next to from in direction (left, right,
+// up, down, previous or next), or "" when there is none.
+func (m *Model) OutputInDirection(from, direction string) string {
+	return m.outputInDirection(from, direction)
+}
+
 func (m *Model) outputInDirection(from, direction string) string {
 	current := m.outputs[from]
 	if current == nil || len(m.outputs) < 2 {
