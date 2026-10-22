@@ -82,12 +82,26 @@ func TestDataControlServesTheSelectionWithoutFocus(t *testing.T) {
 		// wl-copy serves the selection until replaced; in the foreground it
 		// can be stopped, and it holds no pipe the test waits on.
 		copyCmd := tool("wl-copy", "--foreground", "sysc-clipboard-probe")
+		var copyErr strings.Builder
+		copyCmd.Stderr = &copyErr
 		if err := copyCmd.Start(); err != nil {
 			t.Errorf("wl-copy: %v", err)
 			return
 		}
 		defer func() { _ = copyCmd.Process.Kill(); _ = copyCmd.Wait() }()
-		time.Sleep(200 * time.Millisecond)
+		// Wait for wl-copy's offer rather than a fixed time.
+		offered := false
+		for deadline := time.Now().Add(3 * time.Second); !offered && time.Now().Before(deadline); {
+			types, _ := tool("wl-paste", "--list-types").Output()
+			offered = strings.Contains(string(types), "text/plain")
+			if !offered {
+				time.Sleep(50 * time.Millisecond)
+			}
+		}
+		if !offered {
+			t.Errorf("wl-copy never offered the selection: %s", copyErr.String())
+			return
+		}
 		paste := tool("wl-paste", "--no-newline")
 		paste.Env = append(paste.Env, "WAYLAND_DEBUG=1")
 		var stderr strings.Builder
