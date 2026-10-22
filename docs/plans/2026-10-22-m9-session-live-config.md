@@ -119,3 +119,29 @@ Import session variables after both sockets exist and before startup commands or
 2. Run `gofmt`, `git diff --check`, `go vet -p 2 ./...`, and build `cmd/niri` and `cmd/sysc-compositor`.
 3. Run the named package checks required by `AGENTS.md`, never `go test ./...` or `-race`. Validate the laptop and greeter configs without installing the compositor, changing greetd, or starting/stopping host graphical-session targets.
 4. Confirm `go.mod`/`go.sum` contain only the D-Bus dependency required for the two M9 system-bus clients. Create a stacked M9 PR against M8; do not merge it.
+
+## Execution record (2026-10-22)
+
+PR #26, rebased onto M8 (#25) after the consent guard (#27), `Terminate` (#28), M6 (#22), CLI naming
+(#30) and CI (#29) landed on main.
+
+| Commit | What |
+|---|---|
+| `c01d20a` | session and live config: locale1 and login1 clients, `--session`, config reload |
+| `c373d35` | review fixes: `Destroy` is safe before the config watcher starts (`sysc-1627`); the event hub closes before the niri listener, so an open EventStream no longer hangs `Destroy` |
+
+**Rebase resolutions:**
+- `--session` joins #30's usage text: `sysc-compositor [--session] [-c CONFIG] …`. The usage test
+  was updated to match.
+- `normalizeOptions` replaces the inline option defaults, and #29's deferred cleanup in `NewWith` is
+  kept.
+
+**Proof:**
+- On the developer machine: `TestDestroyStopsActiveEventStream` (builds no compositor),
+  `TestM8AnimationOffAndUnsupportedSettings`, `TestUsageLeadsWithSyscCompositorAndNamesTheNiriAlias`,
+  `TestFailedStartReleasesTheSocket`, and the session D-Bus tests on a private bus. Static checks
+  passed.
+- Nested coverage comes from CI lane 2.
+- After the rebase, `sysc-compositor validate` accepts both the laptop's `~/.config/niri/config.kdl`
+  and sysc-greet's `config/niri-greeter-config.kdl`. It warns about sections and bind actions that
+  are still unapplied, all of them later milestones.
