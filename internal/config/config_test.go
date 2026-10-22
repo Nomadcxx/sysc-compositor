@@ -682,6 +682,172 @@ spawn-at-startup "outer-after"
 	}
 }
 
+func TestLoadLaterBindsOverrideIncludedBinds(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "config.kdl")
+	base := filepath.Join(dir, "base.kdl")
+	if err := os.WriteFile(base, []byte("binds {\n    Mod+Q { spawn \"old\"; }\n}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(root, []byte("include \"base.kdl\"\nbinds {\n    Mod+Q { spawn \"new\"; }\n}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.Binds) != 1 || len(c.Binds[0].Actions) != 1 || !reflect.DeepEqual(c.Binds[0].Actions[0].Args, []string{"new"}) {
+		t.Fatalf("binds = %+v, want the later bind only", c.Binds)
+	}
+}
+
+func TestParseRejectsDuplicateBindsWithinSection(t *testing.T) {
+	source := []byte(`binds {
+    Mod+Q { spawn "one"; }
+    Mod+Q { spawn "two"; }
+}`)
+	if _, err := Parse("duplicate-binds.kdl", source); err == nil {
+		t.Fatal("Parse accepted duplicate binds in one section")
+	}
+}
+
+func TestLoadWithSourcesTracksNestedAndOptionalIncludes(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "config.kdl")
+	child := filepath.Join(dir, "parts", "child.kdl")
+	grandchild := filepath.Join(dir, "parts", "nested", "inner.kdl")
+	missing := filepath.Join(dir, "parts", "optional.kdl")
+	for path, source := range map[string]string{
+		root:       "include \"parts/child.kdl\"\ninclude \"parts/optional.kdl\" optional=true",
+		child:      "include \"nested/inner.kdl\"",
+		grandchild: "spawn-at-startup \"nested\"",
+	} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(source), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	result, err := LoadWithSources(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Root != filepath.Clean(root) {
+		t.Fatalf("root = %q, want absolute root %q", result.Root, filepath.Clean(root))
+	}
+	want := []string{root, child, grandchild, missing}
+	for i := range want {
+		want[i] = filepath.Clean(want[i])
+	}
+	if !reflect.DeepEqual(result.Sources, want) {
+		t.Fatalf("sources = %q, want %q", result.Sources, want)
+	}
+	if result.Config == nil || !reflect.DeepEqual(result.Config.SpawnAtStartup, [][]string{{"nested"}}) {
+		t.Fatalf("loaded config = %+v, want nested config", result.Config)
+	}
+}
+
+func TestLoadWithSourcesReportsMissingIncludeOnReadFailure(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "config.kdl")
+	missing := filepath.Join(dir, "missing.kdl")
+	if err := os.WriteFile(root, []byte("include \"missing.kdl\""), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	result, err := LoadWithSources(root)
+	if err == nil {
+		t.Fatal("LoadWithSources() unexpectedly loaded a missing required include")
+	}
+	want := []string{filepath.Clean(root), filepath.Clean(missing)}
+	if !reflect.DeepEqual(result.Sources, want) {
+		t.Fatalf("sources after failed include read = %q, want %q", result.Sources, want)
+	}
+}
+
+func TestLoadWithSourcesReportsIncludeOnParseFailure(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "config.kdl")
+	child := filepath.Join(dir, "broken.kdl")
+	if err := os.WriteFile(root, []byte("include \"broken.kdl\""), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(child, []byte("binds {"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	result, err := LoadWithSources(root)
+	if err == nil {
+		t.Fatal("LoadWithSources() unexpectedly parsed a malformed include")
+	}
+	want := []string{filepath.Clean(root), filepath.Clean(child)}
+	if !reflect.DeepEqual(result.Sources, want) {
+		t.Fatalf("sources after include parse failure = %q, want %q", result.Sources, want)
+	}
+}
+
+func TestLoadSwitchEventsMergeIncludedConfig(t *testing.T) {
+	dir := t.TempDir()
+	base := filepath.Join(dir, "base.kdl")
+	root := filepath.Join(dir, "config.kdl")
+	if err := os.WriteFile(base, []byte("switch-events { lid-close { spawn \"old\"; }; tablet-mode-on { spawn \"tablet\" \"on\"; }; }"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(root, []byte("include \"base.kdl\"\nswitch-events { lid-close { spawn \"new\"; }; lid-open { spawn \"open\"; }; tablet-mode-off { spawn \"tablet\" \"off\"; }; }"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slices.Contains(c.Warnings, "switch-events") {
+		t.Fatalf("switch-events was left unapplied: %v", c.Warnings)
+	}
+	for name, want := range map[string][]string{
+		"LidClose": {"new"}, "LidOpen": {"open"}, "TabletModeOn": {"tablet", "on"}, "TabletModeOff": {"tablet", "off"},
+	} {
+		var got []string
+		switch name {
+		case "LidOpen":
+			got = c.SwitchEvents.LidOpen
+		case "LidClose":
+			got = c.SwitchEvents.LidClose
+		case "TabletModeOn":
+			got = c.SwitchEvents.TabletModeOn
+		case "TabletModeOff":
+			got = c.SwitchEvents.TabletModeOff
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("SwitchEvents.%s = %v, want %v", name, got, want)
+		}
+	}
+}
+
+func TestParseRejectsDuplicateSwitchEventsSections(t *testing.T) {
+	source := []byte(`switch-events {
+    lid-open { spawn "one"; }
+}
+switch-events {
+    lid-close { spawn "two"; }
+}`)
+	if _, err := Parse("duplicate-switch-events.kdl", source); err == nil {
+		t.Fatal("Parse accepted duplicate switch-events sections in one file")
+	} else if !strings.Contains(err.Error(), "duplicate node") {
+		t.Fatalf("Parse failed for the wrong reason: %v", err)
+	}
+}
+
+func TestParseRejectsMalformedSwitchEvents(t *testing.T) {
+	for _, source := range []string{
+		"switch-events { lid-open { spawn; } }",
+		"switch-events { power-button { spawn \"power\"; } }",
+		"switch-events { lid-open { spawn \"one\"; }; lid-open { spawn \"two\"; } }",
+	} {
+		if _, err := Parse("switch-events.kdl", []byte(source)); err == nil {
+			t.Errorf("Parse(%q) succeeded, want malformed switch-events error", source)
+		}
+	}
+}
+
 func TestLoadRejectsRecursiveIncludes(t *testing.T) {
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root.kdl")

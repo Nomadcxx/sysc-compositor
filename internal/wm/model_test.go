@@ -426,6 +426,20 @@ func TestConfiguredWorkspaceIsCreatedOnItsNamedOutput(t *testing.T) {
 	t.Fatal("configured workspace chat was not created")
 }
 
+func TestSetWorkspaceConfigAddsConfiguredWorkspaceToExistingOutput(t *testing.T) {
+	m := New()
+	m.AddOutput("DP-1", layout.Bounds{Width: 1000, Height: 800}, 500, 16)
+	if !m.SetWorkspaceConfig([]WorkspaceConfig{{Name: "chat", OpenOnOutput: "DP-1"}}) {
+		t.Fatal("SetWorkspaceConfig() reported no change")
+	}
+	for _, workspace := range m.Snapshot().Workspaces {
+		if workspace.Name != nil && *workspace.Name == "chat" {
+			return
+		}
+	}
+	t.Fatal("reloaded workspace config was not applied to the existing output")
+}
+
 func TestMoveWindowToWorkspacePreservesIDAndFollowsWhenFocused(t *testing.T) {
 	m := New()
 	m.AddOutput("DP-1", layout.Bounds{Width: 1000, Height: 800}, 500, 16)

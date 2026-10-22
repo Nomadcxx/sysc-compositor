@@ -223,6 +223,51 @@ func TestEncodeRequestRoundTrips(t *testing.T) {
 	}
 }
 
+func TestM9WireRequestsRoundTrip(t *testing.T) {
+	for _, line := range []string{
+		`{"Output":{"output":"eDP-1","action":"Off"}}`,
+		`{"Action":{"SwitchLayout":{"layout":"Next"}}}`,
+		`{"Action":{"SwitchLayout":{"layout":{"Index":2}}}}`,
+		`{"Action":{"LoadConfigFile":{"path":null}}}`,
+		`{"Action":{"LoadConfigFile":{"path":"/tmp/niri.kdl"}}}`,
+	} {
+		t.Run(line, func(t *testing.T) {
+			request, err := DecodeRequest([]byte(line))
+			if err != nil {
+				t.Fatalf("DecodeRequest(%s): %v", line, err)
+			}
+			var gotValue, wantValue any
+			if err := json.Unmarshal(EncodeRequest(request), &gotValue); err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal([]byte(line), &wantValue); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(gotValue, wantValue) {
+				t.Fatalf("EncodeRequest(DecodeRequest(%s)) = %v, want %v", line, gotValue, wantValue)
+			}
+		})
+	}
+}
+
+func TestDecodeOutputRequestRejectsUnknownAction(t *testing.T) {
+	if _, err := DecodeRequest([]byte(`{"Output":{"output":"eDP-1","action":"Unknown"}}`)); err != ErrParse {
+		t.Fatalf("DecodeRequest unknown output action error = %v, want %v", err, ErrParse)
+	}
+}
+
+func TestDecodeOutputRequestRejectsMalformedAction(t *testing.T) {
+	for _, line := range []string{
+		`{"Output":{"output":"eDP-1","action":{"Mode":{}}}}`,
+		`{"Output":{"output":"eDP-1","action":{"Vrr":{"vrr":true}}}}`,
+		`{"Output":{"output":"eDP-1","action":{"Transform":"Sideways"}}}`,
+	} {
+		if _, err := DecodeRequest([]byte(line)); err != ErrParse {
+			t.Errorf("DecodeRequest(%s) error = %v, want %v", line, err, ErrParse)
+		}
+	}
+}
+
 func TestReplyWire(t *testing.T) {
 	for _, tc := range []struct {
 		r    Reply

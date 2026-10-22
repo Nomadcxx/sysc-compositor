@@ -210,6 +210,20 @@ func (m *Model) SetOutputGeometry(name string, bounds layout.Bounds, columnWidth
 	return true
 }
 
+// SetWorkspaceConfig adds newly configured named workspaces to live outputs.
+// Existing workspaces keep their identity and placement across config reloads.
+func (m *Model) SetWorkspaceConfig(workspaces []WorkspaceConfig) bool {
+	if slices.Equal(m.workspaceConfig, workspaces) {
+		return false
+	}
+	m.workspaceConfig = slices.Clone(workspaces)
+	first := m.firstOutput()
+	for _, name := range m.outputNames() {
+		m.addConfiguredWorkspaces(m.outputs[name], name == first)
+	}
+	return true
+}
+
 // MapWindow places a new window on the requested output, or on the focused
 // output when that name is disconnected.
 func (m *Model) MapWindow(id uint64, output string) bool {

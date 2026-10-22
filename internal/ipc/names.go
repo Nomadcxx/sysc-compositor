@@ -7,6 +7,11 @@ var Requests = []string{
 	"OverviewState", "Casts",
 }
 
+// OutputActions is every niri-ipc 26.4.0 OutputAction variant.
+var OutputActions = []string{
+	"Off", "On", "Mode", "CustomMode", "Modeline", "Scale", "Transform", "Position", "Vrr",
+}
+
 // Actions is every niri-ipc 26.4.0 Action variant, in niri-ipc's order.
 var Actions = []string{
 	"Quit", "PowerOffMonitors", "PowerOnMonitors", "Spawn", "SpawnSh", "DoScreenTransition",

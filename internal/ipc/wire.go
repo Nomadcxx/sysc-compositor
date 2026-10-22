@@ -20,6 +20,14 @@ var ErrParse = errors.New("error parsing request")
 type Request struct {
 	Name   string
 	Action *Action
+	Output *OutputRequest
+}
+
+// OutputRequest is Niri's temporary per-output configuration request. The
+// action remains raw until M15 owns applying output changes.
+type OutputRequest struct {
+	Name   string
+	Action json.RawMessage
 }
 
 // The state responses below mirror niri-ipc 26.4.0. Keep the wire types here
@@ -165,6 +173,9 @@ type Action struct {
 	SkipConfirmation bool     // Quit
 	Command          []string // Spawn
 	ShellCommand     string   // SpawnSh
+	Layout           string   // SwitchLayout: Next, Prev, or Index
+	LayoutIndex      *uint8   // SwitchLayout Index
+	ConfigPath       *string  // LoadConfigFile
 	WindowID         *uint64
 	Workspace        *WorkspaceReference
 	WorkspaceName    *string
@@ -188,8 +199,167 @@ func DecodeRequest(line []byte) (Request, error) {
 			return Request{}, ErrParse
 		}
 		r.Action = &a
+	} else if name == "Output" {
+		output, err := decodeOutputRequest(body)
+		if err != nil {
+			return Request{}, ErrParse
+		}
+		r.Output = output
 	}
 	return r, nil
+}
+
+func decodeOutputRequest(body json.RawMessage) (*OutputRequest, error) {
+	var fields struct {
+		Name   *string         `json:"output"`
+		Action json.RawMessage `json:"action"`
+	}
+	if err := strict(body, &fields); err != nil || fields.Name == nil || len(fields.Action) == 0 {
+		return nil, ErrParse
+	}
+	action, value, err := variant(fields.Action)
+	if err != nil || !slices.Contains(OutputActions, action) {
+		return nil, ErrParse
+	}
+	if !validOutputAction(action, value) {
+		return nil, ErrParse
+	}
+	return &OutputRequest{Name: *fields.Name, Action: bytes.Clone(fields.Action)}, nil
+}
+
+func validOutputAction(name string, body json.RawMessage) bool {
+	unit := body == nil
+	switch name {
+	case "Off", "On":
+		return unit
+	case "Mode":
+		var fields struct {
+			Mode json.RawMessage `json:"mode"`
+		}
+		return body != nil && strict(body, &fields) == nil && validModeToSet(fields.Mode)
+	case "CustomMode":
+		var fields struct {
+			Mode json.RawMessage `json:"mode"`
+		}
+		return body != nil && strict(body, &fields) == nil && validConfiguredMode(fields.Mode)
+	case "Modeline":
+		var fields struct {
+			Clock         *float64 `json:"clock"`
+			HDisplay      *uint16  `json:"hdisplay"`
+			HSyncStart    *uint16  `json:"hsync_start"`
+			HSyncEnd      *uint16  `json:"hsync_end"`
+			HTotal        *uint16  `json:"htotal"`
+			VDisplay      *uint16  `json:"vdisplay"`
+			VSyncStart    *uint16  `json:"vsync_start"`
+			VSyncEnd      *uint16  `json:"vsync_end"`
+			VTotal        *uint16  `json:"vtotal"`
+			HSyncPolarity *string  `json:"hsync_polarity"`
+			VSyncPolarity *string  `json:"vsync_polarity"`
+		}
+		if body == nil || strict(body, &fields) != nil || fields.Clock == nil || fields.HDisplay == nil ||
+			fields.HSyncStart == nil || fields.HSyncEnd == nil || fields.HTotal == nil || fields.VDisplay == nil ||
+			fields.VSyncStart == nil || fields.VSyncEnd == nil || fields.VTotal == nil ||
+			fields.HSyncPolarity == nil || fields.VSyncPolarity == nil {
+			return false
+		}
+		return (*fields.HSyncPolarity == "PHSync" || *fields.HSyncPolarity == "NHSync") &&
+			(*fields.VSyncPolarity == "PVSync" || *fields.VSyncPolarity == "NVSync")
+	case "Scale":
+		var fields struct {
+			Scale json.RawMessage `json:"scale"`
+		}
+		return body != nil && strict(body, &fields) == nil && validScaleToSet(fields.Scale)
+	case "Transform":
+		var fields struct {
+			Transform json.RawMessage `json:"transform"`
+		}
+		return body != nil && strict(body, &fields) == nil &&
+			validUnitVariant(fields.Transform, "Normal", "90", "180", "270", "Flipped", "Flipped90", "Flipped180", "Flipped270")
+	case "Position":
+		var fields struct {
+			Position json.RawMessage `json:"position"`
+		}
+		return body != nil && strict(body, &fields) == nil && validPositionToSet(fields.Position)
+	case "Vrr":
+		var fields struct {
+			Vrr      *bool `json:"vrr"`
+			OnDemand *bool `json:"on_demand"`
+		}
+		return body != nil && strict(body, &fields) == nil && fields.Vrr != nil && fields.OnDemand != nil
+	default:
+		return false
+	}
+}
+
+func validModeToSet(raw json.RawMessage) bool {
+	name, body, err := variant(raw)
+	if err != nil {
+		return false
+	}
+	switch name {
+	case "Automatic":
+		return body == nil
+	case "Specific":
+		return validConfiguredMode(body)
+	default:
+		return false
+	}
+}
+
+func validConfiguredMode(raw json.RawMessage) bool {
+	var fields struct {
+		Width   *uint16         `json:"width"`
+		Height  *uint16         `json:"height"`
+		Refresh json.RawMessage `json:"refresh"`
+	}
+	if raw == nil || strict(raw, &fields) != nil || fields.Width == nil || fields.Height == nil {
+		return false
+	}
+	if len(fields.Refresh) == 0 || bytes.Equal(bytes.TrimSpace(fields.Refresh), []byte("null")) {
+		return true
+	}
+	var refresh float64
+	return json.Unmarshal(fields.Refresh, &refresh) == nil
+}
+
+func validScaleToSet(raw json.RawMessage) bool {
+	name, body, err := variant(raw)
+	if err != nil {
+		return false
+	}
+	switch name {
+	case "Automatic":
+		return body == nil
+	case "Specific":
+		var scale *float64
+		return body != nil && json.Unmarshal(body, &scale) == nil && scale != nil
+	default:
+		return false
+	}
+}
+
+func validPositionToSet(raw json.RawMessage) bool {
+	name, body, err := variant(raw)
+	if err != nil {
+		return false
+	}
+	switch name {
+	case "Automatic":
+		return body == nil
+	case "Specific":
+		var position struct {
+			X *int32 `json:"x"`
+			Y *int32 `json:"y"`
+		}
+		return body != nil && strict(body, &position) == nil && position.X != nil && position.Y != nil
+	default:
+		return false
+	}
+}
+
+func validUnitVariant(raw json.RawMessage, names ...string) bool {
+	name, body, err := variant(raw)
+	return err == nil && body == nil && slices.Contains(names, name)
 }
 
 func decodeAction(raw json.RawMessage) (Action, error) {
@@ -223,6 +393,40 @@ func decodeAction(raw json.RawMessage) (Action, error) {
 			return Action{}, ErrParse
 		}
 		a.ShellCommand = *f.Command
+	case "SwitchLayout":
+		var f struct {
+			Layout json.RawMessage `json:"layout"`
+		}
+		if err := strict(body, &f); err != nil || len(f.Layout) == 0 {
+			return Action{}, ErrParse
+		}
+		name, value, err := variant(f.Layout)
+		if err != nil {
+			return Action{}, ErrParse
+		}
+		switch name {
+		case "Next", "Prev":
+			if value != nil {
+				return Action{}, ErrParse
+			}
+			a.Layout = name
+		case "Index":
+			var index uint8
+			if value == nil || json.Unmarshal(value, &index) != nil {
+				return Action{}, ErrParse
+			}
+			a.Layout, a.LayoutIndex = name, &index
+		default:
+			return Action{}, ErrParse
+		}
+	case "LoadConfigFile":
+		var f struct {
+			Path *string `json:"path"`
+		}
+		if err := strict(body, &f); err != nil {
+			return Action{}, ErrParse
+		}
+		a.ConfigPath = f.Path
 	case "FocusWindow":
 		var f struct {
 			ID *uint64 `json:"id"`
@@ -499,6 +703,11 @@ func strict(body json.RawMessage, v any) error {
 
 // EncodeRequest is the line a client sends, without its newline.
 func EncodeRequest(r Request) []byte {
+	if r.Name == "Output" && r.Output != nil {
+		return marshal(map[string]any{"Output": map[string]any{
+			"output": r.Output.Name, "action": r.Output.Action,
+		}})
+	}
 	if r.Name != "Action" || r.Action == nil {
 		return marshal(r.Name)
 	}
@@ -521,6 +730,25 @@ func EncodeRequest(r Request) []byte {
 		body = struct {
 			Command string `json:"command"`
 		}{a.ShellCommand}
+	case "SwitchLayout":
+		var layout any
+		switch a.Layout {
+		case "Next", "Prev":
+			layout = a.Layout
+		case "Index":
+			index := uint8(0)
+			if a.LayoutIndex != nil {
+				index = *a.LayoutIndex
+			}
+			layout = map[string]uint8{"Index": index}
+		}
+		body = struct {
+			Layout any `json:"layout"`
+		}{layout}
+	case "LoadConfigFile":
+		body = struct {
+			Path *string `json:"path"`
+		}{a.ConfigPath}
 	case "FocusWindow":
 		id := uint64(0)
 		if a.WindowID != nil {

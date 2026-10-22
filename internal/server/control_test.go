@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Nomadcxx/sysc-compositor/internal/config"
 	"github.com/Nomadcxx/sysc-compositor/internal/control"
 )
 
@@ -56,7 +57,7 @@ func TestControlDrivesAClient(t *testing.T) {
 	}
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
-	s, err := New(nil, false)
+	s, err := New(config.LoadResult{}, false)
 	if err != nil {
 		t.Skipf("no nested wayland session available: %v", err)
 	}

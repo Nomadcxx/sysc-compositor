@@ -50,8 +50,26 @@ func fakeNiri(t *testing.T) (string, func() []ipc.Request) {
 						return ipc.Reply{Ok: ipc.SuccessValue("Windows", []ipc.Window{})}, nil
 					case "Layers":
 						return ipc.Reply{Ok: ipc.SuccessValue("Layers", []ipc.LayerSurface{})}, nil
+					case "KeyboardLayouts":
+						return ipc.Reply{Ok: ipc.SuccessValue("KeyboardLayouts", ipc.KeyboardLayouts{Names: []string{"English (US)"}})}, nil
 					case "FocusedOutput":
 						return ipc.Reply{Ok: ipc.SuccessValue("FocusedOutput", (*ipc.Output)(nil))}, nil
+					case "FocusedWindow":
+						return ipc.Reply{Ok: ipc.SuccessValue("FocusedWindow", (*ipc.Window)(nil))}, nil
+					case "PickWindow":
+						return ipc.Reply{Ok: ipc.SuccessValue("PickedWindow", (*ipc.Window)(nil))}, nil
+					case "PickColor":
+						return ipc.Reply{Ok: ipc.SuccessValue("PickedColor", nil)}, nil
+					case "OverviewState":
+						return ipc.Reply{Ok: ipc.SuccessValue("OverviewState", ipc.OverviewState{})}, nil
+					case "Casts":
+						return ipc.Reply{Ok: ipc.SuccessValue("Casts", []any{})}, nil
+					case "Output":
+						result := "Applied"
+						if r.Output != nil && r.Output.Name == "missing" {
+							result = "OutputWasMissing"
+						}
+						return ipc.Reply{Ok: ipc.SuccessValue("OutputConfigChanged", result)}, nil
 					}
 					return ipc.Reply{Ok: ipc.Handled}, nil
 				})
@@ -76,6 +94,30 @@ func runMsg(socket string, args ...string) (int, string, string) {
 	}, Stdout: &out, Stderr: &errOut}
 	code := Main("niri", append([]string{"msg"}, args...), env)
 	return code, out.String(), errOut.String()
+}
+
+func TestParseSessionStartupOptions(t *testing.T) {
+	for _, tc := range []struct {
+		args    []string
+		config  string
+		session bool
+	}{
+		{args: []string{}},
+		{args: []string{"--session"}, session: true},
+		{args: []string{"-c", "/tmp/niri.kdl", "--session"}, config: "/tmp/niri.kdl", session: true},
+		{args: []string{"--session", "--config", "/tmp/other.kdl"}, config: "/tmp/other.kdl", session: true},
+	} {
+		got, err := parseRunOptions(tc.args)
+		if err != nil {
+			t.Fatalf("parseRunOptions(%v): %v", tc.args, err)
+		}
+		if got.configPath != tc.config || got.session != tc.session {
+			t.Errorf("parseRunOptions(%v) = %+v, want config %q, session %v", tc.args, got, tc.config, tc.session)
+		}
+	}
+	if _, err := parseRunOptions([]string{"--session", "--unknown"}); err == nil {
+		t.Fatal("parseRunOptions accepted an unknown startup option")
+	}
 }
 
 // The first two CLI tests design §6 names: sysc-greet's quit and
@@ -152,6 +194,17 @@ func TestMsgVersionAndErrors(t *testing.T) {
 	}
 }
 
+func TestMsgReportsVersionMismatch(t *testing.T) {
+	socket, _ := fakeNiri(t)
+	if code, _, stderr := runMsg(socket, "version"); code != 0 || !strings.Contains(stderr, "different version") {
+		t.Errorf("version mismatch: exit %d, stderr %q", code, stderr)
+	}
+	if code, _, stderr := runMsg(socket, "request-error"); code != 1 ||
+		!strings.Contains(stderr, "different version") || !strings.Contains(stderr, "example compositor error") {
+		t.Errorf("request error mismatch: exit %d, stderr %q", code, stderr)
+	}
+}
+
 func TestMsgSupportsStateQueries(t *testing.T) {
 	socket, requests := fakeNiri(t)
 	queries := []struct{ command, request string }{
@@ -175,6 +228,166 @@ func TestMsgSupportsStateQueries(t *testing.T) {
 		if got[i].Name != query.request {
 			t.Errorf("request %d = %s, want %s", i, got[i].Name, query.request)
 		}
+	}
+}
+
+func TestParseMsgSupportsAllNiriRequests(t *testing.T) {
+	tests := []struct {
+		args []string
+		name string
+	}{
+		{[]string{"version"}, "Version"},
+		{[]string{"outputs"}, "Outputs"},
+		{[]string{"workspaces"}, "Workspaces"},
+		{[]string{"windows"}, "Windows"},
+		{[]string{"layers"}, "Layers"},
+		{[]string{"keyboard-layouts"}, "KeyboardLayouts"},
+		{[]string{"focused-output"}, "FocusedOutput"},
+		{[]string{"focused-window"}, "FocusedWindow"},
+		{[]string{"pick-window"}, "PickWindow"},
+		{[]string{"pick-color"}, "PickColor"},
+		{[]string{"action", "quit"}, "Action"},
+		{[]string{"output", "eDP-1", "off"}, "Output"},
+		{[]string{"event-stream"}, "EventStream"},
+		{[]string{"request-error"}, "ReturnError"},
+		{[]string{"overview-state"}, "OverviewState"},
+		{[]string{"casts"}, "Casts"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request, err := parseMsg(test.args)
+			if err != nil {
+				t.Fatalf("parseMsg(%v): %v", test.args, err)
+			}
+			if request.Name != test.name {
+				t.Fatalf("parseMsg(%v).Name = %q, want %q", test.args, request.Name, test.name)
+			}
+		})
+	}
+}
+
+func TestParseMsgSupportsM9Actions(t *testing.T) {
+	for _, args := range [][]string{
+		{"action", "switch-layout", "next"},
+		{"action", "switch-layout", "prev"},
+		{"action", "switch-layout", "2"},
+		{"action", "load-config-file"},
+		{"action", "load-config-file", "--path", "/tmp/niri.kdl"},
+	} {
+		t.Run(strings.Join(args, "_"), func(t *testing.T) {
+			request, err := parseMsg(args)
+			if err != nil {
+				t.Fatalf("parseMsg(%v): %v", args, err)
+			}
+			if request.Name != "Action" || request.Action == nil {
+				t.Fatalf("parseMsg(%v) = %+v, want Action", args, request)
+			}
+		})
+	}
+}
+
+func TestParseOutputMatchesNiriWire(t *testing.T) {
+	tests := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"output", "DP-1", "off"}, `"Off"`},
+		{[]string{"output", "DP-1", "on"}, `"On"`},
+		{[]string{"output", "DP-1", "mode", "auto"}, `{"Mode":{"mode":"Automatic"}}`},
+		{[]string{"output", "DP-1", "mode", "1920x1080@60"}, `{"Mode":{"mode":{"Specific":{"width":1920,"height":1080,"refresh":60}}}}`},
+		{[]string{"output", "DP-1", "custom-mode", "1280x720"}, `{"CustomMode":{"mode":{"width":1280,"height":720,"refresh":null}}}`},
+		{[]string{"output", "DP-1", "modeline", "148.5", "1920", "2008", "2052", "2200", "1080", "1084", "1089", "1125", "+hsync", "+vsync"}, `{"Modeline":{"clock":148.5,"hdisplay":1920,"hsync_start":2008,"hsync_end":2052,"htotal":2200,"vdisplay":1080,"vsync_start":1084,"vsync_end":1089,"vtotal":1125,"hsync_polarity":"PHSync","vsync_polarity":"PVSync"}}`},
+		{[]string{"output", "DP-1", "scale", "1.5"}, `{"Scale":{"scale":{"Specific":1.5}}}`},
+		{[]string{"output", "DP-1", "transform", "flipped-90"}, `{"Transform":{"transform":"Flipped90"}}`},
+		{[]string{"output", "DP-1", "position", "auto"}, `{"Position":{"position":"Automatic"}}`},
+		{[]string{"output", "DP-1", "position", "set", "10", "-20"}, `{"Position":{"position":{"Specific":{"x":10,"y":-20}}}}`},
+		{[]string{"output", "DP-1", "vrr", "on", "--on-demand"}, `{"Vrr":{"vrr":true,"on_demand":true}}`},
+		{[]string{"output", "DP-1", "vrr", "y"}, `{"Vrr":{"vrr":true,"on_demand":false}}`},
+		{[]string{"output", "DP-1", "vrr", "N"}, `{"Vrr":{"vrr":false,"on_demand":false}}`},
+		{[]string{"output", "DP-1", "vrr", "T"}, `{"Vrr":{"vrr":true,"on_demand":false}}`},
+		{[]string{"output", "DP-1", "vrr", "f"}, `{"Vrr":{"vrr":false,"on_demand":false}}`},
+	}
+	for _, test := range tests {
+		t.Run(strings.Join(test.args[2:], "_"), func(t *testing.T) {
+			request, err := parseMsg(test.args)
+			if err != nil {
+				t.Fatalf("parseMsg(%v): %v", test.args, err)
+			}
+			if request.Output == nil {
+				t.Fatalf("parseMsg(%v) returned no output request", test.args)
+			}
+			if _, err := ipc.DecodeRequest(ipc.EncodeRequest(request)); err != nil {
+				t.Fatalf("output request is not valid niri-ipc: %v", err)
+			}
+			var gotValue, wantValue any
+			if err := json.Unmarshal(request.Output.Action, &gotValue); err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal([]byte(test.want), &wantValue); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(gotValue, wantValue) {
+				t.Fatalf("output action = %s, want %s", request.Output.Action, test.want)
+			}
+		})
+	}
+}
+
+func TestMsgSendsEveryNonStreamingRequest(t *testing.T) {
+	socket, requests := fakeNiri(t)
+	queries := []struct {
+		args []string
+		name string
+	}{
+		{[]string{"outputs"}, "Outputs"},
+		{[]string{"workspaces"}, "Workspaces"},
+		{[]string{"windows"}, "Windows"},
+		{[]string{"layers"}, "Layers"},
+		{[]string{"keyboard-layouts"}, "KeyboardLayouts"},
+		{[]string{"focused-output"}, "FocusedOutput"},
+		{[]string{"focused-window"}, "FocusedWindow"},
+		{[]string{"pick-window"}, "PickWindow"},
+		{[]string{"pick-color"}, "PickColor"},
+		{[]string{"action", "quit"}, "Action"},
+		{[]string{"output", "DP-1", "off"}, "Output"},
+		{[]string{"overview-state"}, "OverviewState"},
+		{[]string{"casts"}, "Casts"},
+	}
+	for _, query := range queries {
+		args := append([]string{"--json"}, query.args...)
+		code, stdout, stderr := runMsg(socket, args...)
+		if code != 0 || stderr != "" {
+			t.Errorf("%v: exit %d, stdout %q, stderr %q", query.args, code, stdout, stderr)
+		}
+		if query.name != "Action" && !json.Valid([]byte(strings.TrimSpace(stdout))) {
+			t.Errorf("%v: stdout is not JSON: %q", query.args, stdout)
+		}
+	}
+	got := requests()
+	if len(got) != len(queries) {
+		t.Fatalf("sent %d requests, want %d: %+v", len(got), len(queries), got)
+	}
+	for i, query := range queries {
+		if got[i].Name != query.name {
+			t.Errorf("request %d = %s, want %s", i, got[i].Name, query.name)
+		}
+	}
+}
+
+func TestMsgOutputUsesNiriResponseFormatting(t *testing.T) {
+	socket, _ := fakeNiri(t)
+
+	if code, stdout, stderr := runMsg(socket, "output", "DP-1", "off"); code != 0 || stdout != "" || stderr != "" {
+		t.Errorf("applied output: exit %d, stdout %q, stderr %q", code, stdout, stderr)
+	}
+
+	const missing = "Output \"missing\" is not connected.\nThe change will apply when it is connected.\n"
+	if code, stdout, stderr := runMsg(socket, "output", "missing", "off"); code != 0 || stdout != missing || stderr != "" {
+		t.Errorf("missing output: exit %d, stdout %q, stderr %q", code, stdout, stderr)
+	}
+
+	if code, stdout, stderr := runMsg(socket, "--json", "output", "missing", "off"); code != 0 || stdout != "\"OutputWasMissing\"\n" || stderr != "" {
+		t.Errorf("JSON missing output: exit %d, stdout %q, stderr %q", code, stdout, stderr)
 	}
 }
 
@@ -257,7 +470,7 @@ func TestUsageLeadsWithSyscCompositorAndNamesTheNiriAlias(t *testing.T) {
 			t.Fatalf("%s: exit %d, want 2 (usage)", name, code)
 		}
 		out := stderr.String()
-		if !strings.Contains(out, "usage: sysc-compositor [-c CONFIG] | sysc-compositor validate [-c CONFIG] | sysc-compositor msg [--json] REQUEST\n") {
+		if !strings.Contains(out, "usage: sysc-compositor [--session] [-c CONFIG] | sysc-compositor validate [-c CONFIG] | sysc-compositor msg [--json] REQUEST\n") {
 			t.Errorf("%s usage %q does not lead with sysc-compositor", name, out)
 		}
 		alias := strings.Contains(out, "niri is a compatibility alias of sysc-compositor")

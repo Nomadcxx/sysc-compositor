@@ -162,10 +162,13 @@ type Compositor struct {
 	pointerDevices          map[unsafe.Pointer]bool
 	pointerGestureListeners map[unsafe.Pointer][]*Listener
 	pointerSwipeStates      map[unsafe.Pointer]*pointerSwipeState
+	switchToggleListeners   map[unsafe.Pointer]*Listener
+	switchToggle            func(SwitchToggle)
 	keyboardDevices         map[unsafe.Pointer]bool
 	suppressedKeys          map[uint32]bool
 	keyboardGroup           *C.struct_wlr_keyboard_group
 	keyboard                *C.struct_wlr_keyboard // the group's, which the user seat hears
+	keyboardConfig          Keyboard
 	inputDestroyListeners   map[unsafe.Pointer]*Listener
 	modifiers               uint32
 	focusedView             *toplevelView
@@ -268,6 +271,7 @@ func NewWith(opts Options) (*Compositor, error) {
 	if testing.Testing() && os.Getenv("SYSC_NESTED_TESTS") != "1" {
 		return nil, ErrNestedTestNeedsConsent
 	}
+	opts = normalizeOptions(opts)
 	c := &Compositor{}
 	// Destroy takes a half-built compositor apart, so a failed start leaves no
 	// socket, display or backend behind.
@@ -277,40 +281,17 @@ func NewWith(opts Options) (*Compositor, error) {
 			c.Destroy()
 		}
 	}()
-	defaults := config.Default()
-	if opts.Overview == (config.Overview{}) {
-		opts.Overview = defaults.Overview
-	}
 	c.overviewConfig = opts.Overview
-	if opts.Animations == (config.Animations{}) {
-		opts.Animations = defaults.Animations
-	}
 	c.animationConfig = opts.Animations
 	c.preferNoCSD = opts.PreferNoCSD
 	c.hotCorners = opts.Gestures.HotCorners
 	c.dndEdgeConfig = opts.Gestures.DNDEdgeViewScroll
-	if c.dndEdgeConfig == (config.DNDEdgeViewScroll{}) {
-		c.dndEdgeConfig = defaults.Gestures.DNDEdgeViewScroll
-	}
 	c.model = wm.New(opts.Workspaces...)
 	c.windowRules = slices.Clone(opts.WindowRules)
 	c.layerRules = slices.Clone(opts.LayerRules)
-	c.layoutOptions = LayoutOptions{
-		Gaps: 16, ColumnWidthProportion: 0.5,
-		InsertHint: defaults.Layout.InsertHint,
-		FocusRing:  defaults.Layout.FocusRing,
-		Shadow:     defaults.Layout.Shadow,
-	}
-	if opts.Layout != nil {
-		c.layoutOptions = *opts.Layout
-	}
+	c.layoutOptions = *opts.Layout
 	c.cursorTheme, c.cursorSize = opts.CursorTheme, opts.CursorSize
-	if c.cursorTheme == "" {
-		c.cursorTheme = "default"
-	}
-	if c.cursorSize <= 0 {
-		c.cursorSize = 24
-	}
+	c.keyboardConfig = opts.Keyboard
 
 	c.display = C.wl_display_create()
 	if c.display == nil {
@@ -338,6 +319,7 @@ func NewWith(opts Options) (*Compositor, error) {
 	c.pointerDevices = map[unsafe.Pointer]bool{}
 	c.pointerGestureListeners = map[unsafe.Pointer][]*Listener{}
 	c.pointerSwipeStates = map[unsafe.Pointer]*pointerSwipeState{}
+	c.switchToggleListeners = map[unsafe.Pointer]*Listener{}
 	c.keyboardDevices = map[unsafe.Pointer]bool{}
 	c.suppressedKeys = map[uint32]bool{}
 	c.inputDestroyListeners = map[unsafe.Pointer]*Listener{}
@@ -387,7 +369,7 @@ func NewWith(opts Options) (*Compositor, error) {
 	if c.xdgShell = C.wlr_xdg_shell_create(c.display, C.uint32_t(C.sysc_xdg_version)); c.xdgShell == nil {
 		return nil, errors.New("wlr_xdg_shell_create failed")
 	}
-	if err := c.createDecorationManager(); err != nil {
+	if err := c.createDecorationManager(opts.PreferNoCSD); err != nil {
 		return nil, err
 	}
 	if c.xdgActivation = C.wlr_xdg_activation_v1_create(c.display); c.xdgActivation == nil {
@@ -459,6 +441,89 @@ func NewWith(opts Options) (*Compositor, error) {
 	return c, nil
 }
 
+func normalizeOptions(opts Options) Options {
+	defaults := config.Default()
+	if opts.Overview == (config.Overview{}) {
+		opts.Overview = defaults.Overview
+	}
+	if opts.Animations == (config.Animations{}) {
+		opts.Animations = defaults.Animations
+	}
+	if opts.Gestures.DNDEdgeViewScroll == (config.DNDEdgeViewScroll{}) {
+		opts.Gestures.DNDEdgeViewScroll = defaults.Gestures.DNDEdgeViewScroll
+	}
+	if opts.Layout == nil {
+		opts.Layout = &LayoutOptions{
+			Gaps: defaults.Layout.Gaps, ColumnWidthProportion: 0.5,
+			InsertHint: defaults.Layout.InsertHint, FocusRing: defaults.Layout.FocusRing,
+			Shadow: defaults.Layout.Shadow,
+		}
+	}
+	if opts.CursorTheme == "" {
+		opts.CursorTheme = "default"
+	}
+	if opts.CursorSize <= 0 {
+		opts.CursorSize = 24
+	}
+	return opts
+}
+
+// Reconfigure applies a parsed candidate on the compositor thread.
+func (c *Compositor) Reconfigure(opts Options) error {
+	opts = normalizeOptions(opts)
+	modKey, err := bind.ResolveModKey(opts.ModKey, opts.ModKeyNested,
+		bool(C.sysc_backend_is_nested(c.backend)))
+	if err != nil {
+		return err
+	}
+	decorationChanged := opts.PreferNoCSD != c.preferNoCSD
+	if decorationChanged {
+		if err := c.setDecorationPreference(opts.PreferNoCSD); err != nil {
+			return err
+		}
+	}
+	if opts.Keyboard != c.keyboardConfig {
+		if err := c.reconfigureKeyboard(opts.Keyboard); err != nil {
+			if decorationChanged {
+				_ = c.setDecorationPreference(c.preferNoCSD)
+			}
+			return err
+		}
+		c.keyboardConfig = opts.Keyboard
+	}
+
+	c.modKey = modKey
+	c.bindings = slices.Clone(opts.Binds)
+	for i := range c.bindings {
+		c.bindings[i].Chord = c.bindings[i].Chord.ResolveMod(c.modKey)
+	}
+	c.layoutOptions = *opts.Layout
+	c.overviewConfig = opts.Overview
+	c.animationConfig = opts.Animations
+	c.hotCorners = opts.Gestures.HotCorners
+	c.dndEdgeConfig = opts.Gestures.DNDEdgeViewScroll
+	c.windowRules = slices.Clone(opts.WindowRules)
+	c.layerRules = slices.Clone(opts.LayerRules)
+	c.preferNoCSD = opts.PreferNoCSD
+	c.reconfigureCursor(opts.CursorTheme, opts.CursorSize)
+	c.hotCornerTracker = wm.HotCornerTracker{}
+	if c.dndScroll != nil {
+		c.stopDndEdgeScroll(c.dndScroll)
+	}
+	workspaces := make([]wm.WorkspaceConfig, len(opts.Workspaces))
+	for i, workspace := range opts.Workspaces {
+		workspaces[i] = wm.WorkspaceConfig{Name: workspace.Name, OpenOnOutput: workspace.OpenOnOutput}
+	}
+	c.model.SetWorkspaceConfig(workspaces)
+	c.reapplyWindowRules()
+	c.reapplyLayerRules()
+	for output := range c.sceneOutputs {
+		c.syncWorkspaceOutput(output)
+	}
+	c.applyWorkspaceModel()
+	return nil
+}
+
 // SocketName is the nested Wayland socket this compositor serves. A smoke script
 // spawns clients against it; it is not the compositor's own WAYLAND_DISPLAY.
 func (c *Compositor) SocketName() string { return c.socketName }
@@ -475,6 +540,12 @@ func (c *Compositor) SetStateChanged(fn func()) {
 // environment. The handlers run on the compositor thread.
 func (c *Compositor) SetSpawnHandlers(spawn func([]string) error, spawnSh func(string) error) {
 	c.spawn, c.spawnSh = spawn, spawnSh
+}
+
+// SetSwitchToggleHandler registers the compositor-thread handler for lid and
+// tablet-mode input switches.
+func (c *Compositor) SetSwitchToggleHandler(fn func(SwitchToggle)) {
+	c.switchToggle = fn
 }
 
 // WorkspaceSnapshot copies model state to plain Go values on the compositor

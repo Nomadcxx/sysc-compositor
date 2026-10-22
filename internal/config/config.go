@@ -26,23 +26,36 @@ type Config struct {
 	Warnings         []string
 	UnappliedActions []string
 	// Environment is applied to spawned commands; a nil value unsets.
-	Environment map[string]*string
-	Keyboard    Keyboard
-	Input       Input
-	Layout      Layout
-	Overview    Overview
-	Gestures    Gestures
-	Cursor      Cursor
-	Binds       []Binding
-	Workspaces  []WorkspaceConfig
-	WindowRules []WindowRule
-	LayerRules  []LayerRule
-	Animations  Animations
-	PreferNoCSD bool
+	Environment  map[string]*string
+	Keyboard     Keyboard
+	Input        Input
+	Layout       Layout
+	Overview     Overview
+	Gestures     Gestures
+	SwitchEvents SwitchEvents
+	Cursor       Cursor
+	Binds        []Binding
+	Workspaces   []WorkspaceConfig
+	WindowRules  []WindowRule
+	LayerRules   []LayerRule
+	Animations   Animations
+	PreferNoCSD  bool
+}
+
+// LoadResult returns the decoded config and paths that can trigger a reload.
+// Sources includes missing optional paths so creating one can repair a config.
+type LoadResult struct {
+	Root    string
+	Config  *Config
+	Sources []string
 }
 
 type Input struct {
 	ModKey, ModKeyNested string
+}
+
+type SwitchEvents struct {
+	LidOpen, LidClose, TabletModeOn, TabletModeOff []string
 }
 
 type Layout struct {
@@ -160,20 +173,32 @@ var topLevel = map[string]bool{
 
 // Parse decodes one config file's text. name is used in errors.
 func Parse(name string, src []byte) (*Config, error) {
-	doc, err := kdl.Parse(strings.NewReader(string(src)))
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", name, err)
-	}
+	result, err := ParseWithSources(name, src)
+	return result.Config, err
+}
+
+// ParseWithSources parses text and records its root and included paths.
+func ParseWithSources(name string, src []byte) (LoadResult, error) {
+	result := LoadResult{}
 	root, err := filepath.Abs(name)
 	if err != nil {
-		return nil, fmt.Errorf("%s: resolve config path: %w", name, err)
+		return result, fmt.Errorf("%s: resolve config path: %w", name, err)
 	}
-	stack := map[string]bool{filepath.Clean(root): true}
-	nodes, err := expandIncludes(root, doc.Nodes, stack, 0)
+	root = filepath.Clean(root)
+	result.Root = root
+	result.Sources = append(result.Sources, root)
+	doc, err := kdl.Parse(strings.NewReader(string(src)))
 	if err != nil {
-		return nil, err
+		return result, fmt.Errorf("%s: %w", name, err)
 	}
-	return decode(name, nodes)
+	stack := map[string]bool{root: true}
+	seenSources := map[string]struct{}{root: {}}
+	nodes, err := expandIncludes(root, doc.Nodes, stack, 0, &result.Sources, seenSources)
+	if err != nil {
+		return result, err
+	}
+	result.Config, err = decode(name, nodes)
+	return result, err
 }
 
 func decode(name string, nodes []*document.Node) (*Config, error) {
@@ -222,6 +247,8 @@ func decode(name string, nodes []*document.Node) (*Config, error) {
 			err = c.cursor(n)
 		case "binds":
 			err = c.binds(n)
+		case "switch-events":
+			err = c.switchEvents(n)
 		case "workspace":
 			err = c.workspace(n)
 		case "window-rule":
@@ -240,10 +267,18 @@ func decode(name string, nodes []*document.Node) (*Config, error) {
 
 const maxIncludeDepth = 255
 
-func expandIncludes(name string, nodes []*document.Node, stack map[string]bool, depth int) ([]*document.Node, error) {
+func expandIncludes(name string, nodes []*document.Node, stack map[string]bool, depth int, sources *[]string, seenSources map[string]struct{}) ([]*document.Node, error) {
 	var expanded []*document.Node
+	seen := make(map[string]struct{}, len(nodes))
 	for _, node := range nodes {
-		if nodeName(node) != "include" {
+		kind := nodeName(node)
+		if !multipleTopLevelNodes(kind) {
+			if _, exists := seen[kind]; exists {
+				return nil, fmt.Errorf("%s: duplicate node `%s`", name, kind)
+			}
+			seen[kind] = struct{}{}
+		}
+		if kind != "include" {
 			expanded = append(expanded, node)
 			continue
 		}
@@ -269,6 +304,10 @@ func expandIncludes(name string, nodes []*document.Node, stack map[string]bool, 
 		if err != nil {
 			return nil, fmt.Errorf("%s: include %q: %w", name, paths[0], err)
 		}
+		if _, exists := seenSources[path]; !exists {
+			*sources = append(*sources, path)
+			seenSources[path] = struct{}{}
+		}
 		if depth >= maxIncludeDepth {
 			return nil, fmt.Errorf("%s: include %q: recursion limit (%d) reached", name, paths[0], maxIncludeDepth)
 		}
@@ -287,7 +326,7 @@ func expandIncludes(name string, nodes []*document.Node, stack map[string]bool, 
 			return nil, fmt.Errorf("%s: include %q: %w", name, paths[0], err)
 		}
 		stack[path] = true
-		children, expandErr := expandIncludes(path, doc.Nodes, stack, depth+1)
+		children, expandErr := expandIncludes(path, doc.Nodes, stack, depth+1, sources, seenSources)
 		delete(stack, path)
 		if expandErr != nil {
 			return nil, expandErr
@@ -295,6 +334,15 @@ func expandIncludes(name string, nodes []*document.Node, stack map[string]bool, 
 		expanded = append(expanded, children...)
 	}
 	return expanded, nil
+}
+
+func multipleTopLevelNodes(name string) bool {
+	switch name {
+	case "output", "spawn-at-startup", "spawn-sh-at-startup", "window-rule", "layer-rule", "workspace", "include":
+		return true
+	default:
+		return false
+	}
 }
 
 func resolveIncludePath(base, path string) (string, error) {
@@ -970,11 +1018,17 @@ func (c *Config) binds(n *document.Node) error {
 	if !slices.Contains(c.Warnings, "binds") {
 		c.Warnings = append(c.Warnings, "binds")
 	}
+	var parsed []Binding
+	overrides := make(map[bind.Chord]struct{}, len(n.Children))
 	for _, node := range n.Children {
 		chord, err := bind.ParseChord(nodeName(node))
 		if err != nil {
 			return fmt.Errorf("bind %q: %w", nodeName(node), err)
 		}
+		if _, duplicate := overrides[chord]; duplicate {
+			return fmt.Errorf("duplicate bind %q", nodeName(node))
+		}
+		overrides[chord] = struct{}{}
 		if len(node.Children) == 0 {
 			return fmt.Errorf("bind %q: expected at least one action", nodeName(node))
 		}
@@ -1014,7 +1068,52 @@ func (c *Config) binds(n *document.Node) error {
 			binding.Actions = append(binding.Actions, action)
 		}
 		if len(binding.Actions) > 0 {
-			c.Binds = append(c.Binds, binding)
+			parsed = append(parsed, binding)
+		}
+	}
+	kept := c.Binds[:0]
+	for _, binding := range c.Binds {
+		if _, replaced := overrides[binding.Chord]; !replaced {
+			kept = append(kept, binding)
+		}
+	}
+	c.Binds = append(kept, parsed...)
+	return nil
+}
+
+func (c *Config) switchEvents(n *document.Node) error {
+	if len(n.Arguments) != 0 || len(n.Properties) != 0 {
+		return fmt.Errorf("`%s` takes no arguments or properties", nodeName(n))
+	}
+	seen := make(map[string]bool, len(n.Children))
+	for _, event := range n.Children {
+		name := nodeName(event)
+		if seen[name] {
+			return fmt.Errorf("duplicate switch event `%s`", name)
+		}
+		seen[name] = true
+		if len(event.Arguments) != 0 || len(event.Properties) != 0 || len(event.Children) != 1 {
+			return fmt.Errorf("switch event `%s` needs one spawn action", name)
+		}
+		spawn := event.Children[0]
+		if nodeName(spawn) != "spawn" || len(spawn.Children) != 0 || len(spawn.Properties) != 0 {
+			return fmt.Errorf("switch event `%s` only supports spawn", name)
+		}
+		argv, err := stringArgs(spawn, 1, -1)
+		if err != nil {
+			return fmt.Errorf("switch event `%s`: %w", name, err)
+		}
+		switch name {
+		case "lid-open":
+			c.SwitchEvents.LidOpen = argv
+		case "lid-close":
+			c.SwitchEvents.LidClose = argv
+		case "tablet-mode-on":
+			c.SwitchEvents.TabletModeOn = argv
+		case "tablet-mode-off":
+			c.SwitchEvents.TabletModeOff = argv
+		default:
+			return fmt.Errorf("unexpected switch event `%s`", name)
 		}
 	}
 	return nil
@@ -1147,12 +1246,24 @@ func Locate(flag string, getenv func(string) string) string {
 
 // Load reads and parses path; "" is the default config.
 func Load(path string) (*Config, error) {
+	result, err := LoadWithSources(path)
+	return result.Config, err
+}
+
+// LoadWithSources reads a config and returns the root and include paths used
+// during parsing, even when a read or parse fails.
+func LoadWithSources(path string) (LoadResult, error) {
 	if path == "" {
-		return Default(), nil
+		return LoadResult{Config: Default()}, nil
 	}
-	src, err := os.ReadFile(path)
+	root, err := filepath.Abs(path)
 	if err != nil {
-		return nil, err
+		return LoadResult{}, err
 	}
-	return Parse(path, src)
+	root = filepath.Clean(root)
+	src, err := os.ReadFile(root)
+	if err != nil {
+		return LoadResult{Root: root, Sources: []string{root}}, err
+	}
+	return ParseWithSources(root, src)
 }

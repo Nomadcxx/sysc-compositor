@@ -184,6 +184,16 @@ func (c *Compositor) mapWindowWithRules(view *toplevelView, clientFullscreen boo
 	}
 }
 
+func (c *Compositor) reapplyWindowRules() {
+	for _, view := range c.views {
+		if view == nil || view.toplevel == nil {
+			continue
+		}
+		view.appearance = config.ResolveWindowRules(c.windowRules,
+			cString(view.toplevel.app_id), cString(view.toplevel.title))
+	}
+}
+
 func (c *Compositor) mapWindowAfterUnmap(view *toplevelView, output string, clientFullscreen bool) {
 	c.model.MapWindow(view.id, output)
 	if !c.model.IsWindowedFullscreen(view.id) {

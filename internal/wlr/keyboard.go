@@ -7,6 +7,7 @@ package wlr
 #include <xkbcommon/xkbcommon.h>
 #include <xkbcommon/xkbcommon-keysyms.h>
 #include <wlr/backend/session.h>
+#include <wlr/interfaces/wlr_keyboard.h>
 #include <wlr/types/wlr_keyboard.h>
 #include <wlr/types/wlr_keyboard_group.h>
 #include <wlr/types/wlr_seat.h>
@@ -24,6 +25,17 @@ static const char *sysc_keyboard_layout_name(struct wlr_keyboard *keyboard, uint
 static uint32_t sysc_keyboard_active_layout(struct wlr_keyboard *keyboard) {
 	return keyboard == NULL || keyboard->xkb_state == NULL ? 0 :
 		xkb_state_serialize_layout(keyboard->xkb_state, XKB_STATE_LAYOUT_EFFECTIVE);
+}
+
+static bool sysc_keyboard_switch_layout(struct wlr_keyboard *keyboard, uint32_t index) {
+	if (keyboard == NULL || keyboard->xkb_state == NULL ||
+		index >= xkb_keymap_num_layouts(keyboard->keymap) ||
+		index == xkb_state_serialize_layout(keyboard->xkb_state, XKB_STATE_LAYOUT_EFFECTIVE)) {
+		return false;
+	}
+	wlr_keyboard_notify_modifiers(keyboard, keyboard->modifiers.depressed,
+		keyboard->modifiers.latched, keyboard->modifiers.locked, index);
+	return true;
 }
 
 // Match Niri's hardcoded XF86Switch_VT keysyms. Under the standard XKB
@@ -169,6 +181,31 @@ func (c *Compositor) KeyboardLayoutsSnapshot() *KeyboardLayoutsSnapshot {
 	}
 }
 
+// SwitchLayout changes the XKB group on the user seat and notifies clients.
+// target is Next, Prev, or Index; an invalid index or unknown target is a no-op.
+func (c *Compositor) SwitchLayout(target string, index *uint8) bool {
+	count := uint32(C.sysc_keyboard_layout_count(c.keyboard))
+	if count == 0 {
+		return false
+	}
+	current := uint32(C.sysc_keyboard_active_layout(c.keyboard))
+	var next uint32
+	switch target {
+	case "Next":
+		next = (current + 1) % count
+	case "Prev":
+		next = (current + count - 1) % count
+	case "Index":
+		if index == nil || uint32(*index) >= count {
+			return false
+		}
+		next = uint32(*index)
+	default:
+		return false
+	}
+	return bool(C.sysc_keyboard_switch_layout(c.keyboard, C.uint32_t(next)))
+}
+
 // Niri's defaults (niri-config input.rs): repeat after 600 ms, 25 per second.
 const (
 	defaultRepeatDelay = 600
@@ -229,6 +266,36 @@ func (c *Compositor) startKeyboardGroup(k Keyboard) error {
 		AddListener(unsafe.Pointer(&c.keyboard.events.key), c.handleKeyboardKey),
 		AddListener(unsafe.Pointer(&c.keyboard.events.modifiers), c.handleKeyboardModifiers),
 	)
+	return nil
+}
+
+func (c *Compositor) reconfigureKeyboard(k Keyboard) error {
+	if c.keyboard == nil {
+		return errors.New("keyboard group: no user keyboard")
+	}
+	keymap, err := compileKeymap(k)
+	if err != nil {
+		return err
+	}
+	defer C.xkb_keymap_unref(keymap)
+	delay, rate := k.RepeatDelay, k.RepeatRate
+	if delay == 0 && rate == 0 {
+		delay, rate = defaultRepeatDelay, defaultRepeatRate
+	}
+	if !bool(C.wlr_keyboard_set_keymap(c.keyboard, keymap)) {
+		return errors.New("keyboard group: the new keymap could not be set")
+	}
+	C.wlr_keyboard_set_repeat_info(c.keyboard, C.int(rate), C.int(delay))
+	for device := range c.keyboardDevices {
+		keyboard := C.wlr_keyboard_from_input_device((*C.struct_wlr_input_device)(device))
+		if keyboard == nil {
+			continue
+		}
+		if !bool(C.wlr_keyboard_set_keymap(keyboard, keymap)) {
+			return errors.New("keyboard group: an input keyboard rejected the new keymap")
+		}
+		C.wlr_keyboard_set_repeat_info(keyboard, C.int(rate), C.int(delay))
+	}
 	return nil
 }
 

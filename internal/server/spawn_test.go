@@ -52,7 +52,7 @@ func TestSpawnerPropagatesCursorConfigToChildren(t *testing.T) {
 	configured := map[string]*string{"XCURSOR_THEME": val("ChildTheme")}
 	s := newSpawner("wayland-9", "", configured, config.Cursor{Theme: "Adwaita", Size: 32})
 	got := make(map[string]string)
-	for _, item := range s.env {
+	for _, item := range s.childEnvironment() {
 		name, value, ok := strings.Cut(item, "=")
 		if ok {
 			got[name] = value
@@ -60,6 +60,23 @@ func TestSpawnerPropagatesCursorConfigToChildren(t *testing.T) {
 	}
 	if got["XCURSOR_THEME"] != "ChildTheme" || got["XCURSOR_SIZE"] != "32" {
 		t.Fatalf("child cursor environment = %v, want explicit theme override and configured size", got)
+	}
+}
+
+func TestSpawnerEnvironmentUpdateAffectsExistingHandlers(t *testing.T) {
+	s := newSpawner("wayland-old", "/old.sock", nil, config.Default().Cursor)
+	handlerCopy := s
+	value := "reloaded"
+	s.updateEnvironment("wayland-new", "/new.sock", map[string]*string{"SYSC_RELOAD_TEST": &value}, config.Default().Cursor)
+	got := make(map[string]string)
+	for _, item := range handlerCopy.childEnvironment() {
+		name, value, ok := strings.Cut(item, "=")
+		if ok {
+			got[name] = value
+		}
+	}
+	if got["WAYLAND_DISPLAY"] != "wayland-new" || got["NIRI_SOCKET"] != "/new.sock" || got["SYSC_RELOAD_TEST"] != "reloaded" {
+		t.Fatalf("updated child environment = %v", got)
 	}
 }
 

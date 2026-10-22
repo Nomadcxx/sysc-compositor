@@ -31,10 +31,11 @@ static void sysc_xdg_decoration_set_initial_preference(
 }
 
 static void sysc_xdg_decoration_apply_request(
-		struct wlr_xdg_toplevel_decoration_v1 *decoration) {
+		struct wlr_xdg_toplevel_decoration_v1 *decoration, bool prefer_no_csd) {
 	enum wlr_xdg_toplevel_decoration_v1_mode mode = decoration->requested_mode;
 	if (mode == WLR_XDG_TOPLEVEL_DECORATION_V1_MODE_NONE) {
-		mode = WLR_XDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE;
+		mode = prefer_no_csd ? WLR_XDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE :
+			WLR_XDG_TOPLEVEL_DECORATION_V1_MODE_CLIENT_SIDE;
 	}
 	if (decoration->toplevel->base->initialized) {
 		wlr_xdg_toplevel_decoration_v1_set_mode(decoration, mode);
@@ -53,25 +54,46 @@ import (
 	"unsafe"
 )
 
-func (c *Compositor) createDecorationManager() error {
-	if !c.preferNoCSD {
+func (c *Compositor) createDecorationManager(prefer bool) error {
+	if !prefer {
 		return nil
 	}
-	kdeManager := C.wlr_server_decoration_manager_create(c.display)
-	if kdeManager == nil {
-		return errors.New("wlr_server_decoration_manager_create failed")
+	if c.kdeDecorationManager == nil {
+		kdeManager := C.wlr_server_decoration_manager_create(c.display)
+		if kdeManager == nil {
+			return errors.New("wlr_server_decoration_manager_create failed")
+		}
+		c.kdeDecorationManager = unsafe.Pointer(kdeManager)
 	}
-	C.wlr_server_decoration_manager_set_default_mode(kdeManager,
+	if c.xdgDecorationManager == nil {
+		manager := C.wlr_xdg_decoration_manager_v1_create(c.display)
+		if manager == nil {
+			return errors.New("wlr_xdg_decoration_manager_v1_create failed")
+		}
+		c.xdgDecorationManager = unsafe.Pointer(manager)
+		newDecoration := AddListener(unsafe.Pointer(&manager.events.new_toplevel_decoration), c.handleNewDecoration)
+		c.keep(newDecoration)
+	}
+	C.wlr_server_decoration_manager_set_default_mode(
+		(*C.struct_wlr_server_decoration_manager)(c.kdeDecorationManager),
 		C.WLR_SERVER_DECORATION_MANAGER_MODE_SERVER)
-	c.kdeDecorationManager = unsafe.Pointer(kdeManager)
+	return nil
+}
 
-	manager := C.wlr_xdg_decoration_manager_v1_create(c.display)
-	if manager == nil {
-		return errors.New("wlr_xdg_decoration_manager_v1_create failed")
+func (c *Compositor) setDecorationPreference(prefer bool) error {
+	if prefer && c.xdgDecorationManager == nil {
+		if err := c.createDecorationManager(prefer); err != nil {
+			return err
+		}
 	}
-	c.xdgDecorationManager = unsafe.Pointer(manager)
-	newDecoration := AddListener(unsafe.Pointer(&manager.events.new_toplevel_decoration), c.handleNewDecoration)
-	c.keep(newDecoration)
+	if c.kdeDecorationManager != nil {
+		mode := C.uint32_t(C.WLR_SERVER_DECORATION_MANAGER_MODE_CLIENT)
+		if prefer {
+			mode = C.uint32_t(C.WLR_SERVER_DECORATION_MANAGER_MODE_SERVER)
+		}
+		C.wlr_server_decoration_manager_set_default_mode(
+			(*C.struct_wlr_server_decoration_manager)(c.kdeDecorationManager), mode)
+	}
 	return nil
 }
 
@@ -82,7 +104,7 @@ func (c *Compositor) handleNewDecoration(data unsafe.Pointer) {
 	}
 	var requestMode, destroy *Listener
 	requestMode = AddListener(unsafe.Pointer(&decoration.events.request_mode), func(unsafe.Pointer) {
-		C.sysc_xdg_decoration_apply_request(decoration)
+		C.sysc_xdg_decoration_apply_request(decoration, C.bool(c.preferNoCSD))
 	})
 	destroy = AddListener(unsafe.Pointer(&decoration.events.destroy), func(unsafe.Pointer) {
 		c.drop(requestMode)

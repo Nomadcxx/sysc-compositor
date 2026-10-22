@@ -9,59 +9,61 @@ import (
 	"errors"
 	"net"
 	"os"
+	"slices"
+	"sync"
 
 	"github.com/Nomadcxx/sysc-compositor/internal/config"
 	"github.com/Nomadcxx/sysc-compositor/internal/control"
 	"github.com/Nomadcxx/sysc-compositor/internal/ipc"
 	"github.com/Nomadcxx/sysc-compositor/internal/layout"
+	"github.com/Nomadcxx/sysc-compositor/internal/session"
 	"github.com/Nomadcxx/sysc-compositor/internal/unixsock"
 	"github.com/Nomadcxx/sysc-compositor/internal/wlr"
-	"github.com/Nomadcxx/sysc-compositor/internal/wm"
 )
 
 // Server wraps the wlroots object graph behind the lifetime the binary needs.
 type Server struct {
-	c        *wlr.Compositor
-	cfg      *config.Config
-	ctl      *control.Server
-	ctlPath  string
-	niri     *unixsock.Listener
-	state    *niriState
-	events   *eventHub
-	spawn    spawner
-	stopping chan struct{}
+	c             *wlr.Compositor
+	cfg           *config.Config
+	configPath    string
+	configSources []string
+	configWatcher *config.Watcher
+	sessionDBus   *session.DBus
+	localeXKB     *config.Keyboard
+	watchStop     chan struct{}
+	watchStart    sync.Once
+	watchClose    sync.Once
+	watchWG       sync.WaitGroup
+	reloadMu      sync.Mutex
+	reloadWG      sync.WaitGroup
+	reloadSeq     uint64
+	retryRoot     string
+	destroying    bool
+	lidClosed     bool
+	ctl           *control.Server
+	ctlPath       string
+	niri          *unixsock.Listener
+	state         *niriState
+	events        *eventHub
+	spawn         spawner
+	stopping      chan struct{}
 }
 
 // New builds the compositor from cfg (nil is niri's defaults) and records
 // whether loading the user's startup config failed. The caller must already
 // hold the compositor thread.
-func New(cfg *config.Config, configLoadFailed bool) (*Server, error) {
+func New(load config.LoadResult, configLoadFailed bool) (*Server, error) {
+	cfg := load.Config
 	if cfg == nil {
 		cfg = config.Default()
 	}
-	workspaces := make([]wm.WorkspaceConfig, len(cfg.Workspaces))
-	for i, workspace := range cfg.Workspaces {
-		workspaces[i] = wm.WorkspaceConfig{Name: workspace.Name, OpenOnOutput: workspace.OpenOnOutput}
-	}
-	k := cfg.Keyboard
-	c, err := wlr.NewWith(wlr.Options{Keyboard: wlr.Keyboard{
-		Rules: k.Rules, Model: k.Model, Layout: k.Layout, Variant: k.Variant, Options: k.Options,
-		File: expandHome(k.File), RepeatDelay: k.RepeatDelay, RepeatRate: k.RepeatRate,
-	}, ModKey: cfg.Input.ModKey, ModKeyNested: cfg.Input.ModKeyNested,
-		Layout: &wlr.LayoutOptions{
-			Gaps: cfg.Layout.Gaps, ColumnWidthProportion: cfg.Layout.ColumnWidthProportion,
-			FixedColumnWidth: cfg.Layout.FixedColumnWidth, InsertHint: cfg.Layout.InsertHint,
-			FocusRing: cfg.Layout.FocusRing, Shadow: cfg.Layout.Shadow,
-		}, CursorTheme: cfg.Cursor.Theme, CursorSize: cfg.Cursor.Size, Binds: cfg.Binds,
-		Overview: cfg.Overview, Gestures: cfg.Gestures,
-		Animations: cfg.Animations, PreferNoCSD: cfg.PreferNoCSD,
-		Workspaces: workspaces, WindowRules: cfg.WindowRules, LayerRules: cfg.LayerRules,
-	})
+	c, err := wlr.NewWith(compositorOptions(cfg, nil))
 	if err != nil {
 		return nil, err
 	}
 	s := &Server{
-		c: c, cfg: cfg, state: newNiriState(configLoadFailed), events: newEventHub(),
+		c: c, cfg: cfg, configPath: load.Root, configSources: slices.Clone(load.Sources),
+		state: newNiriState(configLoadFailed), events: newEventHub(),
 		stopping: make(chan struct{}),
 	}
 	c.SetStateChanged(s.refreshNiriState)
@@ -75,8 +77,17 @@ func New(cfg *config.Config, configLoadFailed bool) (*Server, error) {
 		// still can.
 		os.Stderr.WriteString("sysc-compositor: niri socket: " + err.Error() + "\n")
 	}
+	if len(s.configSources) != 0 {
+		watcher, watchErr := config.NewWatcher(s.configSources)
+		if watchErr != nil {
+			os.Stderr.WriteString("sysc-compositor: config watcher: " + watchErr.Error() + "\n")
+		} else {
+			s.configWatcher = watcher
+		}
+	}
 	s.spawn = newSpawner(c.SocketName(), s.NiriSocket(), cfg.Environment, cfg.Cursor)
 	c.SetSpawnHandlers(s.spawn.spawn, s.spawn.spawnSh)
+	c.SetSwitchToggleHandler(s.handleSwitchToggle)
 	return s, nil
 }
 
@@ -202,6 +213,10 @@ func (s *Server) Run() error {
 			postAction: func(action ipc.Action, workspaceID uint64) error {
 				return s.c.Post(func() {
 					switch action.Name {
+					case "LoadConfigFile":
+						s.requestConfigReload(action.ConfigPath)
+					case "SwitchLayout":
+						s.c.SwitchLayout(action.Layout, action.LayoutIndex)
 					case "ToggleOverview":
 						s.c.ToggleOverview()
 					case "OpenOverview":
@@ -369,6 +384,7 @@ func (s *Server) Run() error {
 		}
 		go s.niri.Serve(h.serve)
 	}
+	s.startConfigWatcher()
 	// Niri runs spawn-at-startup, then spawn-sh-at-startup (src/main.rs).
 	for _, argv := range s.cfg.SpawnAtStartup {
 		s.startup(s.spawn.spawn(argv))
@@ -390,15 +406,25 @@ func (s *Server) Terminate() { s.c.Terminate() }
 
 // Destroy releases the compositor and every listener it owns.
 func (s *Server) Destroy() {
+	s.stopConfigWatcher()
+	if s.sessionDBus != nil {
+		s.sessionDBus.Close()
+		s.sessionDBus = nil
+	}
 	if s.events != nil {
 		// EventStream handlers outlive the request half-close. Stop them before
-		// the Unix listener waits for its accepted connections to return.
+		// the Unix listener waits for its accepted connections to return. A
+		// closed hub refuses new streams, and a reload's late events are dropped.
 		s.events.close()
 	}
 	if s.niri != nil {
 		_ = s.niri.Close()
 		s.niri = nil
 	}
+	s.reloadMu.Lock()
+	s.destroying = true
+	s.reloadMu.Unlock()
+	s.reloadWG.Wait()
 	if s.ctl != nil {
 		// Unblock connections waiting on posted work before closing them:
 		// once the loop has stopped, that work never runs.

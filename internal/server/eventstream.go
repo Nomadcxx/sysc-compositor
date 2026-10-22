@@ -11,6 +11,15 @@ import (
 	"github.com/Nomadcxx/sysc-compositor/internal/ipc"
 )
 
+func (s *niriState) publishConfigLoaded(h *eventHub, failed bool) {
+	s.mu.Lock()
+	s.current.configLoadFailed = failed
+	h.publish([][]byte{eventLine("ConfigLoaded", struct {
+		Failed bool `json:"failed"`
+	}{Failed: failed})})
+	s.mu.Unlock()
+}
+
 const eventStreamBufferSize = 64
 
 type eventHub struct {
