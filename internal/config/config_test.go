@@ -158,6 +158,34 @@ binds {
 	}
 }
 
+func TestBindAllowWhenLockedDefaultsFalse(t *testing.T) {
+	cfg, err := Parse("bind-locked.kdl", []byte(`
+binds {
+    Mod+Q { close-window; }
+    XF86AudioMute allow-when-locked=true { spawn "wpctl" "set-mute" "@DEFAULT_AUDIO_SINK@" "toggle"; }
+}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Binds) != 2 {
+		t.Fatalf("binds = %d, want 2", len(cfg.Binds))
+	}
+	if cfg.Binds[0].AllowWhenLocked {
+		t.Error("allow-when-locked defaults to true, want false")
+	}
+	if !cfg.Binds[1].AllowWhenLocked {
+		t.Error("allow-when-locked=true was not retained")
+	}
+	if _, err := Parse("bind-locked.kdl", []byte(`
+binds {
+    Mod+Q allow-when-locked="yes" { close-window; }
+}
+`)); err == nil {
+		t.Error("string allow-when-locked parsed, want boolean validation error")
+	}
+}
+
 func TestM7OverviewGesturesAndInsertHintConfig(t *testing.T) {
 	cfg, err := Parse("m7.kdl", []byte(`
 overview {
