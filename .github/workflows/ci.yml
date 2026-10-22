@@ -44,39 +44,23 @@ jobs:
         run: go test -count=1 -p 2 $(go list ./... | grep -v -e '/internal/wlr$' -e '/internal/server$')
 
   # Lane 2 builds real compositors on wlroots' headless backend, which gives
-  # each one a 1280x720 output. SYSC_NESTED_TESTS=1 is safe here only because
-  # the runner has no desktop: never set it on a developer machine.
+  # each one a 1280x720 output, and renders with GLES on llvmpipe through
+  # vkms, as SceneFX needs. SYSC_NESTED_TESTS=1 is safe here only because the
+  # runner has no desktop: never set it on a developer machine.
   compositor:
     runs-on: ubuntu-latest
-    container: archlinux:latest
-    env:
-      SYSC_NESTED_TESTS: "1"
-      WLR_BACKENDS: headless
-      WLR_RENDERER: pixman
-      XDG_RUNTIME_DIR: /tmp/xdg-runtime
     steps:
-      - name: install build dependencies
-        run: pacman -Syu --noconfirm --needed git gcc pkgconf go wlroots0.20 scenefx wayland wayland-protocols libxkbcommon xkeyboard-config weston wofi ttf-dejavu
       - uses: actions/checkout@v4
-      - name: trust the checkout
-        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
-      - name: runtime directory
-        run: install -d -m 0700 "$XDG_RUNTIME_DIR"
-      - name: generate protocol headers
-        run: go generate ./internal/wlr
-      # A test skips when it cannot build a compositor or find its client
-      # (weston-terminal, wofi). Here a skip means the lane checked less than
-      # it claims, so any skip fails the step.
-      - name: test internal/wlr
-        shell: bash
+      - name: software DRM device
         run: |
-          set -o pipefail
-          go test -count=1 -v -timeout 15m ./internal/wlr | tee wlr.log
-          ! grep -n -- '--- SKIP' wlr.log
-      - name: test internal/server
-        if: ${{ !cancelled() }}
-        shell: bash
-        run: |
-          set -o pipefail
-          go test -count=1 -v -timeout 15m ./internal/server | tee server.log
-          ! grep -n -- '--- SKIP' server.log
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends "linux-modules-extra-$(uname -r)"
+          sudo modprobe vkms
+          ls -l /dev/dri
+      - name: test internal/wlr and internal/server
+        run: >-
+          docker run --rm --device /dev/dri -v "$PWD:/src" -w /src
+          -e GOMAXPROCS=2 -e SYSC_NESTED_TESTS=1 -e WLR_BACKENDS=headless
+          -e WLR_RENDERER=gles2 -e WLR_RENDERER_ALLOW_SOFTWARE=1
+          -e XDG_RUNTIME_DIR=/tmp/xdg-runtime
+          archlinux:latest .github/ci/compositor-tests.sh
