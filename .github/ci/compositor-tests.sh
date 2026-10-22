@@ -5,11 +5,16 @@
 set -euo pipefail
 
 pacman -Syu --noconfirm --needed git gcc pkgconf go wlroots0.20 scenefx wayland \
-	wayland-protocols libxkbcommon xkeyboard-config mesa \
+	wayland-protocols libxkbcommon xkeyboard-config mesa seatd \
 	weston wayland-utils foot swaybg waybar wofi ttf-dejavu >/dev/null
 git config --global --add safe.directory "$PWD"
 install -d -m 0700 "$XDG_RUNTIME_DIR"
+# vkms has a primary node only; wlroots renders on it when the DRM backend
+# hands it over. The container has no udev, so the device is named.
+WLR_DRM_DEVICES=$(ls /dev/dri/card* | head -n1)
+export WLR_DRM_DEVICES
 ls -l /dev/dri
+echo "WLR_DRM_DEVICES=$WLR_DRM_DEVICES"
 go generate ./internal/wlr
 
 # A test skips when it cannot build a compositor or find its client. Here a
