@@ -4,7 +4,10 @@ package testclient
 #cgo pkg-config: wayland-client
 
 #define _GNU_SOURCE
+#include <errno.h>
+#include <poll.h>
 #include <stdbool.h>
+#include <time.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
@@ -155,6 +158,40 @@ static struct wl_buffer *sysc_lock_buffer(struct wl_shm *shm, uint32_t width, ui
 	return buffer;
 }
 
+static int64_t sysc_lock_now_ms(void) {
+	struct timespec ts;
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+
+// Dispatches until the deadline: 0 when something was dispatched, 1 when the
+// deadline passed, -1 on a broken connection. A compositor that never
+// answers fails the test instead of hanging it.
+static int sysc_lock_dispatch(struct wl_display *display, int64_t deadline) {
+	while (wl_display_prepare_read(display) != 0) {
+		if (wl_display_dispatch_pending(display) < 0) {
+			return -1;
+		}
+	}
+	wl_display_flush(display);
+	int64_t left = deadline - sysc_lock_now_ms();
+	if (left <= 0) {
+		wl_display_cancel_read(display);
+		return 1;
+	}
+	struct pollfd pfd = { .fd = wl_display_get_fd(display), .events = POLLIN };
+	int ready = poll(&pfd, 1, (int)left);
+	if (ready <= 0) {
+		wl_display_cancel_read(display);
+		// Go preempts threads with SIGURG, which interrupts poll.
+		return ready < 0 && errno != EINTR ? -1 : 0;
+	}
+	if (wl_display_read_events(display) < 0 || wl_display_dispatch_pending(display) < 0) {
+		return -1;
+	}
+	return 0;
+}
+
 static void sysc_lock_client_free(struct sysc_lock_client *client) {
 	if (client->display != NULL) {
 		wl_display_disconnect(client->display);
@@ -209,9 +246,14 @@ static int sysc_lock_client_start(const char *display_name, bool map_surfaces,
 			}
 		}
 	}
+	int64_t deadline = sysc_lock_now_ms() + 3000;
 	while (!client->locked && !client->finished) {
-		if (wl_display_dispatch(client->display) < 0) {
+		int r = sysc_lock_dispatch(client->display, deadline);
+		if (r < 0) {
 			return 8;
+		}
+		if (r > 0) {
+			return 12; // no `locked` or `finished` within 3 s
 		}
 	}
 	if (client->finished || !map_surfaces) {
@@ -220,8 +262,12 @@ static int sysc_lock_client_start(const char *display_name, bool map_surfaces,
 	for (int i = 0; i < client->num_outputs; i++) {
 		struct sysc_lock_surface *s = &client->surfaces[i];
 		while (!s->configured) {
-			if (wl_display_dispatch(client->display) < 0) {
+			int r = sysc_lock_dispatch(client->display, deadline);
+			if (r < 0) {
 				return 9;
+			}
+			if (r > 0) {
+				return 13; // no configure within the deadline
 			}
 		}
 		s->buffer = sysc_lock_buffer(client->shm, s->width, s->height);

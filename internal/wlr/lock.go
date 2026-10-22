@@ -120,6 +120,10 @@ func (c *Compositor) handleNewSessionLock(data unsafe.Pointer) {
 		for pointer := range c.sceneOutputs {
 			if c.outputIsEnabled(pointer) {
 				c.lockPendingOutputs[pointer] = struct{}{}
+				// An idle output draws only when armed (sysc-1469); the
+				// backdrop's damage does not reliably arm every output, so
+				// each one is asked for the frame that shows the lock.
+				C.wlr_output_schedule_frame((*C.struct_wlr_output)(pointer))
 			}
 		}
 	}
