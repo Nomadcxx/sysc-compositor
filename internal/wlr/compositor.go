@@ -467,6 +467,9 @@ func NewWith(opts Options) (*Compositor, error) {
 	if !c.createTextInput() {
 		return nil, errors.New("text input or input method manager create failed")
 	}
+	if !c.createCaptureGlobals() {
+		return nil, errors.New("capture or clipboard global create failed")
+	}
 	// xdg-output gives clients output names and logical geometry; waybar and
 	// grim refuse to start without it, and Niri advertises it.
 	if C.wlr_xdg_output_manager_v1_create(c.display, c.layout) == nil {
