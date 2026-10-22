@@ -1,0 +1,71 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Supersede in-flight runs for the same branch or PR so a burst of pushes does
+# not queue a full build each.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  GOMAXPROCS: "2"
+
+jobs:
+  # Lane 1 needs no display: static checks, both builds, and the tests of every
+  # package that never builds a compositor.
+  check:
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - name: install build dependencies
+        run: pacman -Syu --noconfirm --needed git gcc pkgconf go wlroots0.20 scenefx wayland wayland-protocols libxkbcommon xkeyboard-config
+      - uses: actions/checkout@v4
+      - name: trust the checkout
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - name: generate protocol headers
+        run: go generate ./internal/wlr
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      - name: whitespace
+        run: git diff --check
+      - name: vet
+        run: go vet -p 2 ./...
+      - name: build
+        run: go build ./cmd/sysc-compositor ./cmd/niri
+      - name: go.mod and go.sum unchanged
+        run: git diff --exit-code -- go.mod go.sum
+      - name: test packages without a compositor
+        run: go test -count=1 -p 2 $(go list ./... | grep -v -e '/internal/wlr$' -e '/internal/server$')
+
+  # Lane 2 builds real compositors on wlroots' DRM backend over vkms, a
+  # virtual display with no GPU, and renders with GLES on llvmpipe as SceneFX
+  # needs. SYSC_NESTED_TESTS=1 is safe here only because the runner has no
+  # desktop: never set it on a developer machine.
+  compositor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: software DRM device
+        run: |
+          kernel=$(uname -r)
+          if ! modinfo vkms >/dev/null 2>&1; then
+            sudo apt-get update -q
+            sudo apt-get install -y -q --no-install-recommends "linux-modules-extra-$kernel" ||
+              { echo "::error::no vkms module for runner kernel $kernel"; exit 1; }
+          fi
+          sudo modprobe vkms
+          ls -l /dev/dri
+      - name: test internal/wlr and internal/server
+        run: >-
+          docker run --rm --device /dev/dri -v "$PWD:/src" -w /src
+          -e GOMAXPROCS=2 -e SYSC_NESTED_TESTS=1 -e WLR_BACKENDS=drm
+          -e LIBSEAT_BACKEND=noop
+          -e WLR_RENDERER=gles2 -e WLR_RENDERER_ALLOW_SOFTWARE=1
+          -e XDG_RUNTIME_DIR=/tmp/xdg-runtime
+          archlinux:latest .github/ci/compositor-tests.sh

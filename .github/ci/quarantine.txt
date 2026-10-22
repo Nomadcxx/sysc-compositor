@@ -1,0 +1,27 @@
+# Lane 2 tests known to fail on the DRM backend over vkms. Each line is a
+# top-level test name and the bd issue that tracks it. A test here may fail
+# or skip without failing the lane; any other failure or skip fails it, and a
+# quarantined test that passes is reported so its line can go.
+TestNestedSessionEndsWhenLastOutputCloses sysc-1638
+TestOutputFollowsHostResize sysc-1638
+TestWorkspaceBindActivatesDynamicWorkspace sysc-1638
+TestNestedKeyboardBindFocusesColumnAndConsumesKey sysc-1638
+TestNestedKeyboardBindMovesFocusedColumnLeft sysc-1638
+TestNestedModPointerGrabsUseEdgeResizeAndCursorImages sysc-1638
+TestPointerResizeSurvivesWorkspaceModelReapplication sysc-1638
+TestSpawnBindUsesServerCallback sysc-1638
+TestCompositorGrabClearsPointerFocus sysc-1638
+TestUserKeyboardsShareOneKeymap sysc-1638
+TestConfiguredKeyboardReachesClients sysc-1638
+TestCloseWindowBindSendsCloseAndConsumesKey sysc-1638
+TestVTSwitchChordIsConsumed sysc-1638
+TestFractionalScaleFollowsOutput sysc-1638
+TestDmabufClientMaps sysc-1638
+TestExclusiveZoneShrinksUsableArea sysc-1638
+# M6 tests of the same nested Mod-key family.
+TestFloatingBindsMoveMappedWindowBetweenLayers sysc-1638
+TestModDragPersistsFloatingWindowPositionOnRelease sysc-1638
+TestNestedKeyboardBindConsumeOrExpelWindowRight sysc-1638
+TestNestedKeyboardBindFocusesAndMovesTabbedWindowsVertically sysc-1638
+TestNestedKeyboardBindMovesColumnAndWindowBetweenWorkspaces sysc-1638
+TestNestedKeyboardBindNamesAndMovesWindowToNamedWorkspace sysc-1638
