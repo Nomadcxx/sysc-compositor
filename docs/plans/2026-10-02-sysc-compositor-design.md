@@ -34,7 +34,7 @@ Implementation map: [orchestration](2026-10-02-orchestration.md). Remaining-work
 
 `$NIRI_SOCKET` is the compositor IPC path (niri’s env name, our process). `$SYSC_SOCKET` is the same inode.
 
-The `niri` CLI is a first-class binary in this repo (`cmd/niri`): `niri msg`, `niri validate`, `niri -c`, `niri --session`. Drop-in for greetd (`niri -c /etc/greetd/niri-greeter-config.kdl`) and sysc-launch (`LookPath("niri")`). The compositor process can be `sysc-compositor` or `niri` (symlink).
+The CLI is `sysc-compositor` (`cmd/sysc-compositor`): `sysc-compositor msg`, `sysc-compositor validate`, `sysc-compositor -c`, `sysc-compositor --session`. A `niri` binary in this repo (`cmd/niri`) is a compatibility alias with the same arguments, and the drop-in for greetd (`niri -c /etc/greetd/niri-greeter-config.kdl`) and sysc-launch (`LookPath("niri")`). The compositor process can be `sysc-compositor` or `niri` (symlink).
 
 **Definition of done (parity):** this machine’s `~/.config/niri/config.kdl` (including `sysc-shell.kdl`) loads, live-reloads, and drives a session that sysc-shell, greeter, Steam/X11 via xwayland-satellite, OBS via gnome portal, and Orca can use without niri installed.
 
@@ -100,7 +100,7 @@ sysc-greet          greetd TUI in kitty (not a Wayland client)
 2. **ext-data-control-v1 is session-hard** (clipboard is already deployed).
 3. **ext-idle-notify-v1 is session-hard** (sysc-walls).
 4. **Do not implement** a lock screen, wallpaper engine, notification server, tray watcher, or bar here.
-5. **`niri` CLI drop-in stays** for greet (`niri msg action quit`), walls (`niri msg version`), scripts, and `niri validate`. **sysc-launch is a sibling change**, not covered by the drop-in alone: its production runner hard-requires `LookPath("niri")`. That is **L0** in the orchestration plan.
+5. **`niri` CLI drop-in stays** as a compatibility alias of `sysc-compositor` (§6) for greet (`niri msg action quit`), walls (`niri msg version`), scripts, and `niri validate`. **sysc-launch is a sibling change**, not covered by the drop-in alone: its production runner hard-requires `LookPath("niri")`. That is **L0** in the orchestration plan.
 6. **Do not rewrite** sysc-launch ranking, XDG scan, or history. Only compositor resolution + docs.
 
 ### Sibling workstreams (other repos, tracked here)
@@ -258,22 +258,22 @@ Grouped for implementation (not for dropping):
 
 ---
 
-## 6. CLI (`cmd/niri`)
+## 6. CLI (`cmd/sysc-compositor`, alias `cmd/niri`)
 
 Match niri’s user-facing CLI well enough that scripts and docs keep working:
 
 - no args / `--session`: start compositor (session imports env, starts graphical-session.target)
 - `-c` / `--config`
-- `niri msg [--json] …`  (thin JSON client of `$NIRI_SOCKET`)
-- `niri msg action …`
-- `niri msg output …`
-- `niri msg event-stream`
-- `niri msg layers|windows|workspaces|outputs|focused-window|keyboard-layouts|version|overview-state|casts`
-- `niri validate`
-- `niri msg --print-request` / `raw-request` if present in 26.04
+- `sysc-compositor msg [--json] …`  (thin JSON client of `$NIRI_SOCKET`)
+- `sysc-compositor msg action …`
+- `sysc-compositor msg output …`
+- `sysc-compositor msg event-stream`
+- `sysc-compositor msg layers|windows|workspaces|outputs|focused-window|keyboard-layouts|version|overview-state|casts`
+- `sysc-compositor validate`
+- `sysc-compositor msg --print-request` / `raw-request` if present in 26.04
 - `-v` / version string (sysc-compositor version + “niri-ipc 26.4.0 compatible”)
 
-`sysc-compositor msg …` is the same CLI (same flags, same JSON). `niri` is the drop-in name.
+**Naming (owner decision 2026-10-22).** `sysc-compositor msg` and `sysc-compositor validate` are the official commands; docs, help text and new scripts use them. `niri` is a compatibility alias with the same flags and JSON, kept so the greeter config and older scripts work unmodified. The niri-ipc wire contract does not change. Later steps: the suite installer's `sysc` passes `msg` and `validate` through (bd `sysc-1633`, installer repo), then `cmd/niri` retires once no sibling invokes `niri` (`sysc-1634`).
 
 sysc-greet’s `niri msg action quit --skip-confirmation` and sysc-launch’s `{compositor} msg action spawn -- …` are the first two CLI tests.
 
@@ -384,10 +384,10 @@ Nested / TTY-without-session: do not export a11y names (niri rule, avoid fightin
 ## 12. Two run modes
 
 ```
-niri --session                 # user session: env import, graphical-session.target
-niri -c /etc/greetd/niri-greeter-config.kdl   # greeter
-niri validate
-niri msg …
+sysc-compositor --session      # user session: env import, graphical-session.target
+niri -c /etc/greetd/niri-greeter-config.kdl   # greeter (alias, so sysc-greet's file runs unmodified)
+sysc-compositor validate
+sysc-compositor msg …
 ```
 
 Greeter kdl (already in sysc-greet): empty binds, animations off, spawn wallpaper + kitty, then `niri msg action quit --skip-confirmation`. That file must work unmodified.
@@ -485,7 +485,7 @@ L0 is independent and can start now. M2/M3 own the sysc pipeline. M5–M8 own th
 - **Layout:** column/tab/float/overview geometries as tables
 - **Rules:** window-rule match/exclude fixtures
 - **Nested smoke:** compositor as Wayland client, spawn foot, EventStream JSON
-- **CLI:** `niri msg --json windows` against a nested instance
+- **CLI:** `sysc-compositor msg --json windows` (and the `niri` alias) against a nested instance
 - **Greeter VT, session VM** before replacing niri as the login session
 - **Parity matrix:** `docs/plans/niri-parity-matrix.md` listing every Request, Event, Action, config section, D-Bus name — filled as milestones land. The matrix is the remaining-work list; do not keep a second copy in this design.
 

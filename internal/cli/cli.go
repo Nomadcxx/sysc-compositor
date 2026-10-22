@@ -58,8 +58,13 @@ func Main(name string, args []string, env Env) int {
 	return run(name, configPath, env)
 }
 
+// usage leads with the sysc-compositor names; niri is a compatibility alias
+// that takes the same arguments (design §6).
 func usage(name string, env Env, problem string) int {
-	fmt.Fprintf(env.Stderr, "%s: %s\nusage: %s [-c CONFIG] | %s validate [-c CONFIG] | %s msg [--json] REQUEST\n", name, problem, name, name, name)
+	fmt.Fprintf(env.Stderr, "%s: %s\nusage: sysc-compositor [-c CONFIG] | sysc-compositor validate [-c CONFIG] | sysc-compositor msg [--json] REQUEST\n", name, problem)
+	if name != "sysc-compositor" {
+		fmt.Fprintf(env.Stderr, "%s is a compatibility alias of sysc-compositor and takes the same arguments\n", name)
+	}
 	return 2
 }
 
@@ -133,7 +138,7 @@ func run(name, configFlag string, env Env) int {
 	return 0
 }
 
-// msg is `niri msg`, for the requests built so far.
+// msg is `sysc-compositor msg` (niri's `niri msg`), for the requests built so far.
 func msg(name string, args []string, env Env) int {
 	asJSON := false
 	if len(args) > 0 && (args[0] == "-j" || args[0] == "--json") {

@@ -246,3 +246,21 @@ func TestValidateParsesConfigWithoutRunningStartup(t *testing.T) {
 		t.Errorf("validate warnings %q do not identify the unapplied bind action", stderr.String())
 	}
 }
+
+func TestUsageLeadsWithSyscCompositorAndNamesTheNiriAlias(t *testing.T) {
+	for _, name := range []string{"sysc-compositor", "niri"} {
+		var stderr bytes.Buffer
+		env := Env{Getenv: func(string) string { return "" }, Stdout: &bytes.Buffer{}, Stderr: &stderr}
+		if code := Main(name, []string{"--no-such-flag"}, env); code != 2 {
+			t.Fatalf("%s: exit %d, want 2 (usage)", name, code)
+		}
+		out := stderr.String()
+		if !strings.Contains(out, "usage: sysc-compositor [-c CONFIG] | sysc-compositor validate [-c CONFIG] | sysc-compositor msg [--json] REQUEST\n") {
+			t.Errorf("%s usage %q does not lead with sysc-compositor", name, out)
+		}
+		alias := strings.Contains(out, "niri is a compatibility alias of sysc-compositor")
+		if alias != (name == "niri") {
+			t.Errorf("%s usage %q: alias note present = %v", name, out, alias)
+		}
+	}
+}
