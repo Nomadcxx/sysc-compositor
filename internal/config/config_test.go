@@ -567,9 +567,15 @@ func TestPreferNoCSDAcceptsExplicitFalse(t *testing.T) {
 }
 
 func TestM8AnimationOffAndUnsupportedSettings(t *testing.T) {
-	cfg, err := Parse("m8-unsupported.kdl", []byte(`
-animations { off; }
-animations {
+	// Niri rejects a repeated `animations` within one file, so the later
+	// block that turns animations back on comes from an include.
+	dir := t.TempDir()
+	root := filepath.Join(dir, "config.kdl")
+	for path, content := range map[string]string{
+		root: `animations { off; }
+include "animations.kdl"
+`,
+		filepath.Join(dir, "animations.kdl"): `animations {
     on
     window-open { off; }
     window-close {
@@ -578,7 +584,13 @@ animations {
     }
     slowdown 2
 }
-`))
+`,
+	} {
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg, err := Load(root)
 	if err != nil {
 		t.Fatal(err)
 	}
