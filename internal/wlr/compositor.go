@@ -85,6 +85,8 @@ import "C"
 
 import (
 	"errors"
+	"os"
+	"testing"
 	"time"
 	"unsafe"
 
@@ -202,6 +204,11 @@ type LayoutOptions struct {
 	FixedColumnWidth      int
 }
 
+// ErrNestedTestNeedsConsent is what NewWith returns inside a test binary unless
+// SYSC_NESTED_TESTS=1. A test compositor nests in the live session and maps a
+// window on the owner's desktop, so building one takes the owner's say-so.
+var ErrNestedTestNeedsConsent = errors.New("nested compositor tests need SYSC_NESTED_TESTS=1: they open a window on the live desktop")
+
 // New is NewWith niri's defaults.
 func New() (*Compositor, error) { return NewWith(Options{}) }
 
@@ -210,6 +217,9 @@ func New() (*Compositor, error) { return NewWith(Options{}) }
 // starts here and announces its devices at once, so everything they need is
 // set before that.
 func NewWith(opts Options) (*Compositor, error) {
+	if testing.Testing() && os.Getenv("SYSC_NESTED_TESTS") != "1" {
+		return nil, ErrNestedTestNeedsConsent
+	}
 	c := &Compositor{}
 	c.model = wm.New()
 	c.layoutOptions = LayoutOptions{Gaps: 16, ColumnWidthProportion: 0.5}
