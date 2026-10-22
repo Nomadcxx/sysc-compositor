@@ -1071,3 +1071,55 @@ func TestScreenshotBindTakesShowPointerOnly(t *testing.T) {
 		t.Error("screenshot took write-to-disk, which Niri's screenshot action does not have")
 	}
 }
+
+func TestQuitBindTakesSkipConfirmation(t *testing.T) {
+	cfg, err := Parse("quit.kdl", []byte(`
+binds {
+    Mod+Shift+E { quit; }
+    Ctrl+Alt+Delete { quit skip-confirmation=true; }
+}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Binds) != 2 || len(cfg.UnappliedActions) != 0 {
+		t.Fatalf("binds = %+v, unapplied = %q", cfg.Binds, cfg.UnappliedActions)
+	}
+	if a := cfg.Binds[0].Actions[0]; a.Name != "quit" || a.SkipConfirmation {
+		t.Errorf("quit = %+v, want the confirmation", a)
+	}
+	if a := cfg.Binds[1].Actions[0]; !a.SkipConfirmation {
+		t.Errorf("quit skip-confirmation=true = %+v", a)
+	}
+	for _, bad := range []string{"quit force=true", "quit skip-confirmation=1", "quit \"now\""} {
+		if _, err := Parse("quit.kdl", []byte("binds {\n    Mod+Q { "+bad+"; }\n}\n")); err == nil {
+			t.Errorf("%s was accepted", bad)
+		}
+	}
+}
+
+func TestExitConfirmationAnimationDefaultsToNiri(t *testing.T) {
+	cfg, err := Parse("exit.kdl", []byte(``))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := cfg.Animations.ExitConfirmationOpenClose.Spring; s == nil || *s != (SpringConfig{DampingRatio: 0.6, Stiffness: 500, Epsilon: 0.01}) {
+		t.Errorf("default exit-confirmation-open-close = %+v", cfg.Animations.ExitConfirmationOpenClose)
+	}
+	cfg, err = Parse("exit.kdl", []byte(`
+animations {
+    exit-confirmation-open-close { spring damping-ratio=1.0 stiffness=800 epsilon=0.001; }
+}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := cfg.Animations.ExitConfirmationOpenClose.Spring; s == nil || *s != (SpringConfig{DampingRatio: 1, Stiffness: 800, Epsilon: 0.001}) {
+		t.Errorf("exit-confirmation-open-close = %+v", cfg.Animations.ExitConfirmationOpenClose)
+	}
+	for _, w := range cfg.Warnings {
+		if w == "animations.exit-confirmation-open-close" {
+			t.Error("exit-confirmation-open-close is still reported as not applied")
+		}
+	}
+}

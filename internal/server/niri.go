@@ -43,7 +43,9 @@ func Version() string {
 // niriHandler answers the niri-ipc requests M2 builds; every other request
 // and action decodes and replies that it is not built yet.
 type niriHandler struct {
-	quit       func()
+	// quit runs Niri's Quit after the reply is written: the exit dialog
+	// asks first unless skipConfirmation is set.
+	quit       func(skipConfirmation bool)
 	spawn      spawner
 	snapshot   func() niriSnapshot
 	stream     func(net.Conn)
@@ -367,9 +369,8 @@ func (h niriHandler) action(a ipc.Action) (ipc.Reply, func()) {
 		}
 		return h.windowAction(a, 0)
 	case "Quit":
-		// There is no confirmation dialog yet, so skip_confirmation changes
-		// nothing. The reply goes out before the shutdown starts.
-		return ipc.Reply{Ok: ipc.Handled}, h.quit
+		// The reply goes out before the dialog opens or the shutdown starts.
+		return ipc.Reply{Ok: ipc.Handled}, func() { h.quit(a.SkipConfirmation) }
 	case "Spawn":
 		err = h.spawn.spawn(a.Command)
 	case "SpawnSh":

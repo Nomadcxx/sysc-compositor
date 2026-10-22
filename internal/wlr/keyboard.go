@@ -343,6 +343,10 @@ func (c *Compositor) handleKeyboardKey(data unsafe.Pointer) {
 			}
 			return
 		}
+		if c.exitDialogKeyPress(keycode) {
+			c.suppressedKeys[keycode] = true
+			return
+		}
 		if c.shotUIKey(keycode) {
 			c.suppressedKeys[keycode] = true
 			return
@@ -380,7 +384,7 @@ func (c *Compositor) dispatchKeyBinding(keycode uint32) (bind.Binding, bool) {
 		if binding.Chord.Trigger != bind.TriggerKey || binding.Chord.Modifiers != modifiers {
 			continue
 		}
-		if c.sessionLocked && !binding.AllowWhenLocked {
+		if c.sessionLocked && !binding.AllowWhenLocked && !allowedWhenLocked(binding) {
 			continue
 		}
 		if !binding.IgnoresInhibit && c.shortcutsInhibited() {
@@ -398,11 +402,24 @@ func (c *Compositor) dispatchKeyBinding(keycode uint32) (bind.Binding, bool) {
 	return bind.Binding{}, false
 }
 
+// allowedWhenLocked is Niri's allowed_when_locked for the implemented
+// actions: a bind of quit alone runs while the session is sealed, so the exit
+// dialog can open over the lock screen.
+func allowedWhenLocked(binding bind.Binding) bool {
+	for _, action := range binding.Actions {
+		if action.Name != bind.ActionQuit {
+			return false
+		}
+	}
+	return len(binding.Actions) > 0
+}
+
 // executeKeyBinding runs a bind's actions. While the session is sealed only
-// spawn actions run, as Niri honours allow-when-locked for spawn alone.
+// spawn actions, which Niri's allow-when-locked covers, and quit run.
 func (c *Compositor) executeKeyBinding(binding bind.Binding) {
 	for _, action := range binding.Actions {
-		if c.sessionLocked && action.Name != bind.ActionSpawn && action.Name != bind.ActionSpawnSh {
+		if c.sessionLocked && action.Name != bind.ActionSpawn && action.Name != bind.ActionSpawnSh &&
+			action.Name != bind.ActionQuit {
 			continue
 		}
 		c.executeBindAction(action)
@@ -486,6 +503,10 @@ func (c *Compositor) modifierActive(modifier bind.Modifier) bool {
 func (c *Compositor) executeBindAction(action bind.Action) {
 	if action.Name == bind.ActionCloseWindow {
 		c.CloseWindow(nil)
+		return
+	}
+	if action.Name == bind.ActionQuit {
+		c.Quit(action.SkipConfirmation)
 		return
 	}
 	if action.Name == bind.ActionSpawn {

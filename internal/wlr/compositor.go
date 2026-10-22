@@ -151,6 +151,7 @@ type Compositor struct {
 	screenshotPattern       *string
 	screenshotTaken         func(path *string)
 	shotUI                  *screenshotUI
+	exitDialog              exitDialog
 	lastShotSelection       image.Rectangle
 	animations              map[animationKey]*runningAnimation
 	animationTimer          *time.Timer

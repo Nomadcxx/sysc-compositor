@@ -833,6 +833,12 @@ func (c *Compositor) handleCursorButton(data unsafe.Pointer) {
 			}
 		}
 	}
+	if pressed && c.exitDialog.open {
+		c.hideExitDialog()
+		c.consumedPointerButtons[button] = true
+		C.wlr_seat_pointer_notify_frame(c.seat)
+		return
+	}
 	if c.shotUIButton(button, pressed) {
 		return
 	}
@@ -911,6 +917,7 @@ func (c *Compositor) handleCursorButton(data unsafe.Pointer) {
 func (c *Compositor) handleCursorAxis(data unsafe.Pointer) {
 	event := (*C.struct_wlr_pointer_axis_event)(data)
 	c.userActivity()
+	c.hideExitDialog()
 	C.wlr_seat_pointer_notify_axis(c.seat, event.time_msec,
 		event.orientation, event.delta, event.delta_discrete,
 		event.source, event.relative_direction)
@@ -1021,6 +1028,12 @@ func (c *Compositor) focusLayerSurface(layer *layerSurface) {
 
 func (c *Compositor) updateKeyboardFocus() {
 	previousFocusedView := c.keyboardFocusedView()
+	if c.exitDialog.open {
+		// The dialog holds the keyboard, as Niri's ExitConfirmDialog focus.
+		C.wlr_seat_keyboard_notify_clear_focus(c.seat)
+		c.keyboardFocusChanged(previousFocusedView)
+		return
+	}
 	if c.sessionLocked {
 		// Sealed: only a lock surface may hold user keyboard focus.
 		if surface := c.lockKeyboardSurface(); surface == nil {
