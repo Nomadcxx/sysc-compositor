@@ -232,3 +232,17 @@ Step 1 of the recent-windows section above.
 |---|---|
 | `recent-windows`: Niri's defaults, every option, the binds block (keyboard keys with a modifier, one `next-window` or `previous-window` with `scope` and `filter`), the first binds block clearing the defaults and later ones replacing by key, `recent-windows-close` | `TestRecentWindowsDefaultsToNiri`, `TestRecentWindowsSectionMergesAsNiri` |
 | `FocusWindowPrevious` (IPC and `focus-window-previous`), committing the stamp of the window it leaves; `debounce-ms`, including 0; a key sent to the focused window commits its stamp | `TestFocusWindowPreviousCommitsTheWindowItLeaves` (lane 2), `TestParseAction`, `TestNiriM6ActionsArePosted` |
+
+## Execution record (2026-10-23): the MRU model
+
+Step 2. `internal/wm/mru.go` ports Niri's `WindowMru`: windows newest stamp first (unstamped last),
+scopes, the app-id filter, forward/backward with wrap, first, last, set-current, Niri's scope cycle
+(All, Workspace, Output) and removal. A scope or filter change keeps the selection, or takes the
+nearest listed window before it, else the first.
+
+| Item | Proof |
+|---|---|
+| Order, wrap-around | `TestMRUOrdersByFocusStampNewestFirst` |
+| Niri's `remove_last_window_out_of_two` | `TestMRURemovingTheLastOfTwoKeepsASelection` |
+| Scope, filter and cycle selection rules | `TestMRUScopeAndFilterKeepTheNearestSelection` |
+| Niri's `random_operations_dont_panic` with `verify_invariants` (2,000 seeded runs) | `TestMRURandomOperationsKeepTheSelectionListed` |
