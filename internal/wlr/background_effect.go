@@ -27,6 +27,7 @@ import (
 	"errors"
 	"math"
 	"runtime/cgo"
+	"slices"
 	"unsafe"
 )
 
@@ -40,6 +41,9 @@ type backgroundEffect struct {
 	committed      []rect
 	pendingSet     bool
 	blurNodes      []unsafe.Pointer
+	// blurGone listens for each blur node's destruction: the nodes are
+	// children of the window's scene tree, which can be destroyed first.
+	blurGone       map[unsafe.Pointer]*Listener
 	blurParent     unsafe.Pointer
 	commit         *Listener
 	rootCommit     *Listener
@@ -177,6 +181,7 @@ func (c *Compositor) syncBackgroundEffect(effect *backgroundEffect, rebuild bool
 			sceneFXNodeSetPosition(node, int(x)+area.x, int(y)+area.y)
 			sceneFXPlaceBelow(node, unsafe.Pointer(surfaceNode))
 			effect.blurNodes = append(effect.blurNodes, node)
+			c.watchBlurNode(effect, node)
 		}
 		effect.blurParent = parentPointer
 		return
@@ -204,8 +209,31 @@ func clipSurfaceRegion(region []rect, width, height int) []rect {
 	return clipped
 }
 
+// watchBlurNode forgets a blur node the scene destroys with its parent tree,
+// so it is never destroyed twice.
+func (c *Compositor) watchBlurNode(effect *backgroundEffect, node unsafe.Pointer) {
+	if effect.blurGone == nil {
+		effect.blurGone = map[unsafe.Pointer]*Listener{}
+	}
+	var gone *Listener
+	gone = AddListener(sceneFXNodeDestroySignal(node), func(unsafe.Pointer) {
+		c.drop(gone)
+		delete(effect.blurGone, node)
+		effect.blurNodes = slices.DeleteFunc(effect.blurNodes, func(n unsafe.Pointer) bool { return n == node })
+		if len(effect.blurNodes) == 0 {
+			effect.blurParent = nil
+		}
+	})
+	c.keep(gone)
+	effect.blurGone[node] = gone
+}
+
 func (c *Compositor) clearBackgroundEffectNodes(effect *backgroundEffect) {
 	for _, node := range effect.blurNodes {
+		if gone := effect.blurGone[node]; gone != nil {
+			c.drop(gone)
+			delete(effect.blurGone, node)
+		}
 		sceneFXNodeDestroy(node)
 	}
 	effect.blurNodes = nil

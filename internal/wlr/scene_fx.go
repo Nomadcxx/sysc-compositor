@@ -354,6 +354,10 @@ static void sysc_scene_blur_box(struct wlr_scene_node *node, int *x, int *y, int
 	*width = blur->width;
 	*height = blur->height;
 }
+
+static void *sysc_scene_node_destroy_signal(struct wlr_scene_node *node) {
+	return &node->events.destroy;
+}
 */
 import "C"
 
@@ -454,6 +458,11 @@ func sceneFXNodeEnabled(node unsafe.Pointer) bool {
 	}
 	var x, y C.int
 	return bool(C.wlr_scene_node_coords((*C.struct_wlr_scene_node)(node), &x, &y))
+}
+
+// sceneFXNodeDestroySignal is the node's destroy signal, for a listener.
+func sceneFXNodeDestroySignal(node unsafe.Pointer) unsafe.Pointer {
+	return C.sysc_scene_node_destroy_signal((*C.struct_wlr_scene_node)(node))
 }
 
 func sceneFXNodeDestroy(node unsafe.Pointer) {
