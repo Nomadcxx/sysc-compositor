@@ -53,9 +53,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: software DRM device
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends "linux-modules-extra-$(uname -r)"
-          sudo modprobe vkms
+          find "/lib/modules/$(uname -r)" -name 'vkms*' -o -name 'vgem*'
+          sudo modprobe vkms || sudo modprobe vgem
           ls -l /dev/dri
       - name: test internal/wlr and internal/server
         run: >-
