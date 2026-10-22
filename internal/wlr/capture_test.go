@@ -167,3 +167,78 @@ func TestScreenshotReadsBackAnOutputAndOffersItAsPNG(t *testing.T) {
 		}
 	})
 }
+
+// TestScreenshotPathExpandsStrftimeAndHome: the pattern goes through
+// strftime on local time and a leading ~ becomes the home directory, as
+// Niri's make_screenshot_path does. It builds no compositor.
+func TestScreenshotPathExpandsStrftimeAndHome(t *testing.T) {
+	t.Setenv("HOME", "/home/probe")
+	got, err := expandScreenshotPath("~/Shots/%Y %%.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join("/home/probe/Shots", time.Now().Format("2006")+" %.png")
+	if got != want {
+		t.Errorf("expanded path = %q, want %q", got, want)
+	}
+	if got, _ := expandScreenshotPath("/abs/name.png"); got != "/abs/name.png" {
+		t.Errorf("a path without specifiers changed to %q", got)
+	}
+}
+
+// TestScreenshotScreenWritesThePNGAndReportsIt: ScreenshotScreen writes the
+// focused output as a PNG to the expanded screenshot-path, creating its
+// directory, and reports the path; with write-to-disk off it reports nil.
+func TestScreenshotScreenWritesThePNGAndReportsIt(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "shots")
+	pattern := filepath.Join(dir, "shot-%Y.png")
+	c := newNestedWith(t, Options{ScreenshotPath: &pattern})
+	reports := make(chan *string, 2)
+	c.SetScreenshotHandler(func(path *string) { reports <- path })
+	var w, h int
+	runTools(t, c, func([]string) {
+		onCompositor(t, c, func() {
+			for pointer := range c.sceneOutputs {
+				w, h = outputPixelSize(pointer)
+			}
+			if err := c.ScreenshotScreen(true, ""); err != nil {
+				t.Error(err)
+			}
+		})
+		select {
+		case path := <-reports:
+			want := filepath.Join(dir, "shot-"+time.Now().Format("2006")+".png")
+			if path == nil || *path != want {
+				t.Errorf("reported path %v, want %q", path, want)
+			}
+		case <-time.After(5 * time.Second):
+			t.Error("no screenshot was reported")
+			return
+		}
+		onCompositor(t, c, func() {
+			if err := c.ScreenshotScreen(false, ""); err != nil {
+				t.Error(err)
+			}
+		})
+		select {
+		case path := <-reports:
+			if path != nil {
+				t.Errorf("write-to-disk off reported %q, want nil", *path)
+			}
+		case <-time.After(5 * time.Second):
+			t.Error("no report for the clipboard-only screenshot")
+		}
+	})
+	file, err := os.Open(filepath.Join(dir, "shot-"+time.Now().Format("2006")+".png"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	config, err := png.DecodeConfig(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.Width != w || config.Height != h {
+		t.Errorf("written screenshot is %dx%d, want %dx%d", config.Width, config.Height, w, h)
+	}
+}

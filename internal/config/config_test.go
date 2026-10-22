@@ -1001,3 +1001,47 @@ binds {
 		t.Errorf("toggle bind = %+v, want allow-inhibiting=false kept", cfg.Binds[1])
 	}
 }
+
+func TestScreenshotPathDefaultsToNiriAndTakesNull(t *testing.T) {
+	cfg, err := Parse("shot.kdl", []byte(``))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ScreenshotPath == nil || *cfg.ScreenshotPath != DefaultScreenshotPath {
+		t.Errorf("default screenshot-path = %v, want Niri's %q", cfg.ScreenshotPath, DefaultScreenshotPath)
+	}
+	cfg, err = Parse("shot.kdl", []byte("screenshot-path \"~/Shots/%Y.png\"\n"))
+	if err != nil || cfg.ScreenshotPath == nil || *cfg.ScreenshotPath != "~/Shots/%Y.png" {
+		t.Errorf("screenshot-path = %v, %v", cfg.ScreenshotPath, err)
+	}
+	cfg, err = Parse("shot.kdl", []byte("screenshot-path null\n"))
+	if err != nil || cfg.ScreenshotPath != nil {
+		t.Errorf("screenshot-path null = %v, %v; want nil", cfg.ScreenshotPath, err)
+	}
+	for _, w := range cfg.Warnings {
+		if w == "screenshot-path" {
+			t.Error("screenshot-path is still reported as not applied")
+		}
+	}
+}
+
+func TestScreenshotScreenBindProperties(t *testing.T) {
+	cfg, err := Parse("shot.kdl", []byte(`
+binds {
+    Print { screenshot-screen; }
+    Ctrl+Print { screenshot-screen write-to-disk=false show-pointer=false; }
+}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Binds) != 2 {
+		t.Fatalf("binds = %+v, unapplied = %q", cfg.Binds, cfg.UnappliedActions)
+	}
+	if a := cfg.Binds[0].Actions[0]; !a.WriteToDisk || !a.ShowPointer {
+		t.Errorf("default screenshot-screen = %+v, want write-to-disk and show-pointer true", a)
+	}
+	if a := cfg.Binds[1].Actions[0]; a.WriteToDisk || a.ShowPointer {
+		t.Errorf("screenshot-screen with both false = %+v", a)
+	}
+}

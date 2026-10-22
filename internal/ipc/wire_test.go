@@ -364,3 +364,22 @@ func enumVariants(t *testing.T, src, enum string) []string {
 	}
 	return names
 }
+
+func TestScreenshotScreenActionRoundTrips(t *testing.T) {
+	line := []byte(`{"Action":{"ScreenshotScreen":{"write_to_disk":false,"show_pointer":true,"path":"/tmp/x.png"}}}`)
+	req, err := DecodeRequest(line)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := req.Action
+	if a == nil || a.Name != "ScreenshotScreen" || a.WriteToDisk || !a.ShowPointer || a.Path == nil || *a.Path != "/tmp/x.png" {
+		t.Fatalf("decoded %+v", a)
+	}
+	if _, err := DecodeRequest([]byte(`{"Action":{"ScreenshotScreen":{"show_pointer":true}}}`)); err == nil {
+		t.Error("ScreenshotScreen without write_to_disk decoded, want a parse error as niri-ipc gives")
+	}
+	noPath, err := DecodeRequest([]byte(`{"Action":{"ScreenshotScreen":{"write_to_disk":true,"show_pointer":false}}}`))
+	if err != nil || noPath.Action.Path != nil {
+		t.Errorf("ScreenshotScreen without path = %+v, %v; want a nil path", noPath.Action, err)
+	}
+}

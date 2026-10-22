@@ -45,6 +45,10 @@ type Action struct {
 	ColumnDisplay  string
 	Output         string
 	Focus          bool
+	// WriteToDisk and ShowPointer are screenshot-screen's properties; both
+	// default to true, as in Niri.
+	WriteToDisk bool
+	ShowPointer bool
 }
 
 type Binding struct {
@@ -88,6 +92,7 @@ const (
 	ActionToggleKeyboardShortcutsInhibit = "toggle-keyboard-shortcuts-inhibit"
 	ActionPowerOffMonitors               = "power-off-monitors"
 	ActionPowerOnMonitors                = "power-on-monitors"
+	ActionScreenshotScreen               = "screenshot-screen"
 	ActionOpenOverview                   = "open-overview"
 	ActionCloseOverview                  = "close-overview"
 	ActionMoveWindowToFloating           = "move-window-to-floating"
@@ -264,7 +269,8 @@ func ParseAction(name string, args []string) (Action, bool, error) {
 		ActionFocusFloating, ActionFocusTiling, ActionSwitchFocusFloatingAndTiling,
 		ActionFullscreenWindow, ActionToggleWindowedFullscreen,
 		ActionToggleOverview, ActionOpenOverview, ActionCloseOverview,
-		ActionToggleKeyboardShortcutsInhibit, ActionPowerOffMonitors, ActionPowerOnMonitors:
+		ActionToggleKeyboardShortcutsInhibit, ActionPowerOffMonitors, ActionPowerOnMonitors,
+		ActionScreenshotScreen:
 		if len(args) != 0 {
 			return Action{}, true, fmt.Errorf("%s takes no arguments", name)
 		}
@@ -384,6 +390,7 @@ func IsSupportedAction(name string) bool {
 		ActionFullscreenWindow, ActionToggleWindowedFullscreen,
 		ActionToggleOverview, ActionOpenOverview, ActionCloseOverview,
 		ActionToggleKeyboardShortcutsInhibit, ActionPowerOffMonitors, ActionPowerOnMonitors,
+		ActionScreenshotScreen,
 		ActionSetWorkspaceName, ActionUnsetWorkspaceName,
 		ActionMoveWindowToWorkspace, ActionMoveWindowToWorkspaceDown, ActionMoveWindowToWorkspaceUp,
 		ActionMoveColumnToWorkspace, ActionMoveColumnToWorkspaceDown, ActionMoveColumnToWorkspaceUp,

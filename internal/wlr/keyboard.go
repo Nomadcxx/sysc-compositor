@@ -614,6 +614,10 @@ func (c *Compositor) executeBindAction(action bind.Action) {
 		if err := c.PowerOffMonitors(); err != nil {
 			fmt.Fprintf(os.Stderr, "sysc-compositor: power-off-monitors: %v\n", err)
 		}
+	case bind.ActionScreenshotScreen:
+		if err := c.ScreenshotScreen(action.WriteToDisk, ""); err != nil {
+			fmt.Fprintf(os.Stderr, "sysc-compositor: screenshot-screen: %v\n", err)
+		}
 	case bind.ActionPowerOnMonitors:
 		if err := c.PowerOnMonitors(); err != nil {
 			fmt.Fprintf(os.Stderr, "sysc-compositor: power-on-monitors: %v\n", err)

@@ -184,6 +184,9 @@ type Action struct {
 	Output           string
 	Focus            *bool
 	X, Y             PositionChange
+	WriteToDisk      bool    // ScreenshotScreen
+	ShowPointer      bool    // ScreenshotScreen
+	Path             *string // ScreenshotScreen
 }
 
 // DecodeRequest decodes one request line.
@@ -369,6 +372,16 @@ func decodeAction(raw json.RawMessage) (Action, error) {
 	}
 	a := Action{Name: name}
 	switch name {
+	case "ScreenshotScreen":
+		var f struct {
+			WriteToDisk *bool   `json:"write_to_disk"`
+			ShowPointer *bool   `json:"show_pointer"`
+			Path        *string `json:"path"`
+		}
+		if err := strict(body, &f); err != nil || f.WriteToDisk == nil || f.ShowPointer == nil {
+			return Action{}, ErrParse
+		}
+		a.WriteToDisk, a.ShowPointer, a.Path = *f.WriteToDisk, *f.ShowPointer, f.Path
 	case "Quit":
 		var f struct {
 			SkipConfirmation *bool `json:"skip_confirmation"`
@@ -715,6 +728,12 @@ func EncodeRequest(r Request) []byte {
 	a := r.Action
 	var body any = struct{}{}
 	switch a.Name {
+	case "ScreenshotScreen":
+		body = struct {
+			WriteToDisk bool    `json:"write_to_disk"`
+			ShowPointer bool    `json:"show_pointer"`
+			Path        *string `json:"path"`
+		}{a.WriteToDisk, a.ShowPointer, a.Path}
 	case "Quit":
 		body = struct {
 			SkipConfirmation bool `json:"skip_confirmation"`

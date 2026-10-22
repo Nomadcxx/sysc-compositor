@@ -41,7 +41,13 @@ type Config struct {
 	Animations   Animations
 	Blur         Blur
 	PreferNoCSD  bool
+	// ScreenshotPath is the strftime pattern screenshots are written to; nil
+	// (`screenshot-path null`) keeps them in the clipboard only.
+	ScreenshotPath *string
 }
+
+// DefaultScreenshotPath is Niri 26.04's (niri-config/src/misc.rs).
+const DefaultScreenshotPath = "~/Pictures/Screenshots/Screenshot from %Y-%m-%d %H-%M-%S.png"
 
 // Blur is the top-level blur section: how ext-background-effect frost is
 // drawn. A later section, or one in an include, changes only the fields it
@@ -171,11 +177,12 @@ func Default() *Config {
 			InsertHint: InsertHint{Color: Color{127.0 / 255, 200.0 / 255, 1, 128.0 / 255}},
 			FocusRing:  FocusRing{Width: 4, ActiveColor: Color{127.0 / 255, 200.0 / 255, 1, 1}, InactiveColor: Color{80.0 / 255, 80.0 / 255, 80.0 / 255, 1}},
 			Shadow:     Shadow{Softness: 30, Spread: 5, OffsetY: 5, Color: Color{0, 0, 0, 119.0 / 255}}},
-		Overview:   Overview{Zoom: 0.5, BackdropColor: Color{0.15, 0.15, 0.15, 1}},
-		Gestures:   Gestures{DNDEdgeViewScroll: DNDEdgeViewScroll{TriggerWidth: 30, DelayMS: 100, MaxSpeed: 1500}},
-		Cursor:     Cursor{Theme: "default", Size: 24},
-		Animations: defaultAnimations(),
-		Blur:       defaultBlur()}
+		Overview:       Overview{Zoom: 0.5, BackdropColor: Color{0.15, 0.15, 0.15, 1}},
+		Gestures:       Gestures{DNDEdgeViewScroll: DNDEdgeViewScroll{TriggerWidth: 30, DelayMS: 100, MaxSpeed: 1500}},
+		Cursor:         Cursor{Theme: "default", Size: 24},
+		Animations:     defaultAnimations(),
+		Blur:           defaultBlur(),
+		ScreenshotPath: func() *string { p := DefaultScreenshotPath; return &p }()}
 }
 
 // topLevel is every top-level node niri 26.04 decodes (niri-config/src/lib.rs).
@@ -259,6 +266,8 @@ func decode(name string, nodes []*document.Node) (*Config, error) {
 			err = c.animations(n)
 		case "blur":
 			err = c.blur(n)
+		case "screenshot-path":
+			err = c.screenshotPath(n)
 		case "overview":
 			err = c.overview(n)
 		case "gestures":
@@ -1040,6 +1049,21 @@ func (c *Config) blur(n *document.Node) error {
 	return nil
 }
 
+func (c *Config) screenshotPath(n *document.Node) error {
+	if len(n.Arguments) != 1 || len(n.Children) != 0 || len(n.Properties) != 0 {
+		return fmt.Errorf("takes one path or null")
+	}
+	switch path := n.Arguments[0].Value.(type) {
+	case nil:
+		c.ScreenshotPath = nil
+	case string:
+		c.ScreenshotPath = &path
+	default:
+		return fmt.Errorf("must be a string or null")
+	}
+	return nil
+}
+
 // blurNumber is a blur setting from 0 to max inclusive.
 func blurNumber(n *document.Node, max float64) (float64, error) {
 	value, err := numberArg(n)
@@ -1138,6 +1162,23 @@ func (c *Config) binds(n *document.Node) error {
 						return fmt.Errorf("bind %q action %s: `focus` must be boolean", nodeName(node), name)
 					}
 					action.Focus = focus
+				}
+			}
+			if name == bind.ActionScreenshotScreen {
+				action.WriteToDisk, action.ShowPointer = true, true
+				for key, property := range actionNode.Properties {
+					value, ok := property.Value.(bool)
+					if !ok {
+						return fmt.Errorf("bind %q action %s: `%s` must be boolean", nodeName(node), name, key)
+					}
+					switch key {
+					case "write-to-disk":
+						action.WriteToDisk = value
+					case "show-pointer":
+						action.ShowPointer = value
+					default:
+						return fmt.Errorf("bind %q action %s: unexpected property `%s`", nodeName(node), name, key)
+					}
 				}
 			}
 			if chord.Trigger != bind.TriggerKey {

@@ -88,6 +88,7 @@ func New(load config.LoadResult, configLoadFailed bool) (*Server, error) {
 	}
 	s.spawn = newSpawner(c.SocketName(), s.NiriSocket(), cfg.Environment, cfg.Cursor)
 	c.SetSpawnHandlers(s.spawn.spawn, s.spawn.spawnSh)
+	c.SetScreenshotHandler(func(path *string) { s.state.publishScreenshotCaptured(s.events, path) })
 	c.SetSwitchToggleHandler(s.handleSwitchToggle)
 	return s, nil
 }
@@ -222,6 +223,14 @@ func (s *Server) Run() error {
 						s.c.ToggleOverview()
 					case "ToggleKeyboardShortcutsInhibit":
 						s.c.ToggleKeyboardShortcutsInhibit()
+					case "ScreenshotScreen":
+						path := ""
+						if action.Path != nil {
+							path = *action.Path
+						}
+						if err := s.c.ScreenshotScreen(action.WriteToDisk, path); err != nil {
+							os.Stderr.WriteString("sysc-compositor: ScreenshotScreen: " + err.Error() + "\n")
+						}
 					case "PowerOffMonitors":
 						if err := s.c.PowerOffMonitors(); err != nil {
 							os.Stderr.WriteString("sysc-compositor: PowerOffMonitors: " + err.Error() + "\n")

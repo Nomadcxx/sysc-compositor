@@ -7,6 +7,7 @@ package wlr
 #include <drm_fourcc.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <wlr/render/allocator.h>
 #include <wlr/render/drm_format_set.h>
 #include <wlr/render/swapchain.h>
@@ -54,6 +55,16 @@ static bool sysc_screenshot_output(void *scene_output, struct wlr_output *output
 	wlr_output_state_finish(&state);
 	wlr_swapchain_destroy(swapchain);
 	return ok;
+}
+
+// strftime on the local time now, as Niri's make_screenshot_path does.
+static size_t sysc_strftime_now(char *buf, size_t len, const char *format) {
+	time_t now = time(NULL);
+	struct tm tm;
+	if (now == (time_t)-1 || localtime_r(&now, &tm) == NULL) {
+		return 0;
+	}
+	return strftime(buf, len, format, &tm);
 }
 
 extern void sysc_png_source_send(uintptr_t handle, int fd);
@@ -106,7 +117,9 @@ import (
 	"image"
 	"image/png"
 	"os"
+	"path/filepath"
 	"runtime/cgo"
+	"strings"
 	"unsafe"
 )
 
@@ -179,3 +192,99 @@ func outputPixelSize(pointer unsafe.Pointer) (int, int) {
 	output := (*C.struct_wlr_output)(pointer)
 	return int(output.width), int(output.height)
 }
+
+// expandScreenshotPath is Niri's make_screenshot_path: the pattern through
+// strftime on the local time, then a leading ~ expanded.
+func expandScreenshotPath(pattern string) (string, error) {
+	format := C.CString(pattern)
+	defer C.free(unsafe.Pointer(format))
+	var buf [2048]C.char
+	n := C.sysc_strftime_now(&buf[0], C.size_t(len(buf)), format)
+	if n == 0 {
+		return "", errors.New("formatting the screenshot path failed")
+	}
+	path := C.GoStringN(&buf[0], C.int(n))
+	if path == "~" || strings.HasPrefix(path, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("expanding ~ in the screenshot path: %w", err)
+		}
+		path = filepath.Join(home, strings.TrimPrefix(path, "~"))
+	}
+	return path, nil
+}
+
+// ScreenshotScreen captures the focused output, copies it to the clipboard
+// and, with writeToDisk, writes it to path, or to the screenshot-path
+// pattern when path is empty. It runs on the compositor thread; the PNG is
+// encoded and written on a goroutine. The pointer is not drawn: it is not
+// part of the scene (recorded in the M11 plan).
+func (c *Compositor) ScreenshotScreen(writeToDisk bool, path string) error {
+	var target unsafe.Pointer
+	active := c.FocusedOutputName()
+	for pointer := range c.sceneOutputs {
+		if target == nil || C.GoString((*C.struct_wlr_output)(pointer).name) == active {
+			target = pointer
+		}
+	}
+	if target == nil {
+		return errors.New("wlr: no output to screenshot")
+	}
+	img, err := c.captureOutput(target)
+	if err != nil {
+		return err
+	}
+	c.saveScreenshot(img, writeToDisk, path)
+	return nil
+}
+
+// saveScreenshot is Niri's save_screenshot: encode on a goroutine, offer the
+// PNG as the clipboard and write it to disk from there, then report the
+// path written, or nil, through the screenshot hook on the compositor
+// thread. An explicit path is written as given; a configured pattern is
+// expanded and its directory created.
+func (c *Compositor) saveScreenshot(img image.Image, writeToDisk bool, explicit string) {
+	pattern := c.screenshotPattern
+	go func() {
+		data, err := encodePNG(img)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "sysc-compositor: encoding screenshot: %v\n", err)
+			return
+		}
+		_ = c.Post(func() {
+			if err := c.setPNGSelection(data); err != nil {
+				fmt.Fprintf(os.Stderr, "sysc-compositor: %v\n", err)
+			}
+		})
+		var written *string
+		if writeToDisk {
+			path, create := explicit, false
+			if path == "" && pattern != nil {
+				if expanded, err := expandScreenshotPath(*pattern); err != nil {
+					fmt.Fprintf(os.Stderr, "sysc-compositor: %v\n", err)
+				} else {
+					path, create = expanded, true
+				}
+			}
+			if path != "" {
+				if dir := filepath.Dir(path); create && dir != "." {
+					_ = os.MkdirAll(dir, 0o755)
+				}
+				if err := os.WriteFile(path, data, 0o644); err != nil {
+					fmt.Fprintf(os.Stderr, "sysc-compositor: saving screenshot: %v\n", err)
+				} else {
+					written = &path
+				}
+			}
+		}
+		_ = c.Post(func() {
+			if c.screenshotTaken != nil {
+				c.screenshotTaken(written)
+			}
+		})
+	}()
+}
+
+// SetScreenshotHandler sets the hook that reports each finished screenshot:
+// the path written, or nil when it went to the clipboard only.
+func (c *Compositor) SetScreenshotHandler(fn func(path *string)) { c.screenshotTaken = fn }

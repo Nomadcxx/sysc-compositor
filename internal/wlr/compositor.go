@@ -147,6 +147,8 @@ type Compositor struct {
 	overviewConfig          config.Overview
 	animationConfig         config.Animations
 	blurConfig              config.Blur
+	screenshotPattern       *string
+	screenshotTaken         func(path *string)
 	animations              map[animationKey]*runningAnimation
 	animationTimer          *time.Timer
 	activeWorkspaces        map[string]activeWorkspace
@@ -303,6 +305,8 @@ type Options struct {
 	Animations   config.Animations
 	Blur         config.Blur
 	PreferNoCSD  bool
+	// ScreenshotPath is the screenshot-path pattern, nil for clipboard only.
+	ScreenshotPath *string
 }
 
 type LayoutOptions struct {
@@ -343,6 +347,7 @@ func NewWith(opts Options) (*Compositor, error) {
 	c.overviewConfig = opts.Overview
 	c.animationConfig = opts.Animations
 	c.blurConfig = opts.Blur
+	c.screenshotPattern = opts.ScreenshotPath
 	c.preferNoCSD = opts.PreferNoCSD
 	c.hotCorners = opts.Gestures.HotCorners
 	c.dndEdgeConfig = opts.Gestures.DNDEdgeViewScroll
@@ -591,6 +596,7 @@ func (c *Compositor) Reconfigure(opts Options) error {
 	c.layoutOptions = *opts.Layout
 	c.overviewConfig = opts.Overview
 	c.animationConfig = opts.Animations
+	c.screenshotPattern = opts.ScreenshotPath
 	if opts.Blur != c.blurConfig {
 		c.blurConfig = opts.Blur
 		c.applyBlurConfig()
