@@ -96,7 +96,7 @@ func (c *Compositor) applyViewAppearance(view *toplevelView) {
 	if view.clipToGeometry {
 		c.clearPopupClips(view)
 	}
-	sceneFXSetTreeOpacity(view.sceneNode(), view.presentationOpacity)
+	c.syncViewOpacity(view)
 
 	if c.layoutOptions.Shadow.On && view.shadowNode == nil {
 		color := premultipliedColor(c.layoutOptions.Shadow.Color)

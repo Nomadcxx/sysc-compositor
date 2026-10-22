@@ -14,7 +14,8 @@ func TestPreferNoCSDAllowsClientSideDecorationRequest(t *testing.T) {
 		clientDone <- testclient.RunDecorationModeSequence(c.SocketName())
 		c.Terminate()
 	}()
-	time.AfterFunc(5*time.Second, c.Terminate)
+	watchdog := time.AfterFunc(5*time.Second, c.Terminate)
+	t.Cleanup(func() { watchdog.Stop() })
 	if err := c.Run(); err != nil {
 		t.Fatal(err)
 	}
@@ -35,7 +36,8 @@ func TestPreferNoCSDExposesKDEServerDecoration(t *testing.T) {
 		clientDone <- testclient.RunKDEServerDecorationSequence(c.SocketName())
 		c.Terminate()
 	}()
-	time.AfterFunc(5*time.Second, c.Terminate)
+	watchdog := time.AfterFunc(5*time.Second, c.Terminate)
+	t.Cleanup(func() { watchdog.Stop() })
 	if err := c.Run(); err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +58,8 @@ func TestPreferNoCSDSetsInitialTiledStateWithoutDecorationProtocol(t *testing.T)
 		clientDone <- testclient.RunPreferNoCSDTiledState(c.SocketName())
 		c.Terminate()
 	}()
-	time.AfterFunc(5*time.Second, c.Terminate)
+	watchdog := time.AfterFunc(5*time.Second, c.Terminate)
+	t.Cleanup(func() { watchdog.Stop() })
 	if err := c.Run(); err != nil {
 		t.Fatal(err)
 	}

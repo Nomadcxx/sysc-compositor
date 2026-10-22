@@ -553,8 +553,8 @@ func TestWindowResizeScalesSnapshotWhileLayoutTargetsCommit(t *testing.T) {
 			return
 		}
 		c.applyWorkspaceModel()
-		if view.resizeSnapshot == nil || sceneFXNodeEnabled(view.sceneNode()) {
-			t.Error("resize did not retain and show a snapshot while hiding the live tree")
+		if view.resizeSnapshot == nil || !sceneFXNodeEnabled(view.sceneNode()) {
+			t.Error("resize did not show a snapshot over a live tree that stays enabled")
 			c.Terminate()
 			return
 		}
@@ -608,6 +608,54 @@ func TestWindowResizeScalesSnapshotWhileLayoutTargetsCommit(t *testing.T) {
 	runClient(t, c, []string{"weston-terminal"}, nil, nil)
 	if !checked {
 		t.Fatal("nested window resize animation check did not complete")
+	}
+}
+
+// TestResizeAnimationKeepsWindowHitTestable: the snapshot drawn during a
+// resize spring must not take the window out of hit testing, or every new
+// window ignores the pointer until its first resize settles.
+func TestResizeAnimationKeepsWindowHitTestable(t *testing.T) {
+	animations := laptopAnimations()
+	animations.WindowOpen.Off = true
+	c := newNestedWith(t, Options{Animations: animations})
+	checked := false
+	c.viewMapped = func(view *toplevelView) {
+		geometry := view.geometry()
+		initial := layout.Bounds{X: 100, Y: 100, Width: geometry.w, Height: geometry.h}
+		target := layout.Bounds{X: 100, Y: 100, Width: geometry.w + 120, Height: geometry.h + 80}
+		if !c.model.SetWindowFloating(view.id, true, initial) {
+			t.Error("SetWindowFloating() = false, want floating window")
+			c.Terminate()
+			return
+		}
+		c.applyWorkspaceModel()
+		if !c.model.SetFloatingGeometry(view.id, target) {
+			t.Error("SetFloatingGeometry() = false, want resize target")
+			c.Terminate()
+			return
+		}
+		c.applyWorkspaceModel()
+		timer := time.AfterFunc(50*time.Millisecond, func() {
+			_ = c.Post(func() {
+				defer c.Terminate()
+				checked = true
+				wKey, hKey := c.resizeKeys(view)
+				if view.resizeSnapshot == nil || (!c.hasAnimation(wKey) && !c.hasAnimation(hKey)) {
+					t.Error("resize spring settled before the mid-spring check")
+					return
+				}
+				surface, _, _ := c.surfaceAt(c.viewCenter(view))
+				if got := c.viewForSurface(surface); got != view {
+					t.Errorf("the window centre mid-spring resolves to view %p (surface %p), want %p",
+						got, unsafe.Pointer(surface), view)
+				}
+			})
+		})
+		t.Cleanup(func() { timer.Stop() })
+	}
+	runClient(t, c, []string{"weston-terminal"}, nil, nil)
+	if !checked {
+		t.Fatal("nested mid-spring hit test did not run")
 	}
 }
 
@@ -680,7 +728,8 @@ func TestWindowResizeSnapshotPreservesGeometryClip(t *testing.T) {
 		clientDone <- testclient.RunWindowGeometryOutsetWithChild(c.SocketName())
 		c.Terminate()
 	}()
-	time.AfterFunc(5*time.Second, c.Terminate)
+	watchdog := time.AfterFunc(5*time.Second, c.Terminate)
+	t.Cleanup(func() { watchdog.Stop() })
 	if err := c.Run(); err != nil {
 		t.Fatal(err)
 	}

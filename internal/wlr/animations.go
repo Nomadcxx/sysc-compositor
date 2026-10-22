@@ -191,10 +191,20 @@ func (c *Compositor) setViewSceneEnabled(view *toplevelView, enabled bool) {
 	}
 	if view.resizeSnapshot != nil {
 		sceneFXSetNodeEnabled(view.resizeSnapshot, enabled)
-		sceneFXSetNodeEnabled(view.sceneNode(), false)
-		return
 	}
 	sceneFXSetNodeEnabled(view.sceneNode(), enabled)
+}
+
+// syncViewOpacity draws the live window at its presentation opacity, or hides
+// it while a resize snapshot stands in for it. It hides by opacity rather than
+// by disabling the node, so the window stays hit-testable and keeps getting
+// frame callbacks during the resize spring.
+func (c *Compositor) syncViewOpacity(view *toplevelView) {
+	opacity := view.presentationOpacity
+	if view.resizeSnapshot != nil {
+		opacity = 0
+	}
+	sceneFXSetTreeOpacity(view.sceneNode(), opacity)
 }
 
 func (c *Compositor) startWindowOpen(view *toplevelView) {
@@ -213,7 +223,7 @@ func (c *Compositor) startWindowOpen(view *toplevelView) {
 	c.animateValue(key, c.animationConfig.WindowOpen, 0, 1, 0, func(value float64) {
 		value = clampOpacity(value)
 		view.presentationOpacity = value
-		sceneFXSetTreeOpacity(view.sceneNode(), value)
+		c.syncViewOpacity(view)
 	}, func() {
 		view.openAnimationFinished = true
 		if view.mapped && view.presentationVisible {
@@ -277,6 +287,7 @@ func (c *Compositor) cancelResizeAnimation(view *toplevelView) {
 	view.resizeTargetWidth, view.resizeTargetHeight = 0, 0
 	if view.tree != nil {
 		sceneFXSetNodeEnabled(view.sceneNode(), view.presentationVisible)
+		c.syncViewOpacity(view)
 	}
 }
 
@@ -303,7 +314,7 @@ func (c *Compositor) animateViewSize(view *toplevelView, width, height int, kind
 		view.resizeBaseWidth, view.resizeBaseHeight = max(1, geometry.w), max(1, geometry.h)
 		view.resizeWidth, view.resizeHeight = float64(view.resizeBaseWidth), float64(view.resizeBaseHeight)
 		view.resizeScaleX, view.resizeScaleY = 1, 1
-		sceneFXSetNodeEnabled(view.sceneNode(), false)
+		c.syncViewOpacity(view)
 	}
 	view.resizeTargetWidth, view.resizeTargetHeight = width, height
 	wKey, hKey := c.resizeKeys(view)
@@ -347,4 +358,5 @@ func (c *Compositor) finishResizeIfSettled(view *toplevelView) {
 	view.resizeSnapshot = nil
 	view.resizeTargetWidth, view.resizeTargetHeight = 0, 0
 	sceneFXSetNodeEnabled(view.sceneNode(), view.presentationVisible)
+	c.syncViewOpacity(view)
 }

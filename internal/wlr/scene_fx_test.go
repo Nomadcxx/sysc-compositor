@@ -154,7 +154,8 @@ func checkSubsurfaceCornerRadii(t *testing.T, childX, childY int, wantChildRadii
 		clientDone <- testclient.RunSubsurfaceWithChildAt(c.SocketName(), childX, childY)
 		c.Terminate()
 	}()
-	time.AfterFunc(5*time.Second, c.Terminate)
+	watchdog := time.AfterFunc(5*time.Second, c.Terminate)
+	t.Cleanup(func() { watchdog.Stop() })
 	if err := c.Run(); err != nil {
 		t.Fatal(err)
 	}
