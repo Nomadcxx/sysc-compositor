@@ -56,7 +56,7 @@ jobs:
       XDG_RUNTIME_DIR: /tmp/xdg-runtime
     steps:
       - name: install build dependencies
-        run: pacman -Syu --noconfirm --needed git gcc pkgconf go wlroots0.20 scenefx wayland wayland-protocols libxkbcommon xkeyboard-config
+        run: pacman -Syu --noconfirm --needed git gcc pkgconf go wlroots0.20 scenefx wayland wayland-protocols libxkbcommon xkeyboard-config weston wofi ttf-dejavu
       - uses: actions/checkout@v4
       - name: trust the checkout
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
@@ -64,7 +64,19 @@ jobs:
         run: install -d -m 0700 "$XDG_RUNTIME_DIR"
       - name: generate protocol headers
         run: go generate ./internal/wlr
+      # A test skips when it cannot build a compositor or find its client
+      # (weston-terminal, wofi). Here a skip means the lane checked less than
+      # it claims, so any skip fails the step.
       - name: test internal/wlr
-        run: go test -count=1 -timeout 15m ./internal/wlr
+        shell: bash
+        run: |
+          set -o pipefail
+          go test -count=1 -v -timeout 15m ./internal/wlr | tee wlr.log
+          ! grep -n -- '--- SKIP' wlr.log
       - name: test internal/server
-        run: go test -count=1 -timeout 15m ./internal/server
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          set -o pipefail
+          go test -count=1 -v -timeout 15m ./internal/server | tee server.log
+          ! grep -n -- '--- SKIP' server.log
