@@ -69,6 +69,13 @@ func runClient(t *testing.T, c *Compositor, argv []string, env []string, stop fu
 	timeout.Stop()
 	_ = cmd.Process.Kill()
 	<-exited
+	// Let the reader drain what the client wrote before closing the pipe:
+	// closing first lost a fast client's whole output. A child the client
+	// left behind can hold the pipe open, so the wait is bounded.
+	select {
+	case <-readerDone:
+	case <-time.After(time.Second):
+	}
 	_ = reader.Close()
 	<-readerDone
 	mu.Lock()
