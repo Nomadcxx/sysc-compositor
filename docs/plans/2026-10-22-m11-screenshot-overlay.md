@@ -39,6 +39,7 @@
   - (b) A Go font module such as `golang.org/x/image`: a `go.mod` change, which needs approval.
   - (c) Ship these UIs without text first.
 - **Until answered:** the text-free parts land first (globals, screenshot actions, the UI's selection and dimming), and the text parts wait.
+- **Answered 2026-10-23:** no new C. A hybrid of the Go options: `github.com/go-text/typesetting` finds system fonts, falls back per rune and shapes (its HarfBuzz port), and `golang.org/x/image` rasterizes into a Go RGBA image that the scene shows through a compositor-owned `wlr_buffer`. Both modules are approved for `go.mod`. bd `sysc-1646` separately investigates replacing SceneFX and wlroots with Go.
 
 **Out of scope.** Screencast and the portal are M12. Foreign-toplevel capture sources are M12 (Q9).
 
@@ -135,3 +136,19 @@ ran in CI lane 2; the pure ones also ran locally, one named test per command.
 - **Task 4:** the hotkey overlay, recent windows, the screenshot hint and the exit dialog wait for the
   text-rendering decision.
 - **Nested gate** with grim and sysc-clipboard on the laptop.
+
+## Execution record (2026-10-23): text and the exit dialog
+
+The first Task 4 PR. The owner chose Go text rendering (decision above).
+
+| Item | Proof |
+|---|---|
+| `internal/text`: the Pango markup subset Niri's UIs and `hotkey-overlay-title` use, system fonts with per-rune fallback, shaping, letter spacing, span colours and backgrounds, centred lines | `TestParseMarkupTakesNiriStrings`, `TestLayoutDrawsTextAtTheFontSizeAndScale`, `TestLayoutBreaksLinesAndCentresThem`, `TestSpanBackgroundAndColourAreDrawn`, `TestFallbackDrawsARuneTheFamilyLacks` (skips where no installed font has the CJK probe rune) |
+| `internal/ui`: Niri's exit dialog panel (sans 14px, 16px padding, 8px red stroke, mono key span) per scale | `TestExitDialogIsNiriPanel` |
+| A read-only `wlr_buffer` over Go-drawn pixels, as a scene buffer node | used by the dialog tests below |
+| `Quit` with the exit dialog: IPC and the `quit` bind with `skip-confirmation`; over every output and the lock screen; no client focus while open; Enter quits, any other key, button or scroll closes it; `exit-confirmation-open-close` animation | `TestExitDialogAsksBeforeQuitting`, `TestExitDialogEnterQuits`, `TestQuitSkipConfirmationQuitsAtOnce`, `TestQuitBindRunsWhileLocked`, `TestQuitBindTakesSkipConfirmation`, `TestExitConfirmationAnimationDefaultsToNiri`, `TestNiriHandler` |
+
+CI lanes 1 and 2 install `ttf-dejavu`, so text renders in both.
+
+**Still open in Task 4:** the screenshot hint (with the `P` pointer toggle, which needs the pointer drawn
+into screenshots), the hotkey overlay and recent windows.

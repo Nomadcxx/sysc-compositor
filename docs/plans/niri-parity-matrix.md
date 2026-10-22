@@ -59,7 +59,7 @@ Until implemented, decode and reply `Err` with `unimplemented: <Name>`. Tick whe
 
 | Action | Status | Milestone |
 |---|---|---|
-| Quit | [~] | M2; no confirmation dialog yet, so it always quits (M11 overlay UI) |
+| Quit | [x] | M2/M11 — `skip_confirmation` quits at once; otherwise Niri's exit dialog asks first, over the lock screen too; Enter quits, any other key, button or scroll closes it. IPC and the `quit` bind (`skip-confirmation`, allowed while locked) |
 | PowerOffMonitors | [x] | M10 (owner Q8) — keeps output and workspace state; injected input is refused while every output is off, user input wakes them (`TestPowerOffPreservesOutputAndWorkspaceStateAndRestoresOnlyItsOutputs`, `TestIdleNotifiesOnlyUserActivityAndHonoursInhibitors`) |
 | PowerOnMonitors | [x] | M10 (owner Q8) — restores only the outputs PowerOffMonitors turned off |
 | Spawn | [~] | M2; no XDG_ACTIVATION_TOKEN until xdg-activation |
@@ -144,7 +144,7 @@ M6 adds the window, column, floating, fullscreen, urgency, named-workspace, and 
 | window-rule | [~] | M6 app-id/title match and exclude, ordered placement/fullscreen overrides, and default size fields; M8 ordered `geometry-corner-radius` and `clip-to-geometry`; remaining Niri rule effects are unimplemented |
 | layer-rule | [~] | M6 parses namespace matching and `place-within-backdrop`; M7 does not render qualifying background surfaces within the overview backdrop or project background/bottom surfaces into workspace thumbnails; other Niri layer-rule effects remain unimplemented |
 | blur | [x] | M10 — off, passes, offset, noise and saturation with Niri's defaults, applied to SceneFX blur at start and on reload (`TestBlurDefaultsMatchNiriAndUnnamedFieldsStay`) |
-| animations | [~] | M8 applies the seven laptop spring kinds and animates overview, workspace, window, movement, and resize transitions; easing, slowdown, custom shaders, and four other recognized animation kinds warn and remain unapplied |
+| animations | [~] | M8 applies the seven laptop spring kinds and animates overview, workspace, window, movement, and resize transitions; M11 adds `exit-confirmation-open-close` (Niri's default spring 0.6/500/0.01). Easing, slowdown, custom shaders, and three other recognized animation kinds warn and remain unapplied |
 | gestures | [~] | M7 swipe, hot-corner, and DND edge-scroll logic passes synthetic nested tests; physical touchpad input, bound-client forwarding of unsupported gestures, and live client DND remain unverified |
 | overview | [~] | M7 IPC, backdrop, window projection, and pointer selection; background/bottom layer projection and visual `place-within-backdrop` behavior remain unimplemented; spring animation is M8 |
 | hotkey-overlay | [ ] | M11 |
