@@ -74,9 +74,9 @@ Until implemented, decode and reply `Err` with `unimplemented: <Name>`. Tick whe
 
 | Action | Status | Milestone |
 |---|---|---|
-| Screenshot | [~] | M11 — interactive UI: frozen outputs, dimmed outside a dragged selection, Space/Return capture, Escape cancel (`TestScreenshotUISelectsAndCapturesARegion`); keyboard moves and hint text wait for the text-rendering decision |
-| ScreenshotScreen | [~] | M11 — PNG to clipboard and screenshot-path, IPC and bind; the pointer is not drawn yet |
-| ScreenshotWindow | [~] | M11 — the window alone at its output scale, IPC (with id) and bind; the pointer is not drawn yet |
+| Screenshot | [~] | M11 — interactive UI: frozen outputs, dimmed outside a dragged selection, Niri's help panel and capture button, Space/Return save, Ctrl+C clipboard only, P toggles the frozen pointer (`show_pointer`), Escape cancels, a click selects 32×32 (`TestScreenshotUISelectsAndCapturesARegion`, `TestScreenshotUIHintTogglesThePointerAndCaptures`); selection moves by binds and the open animation remain |
+| ScreenshotScreen | [x] | M11 — PNG to clipboard and screenshot-path, IPC and bind; `show_pointer` draws the theme or client pointer image (`TestScreenshotScreenDrawsThePointerWhenAsked`) |
+| ScreenshotWindow | [x] | M11 — the window alone at its output scale, IPC (with id) and bind; `show_pointer` draws the pointer where it is over the window |
 
 ### Window focus and workspace
 

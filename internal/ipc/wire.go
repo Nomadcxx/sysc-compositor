@@ -185,7 +185,7 @@ type Action struct {
 	Focus            *bool
 	X, Y             PositionChange
 	WriteToDisk      bool    // ScreenshotScreen, ScreenshotWindow
-	ShowPointer      bool    // ScreenshotScreen, ScreenshotWindow
+	ShowPointer      bool    // Screenshot, ScreenshotScreen, ScreenshotWindow
 	Path             *string // ScreenshotScreen, ScreenshotWindow
 }
 

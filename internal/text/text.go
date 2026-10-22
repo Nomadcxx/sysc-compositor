@@ -96,9 +96,10 @@ type line struct {
 
 // Layout is text shaped at one scale, ready to measure and draw.
 type Layout struct {
-	lines []line
-	align Align
-	size  image.Point
+	lines   []line
+	align   Align
+	size    image.Point
+	spacing int // physical pixels between lines
 }
 
 // NewLayout shapes spans in font at scale (physical pixels per logical
@@ -195,6 +196,13 @@ func emptyLineBounds(family string, size fixed.Int26_6) (fixed.Int26_6, fixed.In
 // Size is the layout's extent in physical pixels.
 func (l *Layout) Size() image.Point { return l.size }
 
+// SetLineSpacing puts px physical pixels between lines, as Pango's
+// set_spacing.
+func (l *Layout) SetLineSpacing(px int) {
+	l.size.Y += (px - l.spacing) * (len(l.lines) - 1)
+	l.spacing = px
+}
+
 // Draw paints the layout into dst with its top-left corner at at, in fg
 // unless a span sets its own colour. Span backgrounds are drawn first.
 func (l *Layout) Draw(dst *image.RGBA, at image.Point, fg color.Color) {
@@ -226,7 +234,7 @@ func (l *Layout) Draw(dst *image.RGBA, at image.Point, fg color.Color) {
 				pen += g.Advance
 			}
 		}
-		y = baseline + ln.descent
+		y = baseline + ln.descent + fixed.I(l.spacing)
 	}
 }
 
