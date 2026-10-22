@@ -68,7 +68,7 @@ Until implemented, decode and reply `Err` with `unimplemented: <Name>`. Tick whe
 | LoadConfigFile | [x] | M9 — reloads the active config or switches roots after a successful explicit load |
 | ToggleKeyboardShortcutsInhibit | [x] | M10 — IPC action and `toggle-keyboard-shortcuts-inhibit` bind (`TestShortcutsInhibitPassesBindsToTheFocusedClient`) |
 | SwitchLayout | [x] | M9 — next, previous, or indexed XKB layout |
-| ShowHotkeyOverlay | [ ] | M11 |
+| ShowHotkeyOverlay | [x] | M11 — IPC and the `show-hotkey-overlay` bind; Niri's action list, bind preference, `hotkey-overlay-title` (string or null) and key names |
 
 ### Screenshot
 
@@ -147,7 +147,7 @@ M6 adds the window, column, floating, fullscreen, urgency, named-workspace, and 
 | animations | [~] | M8 applies the seven laptop spring kinds and animates overview, workspace, window, movement, and resize transitions; M11 adds `exit-confirmation-open-close` (Niri's default spring 0.6/500/0.01). Easing, slowdown, custom shaders, and three other recognized animation kinds warn and remain unapplied |
 | gestures | [~] | M7 swipe, hot-corner, and DND edge-scroll logic passes synthetic nested tests; physical touchpad input, bound-client forwarding of unsupported gestures, and live client DND remain unverified |
 | overview | [~] | M7 IPC, backdrop, window projection, and pointer selection; background/bottom layer projection and visual `place-within-backdrop` behavior remain unimplemented; spring animation is M8 |
-| hotkey-overlay | [ ] | M11 |
+| hotkey-overlay | [x] | M11 — shown at startup unless `skip-at-startup`; `hide-not-bound` |
 | environment | [x] | M2 (applied to spawns) |
 | cursor | [~] | M5 theme/size and child environment; M10 cursor-shape-v1 from the pointer's client; per-output scale M15 |
 | screenshot-path | [x] | M11 — Niri default, null, strftime and ~ (`TestScreenshotPathDefaultsToNiriAndTakesNull`, `TestScreenshotPathExpandsStrftimeAndHome`) |

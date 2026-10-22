@@ -152,3 +152,14 @@ CI lanes 1 and 2 install `ttf-dejavu`, so text renders in both.
 
 **Still open in Task 4:** the screenshot hint (with the `P` pointer toggle, which needs the pointer drawn
 into screenshots), the hotkey overlay and recent windows.
+
+## Execution record (2026-10-23): the hotkey overlay
+
+| Item | Proof |
+|---|---|
+| `hotkey-overlay` (`skip-at-startup`, `hide-not-bound`) and every bind's `hotkey-overlay-title`, kept for binds whose action is not applied here too, so the overlay shows their keys as Niri does | `TestHotkeyOverlaySectionAndBindTitles`, `TestGreeterConfig` (the greeter skips it) |
+| Niri's `collect_actions`, `format_bind`, `action_name` and `key_name`, with xkb's canonical key names | `TestHotkeyFormatBindMatchesNiri` (Niri's snapshot cases), `TestHotkeyLinesFollowNiriOrderAndFilters`, `TestHotkeyKeyNameMatchesNiri`, `TestKeyNameIsXKBCanonical` |
+| The panel: bold title, monospace keys on grey, markup titles, 2px blue frame, drawn at 0.9 opacity per output scale | `TestHotkeyOverlayPanelLaysOutKeysAndActions` |
+| `ShowHotkeyOverlay` (IPC and bind), shown at startup; over windows and layers, under the screenshot UI and the lock; it takes no input, and the next key, button or scroll closes it after being handled | `TestHotkeyOverlayShowsAtStartupWithoutTakingInput` (lane 2) |
+
+Spawn commands in titles are markup-escaped; Niri interpolates them raw.

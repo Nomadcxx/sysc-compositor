@@ -69,6 +69,16 @@ static void sysc_scene_image_place(struct wlr_scene_buffer *node, int x, int y,
 	wlr_scene_node_set_position(&node->node, x, y);
 }
 
+static bool sysc_scene_image_no_input(struct wlr_scene_buffer *buffer, double *sx, double *sy) {
+	return false;
+}
+
+// sysc_scene_image_ignore_input makes the node invisible to hit-testing, so
+// the pointer reaches what is under it.
+static void sysc_scene_image_ignore_input(struct wlr_scene_buffer *node) {
+	node->point_accepts_input = sysc_scene_image_no_input;
+}
+
 static void sysc_scene_rect_color(struct wlr_scene_node *node, float r, float g, float b, float a) {
 	float color[4] = {r, g, b, a};
 	wlr_scene_rect_set_color(wlr_scene_rect_from_node(node), color);
@@ -102,6 +112,10 @@ func sceneImage(parent *C.struct_wlr_scene_tree, img *image.RGBA) *C.struct_wlr_
 
 func sceneImagePlace(node *C.struct_wlr_scene_buffer, box image.Rectangle, opacity float64) {
 	C.sysc_scene_image_place(node, C.int(box.Min.X), C.int(box.Min.Y), C.int(box.Dx()), C.int(box.Dy()), C.float(opacity))
+}
+
+func sceneImageIgnoreInput(node *C.struct_wlr_scene_buffer) {
+	C.sysc_scene_image_ignore_input(node)
 }
 
 // sceneRectSetColor recolours a rect node made by sceneFXCreateRect.

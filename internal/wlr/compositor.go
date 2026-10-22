@@ -151,6 +151,7 @@ type Compositor struct {
 	screenshotPattern       *string
 	screenshotTaken         func(path *string)
 	shotUI                  *screenshotUI
+	hotkeyOverlay           hotkeyOverlay
 	exitDialog              exitDialog
 	lastShotSelection       image.Rectangle
 	animations              map[animationKey]*runningAnimation
@@ -311,6 +312,11 @@ type Options struct {
 	PreferNoCSD  bool
 	// ScreenshotPath is the screenshot-path pattern, nil for clipboard only.
 	ScreenshotPath *string
+	// OverlayBinds and HotkeyOverlay feed the hotkey overlay;
+	// ShowHotkeyOverlayAtStartup is Niri's default unless skip-at-startup.
+	OverlayBinds               []config.OverlayBind
+	HotkeyOverlay              config.HotkeyOverlay
+	ShowHotkeyOverlayAtStartup bool
 }
 
 type LayoutOptions struct {
@@ -352,6 +358,8 @@ func NewWith(opts Options) (*Compositor, error) {
 	c.animationConfig = opts.Animations
 	c.blurConfig = opts.Blur
 	c.screenshotPattern = opts.ScreenshotPath
+	c.hotkeyOverlay.open = opts.ShowHotkeyOverlayAtStartup
+	c.configureHotkeyOverlay(opts.OverlayBinds, opts.HotkeyOverlay)
 	c.preferNoCSD = opts.PreferNoCSD
 	c.hotCorners = opts.Gestures.HotCorners
 	c.dndEdgeConfig = opts.Gestures.DNDEdgeViewScroll
@@ -601,6 +609,7 @@ func (c *Compositor) Reconfigure(opts Options) error {
 	c.overviewConfig = opts.Overview
 	c.animationConfig = opts.Animations
 	c.screenshotPattern = opts.ScreenshotPath
+	c.configureHotkeyOverlay(opts.OverlayBinds, opts.HotkeyOverlay)
 	if opts.Blur != c.blurConfig {
 		c.blurConfig = opts.Blur
 		c.applyBlurConfig()

@@ -833,6 +833,9 @@ func (c *Compositor) handleCursorButton(data unsafe.Pointer) {
 			}
 		}
 	}
+	if pressed && c.hotkeyOverlay.open {
+		defer c.hideHotkeyOverlay()
+	}
 	if pressed && c.exitDialog.open {
 		c.hideExitDialog()
 		c.consumedPointerButtons[button] = true
@@ -918,6 +921,7 @@ func (c *Compositor) handleCursorAxis(data unsafe.Pointer) {
 	event := (*C.struct_wlr_pointer_axis_event)(data)
 	c.userActivity()
 	c.hideExitDialog()
+	c.hideHotkeyOverlay()
 	C.wlr_seat_pointer_notify_axis(c.seat, event.time_msec,
 		event.orientation, event.delta, event.delta_discrete,
 		event.source, event.relative_direction)

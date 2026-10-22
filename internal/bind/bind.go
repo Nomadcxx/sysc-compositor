@@ -100,6 +100,7 @@ const (
 	ActionScreenshotWindow               = "screenshot-window"
 	ActionScreenshot                     = "screenshot"
 	ActionQuit                           = "quit"
+	ActionShowHotkeyOverlay              = "show-hotkey-overlay"
 	ActionOpenOverview                   = "open-overview"
 	ActionCloseOverview                  = "close-overview"
 	ActionMoveWindowToFloating           = "move-window-to-floating"
@@ -277,7 +278,7 @@ func ParseAction(name string, args []string) (Action, bool, error) {
 		ActionFullscreenWindow, ActionToggleWindowedFullscreen,
 		ActionToggleOverview, ActionOpenOverview, ActionCloseOverview,
 		ActionToggleKeyboardShortcutsInhibit, ActionPowerOffMonitors, ActionPowerOnMonitors,
-		ActionScreenshotScreen, ActionScreenshotWindow, ActionScreenshot, ActionQuit:
+		ActionScreenshotScreen, ActionScreenshotWindow, ActionScreenshot, ActionQuit, ActionShowHotkeyOverlay:
 		if len(args) != 0 {
 			return Action{}, true, fmt.Errorf("%s takes no arguments", name)
 		}
@@ -397,7 +398,7 @@ func IsSupportedAction(name string) bool {
 		ActionFullscreenWindow, ActionToggleWindowedFullscreen,
 		ActionToggleOverview, ActionOpenOverview, ActionCloseOverview,
 		ActionToggleKeyboardShortcutsInhibit, ActionPowerOffMonitors, ActionPowerOnMonitors,
-		ActionScreenshotScreen, ActionScreenshotWindow, ActionScreenshot, ActionQuit,
+		ActionScreenshotScreen, ActionScreenshotWindow, ActionScreenshot, ActionQuit, ActionShowHotkeyOverlay,
 		ActionSetWorkspaceName, ActionUnsetWorkspaceName,
 		ActionMoveWindowToWorkspace, ActionMoveWindowToWorkspaceDown, ActionMoveWindowToWorkspaceUp,
 		ActionMoveColumnToWorkspace, ActionMoveColumnToWorkspaceDown, ActionMoveColumnToWorkspaceUp,

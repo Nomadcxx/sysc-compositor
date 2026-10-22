@@ -378,7 +378,7 @@ func (h niriHandler) action(a ipc.Action) (ipc.Reply, func()) {
 	case "SwitchLayout":
 		return h.windowAction(a, 0)
 	case "ToggleOverview", "OpenOverview", "CloseOverview", "ToggleKeyboardShortcutsInhibit", "ScreenshotScreen",
-		"ScreenshotWindow", "Screenshot",
+		"ScreenshotWindow", "Screenshot", "ShowHotkeyOverlay",
 		"PowerOffMonitors", "PowerOnMonitors":
 		return h.windowAction(a, 0)
 	case "FocusWindow", "CloseWindow",
