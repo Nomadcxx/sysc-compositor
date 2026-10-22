@@ -226,7 +226,8 @@ func TestWindowFocusTimestampDebounces(t *testing.T) {
 			c.Terminate()
 			return
 		}
-		time.AfterFunc(850*time.Millisecond, c.Terminate)
+		timer := time.AfterFunc(850*time.Millisecond, c.Terminate)
+		t.Cleanup(func() { timer.Stop() })
 	}
 	runClient(t, c, []string{"sh", "-c", "weston-terminal & weston-terminal & wait"}, nil, nil)
 	if len(views) != 2 {
