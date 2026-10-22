@@ -432,12 +432,6 @@ func (s *Server) Destroy() {
 		// closed hub refuses new streams, and a reload's late events are dropped.
 		s.events.close()
 	}
-	if s.events != nil {
-		// EventStream handlers outlive the request half-close. Stop them before
-		// the Unix listener waits for its accepted connections to return. A
-		// closed hub refuses new streams, and a reload's late events are dropped.
-		s.events.close()
-	}
 	if s.niri != nil {
 		_ = s.niri.Close()
 		s.niri = nil
