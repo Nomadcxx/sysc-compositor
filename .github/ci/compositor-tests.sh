@@ -6,7 +6,7 @@ set -euo pipefail
 
 pacman -Syu --noconfirm --needed git gcc pkgconf go wlroots0.20 scenefx wayland \
 	wayland-protocols libxkbcommon xkeyboard-config mesa seatd dbus adwaita-cursors \
-	weston wayland-utils foot swaybg waybar wofi ttf-dejavu >/dev/null
+	weston wayland-utils foot swaybg waybar wofi ttf-dejavu grim wl-clipboard >/dev/null
 git config --global --add safe.directory "$PWD"
 install -d -m 0700 "$XDG_RUNTIME_DIR"
 # waybar needs a machine id; the tests load the "default" pointer theme.

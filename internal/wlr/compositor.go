@@ -99,6 +99,7 @@ import "C"
 
 import (
 	"errors"
+	"image"
 	"os"
 	"slices"
 	"testing"
@@ -147,6 +148,10 @@ type Compositor struct {
 	overviewConfig          config.Overview
 	animationConfig         config.Animations
 	blurConfig              config.Blur
+	screenshotPattern       *string
+	screenshotTaken         func(path *string)
+	shotUI                  *screenshotUI
+	lastShotSelection       image.Rectangle
 	animations              map[animationKey]*runningAnimation
 	animationTimer          *time.Timer
 	activeWorkspaces        map[string]activeWorkspace
@@ -303,6 +308,8 @@ type Options struct {
 	Animations   config.Animations
 	Blur         config.Blur
 	PreferNoCSD  bool
+	// ScreenshotPath is the screenshot-path pattern, nil for clipboard only.
+	ScreenshotPath *string
 }
 
 type LayoutOptions struct {
@@ -343,6 +350,7 @@ func NewWith(opts Options) (*Compositor, error) {
 	c.overviewConfig = opts.Overview
 	c.animationConfig = opts.Animations
 	c.blurConfig = opts.Blur
+	c.screenshotPattern = opts.ScreenshotPath
 	c.preferNoCSD = opts.PreferNoCSD
 	c.hotCorners = opts.Gestures.HotCorners
 	c.dndEdgeConfig = opts.Gestures.DNDEdgeViewScroll
@@ -467,6 +475,9 @@ func NewWith(opts Options) (*Compositor, error) {
 	if !c.createTextInput() {
 		return nil, errors.New("text input or input method manager create failed")
 	}
+	if !c.createCaptureGlobals() {
+		return nil, errors.New("capture or clipboard global create failed")
+	}
 	// xdg-output gives clients output names and logical geometry; waybar and
 	// grim refuse to start without it, and Niri advertises it.
 	if C.wlr_xdg_output_manager_v1_create(c.display, c.layout) == nil {
@@ -588,6 +599,7 @@ func (c *Compositor) Reconfigure(opts Options) error {
 	c.layoutOptions = *opts.Layout
 	c.overviewConfig = opts.Overview
 	c.animationConfig = opts.Animations
+	c.screenshotPattern = opts.ScreenshotPath
 	if opts.Blur != c.blurConfig {
 		c.blurConfig = opts.Blur
 		c.applyBlurConfig()

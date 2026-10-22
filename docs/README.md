@@ -46,6 +46,7 @@ executed until the owner schedules the milestone they belong to.
 | [plans/2026-10-21-m8-animations.md](plans/2026-10-21-m8-animations.md) | plan | M8 implementation plan: the laptop's spring animations, focus ring, shadow, geometry clipping, and decoration preference. |
 | [plans/2026-10-22-m9-session-live-config.md](plans/2026-10-22-m9-session-live-config.md) | plan | M9 implementation plan (`sysc-1274`): `--session`, complete `niri msg`, keyboard layouts, D-Bus defaults, include-aware live reload, and `LoadConfigFile`. |
 | [plans/2026-10-22-m10-input-idle.md](plans/2026-10-22-m10-input-idle.md) | plan | M10 implementation plan (`sysc-1275`): input protocols, text input, lock/idle, frost, and injected-seat safety. |
+| [plans/2026-10-22-m11-screenshot-overlay.md](plans/2026-10-22-m11-screenshot-overlay.md) | plan | M11 implementation plan (`sysc-1276`): capture and clipboard globals (Q9), screenshot actions and UI, hotkey overlay, recent windows; text rendering awaits an owner decision. |
 
 ## Reference sources (pinned)
 

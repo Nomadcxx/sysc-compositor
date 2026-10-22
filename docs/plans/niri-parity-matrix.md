@@ -46,7 +46,7 @@ Legend: `[ ]` missing · `[~]` partial · `[x]` done.
 | KeyboardLayoutSwitched | [x] | M3/M9 — publishes XKB layout changes and `SwitchLayout` actions |
 | OverviewOpenedOrClosed | [x] | M7 — initial state and open/close transitions |
 | ConfigLoaded | [x] | M3/M9 — initial config result and successful or failed reloads |
-| ScreenshotCaptured | [ ] | M11 |
+| ScreenshotCaptured | [x] | M11 — path written or null (`TestScreenshotScreenWritesThePNGAndReportsIt`) |
 | CastsChanged | [~] | M3 — initial empty baseline; casts in M12 |
 | CastStartedOrChanged | [ ] | M12 |
 | CastStopped | [ ] | M12 |
@@ -74,9 +74,9 @@ Until implemented, decode and reply `Err` with `unimplemented: <Name>`. Tick whe
 
 | Action | Status | Milestone |
 |---|---|---|
-| Screenshot | [ ] | M11 |
-| ScreenshotScreen | [ ] | M11 |
-| ScreenshotWindow | [ ] | M11 |
+| Screenshot | [~] | M11 — interactive UI: frozen outputs, dimmed outside a dragged selection, Space/Return capture, Escape cancel (`TestScreenshotUISelectsAndCapturesARegion`); keyboard moves and hint text wait for the text-rendering decision |
+| ScreenshotScreen | [~] | M11 — PNG to clipboard and screenshot-path, IPC and bind; the pointer is not drawn yet |
+| ScreenshotWindow | [~] | M11 — the window alone at its output scale, IPC (with id) and bind; the pointer is not drawn yet |
 
 ### Window focus and workspace
 
@@ -150,7 +150,7 @@ M6 adds the window, column, floating, fullscreen, urgency, named-workspace, and 
 | hotkey-overlay | [ ] | M11 |
 | environment | [x] | M2 (applied to spawns) |
 | cursor | [~] | M5 theme/size and child environment; M10 cursor-shape-v1 from the pointer's client; per-output scale M15 |
-| screenshot-path | [ ] | M11 |
+| screenshot-path | [x] | M11 — Niri default, null, strftime and ~ (`TestScreenshotPathDefaultsToNiriAndTakesNull`, `TestScreenshotPathExpandsStrftimeAndHome`) |
 | prefer-no-csd | [x] | M8 exposes xdg-decoration and KDE server-decoration with server-side defaults; both accept client-side requests, and undecorated clients receive tiled-edge state |
 | spawn-at-startup / spawn-sh-at-startup | [x] | M2 |
 | workspace | [~] | M6 named workspace declarations and output placement; remaining Niri workspace options are unimplemented |
@@ -191,12 +191,12 @@ global is ticked only with its handler and a test (Q7). Versions follow the wlro
 | zwp_text_input_manager_v3 | [x] | M10 | `TestTextInputRelaysToTheInputMethod` |
 | zwp_input_method_manager_v2 | [~] | M10 | relay and popups tested; keyboard grab gets no keys until virtual-keyboard (M12, `sysc-1639`) |
 | zwlr_output_power_manager_v1 | [ ] | M10 | handler written, unwired: no packaged client to test it (`wlopm` is AUR-only) |
-| ext_data_control_manager_v1, zwlr_data_control_manager_v1 | [ ] | M11 | |
-| zwlr_screencopy_manager_v1 | [ ] | M11 | |
-| ext_image_copy_capture_manager_v1 (output source) | [ ] | M11 | |
-| wp_presentation | [ ] | M11 | |
-| wp_single_pixel_buffer_manager_v1 | [ ] | M11 | |
-| wp_alpha_modifier_v1 | [ ] | M11 | |
+| ext_data_control_manager_v1, zwlr_data_control_manager_v1 | [x] | M11 | `TestDataControlServesTheSelectionWithoutFocus` (wl-copy → wl-paste, no focus) |
+| zwlr_screencopy_manager_v1 | [x] | M11 | `TestScreencopyCapturesTheOutputAtItsSize` (grim); wlroots refuses a non-exact buffer, as Niri does |
+| ext_image_copy_capture_manager_v1 (output source) | [~] | M11 | advertised (`TestM11CaptureGlobalsAdvertised`); no capture test of its own yet |
+| wp_presentation | [~] | M11 | advertised; the SceneFX scene sends feedback; no feedback test yet |
+| wp_single_pixel_buffer_manager_v1 | [~] | M11 | advertised; scene-handled; no client test yet |
+| wp_alpha_modifier_v1 | [~] | M11 | advertised; scene-handled; no client test yet |
 | ext_foreign_toplevel_list_v1 | [ ] | M12 | |
 | zwlr_foreign_toplevel_manager_v1 | [ ] | M12 | |
 | foreign-toplevel image-capture source | [ ] | M12 | |

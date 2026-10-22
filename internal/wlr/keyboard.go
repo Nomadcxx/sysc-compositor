@@ -343,6 +343,10 @@ func (c *Compositor) handleKeyboardKey(data unsafe.Pointer) {
 			}
 			return
 		}
+		if c.shotUIKey(keycode) {
+			c.suppressedKeys[keycode] = true
+			return
+		}
 		if binding, matched := c.dispatchKeyBinding(keycode); matched {
 			c.suppressedKeys[keycode] = true
 			if binding.Repeat {
@@ -359,6 +363,14 @@ func (c *Compositor) handleKeyboardKey(data unsafe.Pointer) {
 	}
 	C.wlr_seat_keyboard_notify_key(c.seat, event.time_msec, event.keycode,
 		C.uint32_t(event.state))
+}
+
+// keysymIs reports whether keycode produces the named keysym on the user
+// keyboard.
+func (c *Compositor) keysymIs(keycode uint32, name string) bool {
+	cname := C.CString(name)
+	defer C.free(unsafe.Pointer(cname))
+	return bool(C.sysc_keysym_matches(c.keyboard, C.uint32_t(keycode), cname))
 }
 
 func (c *Compositor) dispatchKeyBinding(keycode uint32) (bind.Binding, bool) {
@@ -613,6 +625,18 @@ func (c *Compositor) executeBindAction(action bind.Action) {
 	case bind.ActionPowerOffMonitors:
 		if err := c.PowerOffMonitors(); err != nil {
 			fmt.Fprintf(os.Stderr, "sysc-compositor: power-off-monitors: %v\n", err)
+		}
+	case bind.ActionScreenshotScreen:
+		if err := c.ScreenshotScreen(action.WriteToDisk, ""); err != nil {
+			fmt.Fprintf(os.Stderr, "sysc-compositor: screenshot-screen: %v\n", err)
+		}
+	case bind.ActionScreenshot:
+		if err := c.Screenshot(""); err != nil {
+			fmt.Fprintf(os.Stderr, "sysc-compositor: screenshot: %v\n", err)
+		}
+	case bind.ActionScreenshotWindow:
+		if err := c.ScreenshotWindow(nil, action.WriteToDisk, ""); err != nil {
+			fmt.Fprintf(os.Stderr, "sysc-compositor: screenshot-window: %v\n", err)
 		}
 	case bind.ActionPowerOnMonitors:
 		if err := c.PowerOnMonitors(); err != nil {

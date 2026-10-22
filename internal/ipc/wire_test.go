@@ -364,3 +364,51 @@ func enumVariants(t *testing.T, src, enum string) []string {
 	}
 	return names
 }
+
+func TestScreenshotScreenActionRoundTrips(t *testing.T) {
+	line := []byte(`{"Action":{"ScreenshotScreen":{"write_to_disk":false,"show_pointer":true,"path":"/tmp/x.png"}}}`)
+	req, err := DecodeRequest(line)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := req.Action
+	if a == nil || a.Name != "ScreenshotScreen" || a.WriteToDisk || !a.ShowPointer || a.Path == nil || *a.Path != "/tmp/x.png" {
+		t.Fatalf("decoded %+v", a)
+	}
+	if _, err := DecodeRequest([]byte(`{"Action":{"ScreenshotScreen":{"show_pointer":true}}}`)); err == nil {
+		t.Error("ScreenshotScreen without write_to_disk decoded, want a parse error as niri-ipc gives")
+	}
+	noPath, err := DecodeRequest([]byte(`{"Action":{"ScreenshotScreen":{"write_to_disk":true,"show_pointer":false}}}`))
+	if err != nil || noPath.Action.Path != nil {
+		t.Errorf("ScreenshotScreen without path = %+v, %v; want a nil path", noPath.Action, err)
+	}
+}
+
+func TestScreenshotWindowActionRoundTrips(t *testing.T) {
+	req, err := DecodeRequest([]byte(`{"Action":{"ScreenshotWindow":{"id":7,"write_to_disk":true,"show_pointer":false,"path":null}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := req.Action
+	if a.Name != "ScreenshotWindow" || a.WindowID == nil || *a.WindowID != 7 || !a.WriteToDisk || a.ShowPointer || a.Path != nil {
+		t.Fatalf("decoded %+v", a)
+	}
+	again, err := DecodeRequest(EncodeRequest(req))
+	if err != nil || again.Action.WindowID == nil || *again.Action.WindowID != 7 {
+		t.Errorf("re-decoded %+v, %v", again.Action, err)
+	}
+}
+
+func TestScreenshotActionRoundTrips(t *testing.T) {
+	req, err := DecodeRequest([]byte(`{"Action":{"Screenshot":{"show_pointer":false,"path":"/tmp/s.png"}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a := req.Action; a.Name != "Screenshot" || a.ShowPointer || a.Path == nil || *a.Path != "/tmp/s.png" {
+		t.Fatalf("decoded %+v", a)
+	}
+	again, err := DecodeRequest(EncodeRequest(req))
+	if err != nil || again.Action.Path == nil || *again.Action.Path != "/tmp/s.png" {
+		t.Errorf("re-decoded %+v, %v", again.Action, err)
+	}
+}

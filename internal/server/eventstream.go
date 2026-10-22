@@ -20,6 +20,14 @@ func (s *niriState) publishConfigLoaded(h *eventHub, failed bool) {
 	s.mu.Unlock()
 }
 
+// publishScreenshotCaptured sends ScreenshotCaptured with the path written,
+// or null when the screenshot went to the clipboard only.
+func (s *niriState) publishScreenshotCaptured(h *eventHub, path *string) {
+	h.publish([][]byte{eventLine("ScreenshotCaptured", struct {
+		Path *string `json:"path"`
+	}{Path: path})})
+}
+
 const eventStreamBufferSize = 64
 
 type eventHub struct {

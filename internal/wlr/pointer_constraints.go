@@ -121,6 +121,9 @@ func (c *Compositor) pointerMotion(device *C.struct_wlr_input_device, timeMsec C
 	if dx != 0 || dy != 0 {
 		C.wlr_cursor_move(c.cursor, device, C.double(dx), C.double(dy))
 	}
+	if c.shotUIMotion() {
+		return
+	}
 	c.processCursorMotion(timeMsec)
 	c.updatePointerConstraint()
 }

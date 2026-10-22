@@ -833,6 +833,9 @@ func (c *Compositor) handleCursorButton(data unsafe.Pointer) {
 			}
 		}
 	}
+	if c.shotUIButton(button, pressed) {
+		return
+	}
 
 	if !pressed {
 		if c.consumedPointerButtons[button] {

@@ -45,6 +45,11 @@ type Action struct {
 	ColumnDisplay  string
 	Output         string
 	Focus          bool
+	// WriteToDisk and ShowPointer are the screenshot actions' properties;
+	// as in Niri, write-to-disk defaults to true, and show-pointer to true
+	// for screenshot-screen and false for screenshot-window.
+	WriteToDisk bool
+	ShowPointer bool
 }
 
 type Binding struct {
@@ -88,6 +93,9 @@ const (
 	ActionToggleKeyboardShortcutsInhibit = "toggle-keyboard-shortcuts-inhibit"
 	ActionPowerOffMonitors               = "power-off-monitors"
 	ActionPowerOnMonitors                = "power-on-monitors"
+	ActionScreenshotScreen               = "screenshot-screen"
+	ActionScreenshotWindow               = "screenshot-window"
+	ActionScreenshot                     = "screenshot"
 	ActionOpenOverview                   = "open-overview"
 	ActionCloseOverview                  = "close-overview"
 	ActionMoveWindowToFloating           = "move-window-to-floating"
@@ -264,7 +272,8 @@ func ParseAction(name string, args []string) (Action, bool, error) {
 		ActionFocusFloating, ActionFocusTiling, ActionSwitchFocusFloatingAndTiling,
 		ActionFullscreenWindow, ActionToggleWindowedFullscreen,
 		ActionToggleOverview, ActionOpenOverview, ActionCloseOverview,
-		ActionToggleKeyboardShortcutsInhibit, ActionPowerOffMonitors, ActionPowerOnMonitors:
+		ActionToggleKeyboardShortcutsInhibit, ActionPowerOffMonitors, ActionPowerOnMonitors,
+		ActionScreenshotScreen, ActionScreenshotWindow, ActionScreenshot:
 		if len(args) != 0 {
 			return Action{}, true, fmt.Errorf("%s takes no arguments", name)
 		}
@@ -384,6 +393,7 @@ func IsSupportedAction(name string) bool {
 		ActionFullscreenWindow, ActionToggleWindowedFullscreen,
 		ActionToggleOverview, ActionOpenOverview, ActionCloseOverview,
 		ActionToggleKeyboardShortcutsInhibit, ActionPowerOffMonitors, ActionPowerOnMonitors,
+		ActionScreenshotScreen, ActionScreenshotWindow, ActionScreenshot,
 		ActionSetWorkspaceName, ActionUnsetWorkspaceName,
 		ActionMoveWindowToWorkspace, ActionMoveWindowToWorkspaceDown, ActionMoveWindowToWorkspaceUp,
 		ActionMoveColumnToWorkspace, ActionMoveColumnToWorkspaceDown, ActionMoveColumnToWorkspaceUp,
