@@ -27,7 +27,7 @@ for pkg in ./internal/wlr ./internal/server; do
 	go test -count=1 -v -timeout 15m "$pkg" 2>&1 | tee "$log" || passed=0
 	# Top-level tests that failed or skipped. A skip means the lane checked
 	# less than it claims, so it counts like a failure.
-	bad=$(grep -oE '^--- (FAIL|SKIP): [A-Za-z0-9_]+' "$log" | awk '{print $3}' | sort -u)
+	bad=$({ grep -oE '^--- (FAIL|SKIP): [A-Za-z0-9_]+' "$log" || true; } | awk '{print $3}' | sort -u)
 	unexpected=$(comm -23 <(printf '%s\n' "$bad" | sed '/^$/d') <(printf '%s\n' "$quarantine"))
 	if [ -n "$unexpected" ]; then
 		echo "::error::$pkg: failed or skipped outside the quarantine: $(echo $unexpected)"
