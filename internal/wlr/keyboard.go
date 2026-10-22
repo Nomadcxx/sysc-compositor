@@ -658,15 +658,15 @@ func (c *Compositor) executeBindAction(action bind.Action) {
 			fmt.Fprintf(os.Stderr, "sysc-compositor: power-off-monitors: %v\n", err)
 		}
 	case bind.ActionScreenshotScreen:
-		if err := c.ScreenshotScreen(action.WriteToDisk, ""); err != nil {
+		if err := c.ScreenshotScreen(action.WriteToDisk, action.ShowPointer, ""); err != nil {
 			fmt.Fprintf(os.Stderr, "sysc-compositor: screenshot-screen: %v\n", err)
 		}
 	case bind.ActionScreenshot:
-		if err := c.Screenshot(""); err != nil {
+		if err := c.Screenshot(action.ShowPointer, ""); err != nil {
 			fmt.Fprintf(os.Stderr, "sysc-compositor: screenshot: %v\n", err)
 		}
 	case bind.ActionScreenshotWindow:
-		if err := c.ScreenshotWindow(nil, action.WriteToDisk, ""); err != nil {
+		if err := c.ScreenshotWindow(nil, action.WriteToDisk, action.ShowPointer, ""); err != nil {
 			fmt.Fprintf(os.Stderr, "sysc-compositor: screenshot-window: %v\n", err)
 		}
 	case bind.ActionPowerOnMonitors:

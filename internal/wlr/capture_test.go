@@ -234,7 +234,7 @@ func TestScreenshotScreenWritesThePNGAndReportsIt(t *testing.T) {
 			for pointer := range c.sceneOutputs {
 				w, h = outputPixelSize(pointer)
 			}
-			if err := c.ScreenshotScreen(true, ""); err != nil {
+			if err := c.ScreenshotScreen(true, false, ""); err != nil {
 				t.Error(err)
 			}
 		})
@@ -249,7 +249,7 @@ func TestScreenshotScreenWritesThePNGAndReportsIt(t *testing.T) {
 			return
 		}
 		onCompositor(t, c, func() {
-			if err := c.ScreenshotScreen(false, ""); err != nil {
+			if err := c.ScreenshotScreen(false, false, ""); err != nil {
 				t.Error(err)
 			}
 		})
@@ -307,7 +307,7 @@ func TestScreenshotWindowCapturesTheWindowAlone(t *testing.T) {
 		}
 		onCompositor(t, c, func() {
 			c.focusView(view)
-			if err := c.ScreenshotWindow(nil, true, path); err != nil {
+			if err := c.ScreenshotWindow(nil, true, false, path); err != nil {
 				t.Error(err)
 			}
 		})
@@ -360,7 +360,7 @@ func TestScreenshotUISelectsAndCapturesARegion(t *testing.T) {
 		onCompositor(t, c, func() {
 			pointer = c.addFakePointer()
 			keyboard = c.addFakeKeyboard()
-			if err := c.Screenshot(path); err != nil {
+			if err := c.Screenshot(false, path); err != nil {
 				t.Error(err)
 				return
 			}

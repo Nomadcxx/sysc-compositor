@@ -231,7 +231,7 @@ func (s *Server) Run() error {
 						if action.Path != nil {
 							path = *action.Path
 						}
-						if err := s.c.ScreenshotScreen(action.WriteToDisk, path); err != nil {
+						if err := s.c.ScreenshotScreen(action.WriteToDisk, action.ShowPointer, path); err != nil {
 							os.Stderr.WriteString("sysc-compositor: ScreenshotScreen: " + err.Error() + "\n")
 						}
 					case "Screenshot":
@@ -239,7 +239,7 @@ func (s *Server) Run() error {
 						if action.Path != nil {
 							path = *action.Path
 						}
-						if err := s.c.Screenshot(path); err != nil {
+						if err := s.c.Screenshot(action.ShowPointer, path); err != nil {
 							os.Stderr.WriteString("sysc-compositor: Screenshot: " + err.Error() + "\n")
 						}
 					case "ScreenshotWindow":
@@ -247,7 +247,7 @@ func (s *Server) Run() error {
 						if action.Path != nil {
 							path = *action.Path
 						}
-						if err := s.c.ScreenshotWindow(action.WindowID, action.WriteToDisk, path); err != nil {
+						if err := s.c.ScreenshotWindow(action.WindowID, action.WriteToDisk, action.ShowPointer, path); err != nil {
 							os.Stderr.WriteString("sysc-compositor: ScreenshotWindow: " + err.Error() + "\n")
 						}
 					case "PowerOffMonitors":

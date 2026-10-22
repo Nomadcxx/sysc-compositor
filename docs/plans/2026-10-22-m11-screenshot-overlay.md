@@ -163,3 +163,13 @@ into screenshots), the hotkey overlay and recent windows.
 | `ShowHotkeyOverlay` (IPC and bind), shown at startup; over windows and layers, under the screenshot UI and the lock; it takes no input, and the next key, button or scroll closes it after being handled | `TestHotkeyOverlayShowsAtStartupWithoutTakingInput` (lane 2) |
 
 Spawn commands in titles are markup-escaped; Niri interpolates them raw.
+
+## Execution record (2026-10-23): the pointer and the screenshot UI's panel
+
+| Item | Proof |
+|---|---|
+| The pointer in screenshots: the theme image by name or the client's cursor surface, redrawn since wlroots keeps the cursor's image private; `show_pointer` for `ScreenshotScreen`, `ScreenshotWindow` (where it is over the window) and `Screenshot` | `TestScreenshotScreenDrawsThePointerWhenAsked` (lane 2) |
+| Niri's help panel (capture button, Space and P keys, 2px line spacing), bottom centre on every output at 0.9, 0.3 while dragging | `TestScreenshotHintIsNiriPanel` |
+| P toggles the frozen pointer and the panel text; Ctrl+C confirms to the clipboard only; Alt or Shift make keys inert; a press and release on the capture button saves; a click selects 32×32 | `TestScreenshotUIHintTogglesThePointerAndCaptures` (lane 2) |
+
+**Still open:** selection moves by the move, monitor and size binds, and the `screenshot-ui-open` animation; then recent windows.

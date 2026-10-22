@@ -105,12 +105,13 @@ static void sysc_window_shot_surface(struct wlr_surface *surface, int sx, int sy
 	wlr_render_pass_add_texture(shot->pass, &options);
 }
 
-// Draws one window, its surface and subsurfaces but no popups and nothing
-// that overlaps it, into a transparent buffer of its own and reads it back
-// as premultiplied ARGB8888, as Niri screenshots a window alone. width and
-// height are the window geometry times scale.
-static bool sysc_screenshot_window(struct wlr_xdg_surface *xdg, double scale, int width, int height,
-		struct wlr_allocator *alloc, struct wlr_renderer *renderer, void *data) {
+// Draws a surface and its subsurfaces, from (ox, oy) in surface coordinates,
+// into a transparent buffer of its own and reads it back as premultiplied
+// ARGB8888. A window screenshot draws no popups and nothing that overlaps
+// it, as Niri screenshots a window alone; the pointer's surface is drawn
+// the same way. width and height are the drawn size times scale.
+static bool sysc_render_surface_tree(struct wlr_surface *surface, int ox, int oy, double scale,
+		int width, int height, struct wlr_allocator *alloc, struct wlr_renderer *renderer, void *data) {
 	struct wlr_drm_format_set formats = {0};
 	if (!wlr_drm_format_set_add(&formats, DRM_FORMAT_ARGB8888, DRM_FORMAT_MOD_INVALID)) {
 		return false;
@@ -128,10 +129,8 @@ static bool sysc_screenshot_window(struct wlr_xdg_surface *xdg, double scale, in
 			.box = { .width = width, .height = height },
 			.blend_mode = WLR_RENDER_BLEND_MODE_NONE,
 		});
-		struct sysc_window_shot shot = {
-			.pass = pass, .ox = xdg->geometry.x, .oy = xdg->geometry.y, .scale = scale,
-		};
-		wlr_surface_for_each_surface(xdg->surface, sysc_window_shot_surface, &shot);
+		struct sysc_window_shot shot = { .pass = pass, .ox = ox, .oy = oy, .scale = scale };
+		wlr_surface_for_each_surface(surface, sysc_window_shot_surface, &shot);
 		if (wlr_render_pass_submit(pass)) {
 			struct wlr_texture *texture = wlr_texture_from_buffer(renderer, buffer);
 			if (texture != NULL) {
@@ -321,9 +320,9 @@ func expandScreenshotPath(pattern string) (string, error) {
 // ScreenshotScreen captures the focused output, copies it to the clipboard
 // and, with writeToDisk, writes it to path, or to the screenshot-path
 // pattern when path is empty. It runs on the compositor thread; the PNG is
-// encoded and written on a goroutine. The pointer is not drawn: it is not
-// part of the scene (recorded in the M11 plan).
-func (c *Compositor) ScreenshotScreen(writeToDisk bool, path string) error {
+// encoded and written on a goroutine. With showPointer the pointer is drawn
+// in where it is.
+func (c *Compositor) ScreenshotScreen(writeToDisk, showPointer bool, path string) error {
 	var target unsafe.Pointer
 	active := c.FocusedOutputName()
 	for pointer := range c.sceneOutputs {
@@ -337,6 +336,9 @@ func (c *Compositor) ScreenshotScreen(writeToDisk bool, path string) error {
 	img, err := c.captureOutput(target)
 	if err != nil {
 		return err
+	}
+	if showPointer {
+		c.drawPointer(img, c.outputLayoutBox(target), float64((*C.struct_wlr_output)(target).scale))
 	}
 	c.saveScreenshot(img, writeToDisk, path)
 	return nil
@@ -395,7 +397,7 @@ func (c *Compositor) SetScreenshotHandler(fn func(path *string)) { c.screenshotT
 
 // ScreenshotWindow captures one window alone, the focused one when id is nil,
 // at its output's scale, then saves it as ScreenshotScreen does.
-func (c *Compositor) ScreenshotWindow(id *uint64, writeToDisk bool, path string) error {
+func (c *Compositor) ScreenshotWindow(id *uint64, writeToDisk, showPointer bool, path string) error {
 	view := c.focusedView
 	if id != nil {
 		view = nil
@@ -420,20 +422,41 @@ func (c *Compositor) ScreenshotWindow(id *uint64, writeToDisk bool, path string)
 	if width <= 0 || height <= 0 {
 		return errors.New("wlr: the window has no size")
 	}
-	pixels := C.malloc(C.size_t(width * height * 4))
-	if pixels == nil {
-		return errors.New("wlr: out of memory for a screenshot")
+	img, err := c.renderSurfaceTree(xdg.surface, int(xdg.geometry.x), int(xdg.geometry.y), scale, width, height)
+	if err != nil {
+		return err
 	}
-	defer C.free(pixels)
-	if !bool(C.sysc_screenshot_window(xdg, C.double(scale), C.int(width), C.int(height), c.alloc, c.renderer, pixels)) {
-		return errors.New("wlr: rendering the window for a screenshot failed")
-	}
-	// Premultiplied B, G, R, A to Go's premultiplied RGBA.
-	img := image.NewRGBA(image.Rect(0, 0, width, height))
-	src := unsafe.Slice((*byte)(pixels), width*height*4)
-	for i := 0; i < width*height; i++ {
-		img.Pix[i*4], img.Pix[i*4+1], img.Pix[i*4+2], img.Pix[i*4+3] = src[i*4+2], src[i*4+1], src[i*4], src[i*4+3]
+	if showPointer {
+		// The pointer goes in where it is over the window, as in Niri.
+		x, y := view.treePosition()
+		c.drawPointer(img, image.Rect(x, y, x+int(xdg.geometry.width), y+int(xdg.geometry.height)), scale)
 	}
 	c.saveScreenshot(img, writeToDisk, path)
 	return nil
+}
+
+// renderSurfaceTree draws a surface tree from (ox, oy) at scale into a
+// width by height image.
+func (c *Compositor) renderSurfaceTree(surface *C.struct_wlr_surface, ox, oy int, scale float64,
+	width, height int) (*image.RGBA, error) {
+	pixels := C.malloc(C.size_t(width * height * 4))
+	if pixels == nil {
+		return nil, errors.New("wlr: out of memory for a screenshot")
+	}
+	defer C.free(pixels)
+	if !bool(C.sysc_render_surface_tree(surface, C.int(ox), C.int(oy), C.double(scale), C.int(width), C.int(height),
+		c.alloc, c.renderer, pixels)) {
+		return nil, errors.New("wlr: rendering a surface for a screenshot failed")
+	}
+	return rgbaFromARGB(unsafe.Slice((*byte)(pixels), width*height*4), width, height), nil
+}
+
+// rgbaFromARGB converts premultiplied B, G, R, A bytes to Go's premultiplied
+// RGBA.
+func rgbaFromARGB(src []byte, width, height int) *image.RGBA {
+	img := image.NewRGBA(image.Rect(0, 0, width, height))
+	for i := 0; i < width*height; i++ {
+		img.Pix[i*4], img.Pix[i*4+1], img.Pix[i*4+2], img.Pix[i*4+3] = src[i*4+2], src[i*4+1], src[i*4], src[i*4+3]
+	}
+	return img
 }
