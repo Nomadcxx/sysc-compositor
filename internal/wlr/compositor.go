@@ -195,6 +195,10 @@ type Compositor struct {
 	cursorHotspotX, cursorHotspotY int
 	cursorSurfaceDestroy           *Listener
 	cursorClientSet                bool
+	// cursorShape is the theme image the pointer's client last asked for
+	// through cursor-shape-v1, restored after a compositor grab; "" when it
+	// set a surface instead.
+	cursorShape string
 	// focusOriginX/Y is where the user seat's focused surface starts in
 	// layout coordinates, as of the last motion outside an implicit grab.
 	focusOriginX, focusOriginY C.double
@@ -427,6 +431,9 @@ func NewWith(opts Options) (*Compositor, error) {
 	}
 	if !c.createIdle() {
 		return nil, errors.New("idle notify or idle inhibit manager create failed")
+	}
+	if !c.createCursorShape() {
+		return nil, errors.New("wlr_cursor_shape_manager_v1_create failed")
 	}
 	// xdg-output gives clients output names and logical geometry; waybar and
 	// grim refuse to start without it, and Niri advertises it.

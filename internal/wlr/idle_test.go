@@ -12,7 +12,7 @@ const idleTestTimeout = 300 * time.Millisecond
 
 // expectIdleEvent waits for the notification's next event and checks it; ""
 // means no event within the wait.
-func expectIdleEvent(t *testing.T, client *testclient.IdleClient, wait time.Duration, want, label string) bool {
+func expectIdleEvent(t *testing.T, client *testclient.ToplevelClient, wait time.Duration, want, label string) bool {
 	t.Helper()
 	got, err := client.Next(wait)
 	if err != nil {
@@ -42,7 +42,7 @@ func TestIdleNotifiesOnlyUserActivityAndHonoursInhibitors(t *testing.T) {
 	go func() {
 		defer close(done)
 		defer c.Terminate()
-		client, err := testclient.StartIdleClient(c.SocketName(), idleTestTimeout)
+		client, err := testclient.StartToplevelClient(c.SocketName(), idleTestTimeout)
 		if err != nil {
 			t.Error(err)
 			return

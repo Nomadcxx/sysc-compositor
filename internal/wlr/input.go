@@ -809,6 +809,10 @@ func (c *Compositor) restoreCursorImage() {
 		c.drawnImage = ""
 		return
 	}
+	if c.cursorShape != "" {
+		c.showCursorImage(c.cursorShape)
+		return
+	}
 	c.showDefaultImage()
 }
 
@@ -1352,6 +1356,7 @@ func (c *Compositor) handleRequestSetCursor(data unsafe.Pointer) {
 			c.cursorSurfaceDestroy = nil
 		}
 		c.cursorSurface, c.cursorClientSet = event.surface, true
+		c.cursorShape = ""
 		c.cursorHotspotX, c.cursorHotspotY = int(event.hotspot_x), int(event.hotspot_y)
 		if event.surface != nil {
 			surface := event.surface

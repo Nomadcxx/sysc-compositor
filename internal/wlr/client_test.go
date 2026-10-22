@@ -143,6 +143,7 @@ func TestM10InputIdleGlobalsAdvertised(t *testing.T) {
 		"ext_background_effect_manager_v1": 1,
 		"ext_idle_notifier_v1":             1,
 		"ext_session_lock_manager_v1":      1,
+		"wp_cursor_shape_manager_v1":       1,
 		"zwp_idle_inhibit_manager_v1":      1,
 	}
 	for iface, version := range want {
