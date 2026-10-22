@@ -24,6 +24,9 @@ static const struct wl_interface sysc_effect_surface_interface;
 static const struct wl_interface sysc_shortcuts_inhibitor_interface;
 static const struct wl_interface sysc_relative_pointer_interface;
 static const struct wl_interface sysc_locked_pointer_interface;
+static const struct wl_interface sysc_text_input_interface;
+static const struct wl_interface sysc_input_method_interface;
+static const struct wl_interface sysc_input_popup_interface;
 static const struct wl_interface sysc_idle_xdg_toplevel_interface;
 static const struct wl_interface sysc_idle_notification_interface;
 static const struct wl_interface sysc_idle_inhibitor_interface;
@@ -40,6 +43,10 @@ static const struct wl_interface *sysc_idle_types[] = {
 	&sysc_relative_pointer_interface, &wl_pointer_interface,
 	&sysc_locked_pointer_interface, &wl_surface_interface, &wl_pointer_interface,
 	&wl_region_interface, NULL,
+	&sysc_text_input_interface, &wl_seat_interface,
+	&wl_seat_interface, &sysc_input_method_interface,
+	&sysc_input_popup_interface, &wl_surface_interface,
+	&wl_surface_interface,
 };
 static const struct wl_message sysc_idle_wm_base_requests[] = {
 	{"destroy", "", NULL},
@@ -183,6 +190,71 @@ static const struct wl_interface sysc_locked_pointer_interface = {
 	"zwp_locked_pointer_v1", 1, 3, sysc_locked_pointer_requests, 2, sysc_locked_pointer_events,
 };
 
+// text-input-unstable-v3 (version 1) and input-method-unstable-v2.
+static const struct wl_message sysc_text_input_manager_requests[] = {
+	{"destroy", "", NULL},
+	{"get_text_input", "no", sysc_idle_types + 23},
+};
+static const struct wl_interface sysc_text_input_manager_interface = {
+	"zwp_text_input_manager_v3", 1, 2, sysc_text_input_manager_requests, 0, NULL,
+};
+static const struct wl_message sysc_text_input_requests[] = {
+	{"destroy", "", NULL},
+	{"enable", "", NULL},
+	{"disable", "", NULL},
+	{"set_surrounding_text", "sii", NULL},
+	{"set_text_change_cause", "u", NULL},
+	{"set_content_type", "uu", NULL},
+	{"set_cursor_rectangle", "iiii", NULL},
+	{"commit", "", NULL},
+};
+static const struct wl_message sysc_text_input_events[] = {
+	{"enter", "o", sysc_idle_types + 29},
+	{"leave", "o", sysc_idle_types + 29},
+	{"preedit_string", "?sii", NULL},
+	{"commit_string", "?s", NULL},
+	{"delete_surrounding_text", "uu", NULL},
+	{"done", "u", NULL},
+};
+static const struct wl_interface sysc_text_input_interface = {
+	"zwp_text_input_v3", 1, 8, sysc_text_input_requests, 6, sysc_text_input_events,
+};
+static const struct wl_message sysc_input_method_manager_requests[] = {
+	{"get_input_method", "on", sysc_idle_types + 25},
+	{"destroy", "", NULL},
+};
+static const struct wl_interface sysc_input_method_manager_interface = {
+	"zwp_input_method_manager_v2", 1, 2, sysc_input_method_manager_requests, 0, NULL,
+};
+static const struct wl_message sysc_input_method_requests[] = {
+	{"commit_string", "s", NULL},
+	{"set_preedit_string", "sii", NULL},
+	{"delete_surrounding_text", "uu", NULL},
+	{"commit", "u", NULL},
+	{"get_input_popup_surface", "no", sysc_idle_types + 27},
+	{"grab_keyboard", "n", NULL},
+	{"destroy", "", NULL},
+};
+static const struct wl_message sysc_input_method_events[] = {
+	{"activate", "", NULL},
+	{"deactivate", "", NULL},
+	{"surrounding_text", "suu", NULL},
+	{"text_change_cause", "u", NULL},
+	{"content_type", "uu", NULL},
+	{"done", "", NULL},
+	{"unavailable", "", NULL},
+};
+static const struct wl_interface sysc_input_method_interface = {
+	"zwp_input_method_v2", 1, 7, sysc_input_method_requests, 7, sysc_input_method_events,
+};
+static const struct wl_message sysc_input_popup_requests[] = {{"destroy", "", NULL}};
+static const struct wl_message sysc_input_popup_events[] = {
+	{"text_input_rectangle", "iiii", NULL},
+};
+static const struct wl_interface sysc_input_popup_interface = {
+	"zwp_input_popup_surface_v2", 1, 1, sysc_input_popup_requests, 1, sysc_input_popup_events,
+};
+
 #define SYSC_IDLE_EVENTS 32
 
 struct sysc_idle_client {
@@ -195,6 +267,15 @@ struct sysc_idle_client {
 	struct wl_proxy *shortcuts_manager, *shortcuts_inhibitor;
 	struct wl_proxy *relative_manager, *relative_pointer, *constraints, *locked_pointer;
 	bool pointer_locked;
+	struct wl_proxy *text_input_manager, *input_method_manager, *text_input, *input_method;
+	struct wl_proxy *input_popup;
+	struct wl_surface *popup_surface;
+	struct wl_buffer *popup_buffer;
+	bool text_entered, im_active;
+	uint32_t im_done;
+	char im_surrounding[64];
+	char ti_committed[64];
+	uint32_t ti_done;
 	double relative_dx, relative_dy;
 	struct wl_pointer *pointer;
 	struct wl_proxy *cursor_shape_device;
@@ -227,6 +308,11 @@ static void sysc_idle_global(void *data, struct wl_registry *registry,
 		c->notifier = wl_registry_bind(registry, name, &sysc_idle_notifier_interface, 1);
 	} else if (strcmp(interface, "zwp_idle_inhibit_manager_v1") == 0) {
 		c->inhibit_manager = wl_registry_bind(registry, name, &sysc_idle_inhibit_manager_interface, 1);
+	} else if (strcmp(interface, "zwp_text_input_manager_v3") == 0) {
+		c->text_input_manager = wl_registry_bind(registry, name, &sysc_text_input_manager_interface, 1);
+	} else if (strcmp(interface, "zwp_input_method_manager_v2") == 0) {
+		c->input_method_manager = wl_registry_bind(registry, name,
+				&sysc_input_method_manager_interface, 1);
 	} else if (strcmp(interface, "zwp_relative_pointer_manager_v1") == 0) {
 		c->relative_manager = wl_registry_bind(registry, name,
 				&sysc_relative_pointer_manager_interface, 1);
@@ -546,6 +632,122 @@ static bool sysc_client_pointer_locked(struct sysc_idle_client *c) { return c->p
 static double sysc_client_relative_dx(struct sysc_idle_client *c) { return c->relative_dx; }
 static double sysc_client_relative_dy(struct sysc_idle_client *c) { return c->relative_dy; }
 
+static void sysc_ti_enter(void *data, struct wl_proxy *p, struct wl_surface *s) {
+	((struct sysc_idle_client *)data)->text_entered = true;
+}
+static void sysc_ti_leave(void *data, struct wl_proxy *p, struct wl_surface *s) {
+	((struct sysc_idle_client *)data)->text_entered = false;
+}
+static void sysc_ti_preedit(void *data, struct wl_proxy *p, const char *text, int32_t b, int32_t e) {
+}
+static void sysc_ti_commit_string(void *data, struct wl_proxy *p, const char *text) {
+	struct sysc_idle_client *c = data;
+	snprintf(c->ti_committed, sizeof(c->ti_committed), "%s", text != NULL ? text : "");
+}
+static void sysc_ti_delete(void *data, struct wl_proxy *p, uint32_t before, uint32_t after) {
+}
+static void sysc_ti_done(void *data, struct wl_proxy *p, uint32_t serial) {
+	((struct sysc_idle_client *)data)->ti_done++;
+}
+static const struct {
+	void (*enter)(void *, struct wl_proxy *, struct wl_surface *);
+	void (*leave)(void *, struct wl_proxy *, struct wl_surface *);
+	void (*preedit_string)(void *, struct wl_proxy *, const char *, int32_t, int32_t);
+	void (*commit_string)(void *, struct wl_proxy *, const char *);
+	void (*delete_surrounding_text)(void *, struct wl_proxy *, uint32_t, uint32_t);
+	void (*done)(void *, struct wl_proxy *, uint32_t);
+} sysc_text_input_listener = {
+	sysc_ti_enter, sysc_ti_leave, sysc_ti_preedit, sysc_ti_commit_string, sysc_ti_delete, sysc_ti_done,
+};
+
+static void sysc_im_activate(void *data, struct wl_proxy *p) {
+	((struct sysc_idle_client *)data)->im_active = true;
+}
+static void sysc_im_deactivate(void *data, struct wl_proxy *p) {
+	((struct sysc_idle_client *)data)->im_active = false;
+}
+static void sysc_im_surrounding(void *data, struct wl_proxy *p, const char *text, uint32_t cursor,
+		uint32_t anchor) {
+	struct sysc_idle_client *c = data;
+	snprintf(c->im_surrounding, sizeof(c->im_surrounding), "%s", text);
+}
+static void sysc_im_cause(void *data, struct wl_proxy *p, uint32_t cause) {
+}
+static void sysc_im_content_type(void *data, struct wl_proxy *p, uint32_t hint, uint32_t purpose) {
+}
+static void sysc_im_done(void *data, struct wl_proxy *p) {
+	((struct sysc_idle_client *)data)->im_done++;
+}
+static void sysc_im_unavailable(void *data, struct wl_proxy *p) {
+}
+static const struct {
+	void (*activate)(void *, struct wl_proxy *);
+	void (*deactivate)(void *, struct wl_proxy *);
+	void (*surrounding_text)(void *, struct wl_proxy *, const char *, uint32_t, uint32_t);
+	void (*text_change_cause)(void *, struct wl_proxy *, uint32_t);
+	void (*content_type)(void *, struct wl_proxy *, uint32_t, uint32_t);
+	void (*done)(void *, struct wl_proxy *);
+	void (*unavailable)(void *, struct wl_proxy *);
+} sysc_input_method_listener = {
+	sysc_im_activate, sysc_im_deactivate, sysc_im_surrounding, sysc_im_cause,
+	sysc_im_content_type, sysc_im_done, sysc_im_unavailable,
+};
+
+// Takes a text input on the toplevel's seat and the seat's input method.
+static int sysc_client_start_text_input(struct sysc_idle_client *c) {
+	if (c->text_input_manager == NULL || c->input_method_manager == NULL) {
+		return 1;
+	}
+	c->text_input = wl_proxy_marshal_flags(c->text_input_manager, 1, &sysc_text_input_interface,
+			1, 0, NULL, c->seat);
+	c->input_method = wl_proxy_marshal_flags(c->input_method_manager, 0,
+			&sysc_input_method_interface, 1, 0, c->seat, NULL);
+	if (c->text_input == NULL || c->input_method == NULL) {
+		return 2;
+	}
+	wl_proxy_add_listener(c->text_input, (void (**)(void))&sysc_text_input_listener, c);
+	wl_proxy_add_listener(c->input_method, (void (**)(void))&sysc_input_method_listener, c);
+	return wl_display_roundtrip(c->display) < 0 ? 3 : 0;
+}
+
+// Enables the text input with surrounding text and a cursor rectangle.
+static int sysc_client_enable_text_input(struct sysc_idle_client *c, const char *text,
+		int32_t x, int32_t y, int32_t w, int32_t h) {
+	int32_t length = (int32_t)strlen(text);
+	wl_proxy_marshal_flags(c->text_input, 1, NULL, 1, 0);
+	wl_proxy_marshal_flags(c->text_input, 3, NULL, 1, 0, text, length, length);
+	wl_proxy_marshal_flags(c->text_input, 6, NULL, 1, 0, x, y, w, h);
+	wl_proxy_marshal_flags(c->text_input, 7, NULL, 1, 0);
+	return wl_display_roundtrip(c->display) < 0 ? 1 : 0;
+}
+
+// The input method commits a string, as an IME does on a finished word.
+static int sysc_client_im_commit(struct sysc_idle_client *c, const char *text) {
+	wl_proxy_marshal_flags(c->input_method, 0, NULL, 1, 0, text);
+	wl_proxy_marshal_flags(c->input_method, 3, NULL, 1, 0, c->im_done);
+	return wl_display_roundtrip(c->display) < 0 ? 1 : 0;
+}
+
+// The input method maps a w x h popup surface.
+static int sysc_client_im_popup(struct sysc_idle_client *c, int w, int h) {
+	c->popup_surface = wl_compositor_create_surface(c->compositor);
+	c->input_popup = wl_proxy_marshal_flags(c->input_method, 4, &sysc_input_popup_interface,
+			1, 0, NULL, c->popup_surface);
+	c->popup_buffer = sysc_idle_buffer(c->shm, w, h);
+	if (c->popup_surface == NULL || c->input_popup == NULL || c->popup_buffer == NULL) {
+		return 1;
+	}
+	wl_surface_attach(c->popup_surface, c->popup_buffer, 0, 0);
+	wl_surface_damage(c->popup_surface, 0, 0, w, h);
+	wl_surface_commit(c->popup_surface);
+	return wl_display_roundtrip(c->display) < 0 ? 2 : 0;
+}
+
+static bool sysc_client_text_entered(struct sysc_idle_client *c) { return c->text_entered; }
+static bool sysc_client_im_active(struct sysc_idle_client *c) { return c->im_active; }
+static const char *sysc_client_im_surrounding(struct sysc_idle_client *c) { return c->im_surrounding; }
+static const char *sysc_client_ti_committed(struct sysc_idle_client *c) { return c->ti_committed; }
+
 // Asks to inhibit compositor shortcuts on the toplevel for the user seat.
 static int sysc_client_inhibit_shortcuts(struct sysc_idle_client *c) {
 	if (c->shortcuts_manager == NULL) {
@@ -743,6 +945,59 @@ func (c *ToplevelClient) RelativeMotion(wait time.Duration) (float64, float64) {
 		}
 	}
 	return float64(C.sysc_client_relative_dx(c.state)), float64(C.sysc_client_relative_dy(c.state))
+}
+
+// StartTextInput takes a text input and the user seat's input method, both
+// on this connection: the test plays the application and the IME at once.
+func (c *ToplevelClient) StartTextInput() error {
+	if code := int(C.sysc_client_start_text_input(c.state)); code != 0 {
+		return fmt.Errorf("Wayland text input start failed at step %d", code)
+	}
+	return nil
+}
+
+// EnableTextInput enables the text input with surrounding text and a cursor
+// rectangle in surface coordinates, and commits.
+func (c *ToplevelClient) EnableTextInput(text string, x, y, w, h int32) error {
+	ctext := C.CString(text)
+	defer C.free(unsafe.Pointer(ctext))
+	if C.sysc_client_enable_text_input(c.state, ctext, C.int32_t(x), C.int32_t(y), C.int32_t(w), C.int32_t(h)) != 0 {
+		return fmt.Errorf("Wayland text input enable failed")
+	}
+	return nil
+}
+
+// InputMethodCommit has the input method commit a string.
+func (c *ToplevelClient) InputMethodCommit(text string) error {
+	ctext := C.CString(text)
+	defer C.free(unsafe.Pointer(ctext))
+	if C.sysc_client_im_commit(c.state, ctext) != 0 {
+		return fmt.Errorf("Wayland input method commit failed")
+	}
+	return nil
+}
+
+// InputMethodPopup has the input method map a popup of the given size.
+func (c *ToplevelClient) InputMethodPopup(w, h int) error {
+	if code := int(C.sysc_client_im_popup(c.state, C.int(w), C.int(h))); code != 0 {
+		return fmt.Errorf("Wayland input popup failed at step %d", code)
+	}
+	return nil
+}
+
+// TextInputState dispatches for up to wait, then reports whether the text
+// input has entered the toplevel, whether the input method is active, the
+// surrounding text the input method last saw, and the string the text input
+// last had committed.
+func (c *ToplevelClient) TextInputState(wait time.Duration) (entered, active bool, surrounding, committed string) {
+	for deadline := time.Now().Add(wait); ; {
+		left := time.Until(deadline)
+		if left <= 0 || C.sysc_idle_client_dispatch(c.state, C.int(left.Milliseconds())) < 0 {
+			break
+		}
+	}
+	return bool(C.sysc_client_text_entered(c.state)), bool(C.sysc_client_im_active(c.state)),
+		C.GoString(C.sysc_client_im_surrounding(c.state)), C.GoString(C.sysc_client_ti_committed(c.state))
 }
 
 // Close disconnects.

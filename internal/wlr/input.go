@@ -1080,6 +1080,7 @@ func (c *Compositor) updateKeyboardFocus() {
 
 func (c *Compositor) keyboardFocusChanged(previous *toplevelView) {
 	c.updateShortcutsInhibitors()
+	c.updateTextInputFocus()
 	current := c.keyboardFocusedView()
 	if current == previous {
 		return

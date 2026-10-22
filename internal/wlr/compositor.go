@@ -26,7 +26,9 @@ package wlr
 #include <wlr/types/wlr_idle_inhibit_v1.h>
 #include <wlr/types/wlr_idle_notify_v1.h>
 #include <wlr/types/wlr_keyboard_shortcuts_inhibit_v1.h>
+#include <wlr/types/wlr_input_method_v2.h>
 #include <wlr/types/wlr_linux_dmabuf_v1.h>
+#include <wlr/types/wlr_text_input_v3.h>
 #include <wlr/types/wlr_pointer_constraints_v1.h>
 #include <wlr/types/wlr_relative_pointer_v1.h>
 #include <wlr/types/wlr_output_layout.h>
@@ -253,6 +255,12 @@ type Compositor struct {
 	pointerConstraints *C.struct_wlr_pointer_constraints_v1
 	activeConstraint   *C.struct_wlr_pointer_constraint_v1
 
+	// Text input relayed to the input method (text_input.go).
+	textInputs      map[*C.struct_wlr_text_input_v3]*textInput
+	activeTextInput *C.struct_wlr_text_input_v3
+	inputMethod     *C.struct_wlr_input_method_v2
+	inputPopups     map[*C.struct_wlr_input_popup_surface_v2]*inputPopup
+
 	// viewMapped, when set, runs on the compositor thread once a toplevel is
 	// mapped and hit-testable. It is the hook tests use to act once a client
 	// is on screen.
@@ -455,6 +463,9 @@ func NewWith(opts Options) (*Compositor, error) {
 	}
 	if !c.createPointerConstraints() {
 		return nil, errors.New("relative pointer or pointer constraints manager create failed")
+	}
+	if !c.createTextInput() {
+		return nil, errors.New("text input or input method manager create failed")
 	}
 	// xdg-output gives clients output names and logical geometry; waybar and
 	// grim refuse to start without it, and Niri advertises it.
