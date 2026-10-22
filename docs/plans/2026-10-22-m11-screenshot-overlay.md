@@ -173,3 +173,12 @@ Spawn commands in titles are markup-escaped; Niri interpolates them raw.
 | P toggles the frozen pointer and the panel text; Ctrl+C confirms to the clipboard only; Alt or Shift make keys inert; a press and release on the capture button saves; a click selects 32×32 | `TestScreenshotUIHintTogglesThePointerAndCaptures` (lane 2) |
 
 **Still open:** selection moves by the move, monitor and size binds, and the `screenshot-ui-open` animation; then recent windows.
+
+## Execution record (2026-10-23): selection moves
+
+While the screenshot UI is open, keys it does not take run their binds as Niri's
+`allowed_during_screenshot`: quit and monitor power as usual; `move-column-left/right` and
+`move-window-up/down` move the selection 50px within its output; the column and window
+monitor moves carry it to that output keeping its relative place and logical size. Held binds
+repeat. Proof: `TestScreenshotUIMovesTheSelectionByBinds` (lane 2). The size binds wait for
+`set-window-width/height` and `set-column-width`, which are not built yet.

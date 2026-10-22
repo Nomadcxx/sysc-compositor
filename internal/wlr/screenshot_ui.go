@@ -332,34 +332,122 @@ func (c *Compositor) confirmScreenshot(writeToDisk bool) {
 }
 
 // shotUIKey takes a user key press while the UI is open; every key is the
-// UI's. It reports whether the UI took the key. Keys are Niri's: Alt or
-// Shift held makes any key but Escape do nothing.
-func (c *Compositor) shotUIKey(keycode uint32) bool {
-	if c.shotUI == nil {
-		return false
-	}
+// UI's. Keys are Niri's: Escape cancels; without Alt or Shift, Space or
+// Return saves, Ctrl+C copies and P toggles the pointer; any other key runs
+// its bind as runShotBinding allows. It returns the bind that ran.
+func (c *Compositor) shotUIKey(keycode uint32) (bind.Binding, bool) {
 	if c.keysymIs(keycode, "Escape") {
 		c.closeScreenshotUI()
-		return true
+		return bind.Binding{}, false
 	}
 	mods := c.activeBindModifiers()
-	if mods&bind.Modifiers(bind.ModifierAlt|bind.ModifierShift) != 0 {
-		return true
-	}
-	ctrl := mods&bind.Modifiers(bind.ModifierCtrl) != 0
-	switch {
-	case !ctrl && (c.keysymIs(keycode, "space") || c.keysymIs(keycode, "Return")):
-		if !c.shotUI.selection.Empty() {
-			c.confirmScreenshot(true)
+	if mods&bind.Modifiers(bind.ModifierAlt|bind.ModifierShift) == 0 {
+		ctrl := mods&bind.Modifiers(bind.ModifierCtrl) != 0
+		switch {
+		case !ctrl && (c.keysymIs(keycode, "space") || c.keysymIs(keycode, "Return")):
+			if !c.shotUI.selection.Empty() {
+				c.confirmScreenshot(true)
+			}
+			return bind.Binding{}, false
+		case ctrl && c.keysymIs(keycode, "c"):
+			if !c.shotUI.selection.Empty() {
+				c.confirmScreenshot(false)
+			}
+			return bind.Binding{}, false
+		case !ctrl && c.keysymIs(keycode, "p"):
+			c.toggleShotPointer()
+			return bind.Binding{}, false
 		}
-	case ctrl && c.keysymIs(keycode, "c"):
-		if !c.shotUI.selection.Empty() {
-			c.confirmScreenshot(false)
-		}
-	case !ctrl && c.keysymIs(keycode, "p"):
-		c.toggleShotPointer()
 	}
-	return true
+	return c.dispatchKeyBinding(keycode)
+}
+
+// shotMoveStep is Niri's DIRECTIONAL_MOVE_PX.
+const shotMoveStep = 50
+
+// runShotBinding is Niri's allowed_during_screenshot for the actions built
+// here: quit and monitor power run as usual, and the column, window and
+// monitor moves move the selection instead.
+func (c *Compositor) runShotBinding(binding bind.Binding) {
+	for _, action := range binding.Actions {
+		switch action.Name {
+		case bind.ActionQuit:
+			c.Quit(action.SkipConfirmation)
+		case bind.ActionPowerOffMonitors, bind.ActionPowerOnMonitors:
+			c.executeBindAction(action)
+		case bind.ActionMoveColumnLeft:
+			c.moveShotSelection(-shotMoveStep, 0)
+		case bind.ActionMoveColumnRight:
+			c.moveShotSelection(shotMoveStep, 0)
+		case bind.ActionMoveWindowUp:
+			c.moveShotSelection(0, -shotMoveStep)
+		case bind.ActionMoveWindowDown:
+			c.moveShotSelection(0, shotMoveStep)
+		case bind.ActionMoveColumnToMonitor, bind.ActionMoveWindowToMonitor:
+			c.moveShotSelectionToOutput(action.Output)
+		case bind.ActionMoveColumnToMonitorLeft, bind.ActionMoveWindowToMonitorLeft:
+			c.moveShotSelectionTowards("left")
+		case bind.ActionMoveColumnToMonitorRight, bind.ActionMoveWindowToMonitorRight:
+			c.moveShotSelectionTowards("right")
+		case bind.ActionMoveColumnToMonitorUp, bind.ActionMoveWindowToMonitorUp:
+			c.moveShotSelectionTowards("up")
+		case bind.ActionMoveColumnToMonitorDown, bind.ActionMoveWindowToMonitorDown:
+			c.moveShotSelectionTowards("down")
+		case bind.ActionMoveColumnToMonitorPrevious, bind.ActionMoveWindowToMonitorPrevious:
+			c.moveShotSelectionTowards("previous")
+		case bind.ActionMoveColumnToMonitorNext, bind.ActionMoveWindowToMonitorNext:
+			c.moveShotSelectionTowards("next")
+		}
+		if c.shotUI == nil {
+			return
+		}
+	}
+}
+
+// moveShotSelection moves the selection by (dx, dy), no further than its
+// output's edges.
+func (c *Compositor) moveShotSelection(dx, dy int) {
+	ui := c.shotUI
+	box := ui.frames[ui.output].box
+	sel := ui.selection
+	dx = max(box.Min.X-sel.Min.X, min(dx, box.Max.X-sel.Max.X))
+	dy = max(box.Min.Y-sel.Min.Y, min(dy, box.Max.Y-sel.Max.Y))
+	ui.selection = sel.Add(image.Pt(dx, dy))
+	c.drawShotSelection()
+}
+
+func (c *Compositor) moveShotSelectionTowards(direction string) {
+	if c.model == nil {
+		return
+	}
+	from := C.GoString((*C.struct_wlr_output)(c.shotUI.output).name)
+	if name := c.model.OutputInDirection(from, direction); name != "" {
+		c.moveShotSelectionToOutput(name)
+	}
+}
+
+// moveShotSelectionToOutput is Niri's move_to_output: the selection keeps
+// its place relative to the output and its logical size, clamped to fit.
+func (c *Compositor) moveShotSelectionToOutput(name string) {
+	ui := c.shotUI
+	var target unsafe.Pointer
+	for pointer := range ui.frames {
+		if C.GoString((*C.struct_wlr_output)(pointer).name) == name {
+			target = pointer
+		}
+	}
+	if target == nil || target == ui.output {
+		return
+	}
+	from, to := ui.frames[ui.output].box, ui.frames[target].box
+	sel := ui.selection
+	w, h := min(max(sel.Dx(), 1), to.Dx()), min(max(sel.Dy(), 1), to.Dy())
+	x := int(math.Round(float64(sel.Min.X-from.Min.X) / float64(from.Dx()) * float64(to.Dx())))
+	y := int(math.Round(float64(sel.Min.Y-from.Min.Y) / float64(from.Dy()) * float64(to.Dy())))
+	x, y = max(0, min(x, to.Dx()-w)), max(0, min(y, to.Dy()-h))
+	ui.output = target
+	ui.selection = image.Rect(to.Min.X+x, to.Min.Y+y, to.Min.X+x+w, to.Min.Y+y+h)
+	c.drawShotSelection()
 }
 
 // toggleShotPointer is Niri's ScreenshotTogglePointer.
