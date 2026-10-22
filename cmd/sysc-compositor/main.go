@@ -1,6 +1,6 @@
 // Command sysc-compositor is a Wayland compositor for the sysc desktop. With
 // no subcommand it runs, nested inside an existing session; `msg` talks to a
-// running one over the niri-ipc socket.
+// running one over the niri-ipc socket, and `validate` checks a config.
 package main
 
 import (

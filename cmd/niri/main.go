@@ -1,5 +1,6 @@
-// Command niri is sysc-compositor under niri's name (design §6), so scripts
-// that run `niri` or `niri msg` keep working.
+// Command niri is a compatibility alias of sysc-compositor (design §6), so
+// the greeter config and scripts that run `niri`, `niri msg` or
+// `niri validate` keep working. New docs and scripts use sysc-compositor.
 package main
 
 import (

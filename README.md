@@ -4,6 +4,18 @@ Wayland compositor for the sysc desktop. **Go and cgo only** (no `.c` / `.h` her
 
 This directory holds the product and the plans. Code starts at M0.
 
+## Commands
+
+```
+sysc-compositor                       # run (nested inside an existing session)
+sysc-compositor -c CONFIG             # run with a config
+sysc-compositor validate [-c CONFIG]  # check a config without running it
+sysc-compositor msg [--json] REQUEST  # talk to a running compositor over $NIRI_SOCKET
+```
+
+`niri` is a compatibility alias with the same arguments and JSON, so the greeter config and scripts
+written for niri keep working. Use `sysc-compositor` in new docs and scripts.
+
 ## Docs
 
 | Doc | What it is |
