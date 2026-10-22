@@ -5,6 +5,7 @@ package wlr
 #cgo CFLAGS: -DWLR_USE_UNSTABLE
 
 #include <stdlib.h>
+#include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
 #include <xkbcommon/xkbcommon.h>
@@ -69,6 +70,49 @@ static void sysc_injected_keyboard_enter(struct wlr_seat *seat,
 		kb->keycodes, kb->num_keycodes, &kb->modifiers);
 }
 
+static bool sysc_injected_key_held(struct wlr_keyboard *kb, uint32_t keycode) {
+	for (size_t i = 0; i < kb->num_keycodes; i++) {
+		if (kb->keycodes[i] == keycode) {
+			return true;
+		}
+	}
+	return false;
+}
+
+static bool sysc_injected_button_held(struct wlr_seat *seat, uint32_t button) {
+	struct wlr_seat_pointer_state *state = &seat->pointer_state;
+	for (size_t i = 0; i < state->button_count; i++) {
+		if (state->buttons[i].button == button) {
+			return true;
+		}
+	}
+	return false;
+}
+
+// Releases every key and button the injected seat holds. Both lists shrink as
+// releases are delivered, so each is copied first.
+static void sysc_injected_release_all(struct wlr_seat *seat, struct wlr_keyboard *kb,
+		uint32_t time) {
+	uint32_t keys[WLR_KEYBOARD_KEYS_CAP];
+	size_t num_keys = kb->num_keycodes;
+	memcpy(keys, kb->keycodes, num_keys * sizeof(keys[0]));
+	for (size_t i = 0; i < num_keys; i++) {
+		sysc_injected_key(seat, kb, time, keys[i], false);
+	}
+	struct wlr_seat_pointer_button buttons[WLR_POINTER_BUTTONS_CAP];
+	size_t num_buttons = seat->pointer_state.button_count;
+	memcpy(buttons, seat->pointer_state.buttons, num_buttons * sizeof(buttons[0]));
+	for (size_t i = 0; i < num_buttons; i++) {
+		for (size_t n = 0; n < buttons[i].n_pressed; n++) {
+			wlr_seat_pointer_notify_button(seat, time, buttons[i].button,
+				WL_POINTER_BUTTON_STATE_RELEASED);
+		}
+	}
+	if (num_buttons > 0) {
+		wlr_seat_pointer_notify_frame(seat);
+	}
+}
+
 // The registry name a client would see a seat under. wl_global_get_name
 // needs a client, so a throwaway in-process one is made over a socketpair and
 // destroyed at once; it never dispatches.
@@ -117,6 +161,10 @@ var (
 	ErrSeatLimit   = errors.New("wlr: the injected seat limit is reached")
 	ErrUnknownSeat = errors.New("wlr: no injected seat by that name")
 	ErrSeatCreate  = errors.New("wlr: creating the injected seat failed")
+	// ErrInjectedInputBlocked refuses an injected press or motion while the
+	// session is locked or every monitor is off. Releases of held input still
+	// go through.
+	ErrInjectedInputBlocked = errors.New("wlr: injected input is blocked while the session is locked or every monitor is off")
 )
 
 // injectedSeat is a seat fed by the compositor itself rather than by the
@@ -184,6 +232,14 @@ func (c *Compositor) InjectKey(name string, keycode uint32, pressed bool) error 
 	if s == nil {
 		return ErrUnknownSeat
 	}
+	if c.injectedInputBlocked() {
+		if pressed {
+			return ErrInjectedInputBlocked
+		}
+		if !bool(C.sysc_injected_key_held(s.keyboard, C.uint32_t(keycode))) {
+			return nil
+		}
+	}
 	C.sysc_injected_key(s.seat, s.keyboard, nowMsec(), C.uint32_t(keycode), C.bool(pressed))
 	return nil
 }
@@ -195,6 +251,9 @@ func (c *Compositor) InjectPointerMotion(name string, x, y float64) error {
 	s := c.injectedSeat(name)
 	if s == nil {
 		return ErrUnknownSeat
+	}
+	if c.injectedInputBlocked() {
+		return ErrInjectedInputBlocked
 	}
 	s.x, s.y = x, y
 	surface, sx, sy := c.surfaceAt(x, y)
@@ -218,6 +277,14 @@ func (c *Compositor) InjectPointerButton(name string, button uint32, pressed boo
 	if s == nil {
 		return ErrUnknownSeat
 	}
+	if c.injectedInputBlocked() {
+		if pressed {
+			return ErrInjectedInputBlocked
+		}
+		if !bool(C.sysc_injected_button_held(s.seat, C.uint32_t(button))) {
+			return nil
+		}
+	}
 	state := C.enum_wl_pointer_button_state(C.WL_POINTER_BUTTON_STATE_RELEASED)
 	if pressed {
 		state = C.WL_POINTER_BUTTON_STATE_PRESSED
@@ -229,6 +296,42 @@ func (c *Compositor) InjectPointerButton(name string, button uint32, pressed boo
 	C.wlr_seat_pointer_notify_button(s.seat, nowMsec(), C.uint32_t(button), state)
 	C.wlr_seat_pointer_notify_frame(s.seat)
 	return nil
+}
+
+// injectedInputBlocked reports the sysc-1260 gate: injected input is refused
+// while the session is locked or every output is off. User-seat input is
+// never gated here; it is what unlocks or wakes the session.
+func (c *Compositor) injectedInputBlocked() bool {
+	return c.sessionLocked || c.allOutputsOff()
+}
+
+// allOutputsOff is true when outputs exist and none is enabled.
+func (c *Compositor) allOutputsOff() bool {
+	for pointer := range c.sceneOutputs {
+		if c.outputIsEnabled(pointer) {
+			return false
+		}
+	}
+	return len(c.sceneOutputs) > 0
+}
+
+// setSessionLocked seals or unseals the session for injected input.
+func (c *Compositor) setSessionLocked(locked bool) {
+	c.sessionLocked = locked
+	c.updateInjectedInputGate()
+}
+
+// updateInjectedInputGate runs after anything that can open or close the gate.
+// As it closes, every injected seat lets go of what it holds, so no client is
+// left with a key or button down that the agent can no longer release.
+func (c *Compositor) updateInjectedInputGate() {
+	blocked := c.injectedInputBlocked()
+	if blocked && !c.injectedGated {
+		for _, s := range c.injected {
+			C.sysc_injected_release_all(s.seat, s.keyboard, nowMsec())
+		}
+	}
+	c.injectedGated = blocked
 }
 
 func (c *Compositor) injectedSeat(name string) *injectedSeat {

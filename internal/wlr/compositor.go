@@ -209,6 +209,17 @@ type Compositor struct {
 	// user's hardware, after the user seat (c.seat) in creation order.
 	injected []*injectedSeat
 
+	// Injected input is gated while the session is locked or every output
+	// is off (sysc-1260). injectedGated is the gate's last state, so held
+	// input is released once, as it closes.
+	sessionLocked bool
+	injectedGated bool
+	// powerOffActive is set between PowerOffMonitors and PowerOnMonitors;
+	// actionPoweredOff is the outputs PowerOffMonitors turned off, the only
+	// ones PowerOnMonitors turns back on.
+	powerOffActive   bool
+	actionPoweredOff map[unsafe.Pointer]struct{}
+
 	// viewMapped, when set, runs on the compositor thread once a toplevel is
 	// mapped and hit-testable. It is the hook tests use to act once a client
 	// is on screen.

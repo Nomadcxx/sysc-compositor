@@ -194,6 +194,7 @@ import "C"
 import (
 	"errors"
 	"fmt"
+	"os"
 	"sort"
 	"unsafe"
 )
