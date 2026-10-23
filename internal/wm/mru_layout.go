@@ -1,6 +1,9 @@
 package wm
 
-import "math"
+import (
+	"math"
+	"slices"
+)
 
 // Niri's mru.rs layout constants, in logical pixels.
 const (
@@ -37,7 +40,9 @@ func (s MRUStrip) HighlightPadding() float64 {
 	return s.Round(s.Padding) + s.Round(MRUBorder)
 }
 
-func (s MRUStrip) gap() float64 {
+// Gap is the space between two previews: the highlight padding of each and
+// Niri's 16px between.
+func (s MRUStrip) Gap() float64 {
 	padding := s.HighlightPadding()
 	return padding + s.Round(mruGap) + padding
 }
@@ -64,7 +69,7 @@ func (s MRUStrip) Layout(sizes [][2]float64) []MRURect {
 	for i, size := range sizes {
 		w, h := s.PreviewSize(size[0], size[1])
 		rects[i] = MRURect{X: x, Y: s.Round((s.OutputHeight - h) / 2), W: w, H: h}
-		x += w + s.gap()
+		x += w + s.Gap()
 	}
 	return rects
 }
@@ -95,6 +100,64 @@ func viewOffset(curX, workingWidth, x, width float64) float64 {
 		return 0
 	}
 	return -(workingWidth - width)
+}
+
+// RemovalMoves is Niri's remove_window animation. listed is the listed
+// windows before removed, of preview width width, goes. The previews that
+// close its gap start that far from their place: those left of it when it is
+// left of current, with the view shifting by view so current stays put;
+// otherwise those right of it. Removing the last listed preview, or one
+// not listed, moves nothing.
+func (s MRUStrip) RemovalMoves(listed []uint64, current, removed uint64, width float64) (moves map[uint64]float64, view float64) {
+	i := slices.Index(listed, removed)
+	if i < 0 || i == len(listed)-1 {
+		return nil, 0
+	}
+	delta := width + s.Gap()
+	moves = make(map[uint64]float64)
+	if slices.Index(listed, current) > i {
+		for _, id := range listed[:i] {
+			moves[id] = -delta
+		}
+		return moves, -delta
+	}
+	for _, id := range listed[i+1:] {
+		moves[id] = delta
+	}
+	return moves, 0
+}
+
+// RelistMoves is Niri's animate_scope_filter_change after a scope or filter
+// change. windows is every window in order; was and is report which were and
+// are listed; current is the selection after the change; width is a
+// preview's width. Each preview listed both times starts offset by the
+// previews that left or joined between it and current, and the view shifts
+// by view for those left of current.
+func (s MRUStrip) RelistMoves(windows []uint64, was, is func(uint64) bool, current uint64,
+	width func(uint64) float64) (moves map[uint64]float64, view float64) {
+	at := slices.Index(windows, current)
+	if at < 0 {
+		return nil, 0
+	}
+	moves = make(map[uint64]float64)
+	side := func(ids []uint64, sign float64) float64 {
+		delta := 0.
+		for _, id := range ids {
+			switch {
+			case was(id) && is(id):
+				moves[id] = sign * delta
+			case was(id):
+				delta += width(id) + s.Gap()
+			case is(id):
+				delta -= width(id) + s.Gap()
+			}
+		}
+		return delta
+	}
+	side(windows[at+1:], 1)
+	left := slices.Clone(windows[:at])
+	slices.Reverse(left)
+	return moves, -side(left, -1)
 }
 
 // Highlight is the box behind a preview at r whose title, if any, is

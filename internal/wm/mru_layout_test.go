@@ -61,3 +61,85 @@ func TestMRUStripCentresOrScrollsToTheSelection(t *testing.T) {
 		t.Error("Contains does not take the left and top edges only")
 	}
 }
+
+// TestMRURemovalMovesFollowNiri is Niri's WindowMruUi::remove_window: the
+// previews beside a removed one slide into its gap; when the gap is left of
+// the selection the left ones move and the view shifts, so the selection
+// stays where it was drawn.
+func TestMRURemovalMovesFollowNiri(t *testing.T) {
+	s := niriStrip()
+	listed := []uint64{1, 2, 3, 4}
+	const gap = 507. // a 427px preview and Niri's 80px gap
+
+	moves, view := s.RemovalMoves(listed, 3, 2, 427)
+	if want := map[uint64]float64{1: -gap}; !equalMoves(moves, want) || view != -gap {
+		t.Errorf("removing left of the selection: moves %v view %v, want %v and %v", moves, view, want, -gap)
+	}
+	moves, view = s.RemovalMoves(listed, 2, 2, 427)
+	if want := map[uint64]float64{3: gap, 4: gap}; !equalMoves(moves, want) || view != 0 {
+		t.Errorf("removing the selection: moves %v view %v, want %v and 0", moves, view, want)
+	}
+	moves, view = s.RemovalMoves(listed, 1, 3, 427)
+	if want := map[uint64]float64{4: gap}; !equalMoves(moves, want) || view != 0 {
+		t.Errorf("removing right of the selection: moves %v view %v, want %v and 0", moves, view, want)
+	}
+	if moves, view = s.RemovalMoves(listed, 1, 4, 427); len(moves) != 0 || view != 0 {
+		t.Errorf("removing the last listed preview moved %v and the view by %v", moves, view)
+	}
+	// Niri slides every listed preview when an unlisted window closes; here
+	// nothing listed moves.
+	if moves, view = s.RemovalMoves(listed, 1, 9, 427); len(moves) != 0 || view != 0 {
+		t.Errorf("removing an unlisted window moved %v and the view by %v", moves, view)
+	}
+}
+
+// TestMRURelistMovesFollowNiri is Niri's animate_scope_filter_change: a
+// preview listed before and after starts where it was, offset by the
+// previews that left or joined between it and the selection, and the view
+// shifts by what changed left of the selection.
+func TestMRURelistMovesFollowNiri(t *testing.T) {
+	s := niriStrip()
+	windows := []uint64{1, 2, 3, 4, 5, 6}
+	width := func(id uint64) float64 { return 100 * float64(id) }
+	set := func(ids ...uint64) func(uint64) bool {
+		return func(id uint64) bool {
+			for _, i := range ids {
+				if i == id {
+					return true
+				}
+			}
+			return false
+		}
+	}
+	// Before: every window. After: 2 and 5 gone. The selection is 3.
+	moves, view := s.RelistMoves(windows, set(1, 2, 3, 4, 5, 6), set(1, 3, 4, 6), 3, width)
+	want := map[uint64]float64{
+		4: 0,           // right next to the selection: nothing left between
+		6: 500 + 80,    // 5 left the gap between
+		1: -(200 + 80), // 2 left the gap between, on the left
+	}
+	if !equalMoves(moves, want) || view != -(200+80) {
+		t.Errorf("narrowing: moves %v view %v, want %v and %v", moves, view, want, -(200 + 80.))
+	}
+	// Widening back: 2 and 5 join, so the others start nearer the selection.
+	moves, view = s.RelistMoves(windows, set(1, 3, 4, 6), set(1, 2, 3, 4, 5, 6), 3, width)
+	want = map[uint64]float64{4: 0, 6: -(500 + 80), 1: 200 + 80}
+	if !equalMoves(moves, want) || view != 200+80 {
+		t.Errorf("widening: moves %v view %v, want %v and %v", moves, view, want, 200+80.)
+	}
+	if moves, view = s.RelistMoves(windows, set(1), set(2), 9, width); len(moves) != 0 || view != 0 {
+		t.Errorf("a relist with no selection moved %v and the view by %v", moves, view)
+	}
+}
+
+func equalMoves(got, want map[uint64]float64) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for id, from := range want {
+		if g, ok := got[id]; !ok || g != from {
+			return false
+		}
+	}
+	return true
+}

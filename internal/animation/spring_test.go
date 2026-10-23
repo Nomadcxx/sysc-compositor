@@ -61,3 +61,24 @@ func TestNewSpringRejectsInvalidParameters(t *testing.T) {
 		})
 	}
 }
+
+// TestOffsetSpringKeepsItsMotion is Niri's Animation::offset: both ends
+// move by the offset, so the value shifts and the timing and velocity do not.
+func TestOffsetSpringKeepsItsMotion(t *testing.T) {
+	spring, err := NewSpring(0, 100, 3, 0.8, 600, 0.0001)
+	if err != nil {
+		t.Fatal(err)
+	}
+	moved := spring.Offset(-40)
+	if moved.Duration() != spring.Duration() {
+		t.Fatalf("offset changed the duration from %v to %v", spring.Duration(), moved.Duration())
+	}
+	for _, at := range []time.Duration{0, 30 * time.Millisecond, 120 * time.Millisecond, spring.Duration()} {
+		if got, want := moved.ValueAt(at), spring.ValueAt(at)-40; math.Abs(got-want) > 1e-9 {
+			t.Errorf("ValueAt(%v) = %v, want %v", at, got, want)
+		}
+		if got, want := moved.VelocityAt(at), spring.VelocityAt(at); math.Abs(got-want) > 1e-9 {
+			t.Errorf("VelocityAt(%v) = %v, want %v", at, got, want)
+		}
+	}
+}
