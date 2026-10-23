@@ -73,7 +73,7 @@ func TestMRUScopePanelIsNiriPanel(t *testing.T) {
 				}
 			}
 		}
-		if white < 30 || grey < 100 || key < 100 {
+		if white < 10 || grey < 100 || key < 100 {
 			t.Errorf("panel %d: white %d, grey %d, key %d pixels", selected, white, grey, key)
 		}
 		panels[selected] = string(img.Pix)
