@@ -72,6 +72,9 @@ func (m *MRU) Scope() MRUScope { return m.scope }
 // FilteredByAppID reports whether only the selection's app id is listed.
 func (m *MRU) FilteredByAppID() bool { return m.appID != nil }
 
+// Windows is every window, listed or not, in order.
+func (m *MRU) Windows() []MRUWindow { return slices.Clone(m.windows) }
+
 // Listed is the windows in scope and filter, in order.
 func (m *MRU) Listed() []MRUWindow {
 	var listed []MRUWindow
@@ -146,9 +149,10 @@ func (m *MRU) SetScope(scope MRUScope) bool {
 }
 
 // CycleScope moves to the next scope in Niri's cycle: All, Workspace, Output.
-func (m *MRU) CycleScope() {
+// It reports whether the scope changed, which it always does.
+func (m *MRU) CycleScope() bool {
 	i := slices.Index(mruScopeCycle[:], m.scope)
-	m.SetScope(mruScopeCycle[(i+1)%len(mruScopeCycle)])
+	return m.SetScope(mruScopeCycle[(i+1)%len(mruScopeCycle)])
 }
 
 // SetAppIDFilter lists only the selection's app id, or every app id, and

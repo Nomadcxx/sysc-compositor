@@ -208,3 +208,82 @@ func TestWindowSwitcherSpringsTheViewToTheSelection(t *testing.T) {
 		t.Fatalf("mapped windows = %d, want three", len(views))
 	}
 }
+
+const keyGrave = 41 // evdev KEY_GRAVE
+
+// TestWindowSwitcherPreviewsMoveAsNiri: previews slide with window-movement
+// from where they were drawn when a filter change relists them (Niri's
+// animate_scope_filter_change) and when a listed window goes (Niri's
+// remove_window), instead of jumping.
+func TestWindowSwitcherPreviewsMoveAsNiri(t *testing.T) {
+	for _, client := range []string{"weston-terminal", "weston-flower"} {
+		if _, err := exec.LookPath(client); err != nil {
+			t.Skipf("%s unavailable: %v", client, err)
+		}
+	}
+	recent := config.Default().RecentWindows
+	recent.OpenDelayMS = 0
+	c := newNestedWith(t, Options{RecentWindows: &recent, Animations: config.Default().Animations})
+	var views []*toplevelView
+	c.viewMapped = func(view *toplevelView) {
+		views = append(views, view)
+		if len(views) != 3 {
+			return
+		}
+		defer c.Terminate()
+		var terminals []*toplevelView
+		var flower *toplevelView
+		for _, v := range views {
+			if cString(v.toplevel.app_id) == "org.freedesktop.weston.wayland-terminal" {
+				terminals = append(terminals, v)
+			} else {
+				flower = v
+			}
+		}
+		if len(terminals) != 2 || flower == nil {
+			t.Fatalf("mapped %d terminals and flower %v", len(terminals), flower != nil)
+		}
+		// Newest first: terminal, flower, terminal.
+		for _, v := range []*toplevelView{terminals[1], flower, terminals[0]} {
+			c.focusView(v)
+			c.applyPendingWindowFocus()
+		}
+		keyboard := c.addFakeKeyboard()
+		defer keyboard.remove()
+		keyboard.key(keyLeftAlt, true)
+		for range 2 {
+			keyboard.key(keyTab, true)
+			keyboard.key(keyTab, false)
+		}
+		s := &c.switcher
+		if id, _ := s.selected(); id != terminals[1].id {
+			t.Fatalf("selected %d, want the oldest terminal %d", id, terminals[1].id)
+		}
+		strip, _ := c.switcherStrip()
+		hole := func(v *toplevelView) float64 { return c.switcherPreviewWidth(strip, v.id) + strip.Gap() }
+
+		// Alt+grave filters by the terminal's app id: the newest terminal,
+		// left of the selection, starts where it was, past the flower.
+		keyboard.key(keyGrave, true)
+		keyboard.key(keyGrave, false)
+		if got, want := c.switcherMoveOffset(terminals[0].id), -hole(flower); got != want {
+			t.Errorf("after filtering the newest terminal is drawn %v from its place, want %v", got, want)
+		}
+		if c.animations[switcherMoveKey(terminals[0].id)] == nil {
+			t.Errorf("the newest terminal's preview does not move with window-movement")
+		}
+
+		// The newest terminal goes: the selection's preview slides into its place.
+		c.switcherWindowGone(terminals[0].id)
+		if got, want := c.switcherMoveOffset(terminals[1].id), hole(terminals[0]); got != want {
+			t.Errorf("after a removal the remaining terminal is drawn %v from its place, want %v", got, want)
+		}
+		keyboard.key(keyEsc, true)
+		keyboard.key(keyEsc, false)
+		keyboard.key(keyLeftAlt, false)
+	}
+	runClient(t, c, []string{"sh", "-c", "weston-terminal & weston-terminal & weston-flower & wait"}, nil, nil)
+	if len(views) != 3 {
+		t.Fatalf("mapped windows = %d, want three", len(views))
+	}
+}

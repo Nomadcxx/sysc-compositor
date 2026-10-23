@@ -50,16 +50,23 @@ type switcher struct {
 	placed              bool
 	freezeView          bool
 	// syncing is set while syncSwitcher builds the scene, which an
-	// animation's first value must not rebuild under it.
-	syncing bool
-	alpha   float64
-	tree    *C.struct_wlr_scene_tree
-	hits    []switcherHit
+	// animation's first value must not rebuild under it. dirty asks for a
+	// rebuild after the animation tick, once however many springs moved.
+	syncing, dirty bool
+	// moves is the previews drawn away from their place as they slide back.
+	moves map[uint64]*switcherMove
+	alpha float64
+	tree  *C.struct_wlr_scene_tree
+	hits  []switcherHit
 	// dynamic is the open switcher's keys taken from the general binds.
 	dynamic []bind.Binding
 	titles  map[switcherTitle]*image.RGBA
 	panels  map[switcherPanel]*image.RGBA
 }
+
+// switcherMove is Niri's thumbnail MoveAnimation: a preview is drawn from
+// away from its place, scaled by progress as that springs from 1 to 0.
+type switcherMove struct{ from, progress float64 }
 
 type switcherHit struct {
 	id  uint64
@@ -81,6 +88,11 @@ var (
 	switcherCloseKey = animationKey{property: "switcher"}
 	switcherViewKey  = animationKey{property: "switcher-view"}
 )
+
+// switcherMoveKey is a preview's move, owned by its window.
+func switcherMoveKey(id uint64) animationKey {
+	return animationKey{owner: id, property: "switcher-move"}
+}
 
 func (s *switcher) isOpen() bool { return s.mru != nil && !s.fading }
 
@@ -214,7 +226,7 @@ func (c *Compositor) runSwitcherAction(action bind.Action) bool {
 			return true
 		}
 		if action.MRUFilter != "" {
-			s.mru.SetAppIDFilter(action.MRUFilter == "app-id")
+			c.relistSwitcher(func() bool { return s.mru.SetAppIDFilter(action.MRUFilter == "app-id") })
 		}
 		if action.Backward {
 			s.mru.Backward()
@@ -242,9 +254,9 @@ func (c *Compositor) runSwitcherAction(action bind.Action) bool {
 		case bind.ActionMRULast:
 			s.mru.Last()
 		case bind.ActionMRUSetScope:
-			s.mru.SetScope(mruScope(action.MRUScope))
+			c.relistSwitcher(func() bool { return s.mru.SetScope(mruScope(action.MRUScope)) })
 		default:
-			s.mru.CycleScope()
+			c.relistSwitcher(s.mru.CycleScope)
 		}
 	default:
 		return false
@@ -420,11 +432,14 @@ func (c *Compositor) dropSwitcher() {
 	s := &c.switcher
 	c.cancelAnimation(switcherCloseKey)
 	c.cancelAnimation(switcherViewKey)
+	for id := range s.moves {
+		c.cancelAnimation(switcherMoveKey(id))
+	}
 	if s.tree != nil {
 		C.wlr_scene_node_destroy(&s.tree.node)
 		s.tree = nil
 	}
-	s.mru, s.fading, s.shown, s.output, s.hits, s.titles = nil, false, false, nil, nil, nil
+	s.mru, s.fading, s.shown, s.output, s.hits, s.titles, s.moves = nil, false, false, nil, nil, nil, nil
 }
 
 // switcherWindowGone takes a closed window out of the switcher, which
@@ -433,6 +448,14 @@ func (c *Compositor) switcherWindowGone(id uint64) {
 	s := &c.switcher
 	if s.mru == nil {
 		return
+	}
+	c.cancelAnimation(switcherMoveKey(id))
+	delete(s.moves, id)
+	if strip, ok := c.switcherStrip(); ok && s.isOpen() {
+		current, _ := s.mru.Current()
+		moves, view := strip.RemovalMoves(listedIDs(s.mru), current, id, c.switcherPreviewWidth(strip, id))
+		c.offsetSwitcherView(view)
+		c.moveSwitcherPreviews(moves)
 	}
 	s.mru.Remove(id)
 	if s.mru.Empty() && s.isOpen() {
@@ -518,7 +541,7 @@ func (c *Compositor) switcherHitAt(x, y float64) (uint64, bool) {
 // one highlighted, each with its title.
 func (c *Compositor) syncSwitcher() {
 	s := &c.switcher
-	s.syncing = true
+	s.syncing, s.dirty = true, false
 	defer func() { s.syncing = false }()
 	if s.tree != nil {
 		C.wlr_scene_node_destroy(&s.tree.node)
@@ -553,12 +576,9 @@ func (c *Compositor) syncSwitcher() {
 	}
 
 	box := c.outputLayoutBox(s.output)
-	scale := float64((*C.struct_wlr_output)(s.output).scale)
+	strip, _ := c.switcherStrip()
+	scale := strip.Scale
 	hl := c.recentWindows.Highlight
-	strip := wm.MRUStrip{
-		OutputWidth: float64(box.Dx()), OutputHeight: float64(box.Dy()), Scale: scale,
-		Padding: hl.Padding, MaxHeight: c.recentWindows.Previews.MaxHeight, MaxScale: c.recentWindows.Previews.MaxScale,
-	}
 	views := map[uint64]*toplevelView{}
 	for _, v := range c.views {
 		if v.toplevel != nil && v.tree != nil && v.mapped {
@@ -594,18 +614,24 @@ func (c *Compositor) syncSwitcher() {
 		return box.Min.X + int(math.Round(x)), box.Min.Y + int(math.Round(y))
 	}
 	for i, r := range rects {
+		v := listed[i]
+		// As Niri, a moving preview is drawn moved and found where it is
+		// heading.
 		r.X -= viewPos
+		placed := r
+		r.X += strip.Round(c.switcherMoveOffset(v.id))
 		if r.X+r.W < 0 || strip.OutputWidth < r.X {
 			continue
 		}
-		v := listed[i]
 		title := c.switcherTitleImage(cString(v.toplevel.title), int(math.Round(r.W*scale)), scale)
 		titleHeight := 0.
 		if title != nil {
 			titleHeight = float64(title.Rect.Dy()) / scale
 		}
 		highlight := strip.Highlight(r, titleHeight)
-		s.hits = append(s.hits, switcherHit{id: v.id, box: highlight})
+		if placed.X+placed.W >= 0 && placed.X <= strip.OutputWidth {
+			s.hits = append(s.hits, switcherHit{id: v.id, box: strip.Highlight(placed, titleHeight)})
+		}
 
 		active := i == current
 		if active || urgent[v.id] {
@@ -673,10 +699,135 @@ func (c *Compositor) moveSwitcherView(target float64, strip wm.MRUStrip) {
 	c.animateValue(switcherViewKey, c.animationConfig.WindowMovement, s.viewPos, target, 0,
 		func(pos float64) {
 			s.viewPos = pos
-			if !s.syncing {
-				c.syncSwitcher()
-			}
+			c.markSwitcherDirty()
 		}, nil)
+}
+
+// markSwitcherDirty asks for the switcher's scene to be rebuilt after this
+// animation tick, unless it is being built now.
+func (c *Compositor) markSwitcherDirty() {
+	if !c.switcher.syncing {
+		c.switcher.dirty = true
+	}
+}
+
+// switcherStrip is the open switcher's preview strip on its output.
+func (c *Compositor) switcherStrip() (wm.MRUStrip, bool) {
+	s := &c.switcher
+	if s.output == nil {
+		return wm.MRUStrip{}, false
+	}
+	box := c.outputLayoutBox(s.output)
+	return wm.MRUStrip{
+		OutputWidth: float64(box.Dx()), OutputHeight: float64(box.Dy()),
+		Scale:     float64((*C.struct_wlr_output)(s.output).scale),
+		Padding:   c.recentWindows.Highlight.Padding,
+		MaxHeight: c.recentWindows.Previews.MaxHeight, MaxScale: c.recentWindows.Previews.MaxScale,
+	}, true
+}
+
+// switcherPreviewWidth is the width of id's preview in strip.
+func (c *Compositor) switcherPreviewWidth(strip wm.MRUStrip, id uint64) float64 {
+	for _, v := range c.views {
+		if v.id == id && v.toplevel != nil {
+			g := v.geometry()
+			w, _ := strip.PreviewSize(float64(max(g.w, 1)), float64(max(g.h, 1)))
+			return w
+		}
+	}
+	return 0
+}
+
+// switcherMoveOffset is how far id's preview is drawn from its place.
+func (c *Compositor) switcherMoveOffset(id uint64) float64 {
+	if m := c.switcher.moves[id]; m != nil {
+		return m.from * m.progress
+	}
+	return 0
+}
+
+// moveSwitcherPreviews starts each preview in moves that far from its place,
+// plus wherever it is drawn now, and springs it home with window-movement:
+// Niri's animate_move_from_with_config.
+func (c *Compositor) moveSwitcherPreviews(moves map[uint64]float64) {
+	s := &c.switcher
+	for id, from := range moves {
+		if s.moves == nil {
+			s.moves = make(map[uint64]*switcherMove)
+		}
+		m := &switcherMove{from: from + c.switcherMoveOffset(id), progress: 1}
+		s.moves[id] = m
+		key := switcherMoveKey(id)
+		c.cancelAnimation(key)
+		c.animateValue(key, c.animationConfig.WindowMovement, 1, 0, 0, func(progress float64) {
+			m.progress = progress
+			c.markSwitcherDirty()
+		}, func() {
+			if s.moves[id] == m {
+				delete(s.moves, id)
+			}
+		})
+	}
+}
+
+// offsetSwitcherView shifts the view, and its spring, by delta: Niri's
+// ViewPos::offset, which keeps the selection where it is drawn when the
+// strip changes left of it.
+func (c *Compositor) offsetSwitcherView(delta float64) {
+	if delta == 0 {
+		return
+	}
+	s := &c.switcher
+	s.viewPos += delta
+	s.viewTarget += delta
+	c.offsetAnimation(switcherViewKey, delta)
+}
+
+// relistSwitcher applies a scope or filter change, then slides the previews
+// still listed from where they were: Niri's animate_scope_filter_change. A
+// switcher that listed nothing places its view anew.
+func (c *Compositor) relistSwitcher(change func() bool) {
+	s := &c.switcher
+	_, wasListing := s.mru.Current()
+	was := listedSet(s.mru)
+	if !change() {
+		return
+	}
+	current, ok := s.mru.Current()
+	strip, shown := c.switcherStrip()
+	if !ok || !shown {
+		return
+	}
+	if !wasListing {
+		s.placed = false
+		return
+	}
+	is := listedSet(s.mru)
+	var windows []uint64
+	for _, w := range s.mru.Windows() {
+		windows = append(windows, w.ID)
+	}
+	moves, view := strip.RelistMoves(windows, func(id uint64) bool { return was[id] },
+		func(id uint64) bool { return is[id] }, current,
+		func(id uint64) float64 { return c.switcherPreviewWidth(strip, id) })
+	c.offsetSwitcherView(view)
+	c.moveSwitcherPreviews(moves)
+}
+
+func listedIDs(m *wm.MRU) []uint64 {
+	var ids []uint64
+	for _, w := range m.Listed() {
+		ids = append(ids, w.ID)
+	}
+	return ids
+}
+
+func listedSet(m *wm.MRU) map[uint64]bool {
+	set := make(map[uint64]bool)
+	for _, w := range m.Listed() {
+		set[w.ID] = true
+	}
+	return set
 }
 
 // premultiplied is a config colour with its alpha scaled by alpha, as the

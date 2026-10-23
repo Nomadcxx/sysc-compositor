@@ -38,6 +38,14 @@ func NewSpring(from, to, initialVelocity, dampingRatio, stiffness, epsilon float
 	return spring, nil
 }
 
+// Offset is the spring with both ends moved by offset, as Niri's
+// Animation::offset: the same motion, shifted.
+func (s Spring) Offset(offset float64) Spring {
+	s.from += offset
+	s.to += offset
+	return s
+}
+
 // ValueAt returns the spring position at elapsed time, clamped to its Niri duration.
 func (s Spring) ValueAt(elapsed time.Duration) float64 {
 	if elapsed <= 0 {

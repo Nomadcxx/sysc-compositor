@@ -55,6 +55,9 @@ func (c *Compositor) tickAnimations(now time.Time) {
 		}
 		current.set(current.spring.ValueAt(elapsed))
 	}
+	if c.switcher.dirty {
+		c.syncSwitcher()
+	}
 	c.scheduleAnimationTick()
 }
 
@@ -73,6 +76,15 @@ func (c *Compositor) hasAnimation(key animationKey) bool {
 
 func (c *Compositor) cancelAnimation(key animationKey) {
 	delete(c.animations, key)
+}
+
+// offsetAnimation moves a running animation's ends by delta, as Niri's
+// Animation::offset: the same motion, shifted.
+func (c *Compositor) offsetAnimation(key animationKey, delta float64) {
+	if current := c.animations[key]; current != nil {
+		current.spring = current.spring.Offset(delta)
+		current.target += delta
+	}
 }
 
 func (c *Compositor) cancelViewAnimations(view *toplevelView) {
