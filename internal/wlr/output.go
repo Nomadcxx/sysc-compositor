@@ -518,6 +518,7 @@ func (c *Compositor) handleNewOutput(data unsafe.Pointer) {
 		delete(c.sceneOutputs, data)
 		delete(c.usable, data)
 		c.lockOutputGone(data)
+		c.switcherOutputGone(data)
 		c.syncHotkeyOverlay()
 		c.removeWorkspaceOutput(name)
 		c.refreshState()

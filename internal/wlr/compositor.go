@@ -220,6 +220,8 @@ type Compositor struct {
 	stateChanged               func()
 	lastWindowState            []WindowInfo
 	recentWindows              config.RecentWindows
+	mruBindings                []bind.Binding
+	switcher                   switcher
 	focusTimer                 *time.Timer
 	pendingFocus               *toplevelView
 	pendingFocusStamp          time.Duration
@@ -361,7 +363,6 @@ func NewWith(opts Options) (*Compositor, error) {
 	c.animationConfig = opts.Animations
 	c.blurConfig = opts.Blur
 	c.screenshotPattern = opts.ScreenshotPath
-	c.recentWindows = *opts.RecentWindows
 	c.hotkeyOverlay.open = opts.ShowHotkeyOverlayAtStartup
 	c.configureHotkeyOverlay(opts.OverlayBinds, opts.HotkeyOverlay)
 	c.preferNoCSD = opts.PreferNoCSD
@@ -422,6 +423,7 @@ func NewWith(opts Options) (*Compositor, error) {
 	for i := range c.bindings {
 		c.bindings[i].Chord = c.bindings[i].Chord.ResolveMod(c.modKey)
 	}
+	c.configureSwitcher(*opts.RecentWindows)
 
 	c.renderer = (*C.struct_wlr_renderer)(createSceneFXRenderer(unsafe.Pointer(c.backend)))
 	if c.renderer == nil {
@@ -616,7 +618,7 @@ func (c *Compositor) Reconfigure(opts Options) error {
 	c.overviewConfig = opts.Overview
 	c.animationConfig = opts.Animations
 	c.screenshotPattern = opts.ScreenshotPath
-	c.recentWindows = *opts.RecentWindows
+	c.configureSwitcher(*opts.RecentWindows)
 	c.configureHotkeyOverlay(opts.OverlayBinds, opts.HotkeyOverlay)
 	if opts.Blur != c.blurConfig {
 		c.blurConfig = opts.Blur

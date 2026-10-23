@@ -77,6 +77,21 @@ static int sysc_overview_project_buffers(struct wlr_scene_tree *tree,
 	return context.count;
 }
 
+// sysc_project_view_children projects a view's buffers relative to the
+// view tree's origin, walking its children so that a view hidden on another
+// workspace, whose own node is disabled, still shows.
+static int sysc_project_view_children(struct wlr_scene_tree *tree,
+		struct wlr_scene_tree *source, int target_x, int target_y, double zoom) {
+	struct sysc_overview_project_context context = {
+		.tree = tree, .target_x = target_x, .target_y = target_y, .zoom = zoom,
+	};
+	struct wlr_scene_node *child;
+	wl_list_for_each(child, &source->children, link) {
+		wlr_scene_node_for_each_buffer(child, sysc_overview_project_buffer, &context);
+	}
+	return context.count;
+}
+
 struct sysc_overview_surface_list {
 	struct wlr_surface **surfaces;
 	size_t count;
@@ -328,6 +343,21 @@ func (c *Compositor) syncOverviewScene() {
 	}
 }
 
+// projectViewPreview draws view's buffers under parent with its window
+// geometry's origin at (x, y), scaled by zoom. It returns nil when the view
+// has no buffer.
+func projectViewPreview(parent *C.struct_wlr_scene_tree, view *toplevelView, x, y int, zoom float64) *C.struct_wlr_scene_tree {
+	tree := C.wlr_scene_tree_create(parent)
+	if tree == nil {
+		return nil
+	}
+	if C.sysc_project_view_children(tree, view.tree, C.int(x), C.int(y), C.double(zoom)) == 0 {
+		C.wlr_scene_node_destroy(&tree.node)
+		return nil
+	}
+	return tree
+}
+
 func (c *Compositor) overviewSelectAt(x, y float64) bool {
 	if c.model == nil {
 		return false
@@ -405,9 +435,11 @@ func (c *Compositor) syncOverviewSurfaceListeners(view *toplevelView) {
 		if surface != root {
 			listeners.commit = AddListener(unsafe.Pointer(&surface.events.commit), func(unsafe.Pointer) {
 				c.syncOverviewScene()
+				c.syncSwitcher()
 			})
 			listeners.unmap = AddListener(unsafe.Pointer(&surface.events.unmap), func(unsafe.Pointer) {
 				c.syncOverviewScene()
+				c.syncSwitcher()
 			})
 		}
 		listeners.newSubsurface = AddListener(unsafe.Pointer(&surface.events.new_subsurface), func(unsafe.Pointer) {

@@ -686,6 +686,11 @@ func (c *Compositor) handleCursorMotionAbsolute(data unsafe.Pointer) {
 }
 
 func (c *Compositor) processCursorMotion(time C.uint32_t) {
+	if c.switcher.isOpen() {
+		C.wlr_seat_pointer_notify_clear_focus(c.seat)
+		c.showDefaultImage()
+		return
+	}
 	c.updateHotCorner()
 	if c.model != nil && (c.model.OverviewProgress() > 0 || c.model.OverviewOpen()) {
 		C.wlr_seat_pointer_notify_clear_focus(c.seat)
@@ -843,6 +848,9 @@ func (c *Compositor) handleCursorButton(data unsafe.Pointer) {
 		return
 	}
 	if c.shotUIButton(button, pressed) {
+		return
+	}
+	if c.switcherButton(button, pressed) {
 		return
 	}
 
@@ -1045,6 +1053,12 @@ func (c *Compositor) updateKeyboardFocus() {
 		} else if c.seat.keyboard_state.focused_surface != surface {
 			C.sysc_seat_keyboard_focus(c.seat, surface, c.keyboard)
 		}
+		c.keyboardFocusChanged(previousFocusedView)
+		return
+	}
+	if c.switcher.isOpen() {
+		// The window switcher holds the keyboard, as Niri's Mru focus.
+		C.wlr_seat_keyboard_notify_clear_focus(c.seat)
 		c.keyboardFocusChanged(previousFocusedView)
 		return
 	}
@@ -1302,6 +1316,7 @@ func (c *Compositor) handleNewToplevel(data unsafe.Pointer) {
 			c.model.RemoveWindow(view.id)
 			c.applyWorkspaceModel()
 		}
+		c.switcherWindowGone(view.id)
 		c.releaseView(view)
 		if view.closeSnapshot != nil {
 			snapshot := view.closeSnapshot
@@ -1363,6 +1378,7 @@ func (c *Compositor) handleNewToplevel(data unsafe.Pointer) {
 		c.applyViewAppearance(view)
 		c.notifyWindowStateChanged()
 		c.syncOverviewScene()
+		c.syncSwitcher()
 		if newlyMapped && c.viewMapped != nil {
 			c.viewMapped(view)
 		}

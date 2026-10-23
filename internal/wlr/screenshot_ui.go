@@ -135,6 +135,7 @@ func (c *Compositor) Screenshot(showPointer bool, path string) error {
 	c.clearPointerGrab()
 	ui.selection, ui.output = c.initialShotSelection()
 	c.drawShotSelection()
+	c.closeSwitcher(false)
 	return nil
 }
 
