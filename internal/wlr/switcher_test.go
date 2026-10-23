@@ -1,6 +1,7 @@
 package wlr
 
 import (
+	"math"
 	"os/exec"
 	"reflect"
 	"testing"
@@ -285,5 +286,66 @@ func TestWindowSwitcherPreviewsMoveAsNiri(t *testing.T) {
 	runClient(t, c, []string{"sh", "-c", "weston-terminal & weston-terminal & weston-flower & wait"}, nil, nil)
 	if len(views) != 3 {
 		t.Fatalf("mapped windows = %d, want three", len(views))
+	}
+}
+
+// TestWindowSwitcherClipsPreviewsToGeometry: as Niri's Thumbnail::render, a
+// preview shows the window's geometry only, with its corner radius scaled to
+// the preview, even when the window itself is not clipped.
+func TestWindowSwitcherClipsPreviewsToGeometry(t *testing.T) {
+	if _, err := exec.LookPath("weston-terminal"); err != nil {
+		t.Skipf("weston-terminal unavailable: %v", err)
+	}
+	recent := config.Default().RecentWindows
+	recent.OpenDelayMS = 0
+	radius := config.CornerRadius{24, 24, 24, 24}
+	c := newNestedWith(t, Options{
+		RecentWindows: &recent,
+		WindowRules:   []config.WindowRule{{GeometryCornerRadius: &radius}},
+	})
+	var views []*toplevelView
+	c.viewMapped = func(view *toplevelView) {
+		views = append(views, view)
+		if len(views) != 2 {
+			return
+		}
+		defer c.Terminate()
+		for _, v := range views {
+			c.focusView(v)
+			c.applyPendingWindowFocus()
+		}
+		keyboard := c.addFakeKeyboard()
+		defer keyboard.remove()
+		keyboard.key(keyLeftAlt, true)
+		keyboard.key(keyTab, true)
+		keyboard.key(keyTab, false)
+		strip, _ := c.switcherStrip()
+		for _, v := range views {
+			preview := c.switcher.previews[v.id]
+			if preview == nil {
+				t.Fatalf("window %d has no preview", v.id)
+			}
+			g := v.geometry()
+			w, h := strip.PreviewSize(float64(g.w), float64(g.h))
+			bounds, ok := sceneFXTreeBounds(preview)
+			if !ok || bounds.w > int(math.Round(w)) || bounds.h > int(math.Round(h)) {
+				t.Errorf("window %d (geometry %+v) preview covers %+v, want within %vx%v", v.id, g, bounds, w, h)
+			}
+			zoom := w / float64(g.w)
+			var want config.CornerRadius
+			for i, r := range v.cornerRadii {
+				want[i] = r * zoom
+			}
+			if got := sceneFXTreeRoundedBufferCornerRadii(preview); got != sceneFXRadii(want) {
+				t.Errorf("window %d preview corners %v, want %v", v.id, got, sceneFXRadii(want))
+			}
+		}
+		keyboard.key(keyEsc, true)
+		keyboard.key(keyEsc, false)
+		keyboard.key(keyLeftAlt, false)
+	}
+	runClient(t, c, []string{"sh", "-c", "weston-terminal & weston-terminal & wait"}, nil, nil)
+	if len(views) != 2 {
+		t.Fatalf("mapped windows = %d, want two", len(views))
 	}
 }

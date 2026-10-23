@@ -58,6 +58,8 @@ type switcher struct {
 	alpha float64
 	tree  *C.struct_wlr_scene_tree
 	hits  []switcherHit
+	// previews is each drawn window's preview tree.
+	previews map[uint64]unsafe.Pointer
 	// dynamic is the open switcher's keys taken from the general binds.
 	dynamic []bind.Binding
 	titles  map[switcherTitle]*image.RGBA
@@ -440,6 +442,7 @@ func (c *Compositor) dropSwitcher() {
 		s.tree = nil
 	}
 	s.mru, s.fading, s.shown, s.output, s.hits, s.titles, s.moves = nil, false, false, nil, nil, nil, nil
+	s.previews = nil
 }
 
 // switcherWindowGone takes a closed window out of the switcher, which
@@ -547,7 +550,7 @@ func (c *Compositor) syncSwitcher() {
 		C.wlr_scene_node_destroy(&s.tree.node)
 		s.tree = nil
 	}
-	s.hits = nil
+	s.hits, s.previews = nil, nil
 	if s.mru == nil || !s.shown || s.output == nil {
 		return
 	}
@@ -667,8 +670,22 @@ func (c *Compositor) syncSwitcher() {
 			}
 		}
 		x, y := at(r.X, r.Y)
-		if preview := projectViewPreview(s.tree, v, x, y, r.W/float64(max(v.geometry().w, 1))); preview != nil && s.alpha < 1 {
-			sceneFXScaleTreeOpacity(unsafe.Pointer(preview), s.alpha)
+		zoom := r.W / float64(max(v.geometry().w, 1))
+		if preview := projectViewPreview(s.tree, v, x, y, zoom); preview != nil {
+			// Niri clips previews to the window geometry and its corner
+			// radius whether or not the window itself is clipped.
+			var radii config.CornerRadius
+			for i, radius := range v.cornerRadii {
+				radii[i] = radius * zoom
+			}
+			sceneFXClipTree(unsafe.Pointer(preview), rect{x, y, int(math.Round(r.W)), int(math.Round(r.H))}, sceneFXRadii(radii))
+			if s.alpha < 1 {
+				sceneFXScaleTreeOpacity(unsafe.Pointer(preview), s.alpha)
+			}
+			if s.previews == nil {
+				s.previews = make(map[uint64]unsafe.Pointer)
+			}
+			s.previews[v.id] = unsafe.Pointer(preview)
 		}
 	}
 
