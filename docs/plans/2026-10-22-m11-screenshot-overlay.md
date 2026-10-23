@@ -277,3 +277,52 @@ overlay, the screenshot UI and the lock.
 Follow-up: the view springs to the selection with `window-movement` once it moves more than a
 pixel, as Niri's `ViewPos`; the first layout does not animate
 (`TestWindowSwitcherSpringsTheViewToTheSelection`, lane 2).
+
+## Execution record (2026-10-23): the laptop nested gate (Task 5)
+
+Run on the laptop's Niri 26.04 session over SSH (pre-approved), from a `git archive` of `a81d071`
+built in its own directory and never installed. Real keys throughout. The shots are in
+[`assets/2026-10-23-m11-gate/`](assets/2026-10-23-m11-gate/).
+
+| Item | Result |
+|---|---|
+| Hotkey overlay | Shown at startup with Niri's important actions, `(not bound)` rows and bind titles. Alt+Shift+/ did **not** open it: shifted binds never matched (`sysc-1648`, fixed in #44; with the fix, Alt+Shift+/ opens it, [`hotkey-overlay.png`](assets/2026-10-23-m11-gate/hotkey-overlay.png)). |
+| Switcher | Ctrl+Tab opened it after the delay, Tab advanced, releasing Ctrl focused the selection (focus 3 → 1); `w` set the Workspace scope; Escape cancelled and kept focus. [`switcher.png`](assets/2026-10-23-m11-gate/switcher.png), [`switcher-scope-workspace.png`](assets/2026-10-23-m11-gate/switcher-scope-workspace.png). On a 760px output the strip scrolls rather than centring; that is Niri's `compute_view_pos` (192px strut each side). |
+| Exit dialog | Alt+Shift+E showed Niri's dialog, Escape closed it, and Alt+Shift+E then Enter quit the compositor and its clients. [`exit-dialog.png`](assets/2026-10-23-m11-gate/exit-dialog.png) |
+| Screenshot UI | Alt+Shift+S froze and dimmed the output with the selection and Niri's panel; P hid the pointer and changed the panel text; Space wrote the PNG to `screenshot-path`, `ScreenshotCaptured` carried its path, and the clipboard offered `image/png`. [`screenshot-ui.png`](assets/2026-10-23-m11-gate/screenshot-ui.png) |
+| grim | A PNG at the output's exact size (760×814). `WAYLAND_DEBUG` shows grim 1.5 uses ext-image-copy-capture with the output source, not wlr-screencopy: the matrix now ticks the first and leaves the second `[~]`. |
+| Data control | `wl-paste` with no focus read `wl-copy`'s text. sysc-clipboard, built from its repo with its own state directory and key file, recorded both selections (`--check`: 2 entries). |
+
+**Found:**
+- `sysc-1648`: binds matched the shifted keysym, so Niri's default `Mod+Shift+Slash`,
+  `Mod+Shift+1..9` and the like did nothing. Fixed in #44 to Niri's
+  `raw_latin_sym_or_raw_current_sym`.
+- `sysc-1649`: `validate` called the `binds` section unapplied. Fixed in #45.
+- `sysc-1650` (sysc-wayland): an absolute `WAYLAND_DISPLAY` is joined to `XDG_RUNTIME_DIR`.
+
+**How it was run** (for the M10 gate):
+- wtype cannot drive a nested wlroots compositor. It uploads its own keymap, and the nested
+  backend reads the raw keycodes with its own. Use `ydotoold -m -p <private socket>` (keyboard
+  only; the user is in `input`), and stop it afterwards.
+- Before every key, check over the host's `NIRI_SOCKET` that the focused window is the nested
+  compositor's pid, so no key reaches a host window.
+- The host Niri takes Alt+Tab (its default recent-windows binds) before the nested window sees it.
+  The gate config binds the switcher to Ctrl+Tab and Ctrl+grave instead.
+- Give a sibling daemon its own `XDG_RUNTIME_DIR`, or it replaces the host's socket. Because of
+  `sysc-1650`, that directory needs a `wayland-0` symlink to the nested socket.
+- Redirect `wl-copy`'s output, or it holds the SSH session open. Never `pkill -f` a pattern that
+  also appears in the remote command line, because it kills the shell running it.
+
+**Static checks** on #44 and #45: `gofmt`, `git diff --check`, `go vet -p 2 ./...` and both builds
+are clean; `go.mod`/`go.sum` are unchanged.
+
+**M11 state:** every global, action, event and config row has a proof, except the `[~]` rows
+recorded above and in the matrix:
+- `Screenshot`: the size binds and the open animation;
+- `recent-windows`: preview move/open animations, clipping previews to the geometry, and
+  mouse/scroll binds while open;
+- `zwlr_screencopy_manager_v1`: no client drives it;
+- presentation-time, single-pixel-buffer and alpha-modifier: no client tests yet.
+
+Data control serves sysc-clipboard; screenshots match Niri's paths, clipboard and event; the
+text-dependent UIs have landed. Closing `sysc-1276` with those rows open is the owner's call.
