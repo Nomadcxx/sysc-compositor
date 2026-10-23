@@ -155,3 +155,56 @@ func TestWindowSwitcherSelectsConfirmsAndCancels(t *testing.T) {
 		t.Fatalf("mapped windows = %d, want three", len(views))
 	}
 }
+
+const keyEnd = 107 // evdev KEY_END
+
+// When the strip overflows the output, moving the selection out of view
+// springs the view with window-movement instead of jumping; the first
+// layout does not animate.
+func TestWindowSwitcherSpringsTheViewToTheSelection(t *testing.T) {
+	if _, err := exec.LookPath("weston-terminal"); err != nil {
+		t.Skipf("weston-terminal unavailable: %v", err)
+	}
+	recent := config.Default().RecentWindows
+	recent.OpenDelayMS = 0
+	// Full-size previews of half-width tiles overflow any output.
+	recent.Previews = config.MRUPreviews{MaxHeight: 65535, MaxScale: 1}
+	c := newNestedWith(t, Options{RecentWindows: &recent, Animations: config.Default().Animations})
+	var views []*toplevelView
+	c.viewMapped = func(view *toplevelView) {
+		views = append(views, view)
+		if len(views) != 3 {
+			return
+		}
+		defer c.Terminate()
+		for _, view := range views {
+			c.focusView(view)
+			c.applyPendingWindowFocus()
+		}
+		keyboard := c.addFakeKeyboard()
+		defer keyboard.remove()
+		keyboard.key(keyLeftAlt, true)
+		keyboard.key(keyTab, true)
+		keyboard.key(keyTab, false)
+		s := &c.switcher
+		if !s.isOpen() || c.animations[switcherViewKey] != nil || s.viewPos != s.viewTarget {
+			t.Fatalf("the first layout animated: open %v, view %v heading for %v", s.isOpen(), s.viewPos, s.viewTarget)
+		}
+		before := s.viewPos
+		keyboard.key(keyEnd, true)
+		keyboard.key(keyEnd, false)
+		if s.viewTarget == before {
+			t.Fatalf("selecting the last window left the view at %v", before)
+		}
+		if c.animations[switcherViewKey] == nil || s.viewPos == s.viewTarget {
+			t.Errorf("the view jumped to %v instead of springing there", s.viewTarget)
+		}
+		keyboard.key(keyEsc, true)
+		keyboard.key(keyEsc, false)
+		keyboard.key(keyLeftAlt, false)
+	}
+	runClient(t, c, []string{"sh", "-c", "weston-terminal & weston-terminal & weston-terminal & wait"}, nil, nil)
+	if len(views) != 3 {
+		t.Fatalf("mapped windows = %d, want three", len(views))
+	}
+}

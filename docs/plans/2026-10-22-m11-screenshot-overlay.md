@@ -264,11 +264,16 @@ and losing the output cancel it; `recent-windows-close` fades it out; it sits un
 overlay, the screenshot UI and the lock.
 
 **Not yet like Niri:**
-- the view and the previews jump instead of animating (Niri moves them with `window-movement`
-  and fades new previews in with `window-open`);
+- previews that move when a window closes or the scope changes jump instead of moving with
+  `window-movement`, and new previews do not fade in with `window-open` (Niri's default for it is
+  easing, M15);
 - previews are not clipped to the window geometry or its corner radius;
 - the close fade has no offscreen, so overlapping previews show through each other;
 - mouse and scroll binds do not reach the open switcher, since only key binds are applied here;
 - the opened keys come only from the actions built here (Niri also maps
   `focus-column-right-or-first`, `focus-column-or-monitor-right`,
   `focus-window-down-or-column-right` and their left forms).
+
+Follow-up: the view springs to the selection with `window-movement` once it moves more than a
+pixel, as Niri's `ViewPos`; the first layout does not animate
+(`TestWindowSwitcherSpringsTheViewToTheSelection`, lane 2).

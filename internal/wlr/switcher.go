@@ -43,13 +43,18 @@ type switcher struct {
 	// scope is the scope it last closed with, which a bind without scope=
 	// opens it in.
 	scope wm.MRUScope
-	// viewPos is where the strip's view starts; freezeView keeps it while
-	// the pointer selects.
-	viewPos    float64
-	freezeView bool
-	alpha      float64
-	tree       *C.struct_wlr_scene_tree
-	hits       []switcherHit
+	// viewPos is where the strip's view starts as drawn, and viewTarget
+	// where it is heading; placed is false until the first layout, which
+	// does not animate. freezeView keeps the view while the pointer selects.
+	viewPos, viewTarget float64
+	placed              bool
+	freezeView          bool
+	// syncing is set while syncSwitcher builds the scene, which an
+	// animation's first value must not rebuild under it.
+	syncing bool
+	alpha   float64
+	tree    *C.struct_wlr_scene_tree
+	hits    []switcherHit
 	// dynamic is the open switcher's keys taken from the general binds.
 	dynamic []bind.Binding
 	titles  map[switcherTitle]*image.RGBA
@@ -72,7 +77,10 @@ type switcherPanel struct {
 	scale float64
 }
 
-var switcherCloseKey = animationKey{property: "switcher"}
+var (
+	switcherCloseKey = animationKey{property: "switcher"}
+	switcherViewKey  = animationKey{property: "switcher-view"}
+)
 
 func (s *switcher) isOpen() bool { return s.mru != nil && !s.fading }
 
@@ -289,7 +297,7 @@ func (c *Compositor) openSwitcher(action bind.Action) {
 		m.SetAppIDFilter(action.MRUFilter == "app-id")
 	}
 	c.dropSwitcher()
-	s.mru, s.output, s.alpha, s.viewPos, s.freezeView = m, output, 1, 0, false
+	s.mru, s.output, s.alpha, s.placed, s.freezeView = m, output, 1, false, false
 	// With nothing focused, the newest window is the one to go back to.
 	if action.Backward || c.layoutFocusedWindow() {
 		if action.Backward {
@@ -411,6 +419,7 @@ func (c *Compositor) closeSwitcher(confirm bool) {
 func (c *Compositor) dropSwitcher() {
 	s := &c.switcher
 	c.cancelAnimation(switcherCloseKey)
+	c.cancelAnimation(switcherViewKey)
 	if s.tree != nil {
 		C.wlr_scene_node_destroy(&s.tree.node)
 		s.tree = nil
@@ -509,6 +518,8 @@ func (c *Compositor) switcherHitAt(x, y float64) (uint64, bool) {
 // one highlighted, each with its title.
 func (c *Compositor) syncSwitcher() {
 	s := &c.switcher
+	s.syncing = true
+	defer func() { s.syncing = false }()
 	if s.tree != nil {
 		C.wlr_scene_node_destroy(&s.tree.node)
 		s.tree = nil
@@ -576,7 +587,7 @@ func (c *Compositor) syncSwitcher() {
 	}
 	rects := strip.Layout(sizes)
 	if !s.freezeView {
-		s.viewPos = strip.ViewPos(s.viewPos, rects, current)
+		c.moveSwitcherView(strip.ViewPos(s.viewTarget, rects, current), strip)
 	}
 	viewPos := strip.Round(s.viewPos)
 	at := func(x, y float64) (int, int) {
@@ -643,6 +654,29 @@ func (c *Compositor) syncSwitcher() {
 			sceneImagePlace(node, image.Rectangle{Min: image.Pt(x, y), Max: image.Pt(x, y).Add(size)}, s.alpha)
 		}
 	}
+}
+
+// moveSwitcherView heads the view for target, springing there with
+// window-movement as Niri's ViewPos does once it moves more than a pixel.
+func (c *Compositor) moveSwitcherView(target float64, strip wm.MRUStrip) {
+	s := &c.switcher
+	if s.placed && target == s.viewTarget {
+		return
+	}
+	s.viewTarget = target
+	if !s.placed || math.Abs(target-s.viewPos) <= 1/strip.Scale {
+		s.placed = true
+		c.cancelAnimation(switcherViewKey)
+		s.viewPos = target
+		return
+	}
+	c.animateValue(switcherViewKey, c.animationConfig.WindowMovement, s.viewPos, target, 0,
+		func(pos float64) {
+			s.viewPos = pos
+			if !s.syncing {
+				c.syncSwitcher()
+			}
+		}, nil)
 }
 
 // premultiplied is a config colour with its alpha scaled by alpha, as the
