@@ -192,9 +192,9 @@ global is ticked only with its handler and a test (Q7). Versions follow the wlro
 | zwp_text_input_manager_v3 | [x] | M10 | `TestTextInputRelaysToTheInputMethod` |
 | zwp_input_method_manager_v2 | [~] | M10 | relay and popups tested; keyboard grab gets no keys until virtual-keyboard (M12, `sysc-1639`) |
 | zwlr_output_power_manager_v1 | [ ] | M10 | handler written, unwired: no packaged client to test it (`wlopm` is AUR-only) |
-| ext_data_control_manager_v1, zwlr_data_control_manager_v1 | [x] | M11 | `TestDataControlServesTheSelectionWithoutFocus` (wl-copy → wl-paste, no focus) |
-| zwlr_screencopy_manager_v1 | [x] | M11 | `TestScreencopyCapturesTheOutputAtItsSize` (grim); wlroots refuses a non-exact buffer, as Niri does |
-| ext_image_copy_capture_manager_v1 (output source) | [~] | M11 | advertised (`TestM11CaptureGlobalsAdvertised`); no capture test of its own yet |
+| ext_data_control_manager_v1, zwlr_data_control_manager_v1 | [x] | M11 | `TestDataControlServesTheSelectionWithoutFocus` (wl-copy → wl-paste, no focus); sysc-clipboard records selections through it (M11 laptop gate) |
+| zwlr_screencopy_manager_v1 | [~] | M11 | advertised; wlroots refuses a non-exact buffer, as Niri does. grim 1.5 (CI and the laptop) prefers ext-image-copy-capture when both are offered, so no client drives this one yet |
+| ext_image_copy_capture_manager_v1 (output source) | [x] | M11 | grim 1.5 captures through it: `TestScreencopyCapturesTheOutputAtItsSize`, and the M11 laptop gate (`WAYLAND_DEBUG`: output source, one frame `ready` at the output's size) |
 | wp_presentation | [~] | M11 | advertised; the SceneFX scene sends feedback; no feedback test yet |
 | wp_single_pixel_buffer_manager_v1 | [~] | M11 | advertised; scene-handled; no client test yet |
 | wp_alpha_modifier_v1 | [~] | M11 | advertised; scene-handled; no client test yet |
