@@ -240,6 +240,60 @@ static void sysc_scene_tree_set_position_node(struct wlr_scene_tree *tree, int x
 	wlr_scene_node_set_position(&tree->node, x, y);
 }
 
+struct sysc_scene_clip {
+	int x, y, width, height;
+	struct fx_corner_radii radii;
+};
+
+// sysc_clip_scene_buffer crops a buffer to the clip box, hiding it when it
+// lies outside, and rounds the box's corners it reaches. Transformed
+// buffers keep their extent.
+static void sysc_clip_scene_buffer(struct wlr_scene_buffer *buffer, int x, int y, void *data) {
+	struct sysc_scene_clip *clip = data;
+	if (buffer->buffer == NULL || buffer->transform != WL_OUTPUT_TRANSFORM_NORMAL) {
+		return;
+	}
+	int width = buffer->dst_width > 0 ? buffer->dst_width : buffer->buffer->width;
+	int height = buffer->dst_height > 0 ? buffer->dst_height : buffer->buffer->height;
+	int left = x > clip->x ? x : clip->x;
+	int top = y > clip->y ? y : clip->y;
+	int right = x + width < clip->x + clip->width ? x + width : clip->x + clip->width;
+	int bottom = y + height < clip->y + clip->height ? y + height : clip->y + clip->height;
+	if (right <= left || bottom <= top) {
+		wlr_scene_node_set_enabled(&buffer->node, false);
+		return;
+	}
+	if (left != x || top != y || right != x + width || bottom != y + height) {
+		struct wlr_fbox src = buffer->src_box;
+		if (src.width <= 0 || src.height <= 0) {
+			src = (struct wlr_fbox){ .width = buffer->buffer->width, .height = buffer->buffer->height };
+		}
+		double sx = src.width / width, sy = src.height / height;
+		struct wlr_fbox crop = {
+			.x = src.x + (left - x) * sx, .y = src.y + (top - y) * sy,
+			.width = (right - left) * sx, .height = (bottom - top) * sy,
+		};
+		wlr_scene_buffer_set_source_box(buffer, &crop);
+		wlr_scene_buffer_set_dest_size(buffer, right - left, bottom - top);
+		wlr_scene_node_set_position(&buffer->node, buffer->node.x + left - x, buffer->node.y + top - y);
+	}
+	int clip_right = clip->x + clip->width, clip_bottom = clip->y + clip->height;
+	wlr_scene_buffer_set_corner_radii(buffer, corner_radii_new(
+		left == clip->x && top == clip->y ? clip->radii.top_left : 0,
+		right == clip_right && top == clip->y ? clip->radii.top_right : 0,
+		right == clip_right && bottom == clip_bottom ? clip->radii.bottom_right : 0,
+		left == clip->x && bottom == clip_bottom ? clip->radii.bottom_left : 0));
+}
+
+static void sysc_scene_clip_tree(struct wlr_scene_tree *tree, int x, int y, int width, int height,
+		int tl, int tr, int br, int bl) {
+	struct sysc_scene_clip clip = {
+		.x = x, .y = y, .width = width, .height = height,
+		.radii = corner_radii_new(tl, tr, br, bl),
+	};
+	wlr_scene_node_for_each_buffer(&tree->node, sysc_clip_scene_buffer, &clip);
+}
+
 struct sysc_scene_buffer_probe {
 	int width, height;
 	int origin_x, origin_y;
@@ -556,6 +610,16 @@ func sceneFXTreeFirstBuffer(tree unsafe.Pointer) (width, height int, opacity flo
 	var probe C.struct_sysc_scene_buffer_probe
 	C.sysc_scene_tree_probe((*C.struct_wlr_scene_tree)(tree), &probe)
 	return int(probe.width), int(probe.height), float64(probe.opacity), bool(probe.found)
+}
+
+// sceneFXClipTree crops every buffer in tree, whose coordinates start at its
+// own origin, to box and rounds box's corners by radii.
+func sceneFXClipTree(tree unsafe.Pointer, box rect, radii [4]uint16) {
+	if tree == nil {
+		return
+	}
+	C.sysc_scene_clip_tree((*C.struct_wlr_scene_tree)(tree), C.int(box.x), C.int(box.y),
+		C.int(box.w), C.int(box.h), C.int(radii[0]), C.int(radii[1]), C.int(radii[2]), C.int(radii[3]))
 }
 
 func sceneFXTreeBounds(tree unsafe.Pointer) (bounds rect, found bool) {
