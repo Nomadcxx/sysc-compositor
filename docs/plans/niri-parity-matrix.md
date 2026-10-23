@@ -156,7 +156,7 @@ M6 adds the window, column, floating, fullscreen, urgency, named-workspace, and 
 | spawn-at-startup / spawn-sh-at-startup | [x] | M2 |
 | workspace | [~] | M6 named workspace declarations and output placement; remaining Niri workspace options are unimplemented |
 | xwayland-satellite | [ ] | M13 |
-| recent-windows | [~] | M11 — every option, the binds block and `recent-windows-close`; the switcher with previews, titles, the scope panel, highlight, Niri's keys, modifier release, pointer selection and the close fade (`TestWindowSwitcherSelectsConfirmsAndCancels`). the view springs to the selection. Not yet: preview move/open animations, clipping previews to geometry, mouse/scroll binds while open |
+| recent-windows | [~] | M11 — every option, the binds block and `recent-windows-close`; the switcher with previews, titles, the scope panel, highlight, Niri's keys, modifier release, pointer selection and the close fade (`TestWindowSwitcherSelectsConfirmsAndCancels`). the view springs to the selection; previews slide with window-movement when a window goes or the scope or filter changes (`TestWindowSwitcherPreviewsMoveAsNiri`) and are clipped to the window geometry and corner radius (`TestWindowSwitcherClipsPreviewsToGeometry`). Not yet: new previews fading in with window-open (easing, M15); mouse/scroll binds while open (mouse and scroll binds are not applied at all); opened keys for the or-first, or-monitor and window-or-column focus actions, which are not built |
 | debug | [ ] | M15 |
 | include | [x] | M3 positional merge |
 

@@ -326,3 +326,20 @@ recorded above and in the matrix:
 
 Data control serves sysc-clipboard; screenshots match Niri's paths, clipboard and event; the
 text-dependent UIs have landed. Closing `sysc-1276` with those rows open is the owner's call.
+
+## Execution record (2026-10-23): recent-windows gaps
+
+| Item | Proof |
+|---|---|
+| Previews slide with `window-movement` when a listed window goes (Niri's `remove_window`) or a scope or filter change relists them (`animate_scope_filter_change`); the view's spring shifts with them (`Animation::offset`). Drawn at their offset, found where they are heading. | `TestMRURemovalMovesFollowNiri`, `TestMRURelistMovesFollowNiri`, `TestOffsetSpringKeepsItsMotion`, `TestWindowSwitcherPreviewsMoveAsNiri` (laptop, lane 2) |
+| Previews clipped to the window geometry and its corner radius scaled to the preview, as Niri's `Thumbnail::render`, whether or not the window is clipped | `TestWindowSwitcherClipsPreviewsToGeometry` (laptop, lane 2) |
+
+Unlike Niri, closing a window the scope or filter hides moves nothing; Niri slides every listed
+preview then.
+
+**Still open, each waiting on other work:**
+- new previews fading in with `window-open`, whose default is easing (M15);
+- mouse and scroll binds while the switcher is open, which needs mouse and scroll binds applied at
+  all (matrix row `binds`);
+- opened keys for `focus-column-right-or-first`, `focus-column-or-monitor-right`,
+  `focus-window-down-or-column-right` and their left forms, once those actions exist.
