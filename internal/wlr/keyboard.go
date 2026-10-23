@@ -71,23 +71,48 @@ static bool sysc_modifier_active(struct wlr_keyboard *keyboard, const char *name
 			XKB_STATE_MODS_EFFECTIVE) > 0;
 }
 
+static bool sysc_keysym_is_ascii_or_unprintable(xkb_keysym_t sym) {
+	return xkb_keysym_to_utf32(sym) < 128;
+}
+
+static xkb_keysym_t sysc_raw_sym(struct xkb_keymap *keymap, xkb_keycode_t code,
+		xkb_layout_index_t layout) {
+	const xkb_keysym_t *syms = NULL;
+	return xkb_keymap_key_get_syms_by_level(keymap, code, layout, 0, &syms) > 0 ?
+		syms[0] : XKB_KEY_NoSymbol;
+}
+
+// The keysym a bind names, as Niri's find_bind takes it: smithay's
+// raw_latin_sym_or_raw_current_sym. That is the key's unshifted keysym on its
+// layout, unless that is a non-ASCII character and another layout gives the
+// key an ASCII one, so binds work the same on every layout.
+static xkb_keysym_t sysc_bind_keysym(struct xkb_state *state, uint32_t keycode) {
+	struct xkb_keymap *keymap = xkb_state_get_keymap(state);
+	xkb_keycode_t code = keycode + 8;
+	xkb_layout_index_t current = xkb_state_key_get_layout(state, code);
+	xkb_keysym_t base = sysc_raw_sym(keymap, code, current);
+	if (base == XKB_KEY_NoSymbol || sysc_keysym_is_ascii_or_unprintable(base)) {
+		return base;
+	}
+	for (xkb_layout_index_t layout = 0; layout < xkb_keymap_num_layouts(keymap); layout++) {
+		xkb_keysym_t sym = layout == current ? XKB_KEY_NoSymbol : sysc_raw_sym(keymap, code, layout);
+		if (sym != XKB_KEY_NoSymbol && xkb_keysym_to_utf32(sym) != 0 &&
+				sysc_keysym_is_ascii_or_unprintable(sym)) {
+			return sym;
+		}
+	}
+	return base;
+}
+
 static bool sysc_keysym_matches(struct wlr_keyboard *keyboard, uint32_t keycode,
 		const char *name) {
 	if (keyboard == NULL || keyboard->xkb_state == NULL) {
 		return false;
 	}
 	xkb_keysym_t wanted = xkb_keysym_from_name(name, XKB_KEYSYM_CASE_INSENSITIVE);
-	if (wanted == XKB_KEY_NoSymbol) {
-		return false;
-	}
-	const xkb_keysym_t *syms = NULL;
-	int count = xkb_state_key_get_syms(keyboard->xkb_state, keycode + 8, &syms);
-	for (int i = 0; i < count; i++) {
-		if (syms[i] == wanted || xkb_keysym_to_lower(syms[i]) == xkb_keysym_to_lower(wanted)) {
-			return true;
-		}
-	}
-	return false;
+	xkb_keysym_t sym = sysc_bind_keysym(keyboard->xkb_state, keycode);
+	return wanted != XKB_KEY_NoSymbol && sym != XKB_KEY_NoSymbol &&
+		xkb_keysym_to_lower(sym) == xkb_keysym_to_lower(wanted);
 }
 
 #include <stdlib.h>
@@ -380,12 +405,17 @@ func (c *Compositor) handleKeyboardKey(data unsafe.Pointer) {
 		C.uint32_t(event.state))
 }
 
-// keysymIs reports whether keycode produces the named keysym on the user
+// keysymIs reports whether keycode is the named bind key on the user
 // keyboard.
 func (c *Compositor) keysymIs(keycode uint32, name string) bool {
+	return keysymMatches(c.keyboard, keycode, name)
+}
+
+// keysymMatches reports whether keycode on kb is the key a bind names.
+func keysymMatches(kb *C.struct_wlr_keyboard, keycode uint32, name string) bool {
 	cname := C.CString(name)
 	defer C.free(unsafe.Pointer(cname))
-	return bool(C.sysc_keysym_matches(c.keyboard, C.uint32_t(keycode), cname))
+	return bool(C.sysc_keysym_matches(kb, C.uint32_t(keycode), cname))
 }
 
 func (c *Compositor) dispatchKeyBinding(keycode uint32) (bind.Binding, bool) {
@@ -409,10 +439,7 @@ func (c *Compositor) matchKeyBinding(keycode uint32) (bind.Binding, bool) {
 		if !binding.IgnoresInhibit && c.shortcutsInhibited() {
 			continue
 		}
-		name := C.CString(binding.Chord.Key)
-		matches := bool(C.sysc_keysym_matches(c.keyboard, C.uint32_t(keycode), name))
-		C.free(unsafe.Pointer(name))
-		if !matches {
+		if !c.keysymIs(keycode, binding.Chord.Key) {
 			continue
 		}
 		return binding, true

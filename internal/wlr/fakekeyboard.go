@@ -1,12 +1,13 @@
 package wlr
 
 /*
-#cgo pkg-config: wlroots-0.20 wayland-server
+#cgo pkg-config: wlroots-0.20 wayland-server xkbcommon
 #cgo CFLAGS: -DWLR_USE_UNSTABLE
 
 #include <stdlib.h>
 #include <wlr/interfaces/wlr_keyboard.h>
 #include <wlr/types/wlr_keyboard.h>
+#include <xkbcommon/xkbcommon.h>
 
 static const struct wlr_keyboard_impl sysc_fake_keyboard_impl = {
 	.name = "sysc-fake-keyboard",
@@ -36,10 +37,18 @@ static void sysc_fake_key(struct wlr_keyboard *kb, uint32_t time, uint32_t keyco
 	};
 	wlr_keyboard_notify_key(kb, &event);
 }
+
+static void sysc_fake_keyboard_layout(struct wlr_keyboard *kb, uint32_t index) {
+	wlr_keyboard_notify_modifiers(kb, kb->modifiers.depressed, kb->modifiers.latched,
+		kb->modifiers.locked, index);
+}
 */
 import "C"
 
-import "unsafe"
+import (
+	"errors"
+	"unsafe"
+)
 
 // fakeKeyboard is an in-process keyboard attached to the user seat the way a
 // backend keyboard is, for tests: hardware keyboards cannot be pressed from a
@@ -53,6 +62,29 @@ func (c *Compositor) addFakeKeyboard() *fakeKeyboard {
 	}
 	c.handleNewInput(unsafe.Pointer(&kb.base))
 	return &fakeKeyboard{kb: kb}
+}
+
+// newDetachedFakeKeyboard is a fake keyboard with k's keymap that belongs to
+// no compositor, for tests of what its keys match on real xkb state.
+func newDetachedFakeKeyboard(k Keyboard) (*fakeKeyboard, error) {
+	keymap, err := compileKeymap(k)
+	if err != nil {
+		return nil, err
+	}
+	defer C.xkb_keymap_unref(keymap)
+	kb := C.sysc_fake_keyboard_create()
+	if kb == nil {
+		return nil, errors.New("fake keyboard: out of memory")
+	}
+	if !C.wlr_keyboard_set_keymap(kb, keymap) {
+		C.sysc_fake_keyboard_destroy(kb)
+		return nil, errors.New("fake keyboard: the keymap could not be set")
+	}
+	return &fakeKeyboard{kb: kb}, nil
+}
+
+func (f *fakeKeyboard) switchLayout(index uint32) {
+	C.sysc_fake_keyboard_layout(f.kb, C.uint32_t(index))
 }
 
 func (f *fakeKeyboard) key(keycode uint32, pressed bool) {

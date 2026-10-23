@@ -451,3 +451,44 @@ func readWindowFloating(c *Compositor, view *toplevelView) (bool, bool) {
 		return false, false
 	}
 }
+
+// TestBindKeysIgnoreShiftAndLayoutAsNiri is Niri's find_bind trigger,
+// smithay's raw_latin_sym_or_raw_current_sym: a bind names the key's
+// unshifted keysym, and on a non-Latin layout the keysym of the first layout
+// that gives that key an ASCII one. It needs no compositor.
+func TestBindKeysIgnoreShiftAndLayoutAsNiri(t *testing.T) {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	kb, err := newDetachedFakeKeyboard(Keyboard{Layout: "us,ru"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer kb.remove()
+	const (
+		keyOne   = 2  // evdev KEY_1
+		keyQ     = 16 // evdev KEY_Q
+		keyE     = 18 // evdev KEY_E
+		keyShift = 42 // evdev KEY_LEFTSHIFT
+		keySlash = 53 // evdev KEY_SLASH
+	)
+	expect := func(keycode uint32, name string, want bool) {
+		t.Helper()
+		if got := keysymMatches(kb.kb, keycode, name); got != want {
+			t.Errorf("key %d matches %q = %v, want %v", keycode, name, got, want)
+		}
+	}
+
+	kb.key(keyShift, true)
+	expect(keySlash, "Slash", true)
+	expect(keySlash, "question", false)
+	expect(keyOne, "1", true)
+	expect(keyOne, "exclam", false)
+	expect(keyE, "E", true)
+	kb.key(keyShift, false)
+
+	kb.switchLayout(1)
+	expect(keyQ, "q", true)
+	expect(keyQ, "Cyrillic_shorti", false)
+	// An ASCII keysym on the current layout is kept.
+	expect(keySlash, "period", true)
+}
