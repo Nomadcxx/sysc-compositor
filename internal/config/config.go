@@ -1144,9 +1144,6 @@ func (c *Config) cursor(n *document.Node) error {
 }
 
 func (c *Config) binds(n *document.Node) error {
-	if !slices.Contains(c.Warnings, "binds") {
-		c.Warnings = append(c.Warnings, "binds")
-	}
 	var parsed []Binding
 	var overlay []OverlayBind
 	overrides := make(map[bind.Chord]struct{}, len(n.Children))

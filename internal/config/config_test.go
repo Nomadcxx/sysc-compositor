@@ -324,6 +324,18 @@ func TestConfiguredLaptopNiriM8Values(t *testing.T) {
 	}
 }
 
+// TestBindsAreNotReportedUnapplied: binds have been applied since M5, so
+// validate warns only about the actions not built yet.
+func TestBindsAreNotReportedUnapplied(t *testing.T) {
+	cfg, err := Parse("binds.kdl", []byte("binds {\n    Mod+T { spawn \"foot\"; }\n}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slices.Contains(cfg.Warnings, "binds") {
+		t.Errorf("binds reported as not applied: %v", cfg.Warnings)
+	}
+}
+
 func TestM6WorkspaceAndRuleSectionsAreApplied(t *testing.T) {
 	cfg, err := Parse("m6.kdl", []byte(`
 workspace "Work" { open-on-output "DP-1"; }

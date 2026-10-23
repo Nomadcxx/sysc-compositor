@@ -455,8 +455,8 @@ func TestValidateParsesConfigWithoutRunningStartup(t *testing.T) {
 	if !strings.Contains(stdout.String(), "valid") {
 		t.Errorf("validate output %q does not confirm the config", stdout.String())
 	}
-	if !strings.Contains(stderr.String(), "binds") {
-		t.Errorf("validate warnings %q do not mention the accepted, unapplied binds section", stderr.String())
+	if strings.Contains(stderr.String(), "section `binds`") {
+		t.Errorf("validate warnings %q call the applied binds section unapplied", stderr.String())
 	}
 	if !strings.Contains(stderr.String(), "bind actions are accepted but not applied yet: toggle-debug-tint\n") {
 		t.Errorf("validate warnings %q do not identify the unapplied bind action", stderr.String())
