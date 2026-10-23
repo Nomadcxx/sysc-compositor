@@ -399,8 +399,7 @@ func (c *Compositor) dispatchKeyBinding(keycode uint32) (bind.Binding, bool) {
 // matchKeyBinding is the bind a user key press triggers now, if any.
 func (c *Compositor) matchKeyBinding(keycode uint32) (bind.Binding, bool) {
 	modifiers := c.activeBindModifiers()
-	for i := range c.bindings {
-		binding := c.bindings[i]
+	for _, binding := range c.keyBindings(modifiers) {
 		if binding.Chord.Trigger != bind.TriggerKey || binding.Chord.Modifiers != modifiers {
 			continue
 		}
@@ -524,6 +523,9 @@ func (c *Compositor) modifierActive(modifier bind.Modifier) bool {
 }
 
 func (c *Compositor) executeBindAction(action bind.Action) {
+	if c.runSwitcherAction(action) {
+		return
+	}
 	if action.Name == bind.ActionCloseWindow {
 		c.CloseWindow(nil)
 		return
@@ -796,6 +798,7 @@ func (c *Compositor) executeBindAction(action bind.Action) {
 func (c *Compositor) handleKeyboardModifiers(unsafe.Pointer) {
 	c.modifiers = uint32(C.wlr_keyboard_get_modifiers(c.keyboard))
 	C.wlr_seat_keyboard_notify_modifiers(c.seat, &c.keyboard.modifiers)
+	c.switcherModifiersReleased()
 	c.notifyStateChanged()
 }
 

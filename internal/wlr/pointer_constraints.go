@@ -124,6 +124,9 @@ func (c *Compositor) pointerMotion(device *C.struct_wlr_input_device, timeMsec C
 	if c.shotUIMotion() {
 		return
 	}
+	if c.switcherMotion() {
+		return
+	}
 	c.processCursorMotion(timeMsec)
 	c.updatePointerConstraint()
 }

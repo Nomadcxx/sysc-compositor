@@ -134,6 +134,7 @@ func (c *Compositor) handleNewSessionLock(data unsafe.Pointer) {
 func (c *Compositor) sealSession() {
 	c.setSessionLocked(true)
 	c.closeScreenshotUI()
+	c.closeSwitcher(false)
 	c.stopKeyboardRepeat()
 	c.cancelTiledWindowMove()
 	c.clearPointerGrab()

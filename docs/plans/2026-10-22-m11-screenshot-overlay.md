@@ -246,3 +246,29 @@ nearest listed window before it, else the first.
 | Niri's `remove_last_window_out_of_two` | `TestMRURemovingTheLastOfTwoKeepsASelection` |
 | Scope, filter and cycle selection rules | `TestMRUScopeAndFilterKeepTheNearestSelection` |
 | Niri's `random_operations_dont_panic` with `verify_invariants` (2,000 seeded runs) | `TestMRURandomOperationsKeepTheSelectionListed` |
+
+## Execution record (2026-10-23): the window switcher
+
+Step 3. `internal/wlr/switcher.go` is Niri's `WindowMruUi`; `internal/wm/mru_layout.go` is its strip
+layout; `internal/ui/mru.go` draws the titles and the scope panel.
+
+| Item | Proof |
+|---|---|
+| Strip layout: Niri's `preview_size`, the gap from the highlight padding and border, centring a strip that fits, `compute_view_pos` scrolling with the least motion, the highlight box with its title | `TestMRUPreviewSizeFollowsNiri`, `TestMRUStripCentresOrScrollsToTheSelection` |
+| Titles (sans 14px, one line, cut to the preview with Niri's 18px fade) and the scope panel (key letters on the key background, the scope in white) | `TestMRUTitleFadesOutWhenCut`, `TestMRUScopePanelIsNiriPanel` |
+| Niri's `make_dynamic_opened_binds` for the actions built here, the fewest modifiers winning per key | `TestSwitcherDynamicBindsFollowNiri` (lane 2) |
+| A recent-windows bind opens the switcher on the next window (the newest when nothing is focused), committing the pending stamp; it holds the keyboard and keeps the pointer from clients; it shows after `open-delay-ms`; Tab, the preset keys and the general binds' keys move the selection; releasing every modifier focuses it; Escape cancels; the pointer selects and a left click focuses (anywhere else cancels) | `TestWindowSwitcherSelectsConfirmsAndCancels` (lane 2) |
+
+Also: a closing window leaves the list and the last one closes the switcher; the lock, `Screenshot`
+and losing the output cancel it; `recent-windows-close` fades it out; it sits under the hotkey
+overlay, the screenshot UI and the lock.
+
+**Not yet like Niri:**
+- the view and the previews jump instead of animating (Niri moves them with `window-movement`
+  and fades new previews in with `window-open`);
+- previews are not clipped to the window geometry or its corner radius;
+- the close fade has no offscreen, so overlapping previews show through each other;
+- mouse and scroll binds do not reach the open switcher, since only key binds are applied here;
+- the opened keys come only from the actions built here (Niri also maps
+  `focus-column-right-or-first`, `focus-column-or-monitor-right`,
+  `focus-window-down-or-column-right` and their left forms).
