@@ -53,6 +53,13 @@ type Action struct {
 	// SkipConfirmation is quit's skip-confirmation: quit without the exit
 	// dialog.
 	SkipConfirmation bool
+	// Backward, MRUScope and MRUFilter are the window switcher's options:
+	// mru-advance goes backward, mru-advance and mru-set-scope name a scope
+	// (all, output or workspace; empty keeps the switcher's), and mru-advance
+	// sets the filter (all or app-id; empty keeps it).
+	Backward  bool
+	MRUScope  string
+	MRUFilter string
 }
 
 type Binding struct {
@@ -89,6 +96,7 @@ const (
 	ActionFocusWindowInColumn            = "focus-window-in-column"
 	ActionFocusWindowDown                = "focus-window-down"
 	ActionFocusWindowUp                  = "focus-window-up"
+	ActionFocusWindowPrevious            = "focus-window-previous"
 	ActionMoveWindowDown                 = "move-window-down"
 	ActionMoveWindowUp                   = "move-window-up"
 	ActionToggleWindowFloating           = "toggle-window-floating"
@@ -146,6 +154,19 @@ const (
 	ActionFocusMonitorDown               = "focus-monitor-down"
 	ActionFocusMonitorPrevious           = "focus-monitor-previous"
 	ActionFocusMonitorNext               = "focus-monitor-next"
+)
+
+// The window switcher's actions, Niri's knuffel(skip) Mru actions: no bind
+// names them; recent-windows binds and the open switcher's keys run them.
+const (
+	ActionMRUAdvance            = "mru-advance"
+	ActionMRUConfirm            = "mru-confirm"
+	ActionMRUCancel             = "mru-cancel"
+	ActionMRUCloseCurrentWindow = "mru-close-current-window"
+	ActionMRUFirst              = "mru-first"
+	ActionMRULast               = "mru-last"
+	ActionMRUSetScope           = "mru-set-scope"
+	ActionMRUCycleScope         = "mru-cycle-scope"
 )
 
 // ResolveModKey follows Niri's backend defaults: Super on native/headless,
@@ -272,6 +293,7 @@ func ParseAction(name string, args []string) (Action, bool, error) {
 		ActionConsumeWindowIntoColumn, ActionExpelWindowFromColumn,
 		ActionConsumeOrExpelWindowLeft, ActionConsumeOrExpelWindowRight,
 		ActionToggleColumnTabbedDisplay, ActionFocusWindowDown, ActionFocusWindowUp,
+		ActionFocusWindowPrevious,
 		ActionMoveWindowDown, ActionMoveWindowUp, ActionToggleWindowFloating,
 		ActionMoveWindowToFloating, ActionMoveWindowToTiling,
 		ActionFocusFloating, ActionFocusTiling, ActionSwitchFocusFloatingAndTiling,
@@ -392,7 +414,8 @@ func IsSupportedAction(name string) bool {
 		ActionConsumeWindowIntoColumn, ActionExpelWindowFromColumn,
 		ActionConsumeOrExpelWindowLeft, ActionConsumeOrExpelWindowRight,
 		ActionToggleColumnTabbedDisplay, ActionSetColumnDisplay, ActionFocusWindowInColumn,
-		ActionFocusWindowDown, ActionFocusWindowUp, ActionMoveWindowDown, ActionMoveWindowUp,
+		ActionFocusWindowDown, ActionFocusWindowUp, ActionFocusWindowPrevious,
+		ActionMoveWindowDown, ActionMoveWindowUp,
 		ActionToggleWindowFloating, ActionMoveWindowToFloating, ActionMoveWindowToTiling,
 		ActionFocusFloating, ActionFocusTiling, ActionSwitchFocusFloatingAndTiling,
 		ActionFullscreenWindow, ActionToggleWindowedFullscreen,

@@ -75,6 +75,7 @@ func TestParseAction(t *testing.T) {
 		{name: "focus window in column", args: []string{"2"}, kind: ActionFocusWindowInColumn, want: true, columnIndex: 2},
 		{name: "focus window down", kind: "focus-window-down", want: true},
 		{name: "focus window up", kind: "focus-window-up", want: true},
+		{name: "focus window previous", kind: "focus-window-previous", want: true},
 		{name: "move window down", kind: "move-window-down", want: true},
 		{name: "move window up", kind: "move-window-up", want: true},
 		{name: "toggle floating", kind: ActionToggleWindowFloating, want: true},

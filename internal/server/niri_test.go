@@ -396,6 +396,7 @@ func TestNiriM6ActionsArePosted(t *testing.T) {
 		{`{"Action":{"MoveColumnToWorkspaceUp":{"focus":false}}}`, "MoveColumnToWorkspaceUp", 0},
 		{`{"Action":{"FocusWindowDown":{}}}`, "FocusWindowDown", 0},
 		{`{"Action":{"FocusWindowUp":{}}}`, "FocusWindowUp", 0},
+		{`{"Action":{"FocusWindowPrevious":{}}}`, "FocusWindowPrevious", 0},
 		{`{"Action":{"MoveWindowDown":{}}}`, "MoveWindowDown", 0},
 		{`{"Action":{"MoveWindowUp":{}}}`, "MoveWindowUp", 0},
 		{`{"Action":{"ConsumeOrExpelWindowLeft":{"id":41}}}`, "ConsumeOrExpelWindowLeft", 0},

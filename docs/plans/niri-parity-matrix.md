@@ -39,7 +39,7 @@ Legend: `[ ]` missing · `[~]` partial · `[x]` done.
 | WindowOpenedOrChanged | [x] | M4 — map and metadata changes |
 | WindowClosed | [x] | M4 — unmap/destroy |
 | WindowFocusChanged | [x] | M4 — focus changes and clear, following Niri event semantics |
-| WindowFocusTimestampChanged | [x] | M4 — monotonic timestamp after Niri's 750 ms debounce |
+| WindowFocusTimestampChanged | [x] | M4 — monotonic timestamp after Niri's debounce (`recent-windows.debounce-ms`, M11); a key sent to the focused window commits it at once |
 | WindowUrgencyChanged | [x] | M6 — urgency actions and state transitions |
 | WindowLayoutsChanged | [x] | M5 — tile order, position, and size changes |
 | KeyboardLayoutsChanged | [x] | M3/M9 — publishes configured layouts and active-index changes |
@@ -86,6 +86,7 @@ Until implemented, decode and reply `Err` with `unimplemented: <Name>`. Tick whe
 | CloseWindow | [x] | M4 — sends xdg-toplevel close for an explicit ID or the retained Niri layout focus |
 | FocusWorkspace | [x] | M4/M5/M6 — stable ID, current-output index, or named workspace |
 | FocusWindowDown/Up | [x] | M6 — adjacent tiled window or nearest floating window in the vertical direction |
+| FocusWindowPrevious | [x] | M11 — newest focus timestamp other than the layout-focused window; commits the pending stamp first (`TestFocusWindowPreviousCommitsTheWindowItLeaves`) |
 | MoveWindowDown/Up | [x] | M6 — reorder a tiled window within its column or move a floating window by 50 logical pixels |
 | MoveWindowToWorkspaceDown/Up | [x] | M6 — move the active window between adjacent workspaces, with focus following by default |
 | MoveColumnToWorkspaceDown/Up | [x] | M6 — move the focused column with its tabs; a focused floating window moves alone |
@@ -155,7 +156,7 @@ M6 adds the window, column, floating, fullscreen, urgency, named-workspace, and 
 | spawn-at-startup / spawn-sh-at-startup | [x] | M2 |
 | workspace | [~] | M6 named workspace declarations and output placement; remaining Niri workspace options are unimplemented |
 | xwayland-satellite | [ ] | M13 |
-| recent-windows | [ ] | M11 |
+| recent-windows | [~] | M11 — every option, the binds block and `recent-windows-close` parse with Niri's defaults and merging; `debounce-ms` drives the focus timestamps; the switcher is not built yet |
 | debug | [ ] | M15 |
 | include | [x] | M3 positional merge |
 

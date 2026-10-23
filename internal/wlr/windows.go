@@ -208,12 +208,16 @@ func (c *Compositor) keyboardFocusedView() *toplevelView {
 	return c.viewForSurface(c.seat.keyboard_state.focused_surface)
 }
 
+// recordWindowFocus stamps a newly focused window. A window focused before
+// gets its new stamp only once it has kept focus for debounce-ms, so quickly
+// passing over windows does not reorder them (Niri's PendingMruCommit).
 func (c *Compositor) recordWindowFocus(view *toplevelView) {
 	stamp := time.Duration(C.sysc_monotonic_time_ns())
 	if c.pendingFocus != nil {
 		c.cancelPendingWindowFocus(c.pendingFocus)
 	}
-	if !view.hasFocusTimestamp {
+	debounce := time.Duration(c.recentWindows.DebounceMS) * time.Millisecond
+	if !view.hasFocusTimestamp || debounce == 0 {
 		view.focusTimestamp = stamp
 		view.hasFocusTimestamp = true
 		return
@@ -225,7 +229,7 @@ func (c *Compositor) recordWindowFocus(view *toplevelView) {
 	c.pendingFocusStamp = stamp
 	c.pendingFocusGeneration++
 	generation := c.pendingFocusGeneration
-	c.focusTimer = time.AfterFunc(750*time.Millisecond, func() {
+	c.focusTimer = time.AfterFunc(debounce, func() {
 		_ = c.Post(func() {
 			c.commitPendingWindowFocus(view, generation)
 		})
@@ -244,6 +248,17 @@ func (c *Compositor) commitPendingWindowFocus(view *toplevelView, generation uin
 	view.focusTimestamp = c.pendingFocusStamp
 	view.hasFocusTimestamp = true
 	c.notifyWindowStateChanged()
+}
+
+// applyPendingWindowFocus commits the pending focus stamp now, as Niri's
+// mru_apply_keyboard_commit does when a key reaches the focused client.
+func (c *Compositor) applyPendingWindowFocus() {
+	if view := c.pendingFocus; view != nil {
+		if c.focusTimer != nil {
+			c.focusTimer.Stop()
+		}
+		c.commitPendingWindowFocus(view, c.pendingFocusGeneration)
+	}
 }
 
 func (c *Compositor) cancelPendingWindowFocus(view *toplevelView) {
@@ -268,6 +283,39 @@ func (c *Compositor) FocusWindow(id uint64) bool {
 		}
 	}
 	return false
+}
+
+// FocusWindowPrevious focuses the window with the newest focus timestamp
+// other than the layout-focused one, as Niri's focus-window-previous does.
+// A window never stamped ranks last.
+func (c *Compositor) FocusWindowPrevious() bool {
+	var previous *toplevelView
+	for _, view := range c.views {
+		if view == c.focusedView || view.toplevel == nil || !view.mapped || !bool(view.toplevel.base.surface.mapped) {
+			continue
+		}
+		if previous == nil || focusedMoreRecently(view, previous) {
+			previous = view
+		}
+	}
+	if previous == nil {
+		return false
+	}
+	// Commit the current window's stamp so a repeated focus-window-previous
+	// returns to it.
+	c.applyPendingWindowFocus()
+	c.focusView(previous)
+	return true
+}
+
+func focusedMoreRecently(a, b *toplevelView) bool {
+	if a.hasFocusTimestamp != b.hasFocusTimestamp {
+		return a.hasFocusTimestamp
+	}
+	if a.focusTimestamp != b.focusTimestamp {
+		return a.focusTimestamp > b.focusTimestamp
+	}
+	return a.id > b.id
 }
 
 // CloseWindow sends the xdg-toplevel close request for id, or for the Niri

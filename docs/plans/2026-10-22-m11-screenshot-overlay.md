@@ -96,6 +96,47 @@
    - the screenshot UI's hint text;
    - the exit confirmation dialog, which also completes `Quit` without `skip-confirmation` (matrix row `Quit`).
 
+### Task 4, recent windows (written 2026-10-23)
+
+Niri sources: `src/ui/mru.rs`, `src/ui/mru/tests.rs`, `niri-config/src/recent_windows.rs`,
+`src/niri.rs` (`PendingMruCommit`, `mru_apply_keyboard_commit`), `src/input/mod.rs`
+(`FocusWindowPrevious`, `MruAdvance`, `make_binds_iter`). Matrix rows: `recent-windows` and the
+`FocusWindowPrevious` action. Each step below is its own PR.
+
+1. **Config, focus timestamps and `FocusWindowPrevious`.**
+   - The `recent-windows` section: `on`/`off`, `debounce-ms` (750), `open-delay-ms` (150);
+     `highlight` (`active-color` 0.6 grey, `urgent-color` (1, .6, .6), `padding` 30,
+     `corner-radius` 0); `previews` (`max-height` 480, `max-scale` 0.5).
+   - Its `binds` block: keyboard keys with a modifier, one `next-window` or `previous-window` each,
+     with `scope=` (`all`, `output`, `workspace`) and `filter=` (`app-id`), and `allow-inhibiting`
+     and `hotkey-overlay-title`. A duplicate key is an error. The first `binds` block clears the
+     defaults (Alt and Mod with Tab, and with grave filtered by app id; Shift reverses); a later one
+     replaces binds by key.
+   - `animations.recent-windows-close`: a spring, 1.0/800/0.001.
+   - The existing focus timestamps take `debounce-ms`; a debounce of 0 stamps at once.
+   - A key that reaches the focused client commits the pending stamp at once.
+   - `FocusWindowPrevious` (IPC and the `focus-window-previous` bind) focuses the window with the
+     newest timestamp other than the focused one, committing the pending stamp first.
+2. **The MRU model** in `internal/wm`, pure Go: every window newest first, with its output,
+   workspace and app id; scopes All, Output and Workspace; the app-id filter; forward, backward,
+   first, last, set-current and remove. The selection is always in the filtered list (Niri's
+   `verify_invariants`), proved by a randomized test like Niri's proptest.
+3. **The switcher.**
+   - The recent-windows binds run when no general bind matches. The first opens the switcher on the
+     active output after committing the pending stamp, and selects the next window unless nothing
+     is focused; later ones advance.
+   - It shows after `open-delay-ms`: the 0.8 black backdrop, previews by `sceneFXCloneView` as the
+     overview does, the highlight and 2px border, titles and the scope panel through
+     `internal/text`. Preview sizing follows `Thumbnail::preview_size`.
+   - While open: Niri's preset keys (Escape cancels; Return and Space confirm; a, o, w set the
+     scope; s cycles it; Home, End, Left, Right) and the keys of the general binds that Niri maps
+     (`make_dynamic_opened_binds`); releasing every modifier confirms; the pointer selects; a left
+     click on a preview confirms, and anywhere else cancels.
+   - Confirm focuses the selection; cancel leaves focus; a closing window leaves the list, and the
+     last one closes the switcher. `recent-windows-close` fades it out.
+4. **Hotkey overlay.** Niri's `collect_actions` reads the general binds only, so the overlay does
+   not list the recent-windows binds. Nothing to add.
+
 ## Task 5: Close M11
 
 1. Tick only proven rows in the parity matrix: requests, events, actions, config, and the Wayland globals table.
@@ -182,3 +223,12 @@ While the screenshot UI is open, keys it does not take run their binds as Niri's
 monitor moves carry it to that output keeping its relative place and logical size. Held binds
 repeat. Proof: `TestScreenshotUIMovesTheSelectionByBinds` (lane 2). The size binds wait for
 `set-window-width/height` and `set-column-width`, which are not built yet.
+
+## Execution record (2026-10-23): recent-windows config and focus-window-previous
+
+Step 1 of the recent-windows section above.
+
+| Item | Proof |
+|---|---|
+| `recent-windows`: Niri's defaults, every option, the binds block (keyboard keys with a modifier, one `next-window` or `previous-window` with `scope` and `filter`), the first binds block clearing the defaults and later ones replacing by key, `recent-windows-close` | `TestRecentWindowsDefaultsToNiri`, `TestRecentWindowsSectionMergesAsNiri` |
+| `FocusWindowPrevious` (IPC and `focus-window-previous`), committing the stamp of the window it leaves; `debounce-ms`, including 0; a key sent to the focused window commits its stamp | `TestFocusWindowPreviousCommitsTheWindowItLeaves` (lane 2), `TestParseAction`, `TestNiriM6ActionsArePosted` |
