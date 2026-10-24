@@ -1,0 +1,42 @@
+#!/bin/sh
+# The session entry's command, as niri-session is Niri's (systemd only): run
+# sysc-compositor.service, wait for it, then stop the graphical session and
+# clear the environment the compositor published, even if it crashed.
+
+# Re-run in the user's login shell, so the profile's environment is imported.
+if [ -n "$SHELL" ] &&
+   grep -q "$SHELL" /etc/shells &&
+   ! (echo "$SHELL" | grep -q "false") &&
+   ! (echo "$SHELL" | grep -q "nologin"); then
+  if [ "$1" != '-l' ]; then
+    exec bash -c "exec -l '$SHELL' -c '$0 -l $*'"
+  else
+    shift
+  fi
+fi
+
+if systemctl --user -q is-active sysc-compositor.service; then
+  echo 'A sysc-compositor session is already running.'
+  exit 1
+fi
+
+# Reset failed state of all user units.
+systemctl --user reset-failed
+
+# Import the login manager environment.
+systemctl --user import-environment
+
+# D-Bus activation has its own environment; services without SystemdService=
+# read it.
+if hash dbus-update-activation-environment 2>/dev/null; then
+  dbus-update-activation-environment --all
+fi
+
+# Start the compositor and wait for it to exit.
+systemctl --user --wait start sysc-compositor.service
+
+# Force stop of graphical-session.target.
+systemctl --user start --job-mode=replace-irreversibly sysc-compositor-shutdown.target
+
+# Unset the environment the compositor set.
+systemctl --user unset-environment WAYLAND_DISPLAY DISPLAY XDG_SESSION_TYPE XDG_CURRENT_DESKTOP NIRI_SOCKET SYSC_SOCKET

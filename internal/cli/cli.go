@@ -152,6 +152,11 @@ func run(name, configFlag string, sessionMode bool, env Env) int {
 		defer lifecycle.Close()
 		s.StartSessionDBus()
 	}
+	// sysc-compositor.service is Type=notify: graphical-session.target, and the
+	// shell with it, waits for this.
+	if err := session.NotifyReady(); err != nil {
+		fmt.Fprintf(env.Stderr, "%s: %v\n", name, err)
+	}
 	// The smoke scripts read these lines to reach the nested session.
 	fmt.Fprintln(env.Stderr, "WAYLAND_DISPLAY="+s.SocketName())
 	if p := s.NiriSocket(); p != "" {

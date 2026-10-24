@@ -1,0 +1,2 @@
+#!/bin/bash
+exec ssh -q -i "$(dirname "$0")/id_ed25519" -p 2222 -o StrictHostKeyChecking=no -o UserKnownHostsFile="$(dirname "$0")/known_hosts" nomadx@127.0.0.1 "$@"

@@ -2,13 +2,12 @@ package session
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"strings"
 	"sync"
 )
-
-const sessionTarget = "graphical-session.target"
 
 var baseEnvironment = []string{"WAYLAND_DISPLAY", "NIRI_SOCKET", "SYSC_SOCKET", "XDG_CURRENT_DESKTOP", "XDG_SESSION_TYPE"}
 
@@ -24,11 +23,12 @@ type savedEnvironment struct {
 	present bool
 }
 
-// Lifecycle publishes the compositor environment and owns graphical-session.target.
+// Lifecycle publishes the compositor environment to systemd --user and D-Bus
+// activation. graphical-session.target is not its to start: systemd refuses a
+// manual start, and sysc-compositor.service binds it, as niri.service does.
 type Lifecycle struct {
 	keys     []string
 	previous map[string]savedEnvironment
-	started  bool
 	close    sync.Once
 }
 
@@ -68,13 +68,27 @@ func Activate(environment Environment) (*Lifecycle, error) {
 		lifecycle.restoreProcessEnvironment()
 		return nil, err
 	}
-	if err := run("systemctl", "--user", "start", sessionTarget); err != nil {
-		lifecycle.clearPublishedEnvironment()
-		lifecycle.restoreProcessEnvironment()
-		return nil, err
-	}
-	lifecycle.started = true
 	return lifecycle, nil
+}
+
+// NotifyReady tells systemd the compositor is up, for Type=notify units. Like
+// Niri, it does so in every mode; outside a notify service NOTIFY_SOCKET is
+// unset and it does nothing.
+func NotifyReady() error {
+	path := os.Getenv("NOTIFY_SOCKET")
+	if path == "" {
+		return nil
+	}
+	// An abstract socket's leading '@' is mapped by the net package.
+	conn, err := net.Dial("unixgram", path)
+	if err != nil {
+		return fmt.Errorf("notify systemd: %w", err)
+	}
+	defer conn.Close()
+	if _, err := conn.Write([]byte("READY=1")); err != nil {
+		return fmt.Errorf("notify systemd: %w", err)
+	}
+	return nil
 }
 
 func run(name string, args ...string) error {
@@ -91,13 +105,6 @@ func (l *Lifecycle) Close() {
 		return
 	}
 	l.close.Do(func() {
-		if l.started {
-			// --no-block queues stop and returns without waiting for services that
-			// may include this compositor process.
-			if err := run("systemctl", "--user", "--no-block", "stop", sessionTarget); err != nil {
-				warn("stop graphical session", err)
-			}
-		}
 		l.clearPublishedEnvironment()
 		l.restoreProcessEnvironment()
 	})

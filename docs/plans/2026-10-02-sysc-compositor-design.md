@@ -262,7 +262,7 @@ Grouped for implementation (not for dropping):
 
 Match niri’s user-facing CLI well enough that scripts and docs keep working:
 
-- no args / `--session`: start compositor (session imports env, starts graphical-session.target)
+- no args / `--session`: start compositor (session imports env and notifies systemd; `sysc-compositor-session` runs it as `sysc-compositor.service`, which binds graphical-session.target)
 - `-c` / `--config`
 - `sysc-compositor msg [--json] …`  (thin JSON client of `$NIRI_SOCKET`)
 - `sysc-compositor msg action …`
@@ -392,7 +392,7 @@ sysc-compositor msg …
 
 Greeter kdl (already in sysc-greet): empty binds, animations off, spawn wallpaper + kitty, then `niri msg action quit --skip-confirmation`. That file must work unmodified.
 
-Session: import `WAYLAND_DISPLAY`, `NIRI_SOCKET`, `SYSC_SOCKET`, `DISPLAY`, `XDG_CURRENT_DESKTOP=niri:sysc`, `XDG_SESSION_TYPE=wayland`. Start `graphical-session.target` so sysc-shell.service and portals come up. Also start `sysc-session.target` if we ship one.
+Session: import `WAYLAND_DISPLAY`, `NIRI_SOCKET`, `SYSC_SOCKET`, `DISPLAY`, `XDG_CURRENT_DESKTOP=niri:sysc`, `XDG_SESSION_TYPE=wayland`. Then notify systemd (`READY=1`). As with Niri, the session entry runs `sysc-compositor-session` (`share/bin/`), which starts `sysc-compositor.service` (`Type=notify`, `BindsTo=graphical-session.target`), so sysc-shell.service and portals come up once the compositor is ready; systemd refuses to start `graphical-session.target` by hand. When the service exits, crashed or not, the script starts `sysc-compositor-shutdown.target` and unsets the variables (owner decision 2026-10-24).
 
 ---
 
