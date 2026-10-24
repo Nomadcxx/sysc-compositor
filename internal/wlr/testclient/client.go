@@ -474,8 +474,10 @@ static void sysc_background_effect_client_close(struct sysc_background_effect_cl
 	free(client);
 }
 
+extern void sysc_subsurface_checkpoint(uintptr_t checkpoint);
+
 static int sysc_client_subsurface_sequence(const char *display_name, int keep_child,
-		int child_x, int child_y, int outset_window_geometry) {
+		int child_x, int child_y, int outset_window_geometry, uintptr_t checkpoint) {
 	int result = 1;
 	struct wl_display *display = wl_display_connect(display_name);
 	if (display == NULL) {
@@ -562,6 +564,9 @@ static int sysc_client_subsurface_sequence(const char *display_name, int keep_ch
 		result = 12;
 		goto done;
 	}
+	if (checkpoint != 0) {
+		sysc_subsurface_checkpoint(checkpoint);
+	}
 
 	updated_child_buffer = sysc_client_buffer(globals.shm, 48, 30);
 	if (updated_child_buffer == NULL) {
@@ -576,6 +581,9 @@ static int sysc_client_subsurface_sequence(const char *display_name, int keep_ch
 		result = 14;
 		goto done;
 	}
+	if (checkpoint != 0) {
+		sysc_subsurface_checkpoint(checkpoint);
+	}
 	if (keep_child) {
 		usleep(500000);
 		result = 0;
@@ -588,11 +596,17 @@ static int sysc_client_subsurface_sequence(const char *display_name, int keep_ch
 		result = 15;
 		goto done;
 	}
+	if (checkpoint != 0) {
+		sysc_subsurface_checkpoint(checkpoint);
+	}
 	wl_surface_destroy(child);
 	child = NULL;
 	if (wl_display_roundtrip(display) < 0) {
 		result = 16;
 		goto done;
+	}
+	if (checkpoint != 0) {
+		sysc_subsurface_checkpoint(checkpoint);
 	}
 
 	result = 0;
@@ -939,6 +953,7 @@ import "C"
 
 import (
 	"fmt"
+	"runtime/cgo"
 	"unsafe"
 )
 
@@ -968,13 +983,21 @@ func (c *BackgroundEffectClient) Close() {
 
 // RunSubsurfaceSequence creates an xdg toplevel with a subsurface, commits a
 // new child buffer, then destroys the child while leaving the root mapped.
-func RunSubsurfaceSequence(display string) error {
+// checkpoint waits for compositor observations before each next client state.
+func RunSubsurfaceSequence(display string, checkpoint func()) error {
+	handle := cgo.NewHandle(checkpoint)
+	defer handle.Delete()
 	name := C.CString(display)
 	defer C.free(unsafe.Pointer(name))
-	if code := int(C.sysc_client_subsurface_sequence(name, 0, 20, 18, 0)); code != 0 {
+	if code := int(C.sysc_client_subsurface_sequence(name, 0, 20, 18, 0, C.uintptr_t(handle))); code != 0 {
 		return fmt.Errorf("Wayland subsurface client failed at step %d", code)
 	}
 	return nil
+}
+
+//export sysc_subsurface_checkpoint
+func sysc_subsurface_checkpoint(checkpoint C.uintptr_t) {
+	cgo.Handle(checkpoint).Value().(func())()
 }
 
 // RunSubsurfaceWithChildAt keeps a mapped subsurface at the requested offset
@@ -982,7 +1005,7 @@ func RunSubsurfaceSequence(display string) error {
 func RunSubsurfaceWithChildAt(display string, x, y int) error {
 	name := C.CString(display)
 	defer C.free(unsafe.Pointer(name))
-	if code := int(C.sysc_client_subsurface_sequence(name, 1, C.int(x), C.int(y), 0)); code != 0 {
+	if code := int(C.sysc_client_subsurface_sequence(name, 1, C.int(x), C.int(y), 0, 0)); code != 0 {
 		return fmt.Errorf("Wayland subsurface client failed at step %d", code)
 	}
 	return nil
@@ -993,7 +1016,7 @@ func RunSubsurfaceWithChildAt(display string, x, y int) error {
 func RunWindowGeometryOutsetWithChild(display string) error {
 	name := C.CString(display)
 	defer C.free(unsafe.Pointer(name))
-	if code := int(C.sysc_client_subsurface_sequence(name, 1, 80, 50, 1)); code != 0 {
+	if code := int(C.sysc_client_subsurface_sequence(name, 1, 80, 50, 1, 0)); code != 0 {
 		return fmt.Errorf("Wayland outset geometry client failed at step %d", code)
 	}
 	return nil

@@ -423,7 +423,11 @@ func TestOverviewProjectionSurvivesBufferCommitAndUnmap(t *testing.T) {
 
 	var clientError error
 	go func() {
-		clientError = testclient.RunSubsurfaceSequence(c.SocketName())
+		clientError = testclient.RunSubsurfaceSequence(c.SocketName(), func() {
+			// A Wayland roundtrip can finish before the eventfd drains Post.
+			// Sample this state before the client commits or destroys the next.
+			onCompositor(t, c, func() {})
+		})
 		close(clientReturned)
 		select {
 		case <-rootDestroyed:
