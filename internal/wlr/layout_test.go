@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"slices"
 	"testing"
+	"time"
 	"unsafe"
 
 	"github.com/Nomadcxx/sysc-compositor/internal/bind"
@@ -917,25 +918,56 @@ func TestWindowedFullscreenFromClientFullscreenRestoresFloatingPlacement(t *test
 	runClient(t, c, []string{"weston-terminal"}, nil, nil)
 }
 
-func TestWindowedFullscreenSurvivesUnmapAndRemap(t *testing.T) {
-	model := wm.New()
-	model.AddOutput("DP-1", layout.Bounds{Width: 1000, Height: 800}, 500, 16)
-	model.MapWindow(1, "DP-1")
-	bounds := layout.Bounds{X: 180, Y: 130, Width: 420, Height: 280}
-	if !model.SetWindowFloating(1, true, bounds) || !model.SetWindowedFullscreen(1, true) {
-		t.Fatal("could not set up floating windowed fullscreen")
-	}
-	model.RemoveWindow(1)
-
-	c := &Compositor{model: model}
-	c.mapWindowAfterUnmap(&toplevelView{id: 1}, "DP-1", true)
-
-	window, ok := findWindowSnapshot(model.Snapshot().Windows, 1)
-	if !ok || window.Fullscreen || !window.WindowedFullscreen || !window.Tile.Floating {
-		t.Fatalf("remapped window = %+v, %t, want floating windowed fullscreen", window, ok)
-	}
-	if got := [4]int{window.Tile.X, window.Tile.Y, window.Tile.Width, window.Tile.Height}; got != [4]int{bounds.X, bounds.Y, bounds.Width, bounds.Height} {
-		t.Errorf("remapped floating bounds = %v, want %v", got, bounds)
+func TestWindowRemapRetiresItsPublicID(t *testing.T) {
+	for _, mode := range []string{"tiled", "floating", "windowed-fullscreen"} {
+		t.Run(mode, func(t *testing.T) {
+			model := wm.New()
+			model.AddOutput("DP-1", layout.Bounds{Width: 1000, Height: 800}, 500, 16)
+			model.MapWindow(1, "DP-1")
+			bounds := layout.Bounds{X: 180, Y: 130, Width: 420, Height: 280}
+			if mode == "tiled" {
+				model.ResizeWindow(1, 16, 16, bounds.Width, bounds.Height, layout.ResizeOptions{ResizeWidth: true, ResizeHeight: true})
+			} else {
+				model.SetWindowFloating(1, true, bounds)
+			}
+			if mode == "windowed-fullscreen" {
+				model.SetWindowedFullscreen(1, true)
+			}
+			before := model.Snapshot().Windows[0]
+			model.RemoveWindow(1)
+			c := &Compositor{model: model, nextViewID: 1}
+			view := &toplevelView{id: 1, focusTimestamp: time.Second, hasFocusTimestamp: true}
+			c.mapWindowAfterUnmap(view, "DP-1", mode == "windowed-fullscreen")
+			if view.id != 2 {
+				t.Fatalf("remapped ID = %d, want fresh ID 2", view.id)
+			}
+			window, ok := findWindowSnapshot(model.Snapshot().Windows, view.id)
+			if !ok || window.Tile.Width != before.Tile.Width || window.Tile.Height != before.Tile.Height ||
+				window.Tile.Floating != before.Tile.Floating || window.WindowedFullscreen != before.WindowedFullscreen || window.Fullscreen {
+				t.Fatalf("remapped window = %+v, %t, want retained placement %+v", window, ok, before)
+			}
+			if mode != "tiled" && (window.Tile.X != bounds.X || window.Tile.Y != bounds.Y) {
+				t.Errorf("remapped floating position = (%d,%d), want (%d,%d)", window.Tile.X, window.Tile.Y, bounds.X, bounds.Y)
+			}
+			retiredID := uint64(1)
+			if model.FocusWindow(retiredID) || c.FocusWindow(retiredID) || c.CloseWindow(&retiredID) {
+				t.Error("retired ID still addresses a window")
+			}
+			if view.hasFocusTimestamp || view.focusTimestamp != 0 {
+				t.Error("remap retained the previous mapping's focus timestamp")
+			}
+			model.RemoveWindow(2)
+			c.mapWindowAfterUnmap(view, "DP-1", false)
+			if view.id != 3 {
+				t.Fatalf("second remap ID = %d, want 3", view.id)
+			}
+			model.DestroyWindow(3)
+			model.MapWindow(1, "DP-1")
+			window, _ = findWindowSnapshot(model.Snapshot().Windows, 1)
+			if window.Tile.Floating || window.Tile.Width != 500 || window.Tile.Height != 768 || window.WindowedFullscreen {
+				t.Errorf("retired ID still holds policy state: %+v", window)
+			}
+		})
 	}
 }
 

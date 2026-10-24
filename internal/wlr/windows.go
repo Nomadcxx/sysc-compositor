@@ -37,7 +37,7 @@ import (
 )
 
 // WindowInfo is an immutable snapshot of one mapped toplevel. ID is stable for
-// the window's lifetime and never reused within a run.
+// this mapping and never reused within a run, including after unmap/remap.
 type WindowInfo struct {
 	ID                uint64
 	AppID, Title      *string
@@ -195,7 +195,11 @@ func (c *Compositor) reapplyWindowRules() {
 }
 
 func (c *Compositor) mapWindowAfterUnmap(view *toplevelView, output string, clientFullscreen bool) {
-	c.model.MapWindow(view.id, output)
+	oldID := view.id
+	c.nextViewID++
+	view.id = c.nextViewID
+	view.focusTimestamp, view.hasFocusTimestamp = 0, false
+	c.model.RemapWindow(oldID, view.id, output)
 	if !c.model.IsWindowedFullscreen(view.id) {
 		c.model.SetFullscreen(view.id, clientFullscreen)
 	}

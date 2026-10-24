@@ -287,6 +287,44 @@ func (m *Model) mapWindowOnWorkspace(id uint64, out *outputState, workspace *wor
 	}
 }
 
+// RemapWindow moves an unmapped toplevel's retained policy to its fresh mapping
+// ID, retiring the old key before adding it to an output again. The caller owns
+// ID allocation and must supply a new, unused ID.
+func (m *Model) RemapWindow(oldID, newID uint64, output string) bool {
+	if oldID == 0 || newID == 0 || oldID == newID {
+		return false
+	}
+	if _, mapped := m.windows[oldID]; mapped {
+		return false
+	}
+	if _, mapped := m.windows[newID]; mapped {
+		return false
+	}
+	if value, ok := m.resizedWindows[oldID]; ok {
+		m.resizedWindows[newID] = value
+	}
+	if value, ok := m.floatingWindows[oldID]; ok {
+		m.floatingWindows[newID] = value
+	}
+	if value, ok := m.fullscreenFloat[oldID]; ok {
+		m.fullscreenFloat[newID] = value
+	}
+	if value, ok := m.fullscreen[oldID]; ok {
+		m.fullscreen[newID] = value
+	}
+	if value, ok := m.windowedFull[oldID]; ok {
+		m.windowedFull[newID] = value
+	}
+	if value, ok := m.urgent[oldID]; ok {
+		m.urgent[newID] = value
+	}
+	if value, ok := m.sizeHints[oldID]; ok {
+		m.sizeHints[newID] = value
+	}
+	m.DestroyWindow(oldID)
+	return m.MapWindow(newID, output)
+}
+
 // MapWindowToWorkspace places a new toplevel on a specific stable workspace.
 func (m *Model) MapWindowToWorkspace(id, workspaceID uint64) bool {
 	if id == 0 || m.windows[id].workspaceID != 0 {

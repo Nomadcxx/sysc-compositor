@@ -343,10 +343,14 @@ func TestWindowOpenAndCloseAnimateReferencedBuffers(t *testing.T) {
 	checked := false
 	redraw := make(chan struct{})
 	mapCount := 0
+	var initialID uint64
 	remapOpened := false
 	c.viewMapped = func(view *toplevelView) {
 		mapCount++
 		if mapCount > 1 {
+			if view.id == initialID || c.FocusWindow(initialID) || c.CloseWindow(&initialID) {
+				t.Error("remap reused its old public window ID")
+			}
 			key := animationKey{owner: view.id, property: "open-opacity"}
 			if !view.openAnimationStarted || view.openAnimationFinished || view.presentationOpacity != 0 || !c.hasAnimation(key) {
 				t.Errorf("remapped open state = started:%v finished:%v opacity:%v animating:%v", view.openAnimationStarted, view.openAnimationFinished, view.presentationOpacity, c.hasAnimation(key))
@@ -354,6 +358,7 @@ func TestWindowOpenAndCloseAnimateReferencedBuffers(t *testing.T) {
 			remapOpened = true
 			return
 		}
+		initialID = view.id
 		if view.presentationOpacity != 0 {
 			t.Errorf("new window presentation opacity = %v, want 0 at spring start", view.presentationOpacity)
 			c.Terminate()
