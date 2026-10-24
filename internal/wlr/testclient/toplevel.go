@@ -831,6 +831,18 @@ func StartToplevelClient(display string, timeout time.Duration) (*ToplevelClient
 	return &ToplevelClient{state: state}, nil
 }
 
+// CommitBuffer attaches and commits the client's existing toplevel buffer,
+// including after a test forces the server-side surface to unmap.
+func (c *ToplevelClient) CommitBuffer() error {
+	C.wl_surface_attach(c.state.surface, c.state.buffer, 0, 0)
+	C.wl_surface_damage(c.state.surface, 0, 0, 200, 150)
+	C.wl_surface_commit(c.state.surface)
+	if C.wl_display_roundtrip(c.state.display) < 0 {
+		return fmt.Errorf("Wayland toplevel buffer commit failed: %s", c.failure())
+	}
+	return nil
+}
+
 // Next waits up to timeout for the notification's next event and returns
 // "idled", "resumed", or "" when none came.
 func (c *ToplevelClient) Next(timeout time.Duration) (string, error) {

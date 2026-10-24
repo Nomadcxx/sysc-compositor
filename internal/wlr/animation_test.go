@@ -341,6 +341,7 @@ func TestWindowOpenAndCloseAnimateReferencedBuffers(t *testing.T) {
 		WindowRules: []config.WindowRule{{GeometryCornerRadius: &radius, ClipToGeometry: &clip}},
 	})
 	checked := false
+	redraw := make(chan struct{})
 	mapCount := 0
 	remapOpened := false
 	c.viewMapped = func(view *toplevelView) {
@@ -425,6 +426,7 @@ func TestWindowOpenAndCloseAnimateReferencedBuffers(t *testing.T) {
 									c.Terminate()
 									return
 								}
+								close(redraw)
 								time.AfterFunc(1200*time.Millisecond, func() {
 									_ = c.Post(func() {
 										if len(c.closingNodes) != 0 {
@@ -448,7 +450,38 @@ func TestWindowOpenAndCloseAnimateReferencedBuffers(t *testing.T) {
 			})
 		})
 	}
-	runClient(t, c, []string{"weston-terminal"}, nil, nil)
+	clientDone := make(chan struct{})
+	stop := make(chan struct{})
+	go func() {
+		defer close(clientDone)
+		client, err := testclient.StartToplevelClient(c.SocketName(), time.Hour)
+		if err != nil {
+			t.Error(err)
+			c.Terminate()
+			return
+		}
+		defer client.Close()
+		select {
+		case <-redraw:
+			// The forced server-side unmap does not ask a client to draw.
+			// Commit explicitly; an idle client need not repaint on DRM.
+			if err := client.CommitBuffer(); err != nil {
+				t.Error(err)
+				c.Terminate()
+			}
+		case <-stop:
+			return
+		}
+		<-stop
+	}()
+	watchdog := time.AfterFunc(5*time.Second, c.Terminate)
+	err := c.Run()
+	watchdog.Stop()
+	close(stop)
+	<-clientDone
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !checked {
 		t.Fatal("nested window open and close animation check did not complete")
 	}

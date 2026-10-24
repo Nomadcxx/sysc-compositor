@@ -4,5 +4,3 @@
 # quarantined test that passes is reported so its line can go.
 # M7: an overview projection test that is flaky in lane 2.
 TestOverviewProjectionSurvivesBufferCommitAndUnmap sysc-1640
-# M8: a window remap animation test that fails in lane 2.
-TestWindowOpenAndCloseAnimateReferencedBuffers sysc-1642
