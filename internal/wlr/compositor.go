@@ -219,6 +219,7 @@ type Compositor struct {
 	activeOutputName           string
 	stateChanged               func()
 	lastWindowState            []WindowInfo
+	foreign                    *foreignToplevelProtocol
 	recentWindows              config.RecentWindows
 	mruBindings                []bind.Binding
 	switcher                   switcher
@@ -493,6 +494,9 @@ func NewWith(opts Options) (*Compositor, error) {
 	if !c.createCaptureGlobals() {
 		return nil, errors.New("capture or clipboard global create failed")
 	}
+	if err := c.createForeignToplevels(); err != nil {
+		return nil, err
+	}
 	// xdg-output gives clients output names and logical geometry; waybar and
 	// grim refuse to start without it, and Niri advertises it.
 	if C.wlr_xdg_output_manager_v1_create(c.display, c.layout) == nil {
@@ -681,6 +685,7 @@ func (c *Compositor) WorkspaceSnapshot() wm.Snapshot {
 }
 
 func (c *Compositor) notifyStateChanged() {
+	c.syncForeignToplevels()
 	if c.stateChanged != nil {
 		c.stateChanged()
 	}
@@ -744,6 +749,7 @@ func (c *Compositor) Destroy() {
 		c.animationTimer = nil
 	}
 	for _, view := range c.views {
+		c.closeForeignToplevel(view)
 		if view.closeSnapshotTimer != nil {
 			view.closeSnapshotTimer.Stop()
 			view.closeSnapshotTimer = nil
@@ -806,6 +812,10 @@ func (c *Compositor) Destroy() {
 		c.display = nil
 	}
 	c.destroyBackgroundEffectProtocol()
+	if c.foreign != nil {
+		c.foreign.handle.Delete()
+		c.foreign = nil
+	}
 }
 
 func (c *Compositor) destroyBackend() {

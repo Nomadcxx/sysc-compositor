@@ -69,13 +69,16 @@ static const struct wl_message sysc_idle_xdg_surface_events[] = {{"configure", "
 static const struct wl_interface sysc_idle_xdg_surface_interface = {
 	"xdg_surface", 1, 5, sysc_idle_xdg_surface_requests, 1, sysc_idle_xdg_surface_events,
 };
-static const struct wl_message sysc_idle_xdg_toplevel_requests[] = {{"destroy", "", NULL}};
+static const struct wl_message sysc_idle_xdg_toplevel_requests[] = {
+	{"destroy", "", NULL}, {"set_parent", "?o", NULL},
+	{"set_title", "s", NULL}, {"set_app_id", "s", NULL},
+};
 static const struct wl_message sysc_idle_xdg_toplevel_events[] = {
 	{"configure", "iia", NULL},
 	{"close", "", NULL},
 };
 static const struct wl_interface sysc_idle_xdg_toplevel_interface = {
-	"xdg_toplevel", 1, 1, sysc_idle_xdg_toplevel_requests, 2, sysc_idle_xdg_toplevel_events,
+	"xdg_toplevel", 1, 4, sysc_idle_xdg_toplevel_requests, 2, sysc_idle_xdg_toplevel_events,
 };
 static const struct wl_message sysc_idle_notifier_requests[] = {
 	{"destroy", "", NULL},
@@ -258,6 +261,7 @@ static const struct wl_interface sysc_input_popup_interface = {
 #define SYSC_IDLE_EVENTS 32
 
 struct sysc_idle_client {
+	bool close_requested;
 	struct wl_display *display;
 	struct wl_compositor *compositor;
 	struct wl_shm *shm;
@@ -354,6 +358,7 @@ static void sysc_idle_toplevel_configure(void *data, struct wl_proxy *proxy,
 		int32_t width, int32_t height, struct wl_array *states) {
 }
 static void sysc_idle_toplevel_close(void *data, struct wl_proxy *proxy) {
+	((struct sysc_idle_client *)data)->close_requested = true;
 }
 static const struct {
 	void (*configure)(void *, struct wl_proxy *, int32_t, int32_t, struct wl_array *);
@@ -629,6 +634,11 @@ static int sysc_client_unlock_pointer(struct sysc_idle_client *c) {
 	return wl_display_roundtrip(c->display) < 0 ? 1 : 0;
 }
 
+static int sysc_client_set_identity(struct sysc_idle_client *c, const char *title, const char *app_id) {
+	wl_proxy_marshal_flags(c->toplevel, 2, NULL, 1, 0, title);
+	wl_proxy_marshal_flags(c->toplevel, 3, NULL, 1, 0, app_id);
+	return wl_display_roundtrip(c->display) < 0 ? -1 : 0;
+}
 static bool sysc_client_pointer_locked(struct sysc_idle_client *c) { return c->pointer_locked; }
 static double sysc_client_relative_dx(struct sysc_idle_client *c) { return c->relative_dx; }
 static double sysc_client_relative_dy(struct sysc_idle_client *c) { return c->relative_dy; }
@@ -842,6 +852,18 @@ func (c *ToplevelClient) CommitBuffer() error {
 	}
 	return nil
 }
+
+func (c *ToplevelClient) SetIdentity(title, appID string) error {
+	t, a := C.CString(title), C.CString(appID)
+	defer C.free(unsafe.Pointer(t))
+	defer C.free(unsafe.Pointer(a))
+	if C.sysc_client_set_identity(c.state, t, a) != 0 {
+		return fmt.Errorf("set toplevel identity failed")
+	}
+	return nil
+}
+
+func (c *ToplevelClient) CloseRequested() bool { return bool(c.state.close_requested) }
 
 // Next waits up to timeout for the notification's next event and returns
 // "idled", "resumed", or "" when none came.
