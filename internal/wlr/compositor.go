@@ -415,7 +415,7 @@ func NewWith(opts Options) (*Compositor, error) {
 		return nil, errors.New("wlr_backend_autocreate failed")
 	}
 	var err error
-	c.modKey, err = bind.ResolveModKey(opts.ModKey, opts.ModKeyNested, bool(C.sysc_backend_is_nested(c.backend)))
+	c.modKey, err = bind.ResolveModKey(opts.ModKey, opts.ModKeyNested, c.nested())
 	if err != nil {
 		return nil, err
 	}
@@ -587,8 +587,7 @@ func normalizeOptions(opts Options) Options {
 // Reconfigure applies a parsed candidate on the compositor thread.
 func (c *Compositor) Reconfigure(opts Options) error {
 	opts = normalizeOptions(opts)
-	modKey, err := bind.ResolveModKey(opts.ModKey, opts.ModKeyNested,
-		bool(C.sysc_backend_is_nested(c.backend)))
+	modKey, err := bind.ResolveModKey(opts.ModKey, opts.ModKeyNested, c.nested())
 	if err != nil {
 		return err
 	}
@@ -713,6 +712,12 @@ func (c *Compositor) Scene() unsafe.Pointer { return unsafe.Pointer(c.scene) }
 func (c *Compositor) Run() error {
 	C.wl_display_run(c.display)
 	return nil
+}
+
+// nested reports whether c runs in a host window on the nested Wayland
+// backend, rather than on DRM or headless.
+func (c *Compositor) nested() bool {
+	return bool(C.sysc_backend_is_nested(c.backend))
 }
 
 // Terminate asks Run to return. It is safe from any goroutine and at any

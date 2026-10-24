@@ -92,12 +92,7 @@ func TestInjectedInputIsReleasedAndBlockedByLockOrBlanking(t *testing.T) {
 		t.Fatal("compositor does not gate injected input on lock and monitor power")
 	}
 	buttonEvent := regexp.MustCompile(`\} wl_pointer#(\d+)\.button\(\d+, \d+, (\d+), (\d+)\)`)
-	var keyboard *fakeKeyboard
-	t.Cleanup(func() {
-		if keyboard != nil {
-			keyboard.remove()
-		}
-	})
+	keyboard := attachFakeKeyboard(t, c)
 	c.viewMapped = func(view *toplevelView) {
 		c.focusView(view)
 		x, y := c.viewCenter(view)
@@ -139,13 +134,8 @@ func TestInjectedInputIsReleasedAndBlockedByLockOrBlanking(t *testing.T) {
 		}
 		checkBlocked("locked")
 
-		keyboard = c.addFakeKeyboard()
-		if keyboard == nil {
-			t.Error("could not attach the user-seat test keyboard while locked")
-		} else {
-			keyboard.key(keyA, true)
-			keyboard.key(keyA, false)
-		}
+		keyboard.key(keyA, true)
+		keyboard.key(keyA, false)
 		gate.unsealSession()
 		if err := c.InjectKey("agent", keyA, true); err != nil {
 			t.Errorf("injected key press after unlock: %v", err)
@@ -166,10 +156,8 @@ func TestInjectedInputIsReleasedAndBlockedByLockOrBlanking(t *testing.T) {
 		if gate.injectedInputBlocked() {
 			t.Error("PowerOnMonitors left injected input blocked")
 		}
-		if keyboard != nil {
-			keyboard.key(keyA, true)
-			keyboard.key(keyA, false)
-		}
+		keyboard.key(keyA, true)
+		keyboard.key(keyA, false)
 	}
 	buttonEvents := 0
 	var lines []string

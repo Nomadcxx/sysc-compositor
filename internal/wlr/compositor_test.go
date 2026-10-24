@@ -134,6 +134,9 @@ func TestReconfigureUpdatesCompositorSettings(t *testing.T) {
 
 func TestNestedSessionEndsWhenLastOutputCloses(t *testing.T) {
 	c := newNested(t)
+	if !c.nested() {
+		t.Skip("needs the nested backend: it closes the host window; a DRM session outlives its outputs")
+	}
 	if got := c.EnabledOutputs(); got == 0 {
 		t.Fatal("nested session started without an output")
 	}
