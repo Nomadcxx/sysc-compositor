@@ -96,7 +96,7 @@ Results with the fix. The shots are `gate-session.png` (the session with sysc-sh
 **Found on the way:**
 - sysc-shell exits with status 1 when it is stopped after the compositor has gone ("shutdown
   roundtrip … connection reset by peer"). The unit ends `failed`, although the next login still
-  starts it. This is a sysc-shell bug, tracked in bd; under Niri the order is the same.
+  starts it. This is a sysc-shell bug, `sysc-1651`; under Niri the order is the same.
 - With no config the session's binds are all "(not bound)". Niri writes a default config on first
   run; this compositor doesn't.
 
