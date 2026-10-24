@@ -8,7 +8,15 @@ import (
 	"sync"
 )
 
-const sessionTarget = "graphical-session.target"
+// systemd refuses to start graphical-session.target by hand
+// (RefuseManualStart=yes), so the session starts startTarget, which binds it, as
+// niri.service does for Niri. Stopping is allowed, and is done on
+// sessionTarget itself: a unit with Requisite= on it, such as sysc-shell.service,
+// keeps it needed after startTarget stops. startTarget stops with it (BindsTo=).
+const (
+	startTarget   = "sysc-session.target"
+	sessionTarget = "graphical-session.target"
+)
 
 var baseEnvironment = []string{"WAYLAND_DISPLAY", "NIRI_SOCKET", "SYSC_SOCKET", "XDG_CURRENT_DESKTOP", "XDG_SESSION_TYPE"}
 
@@ -68,7 +76,7 @@ func Activate(environment Environment) (*Lifecycle, error) {
 		lifecycle.restoreProcessEnvironment()
 		return nil, err
 	}
-	if err := run("systemctl", "--user", "start", sessionTarget); err != nil {
+	if err := run("systemctl", "--user", "start", startTarget); err != nil {
 		lifecycle.clearPublishedEnvironment()
 		lifecycle.restoreProcessEnvironment()
 		return nil, err

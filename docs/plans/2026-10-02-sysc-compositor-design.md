@@ -262,7 +262,7 @@ Grouped for implementation (not for dropping):
 
 Match niri’s user-facing CLI well enough that scripts and docs keep working:
 
-- no args / `--session`: start compositor (session imports env, starts graphical-session.target)
+- no args / `--session`: start compositor (session imports env, starts sysc-session.target and so graphical-session.target)
 - `-c` / `--config`
 - `sysc-compositor msg [--json] …`  (thin JSON client of `$NIRI_SOCKET`)
 - `sysc-compositor msg action …`
@@ -392,7 +392,7 @@ sysc-compositor msg …
 
 Greeter kdl (already in sysc-greet): empty binds, animations off, spawn wallpaper + kitty, then `niri msg action quit --skip-confirmation`. That file must work unmodified.
 
-Session: import `WAYLAND_DISPLAY`, `NIRI_SOCKET`, `SYSC_SOCKET`, `DISPLAY`, `XDG_CURRENT_DESKTOP=niri:sysc`, `XDG_SESSION_TYPE=wayland`. Start `graphical-session.target` so sysc-shell.service and portals come up. Also start `sysc-session.target` if we ship one.
+Session: import `WAYLAND_DISPLAY`, `NIRI_SOCKET`, `SYSC_SOCKET`, `DISPLAY`, `XDG_CURRENT_DESKTOP=niri:sysc`, `XDG_SESSION_TYPE=wayland`. Start `sysc-session.target` (`share/systemd/user/`), which binds `graphical-session.target`, so sysc-shell.service and portals come up; systemd refuses to start `graphical-session.target` directly. On exit stop `graphical-session.target` itself, which systemd allows; `sysc-session.target` stops with it.
 
 ---
 
