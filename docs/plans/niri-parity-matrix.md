@@ -13,7 +13,7 @@ Legend: `[ ]` missing · `[~]` partial · `[x]` done.
 | Version | [x] | M2 — `sysc-compositor <version> (niri-ipc 26.4.0)` |
 | Outputs | [x] | M3 — wlroots output snapshots |
 | Workspaces | [x] | M3/M5/M6 — stable per-output IDs, names, active plus trailing empty workspace, dynamic indices |
-| Windows | [x] | M4 — mapped toplevels with stable IDs and logical geometry; offscreen centers fall back to the focused output |
+| Windows | [x] | M4 — mapped toplevels with stable IDs and logical geometry; M12 retires IDs on unmap and issues fresh IDs on remap while retaining placement (`TestWindowRemapRetiresItsPublicID`); offscreen centers fall back to the focused output |
 | Layers | [x] | M3 — mapped layer-shell surfaces |
 | KeyboardLayouts | [x] | M9 — configured XKB names and active index; `SwitchLayout` updates the active layout |
 | FocusedOutput | [x] | M3/M6 — active output follows keyboard focus; first connected output is the initial and disconnect fallback; monitor focus warps the pointer to output center |
@@ -137,7 +137,7 @@ M6 adds the window, column, floating, fullscreen, urgency, named-workspace, and 
 
 | Section | Status | Milestone |
 |---|---|---|
-| input | [~] | M2 keyboard xkb + repeat; M5 nested Mod defaults, core key binds, Mod+drag, and edge resize with tile dimensions retained across unmap/remap for the stable window ID; M6 adds its keyboard action subset; M7 adds overview gestures, hot corners, tiled insert hints, and DND edge scrolling; M9 adds layout switching and session locale defaults; physical input and client gesture delivery remain unverified; remaining input work is M10 |
+| input | [~] | M2 keyboard xkb + repeat; M5 nested Mod defaults, core key binds, Mod+drag, and edge resize with tile dimensions retained across unmap/remap; M12 transfers those dimensions to each fresh mapped-window ID; M6 adds its keyboard action subset; M7 adds overview gestures, hot corners, tiled insert hints, and DND edge scrolling; M9 adds layout switching and session locale defaults; physical input and client gesture delivery remain unverified; remaining input work is M10 |
 | output | [~] | M3 reports connected outputs, available/current modes, logical geometry, scale/transform, and VRR capability/state; M15 applies mode/refresh, scale, position, transform, power, and VRR settings |
 | layout | [~] | M5 gaps, default column width, scrolling columns, client min/max size bounds, centered window offsets, and retained pointer-resized dimensions; M7 insert hints and tiled drag placement; M8 focus ring, window shadow, rounded outer subsurface corners, geometry clipping, and clipped snapshot bounds. SceneFX shadows use one radius, so nonuniform corner rules use the top-left radius; direct-session visual calibration remains unverified |
 | binds | [~] | M5 core key subset plus M6 window, workspace, urgency, and monitor actions; M7 overview actions; unsupported later actions and mouse/scroll triggers warn |
