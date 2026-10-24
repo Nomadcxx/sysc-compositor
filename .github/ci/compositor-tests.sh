@@ -19,8 +19,8 @@ export WLR_DRM_DEVICES
 echo "WLR_DRM_DEVICES=$WLR_DRM_DEVICES"
 go generate ./internal/wlr
 
-quarantine=$(grep -v '^#' .github/ci/quarantine.txt | awk 'NF {print $1}' | sort -u)
-skips=$(grep -v '^#' .github/ci/skips.txt | awk 'NF {print $1}' | sort -u)
+quarantine=$(awk '!/^#/ && NF {print $1}' .github/ci/quarantine.txt | sort -u)
+skips=$(awk '!/^#/ && NF {print $1}' .github/ci/skips.txt | sort -u)
 status=0
 for pkg in ./internal/wlr ./internal/server; do
 	log=$(mktemp)

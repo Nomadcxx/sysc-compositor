@@ -1,6 +1,3 @@
-# Lane 2 tests known to fail on the DRM backend over vkms. Each line is a
-# top-level test name and the bd issue that tracks it. A test here may fail
-# or skip without failing the lane; any other failure or skip fails it, and a
-# quarantined test that passes is reported so its line can go.
-# M7: an overview projection test that is flaky in lane 2.
-TestOverviewProjectionSurvivesBufferCommitAndUnmap sysc-1640
+# Lane 2 tests known to fail on the DRM backend over vkms.
+# Each entry is a top-level test name and its tracking issue.
+# No tests are quarantined.
