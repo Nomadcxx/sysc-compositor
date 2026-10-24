@@ -115,8 +115,43 @@ that code.
 - With no config the session's binds are all "(not bound)". Niri writes a default config on first
   run; this compositor doesn't.
 
-**Still open:** agreety stood in for sysc-greet. Running sysc-greet with this repo's `niri` alias as
-the greeter compositor is the next run of this gate.
+### sysc-greet as the greeter
+
+Run the same day on `f5b761f`, with sysc-greet at `a390e38`. The VM was set up by hand the way
+sysc-greet's installer sets up its niri variant, without pulling niri from the AUR:
+- kitty installed;
+- the binary, `ascii_configs`, `fonts`, `wallpapers` and `themes` in `/usr/share/sysc-greet`;
+- `/etc/greetd/kitty.conf`;
+- the greeter user's home at `/var/lib/greeter`, in the video, render and input groups;
+- the installer's niri greeter config, copied word for word to `/etc/greetd/niri-greeter-config.kdl`.
+
+greetd runs `niri -c /etc/greetd/niri-greeter-config.kdl`, so this repo's `niri` alias is the
+greeter compositor.
+
+| Check | Result |
+|---|---|
+| `niri validate` accepts the installer's config as written | yes. It warns that `layout.center-focused-column` and `layout.border` are accepted but not applied; both are set to their defaults there. |
+| sysc-greet runs fullscreen in kitty and lists the session entry (`sysc-greet.png`) | yes: "sysc-compositor (Wayland)" |
+| Logging in runs the entry's `Exec`, `sysc-compositor-session` | yes. The service, `graphical-session.target` and sysc-shell came up with all five variables. |
+| The greeter's compositor quits after login (`niri msg action quit --skip-confirmation` in its config) | yes |
+| The greeter's compositor, a plain `-c` run, publishes nothing | the greeter user's systemd had no session variables and no `graphical-session.target` |
+| Quitting the session returns to sysc-greet | yes. It remembered the user and asked for the password only. |
+
+Not covered: gSlapper isn't in the VM, so the greeter's wallpaper daemon and its
+`place-within-backdrop` layer rule weren't exercised.
+
+With this run every check in `sysc-1631` has passed.
+
+### `sysc-1626`, checked here
+
+Run on `f5b761f` in lane2 mode. These three tests each passed 10 out of 10 runs with `-count=10`,
+and none stalled:
+- `TestWindowTransitionOpacityClampsUnderdampedOvershoot`
+- `TestWindowResizeScalesSnapshotWhileLayoutTargetsCommit`
+- `TestWindowResizeSnapshotPreservesGeometryClip`
+
+The watchdog bug that the 2026-10-22 review found next to it is already fixed on `main`. `sysc-1626`
+is closed as not a bug.
 
 ## Housekeeping
 
