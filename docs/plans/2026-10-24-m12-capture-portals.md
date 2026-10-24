@@ -145,3 +145,11 @@ Do not fake DRM capabilities to make a registry assertion pass. Record a missing
 5. Run lane 2 and the standing merge checks for the final changes. Tick only behavior proved by the relevant handler tests. Leave M12 open until capture/portal requirements and the assigned globals have their evidence; owner-only closures remain with the owner.
 
 **Stop condition:** M12's required behavior has passed the VM and CI gates, the matrix names the evidence, and the reviewed changes have merged. Do not start the smaller-item queue or M13–M15 as part of this milestone.
+
+## Execution record: mapped IDs, 2026-10-24
+
+Session recovery confirmed that PRs #54–#56 had merged and that the next work was this milestone. The owner approved the scoped system-libpipewire exception above during recovery.
+
+The first implementation keeps the initial ID reservation at role creation and allocates a fresh ID on remap. `wm.Model.RemapWindow` transfers the retained policy and clears the old keys; the remap also clears its previous focus timestamp. The pure-model `TestWindowRemapRetiresItsPublicID` failed on the previous reused ID, then passed for tiled, floating and windowed-fullscreen mappings, repeated remap, retired actions and retained-state cleanup. The existing open/close animation test now checks fresh IDs and rejection of the previous ID in a running compositor.
+
+Validation used the headless session VM under vkms with a private D-Bus session: `internal/wlr` passed in 55.027 s (166 top-level passes, two existing allowed skips), and `internal/server` passed in 2.439 s. Local named remap and constrained-size checks, vet, formatting, whitespace and builds of both entry points passed. Local code review found no critical or important issues. No host compositor test ran. These checks prove the identity step; portal and capture support still require their own implementation and gates.
