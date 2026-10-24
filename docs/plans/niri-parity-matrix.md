@@ -198,8 +198,8 @@ global is ticked only with its handler and a test (Q7). Versions follow the wlro
 | wp_presentation | [~] | M11 | advertised; the SceneFX scene sends feedback; no feedback test yet |
 | wp_single_pixel_buffer_manager_v1 | [~] | M11 | advertised; scene-handled; no client test yet |
 | wp_alpha_modifier_v1 | [~] | M11 | advertised; scene-handled; no client test yet |
-| ext_foreign_toplevel_list_v1 | [ ] | M12 | |
-| zwlr_foreign_toplevel_manager_v1 | [ ] | M12 | |
+| ext_foreign_toplevel_list_v1 | [x] | M12 | `TestForeignToplevelIdentifierMatchesIPCFromFirstAnnouncement`: decimal IPC identity, early/late binding, metadata, stop, destruction and remap |
+| zwlr_foreign_toplevel_manager_v1 | [~] | M12 | `TestForeignToplevelRequestsUseWindowPolicy`: metadata, focus/fullscreen/output state, activate/close/fullscreen, lock gating and inert handles; maximize/unmaximize await M15 column sizing |
 | foreign-toplevel image-capture source | [ ] | M12 | |
 | zwp_virtual_keyboard_manager_v1, zwlr_virtual_pointer_manager_v1 | [ ] | M12 | |
 | zwlr_gamma_control_manager_v1 | [ ] | M12 | |

@@ -184,6 +184,7 @@ func (g pointerGrab) resizeOptions() layout.ResizeOptions {
 }
 
 type toplevelView struct {
+	foreign                 *foreignToplevel
 	toplevel                *C.struct_wlr_xdg_toplevel
 	tree                    *C.struct_wlr_scene_tree
 	appearance              config.WindowRuleResult
@@ -1299,6 +1300,7 @@ func (c *Compositor) handleNewToplevel(data unsafe.Pointer) {
 			}
 		}
 		view.mapped = false
+		c.closeForeignToplevel(view)
 		view.presentationVisible = false
 		view.openAnimationStarted = false
 		view.openAnimationFinished = false
@@ -1532,6 +1534,7 @@ func (c *Compositor) handleToplevelDestroy(view *toplevelView) {
 	if view == nil {
 		return
 	}
+	c.closeForeignToplevel(view)
 	c.cancelViewAnimations(view)
 	c.cancelResizeAnimation(view)
 	if view.closeSnapshotTimer != nil {
