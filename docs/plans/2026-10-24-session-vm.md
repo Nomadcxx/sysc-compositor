@@ -61,52 +61,62 @@ doesn't have. The handover worried that CI's script picks the first `/dev/dri/ca
 
 ## The `--session` gate (`sysc-1631`)
 
-Boot with `./run.sh`. greetd runs agreety on tty1 with
-`--cmd 'systemd-cat -t sysc-compositor /usr/local/bin/sysc-compositor --session'`. The VM user has a
+Boot with `./run.sh`. greetd runs agreety on tty1 (`greetd-config.toml`). The VM user has a
 throwaway console password, typed with `qmp.py type`. The screen is captured with
 `gvnccapture 127.0.0.1:59`. QEMU can't `screendump` the `egl-headless` GL console ("no surface"), so
 `run.sh` adds a VNC server bound to localhost.
 
-**First login: it failed.** systemd refused `systemctl --user start graphical-session.target`
-(`RefuseManualStart=yes`), and the compositor exited back to the greeter. The M9 test used a fake
-`systemctl`, so it never saw the refusal. Niri never starts that target itself: `niri.service` has
-`BindsTo=graphical-session.target`. The fix is on the same branch as this record:
+### First run: `--session` could not start the session
 
-- `--session` starts `sysc-session.target` (`share/systemd/user/`, installed by `make install`). That
-  target binds `graphical-session.target`.
-- On exit it still stops `graphical-session.target`. The first fix stopped only the new target, and
-  the gate showed `graphical-session.target` staying up: sysc-shell's `Requisite=` keeps it "needed",
-  so `StopWhenUnneeded` never fires, and the shell kept restarting. systemd allows a manual stop.
+agreety ran `sysc-compositor --session` directly. systemd refused the compositor's
+`systemctl --user start graphical-session.target` (`RefuseManualStart=yes`), and the compositor
+exited back to the greeter. The M9 test used a fake `systemctl`, so it never saw the refusal.
 
-Results with the fix. The shots are `gate-session.png` (the session with sysc-shell's bar) and
-`gate-exit.png` (the greeter after quitting), in the assets directory.
+Niri never starts that target itself. `niri.service` has `BindsTo=graphical-session.target`, and
+the session entry runs `niri-session`, which starts the service, waits for it, then stops the
+session through `niri-shutdown.target` and unsets the variables. A first fix bound the target from
+a `sysc-session.target`. It worked, but it left the entry's bare `Exec` with no session at all, so
+the owner chose Niri's shape (2026-10-24). The branch now does this:
+
+- `--session` publishes the environment, and the compositor sends `READY=1` to `$NOTIFY_SOCKET` in
+  every mode, as Niri does. Neither touches a target.
+- `share/systemd/user/sysc-compositor.service` is `Type=notify` with `BindsTo=` and
+  `Before=graphical-session.target`, as `niri.service` is. `sysc-compositor-shutdown.target` is
+  `niri-shutdown.target`.
+- `share/bin/sysc-compositor-session` is `niri-session`'s systemd branch. The session entry's `Exec`
+  is now `/usr/local/bin/sysc-compositor-session`. `make install` installs all of these.
+
+### Results through the session entry's command
+
+greetd ran `agreety --cmd /usr/local/bin/sysc-compositor-session`, the entry's exact `Exec`. The
+shots are `gate-session.png` (the session with sysc-shell's bar) and `gate-exit.png` (the greeter
+after quitting), in the assets directory.
 
 | Check | Result |
 |---|---|
 | `WAYLAND_DISPLAY`, `NIRI_SOCKET`, `SYSC_SOCKET`, `XDG_CURRENT_DESKTOP=niri:sysc`, `XDG_SESSION_TYPE=wayland` in `systemctl --user show-environment` | yes |
 | The same five in a D-Bus-activated service's environment (`xdg-desktop-portal`, activated by a Settings call) | yes |
-| `sysc-session.target`, `graphical-session-pre.target`, `graphical-session.target` active | yes |
+| `sysc-compositor.service` (`Type=notify`), `graphical-session-pre.target`, `graphical-session.target`, `xdg-desktop-autostart.target` active; the target became active at the service's READY | yes |
 | `sysc-shell.service` started by the target, bar drawn | yes |
 | Portals: `xdg-desktop-portal` with the gnome and gtk backends from `niri-portals.conf` | yes. The gnome backend logs a missing `org.gnome.Mutter.ServiceChannel`, which is M12. |
 | locale1 and login1 clients in session mode | 2 system-bus connections. `localectl set-x11-keymap de` and then `us` changed `niri msg keyboard-layouts` live. The compositor also owns `org.freedesktop.ScreenSaver` on the user bus. |
 | Not in non-session mode | `sysc-compositor -c` nested in the VM session: no system-bus or user-bus connections |
-| On `niri msg action quit --skip-confirmation`: targets stop, portal backends stop, variables cleared, greeter back on tty1 | yes |
-| A second login after that | yes |
+| On `niri msg action quit --skip-confirmation`: the service and targets stop, the shell and portal backends stop, the variables are unset, greeter back on tty1 | yes |
+| On `kill -9` of the compositor: the script starts the shutdown target, everything above stops, the variables are unset, greeter back | yes; the service is left `failed` |
+| A login after the crash (the script's `reset-failed`) | yes |
+
+The locale1, D-Bus and non-session rows were checked with the first fix. This branch doesn't change
+that code.
 
 **Found on the way:**
 - sysc-shell exits with status 1 when it is stopped after the compositor has gone ("shutdown
-  roundtrip … connection reset by peer"). The unit ends `failed`, although the next login still
-  starts it. This is a sysc-shell bug, `sysc-1651`; under Niri the order is the same.
+  roundtrip … connection reset by peer"). This is a sysc-shell bug, `sysc-1651`; under Niri the order
+  is the same. `xdg-desktop-portal-gnome` exits 1 the same way, which isn't ours.
 - With no config the session's binds are all "(not bound)". Niri writes a default config on first
   run; this compositor doesn't.
 
-**Still open for the owner:**
-- `share/wayland-sessions/sysc-compositor.desktop` has `Exec=/usr/local/bin/sysc-compositor` with no
-  `--session`. A greeter that launches the entry gets no `graphical-session.target`, no shell and no
-  portals. Niri's entry runs `niri-session`. Whether the entry should change is the owner's decision;
-  this gate used greetd's command line instead.
-- Agreety stood in for sysc-greet. Running sysc-greet with this repo's `niri` alias as the greeter
-  compositor is the next run of this gate.
+**Still open:** agreety stood in for sysc-greet. Running sysc-greet with this repo's `niri` alias as
+the greeter compositor is the next run of this gate.
 
 ## Housekeeping
 
