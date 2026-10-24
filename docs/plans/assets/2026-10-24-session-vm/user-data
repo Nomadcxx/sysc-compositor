@@ -1,0 +1,12 @@
+#cloud-config
+users:
+  - name: nomadx
+    uid: 1000
+    groups: [wheel, video, render, input, seat]
+    shell: /bin/bash
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    lock_passwd: true
+    ssh_authorized_keys:
+      - <contents of id_ed25519.pub>
+growpart: {mode: auto, devices: ["/"]}
+resize_rootfs: true

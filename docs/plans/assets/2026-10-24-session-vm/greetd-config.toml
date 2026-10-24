@@ -1,0 +1,6 @@
+[terminal]
+vt = 1
+
+[default_session]
+command = "agreety --cmd 'systemd-cat -t sysc-compositor /usr/local/bin/sysc-compositor --session'"
+user = "greeter"
