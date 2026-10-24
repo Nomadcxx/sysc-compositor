@@ -72,7 +72,7 @@ func TestNestedModPointerGrabsUseEdgeResizeAndCursorImages(t *testing.T) {
 			c.Terminate()
 			return
 		}
-		keyboard.key(56, true) // Left Alt is Mod in a nested Wayland backend.
+		keyboard.key(c.modKeycode(), true)
 		if !c.modifierActive(c.modKey) {
 			t.Error("nested Alt is not active as the compositor Mod key")
 		}
@@ -105,7 +105,7 @@ func TestNestedModPointerGrabsUseEdgeResizeAndCursorImages(t *testing.T) {
 			t.Errorf("Mod+LMB grab = (%+v, %q), want move and grabbing cursor", c.pointerGrab, c.drawnImage)
 		}
 		pointer.button(buttonLeft, false)
-		keyboard.key(56, false)
+		keyboard.key(c.modKeycode(), false)
 		c.Terminate()
 	}
 	runClient(t, c, []string{"weston-terminal"}, nil, nil)
@@ -139,7 +139,7 @@ func TestModDragPersistsFloatingWindowPositionOnRelease(t *testing.T) {
 			c.Terminate()
 			return
 		}
-		keyboard.key(56, true) // Left Alt is Mod in a nested Wayland backend.
+		keyboard.key(c.modKeycode(), true)
 		pointer.moveTo(c.viewCenter(view))
 		pointer.button(buttonLeft, true)
 		if c.pointerGrab == nil || c.pointerGrab.mode != grabMove {

@@ -1,0 +1,7 @@
+# Lane 2 tests that must skip on the DRM backend over vkms, each with the
+# reason it gives. A test here may skip without failing the lane, but never
+# fail; one that passes is reported so its line can go. The script reads
+# top-level results only: TestDmabufClientMaps/maps also skips here, because
+# vkms has no render node for its client to allocate on.
+TestNestedSessionEndsWhenLastOutputCloses needs the nested backend: it closes the host window
+TestOutputFollowsHostResize needs the nested backend: the host resizes its window

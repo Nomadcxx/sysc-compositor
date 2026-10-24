@@ -1165,7 +1165,7 @@ func TestPointerResizeSurvivesWorkspaceModelReapplication(t *testing.T) {
 			c.Terminate()
 			return
 		}
-		keyboard.key(56, true) // Left Alt is Mod in a nested Wayland backend.
+		keyboard.key(c.modKeycode(), true)
 		x, y := view.treePosition()
 		pointer.moveTo(float64(x+1), float64(y+1))
 		pointer.button(buttonRight, true)
@@ -1215,16 +1215,17 @@ func TestWorkspaceBindActivatesDynamicWorkspace(t *testing.T) {
 				c.Terminate()
 				return
 			}
-			keyboard.key(56, true) // Left Alt is Mod in a nested Wayland backend.
-			if got := c.activeBindModifiers(); got != bind.Modifiers(bind.ModifierAlt) {
-				t.Errorf("active modifiers after nested Alt = %b, want Alt", got)
+			keyboard.key(c.modKeycode(), true)
+			// Which key Mod is per backend is TestResolveModKeyByBackend's.
+			if got := c.activeBindModifiers(); got != bind.Modifiers(c.modKey) {
+				t.Errorf("active modifiers after Mod = %b, want %b", got, c.modKey)
 			}
-			if c.modKey != bind.ModifierAlt || c.bindings[0].Chord.Modifiers != bind.Modifiers(bind.ModifierAlt) {
-				t.Errorf("nested resolved modifier = %v, chord = %+v, want Alt", c.modKey, c.bindings[0].Chord)
+			if c.bindings[0].Chord.Modifiers != bind.Modifiers(c.modKey) {
+				t.Errorf("chord = %+v, want it resolved to Mod %v", c.bindings[0].Chord, c.modKey)
 			}
 			keyboard.key(10, true) // Top row 9.
 			keyboard.key(10, false)
-			keyboard.key(56, false)
+			keyboard.key(c.modKeycode(), false)
 			snapshot := c.WorkspaceSnapshot()
 			if len(snapshot.Workspaces) != 2 || snapshot.Workspaces[0].IsActive || !snapshot.Workspaces[1].IsActive {
 				t.Errorf("after Mod+9, workspaces = %+v; want workspace 2 active", snapshot.Workspaces)
@@ -1283,17 +1284,17 @@ func TestNestedKeyboardBindNamesAndMovesWindowToNamedWorkspace(t *testing.T) {
 			c.Terminate()
 			return
 		}
-		keyboard.key(56, true) // Left Alt is Mod in a nested Wayland backend.
+		keyboard.key(c.modKeycode(), true)
 		keyboard.key(49, true) // N: name the active workspace.
 		keyboard.key(49, false)
-		keyboard.key(56, false)
+		keyboard.key(c.modKeycode(), false)
 		buildID, named := c.model.WorkspaceIDByName("Build")
 		if !named {
 			t.Error("set-workspace-name bind did not name the focused workspace")
 			c.Terminate()
 			return
 		}
-		keyboard.key(56, true)
+		keyboard.key(c.modKeycode(), true)
 		keyboard.key(17, true) // W: move the active window to the named workspace.
 		snapshot := c.WorkspaceSnapshot()
 		workID, workFound := c.model.WorkspaceIDByName("Work")
@@ -1307,7 +1308,7 @@ func TestNestedKeyboardBindNamesAndMovesWindowToNamedWorkspace(t *testing.T) {
 			t.Fatal("new workspace name reused Work's stable ID")
 		}
 		keyboard.key(17, false)
-		keyboard.key(56, false)
+		keyboard.key(c.modKeycode(), false)
 		c.Terminate()
 	}
 	runClient(t, c, []string{"weston-terminal"}, nil, nil)
@@ -1331,17 +1332,17 @@ func TestFloatingBindsMoveMappedWindowBetweenLayers(t *testing.T) {
 			c.Terminate()
 			return
 		}
-		keyboard.key(56, true)
+		keyboard.key(c.modKeycode(), true)
 		keyboard.key(33, true) // F
 		keyboard.key(33, false)
-		keyboard.key(56, false)
+		keyboard.key(c.modKeycode(), false)
 		if windows := c.WorkspaceSnapshot().Windows; len(windows) != 1 || !windows[0].Tile.Floating {
 			t.Errorf("after Mod+F, windows = %+v, want one floating window", windows)
 		}
-		keyboard.key(56, true)
+		keyboard.key(c.modKeycode(), true)
 		keyboard.key(20, true) // T
 		keyboard.key(20, false)
-		keyboard.key(56, false)
+		keyboard.key(c.modKeycode(), false)
 		if windows := c.WorkspaceSnapshot().Windows; len(windows) != 1 || windows[0].Tile.Floating {
 			t.Errorf("after Mod+T, windows = %+v, want one tiled window", windows)
 		}
@@ -1372,10 +1373,10 @@ func TestSpawnBindUsesServerCallback(t *testing.T) {
 			c.Terminate()
 			return
 		}
-		keyboard.key(56, true) // Left Alt is Mod in a nested Wayland backend.
+		keyboard.key(c.modKeycode(), true)
 		keyboard.key(28, true) // Return.
 		keyboard.key(28, false)
-		keyboard.key(56, false)
+		keyboard.key(c.modKeycode(), false)
 		c.Terminate()
 	}
 	runClient(t, c, []string{"weston-terminal"}, nil, nil)
@@ -1429,22 +1430,22 @@ func TestNestedKeyboardBindFocusesAndMovesTabbedWindowsVertically(t *testing.T) 
 			keyboard.key(mods[i], false)
 		}
 	}
-	press([]uint32{56}, 36) // Mod+J: focus window down.
+	press([]uint32{c.modKeycode()}, 36) // Mod+J: focus window down.
 	if got, _ := c.model.ActiveWindow(); got != 2 {
 		t.Fatalf("active window after Mod+J = %d, want 2", got)
 	}
-	press([]uint32{56, 29}, 36) // Mod+Ctrl+J: move window down.
+	press([]uint32{c.modKeycode(), 29}, 36) // Mod+Ctrl+J: move window down.
 	if got, want := windowIDs(c.WorkspaceSnapshot()), []uint64{1, 3, 2}; !slices.Equal(got, want) {
 		t.Fatalf("window order after move down = %v, want %v", got, want)
 	}
 	if got, _ := c.model.ActiveWindow(); got != 2 {
 		t.Fatalf("active window after move down = %d, want moved window 2", got)
 	}
-	press([]uint32{56, 29}, 37) // Mod+Ctrl+K: move window up.
+	press([]uint32{c.modKeycode(), 29}, 37) // Mod+Ctrl+K: move window up.
 	if got, want := windowIDs(c.WorkspaceSnapshot()), []uint64{1, 2, 3}; !slices.Equal(got, want) {
 		t.Fatalf("window order after move up = %v, want %v", got, want)
 	}
-	press([]uint32{56}, 37) // Mod+K: focus window up.
+	press([]uint32{c.modKeycode()}, 37) // Mod+K: focus window up.
 	if got, _ := c.model.ActiveWindow(); got != 1 {
 		t.Fatalf("active window after Mod+K = %d, want 1", got)
 	}
@@ -1488,7 +1489,7 @@ func TestNestedKeyboardBindMovesColumnAndWindowBetweenWorkspaces(t *testing.T) {
 			keyboard.key(mods[i], false)
 		}
 	}
-	press([]uint32{56, 29}, 36) // Mod+Ctrl+J: move the whole column down and follow it.
+	press([]uint32{c.modKeycode(), 29}, 36) // Mod+Ctrl+J: move the whole column down and follow it.
 	snapshot := c.WorkspaceSnapshot()
 	for _, id := range []uint64{1, 2} {
 		var workspaceID uint64
@@ -1504,7 +1505,7 @@ func TestNestedKeyboardBindMovesColumnAndWindowBetweenWorkspaces(t *testing.T) {
 	if got, _ := c.model.ActiveWindow(); got != 1 {
 		t.Fatalf("active window after column move = %d, want 1", got)
 	}
-	press([]uint32{56, 29}, 37) // Mod+Ctrl+K: move the focused window up and follow it.
+	press([]uint32{c.modKeycode(), 29}, 37) // Mod+Ctrl+K: move the focused window up and follow it.
 	snapshot = c.WorkspaceSnapshot()
 	for _, window := range snapshot.Windows {
 		if window.ID == 1 && window.WorkspaceID != topID {
@@ -1560,7 +1561,7 @@ func TestNestedKeyboardBindFocusesColumnAndConsumesKey(t *testing.T) {
 			return
 		}
 		c.focusView(second)
-		keyboard.key(56, true)  // Left Alt is Mod in a nested Wayland backend.
+		keyboard.key(c.modKeycode(), true)
 		keyboard.key(105, true) // Left arrow.
 		if !c.suppressedKeys[105] {
 			t.Error("configured bind key was not marked consumed")
@@ -1572,7 +1573,7 @@ func TestNestedKeyboardBindFocusesColumnAndConsumesKey(t *testing.T) {
 		if c.suppressedKeys[105] {
 			t.Error("consumed key release remained suppressed after release")
 		}
-		keyboard.key(56, false)
+		keyboard.key(c.modKeycode(), false)
 		c.Terminate()
 	}
 	runClient(t, c, []string{"weston-terminal"}, nil, nil)
@@ -1615,7 +1616,7 @@ func TestNestedKeyboardBindMovesFocusedColumnLeft(t *testing.T) {
 			c.Terminate()
 			return
 		}
-		keyboard.key(56, true) // Left Alt is Mod in a nested Wayland backend.
+		keyboard.key(c.modKeycode(), true)
 		keyboard.key(29, true) // Left Ctrl.
 		keyboard.key(35, true) // H.
 		snapshot := c.WorkspaceSnapshot()
@@ -1627,7 +1628,7 @@ func TestNestedKeyboardBindMovesFocusedColumnLeft(t *testing.T) {
 		}
 		keyboard.key(35, false)
 		keyboard.key(29, false)
-		keyboard.key(56, false)
+		keyboard.key(c.modKeycode(), false)
 		c.Terminate()
 	}
 	runClient(t, c, []string{"weston-terminal"}, nil, nil)
@@ -1675,7 +1676,7 @@ func TestNestedKeyboardBindConsumeOrExpelWindowRight(t *testing.T) {
 			return
 		}
 		c.focusView(first)
-		keyboard.key(56, true) // Left Alt is Mod in a nested Wayland backend.
+		keyboard.key(c.modKeycode(), true)
 		keyboard.key(29, true) // Left Ctrl.
 		keyboard.key(38, true) // L.
 		snapshot := c.WorkspaceSnapshot()
@@ -1687,7 +1688,7 @@ func TestNestedKeyboardBindConsumeOrExpelWindowRight(t *testing.T) {
 		}
 		keyboard.key(38, false)
 		keyboard.key(29, false)
-		keyboard.key(56, false)
+		keyboard.key(c.modKeycode(), false)
 		c.Terminate()
 	}
 	runClient(t, c, []string{"weston-terminal"}, nil, nil)

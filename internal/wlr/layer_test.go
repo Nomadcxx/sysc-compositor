@@ -280,6 +280,9 @@ func TestExclusiveZoneShrinksUsableArea(t *testing.T) {
 // request left every frame after the first undrawn.
 func TestOutputFollowsHostResize(t *testing.T) {
 	c := newNested(t)
+	if !c.nested() {
+		t.Skip("needs the nested backend: the host resizes its window")
+	}
 	var (
 		requested rect
 		got       *layerPlacement

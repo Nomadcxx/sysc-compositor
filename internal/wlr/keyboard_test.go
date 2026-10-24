@@ -15,6 +15,36 @@ import (
 
 const keyEsc = 1 // evdev KEY_ESC
 
+// modKeycode is the evdev key that presses c's Mod: Alt in a nested session,
+// Super on DRM or headless (bind.ResolveModKey, after Niri).
+func (c *Compositor) modKeycode() uint32 {
+	switch c.modKey {
+	case bind.ModifierAlt:
+		return 56 // KEY_LEFTALT
+	case bind.ModifierSuper:
+		return 125 // KEY_LEFTMETA
+	case bind.ModifierCtrl:
+		return 29 // KEY_LEFTCTRL
+	case bind.ModifierShift:
+		return 42 // KEY_LEFTSHIFT
+	}
+	panic("modKeycode: no evdev key for this Mod")
+}
+
+// attachFakeKeyboard attaches a fake keyboard for the rest of the test. A test
+// whose client must receive keys attaches it before the client starts: on a
+// backend with no keyboard of its own, such as DRM in CI, the seat offers none
+// until then, and keys sent before the client binds wl_keyboard are lost.
+func attachFakeKeyboard(t *testing.T, c *Compositor) *fakeKeyboard {
+	t.Helper()
+	kb := c.addFakeKeyboard()
+	if kb == nil {
+		t.Fatal("could not attach a fake keyboard")
+	}
+	t.Cleanup(kb.remove)
+	return kb
+}
+
 var (
 	reRepeat = regexp.MustCompile(`wl_keyboard#\d+\.repeat_info\((\d+), (\d+)\)`)
 	reKeymap = regexp.MustCompile(`wl_keyboard#\d+\.keymap\((\d+),`)
@@ -26,26 +56,13 @@ var (
 // Escape is an ordinary key rather than a way to end the session.
 func TestUserKeyboardsShareOneKeymap(t *testing.T) {
 	c := newNested(t)
-	var first, second *fakeKeyboard
-	t.Cleanup(func() {
-		for _, kb := range []*fakeKeyboard{first, second} {
-			if kb != nil {
-				kb.remove()
-			}
-		}
-	})
+	first, second := attachFakeKeyboard(t, c), attachFakeKeyboard(t, c)
 	acted := false
 	c.viewMapped = func(v *toplevelView) {
 		if acted {
 			return
 		}
 		acted = true
-		first, second = c.addFakeKeyboard(), c.addFakeKeyboard()
-		if first == nil || second == nil {
-			t.Error("could not attach the test keyboards")
-			c.Terminate()
-			return
-		}
 		c.focusView(v)
 		first.key(keyEsc, true)
 		first.key(keyEsc, false)
@@ -96,6 +113,7 @@ func TestConfiguredKeyboardReachesClients(t *testing.T) {
 	if got := c.userLayout(); !strings.HasPrefix(got, "German") {
 		t.Errorf("seat layout %q, want German", got)
 	}
+	attachFakeKeyboard(t, c)
 	var repeat []string
 	runClient(t, c, []string{"weston-terminal"}, []string{"WAYLAND_DEBUG=client"}, func(line string) bool {
 		if m := reRepeat.FindStringSubmatch(line); m != nil {
@@ -190,19 +208,10 @@ func TestFocusingNewWindowDeactivatesPrevious(t *testing.T) {
 // the config has no binds, and the switch key never reaches the focused client.
 func TestVTSwitchChordIsConsumed(t *testing.T) {
 	c := newNested(t)
-	var kb *fakeKeyboard
-	t.Cleanup(func() {
-		if kb != nil {
-			kb.remove()
-		}
-	})
+	kb := attachFakeKeyboard(t, c)
+	mapped := false
 	c.viewMapped = func(v *toplevelView) {
-		kb = c.addFakeKeyboard()
-		if kb == nil {
-			t.Error("could not attach the test keyboard")
-			c.Terminate()
-			return
-		}
+		mapped = true
 		c.focusView(v)
 		kb.key(60, true) // unrelated F2 input from the nested seat
 		kb.key(60, false)
@@ -234,7 +243,7 @@ func TestVTSwitchChordIsConsumed(t *testing.T) {
 		}
 		return false
 	})
-	if kb == nil {
+	if !mapped {
 		t.Fatal("weston-terminal never mapped")
 	}
 	want := []string{"29/1", "56/1", "56/0", "29/0", "59/1", "59/0"}
@@ -268,13 +277,13 @@ func TestCloseWindowBindSendsCloseAndConsumesKey(t *testing.T) {
 			c.Terminate()
 			return
 		}
-		keyboard.key(56, true) // Left Alt is Mod in a nested Wayland backend.
+		keyboard.key(c.modKeycode(), true)
 		keyboard.key(16, true) // Q.
 		if !c.suppressedKeys[16] {
 			t.Error("configured close bind key was not consumed")
 		}
 		keyboard.key(16, false)
-		keyboard.key(56, false)
+		keyboard.key(c.modKeycode(), false)
 	}
 	lines := runClient(t, c, []string{"weston-terminal"}, []string{"WAYLAND_DEBUG=client"}, func(line string) bool {
 		return strings.Contains(line, ".close(")
@@ -294,21 +303,10 @@ func TestKeyBindingRepeatHonorsDelayRateAndRelease(t *testing.T) {
 		Keyboard: Keyboard{RepeatDelay: 300, RepeatRate: 10},
 		Binds:    []bind.Binding{repeatable},
 	})
-	var keyboard *fakeKeyboard
-	t.Cleanup(func() {
-		if keyboard != nil {
-			keyboard.remove()
-		}
-	})
+	keyboard := attachFakeKeyboard(t, c)
 	c.viewMapped = func(view *toplevelView) {
-		keyboard = c.addFakeKeyboard()
-		if keyboard == nil {
-			t.Error("could not attach fake keyboard")
-			c.Terminate()
-			return
-		}
 		c.focusView(view)
-		keyboard.key(56, true) // Left Alt is Mod in the nested backend.
+		keyboard.key(c.modKeycode(), true)
 		keyboard.key(33, true) // Repeatable Mod+F.
 		keyboard.key(30, true) // A is forwarded once while the bind is held.
 		window, found := findWindowSnapshot(c.WorkspaceSnapshot().Windows, view.id)
@@ -352,7 +350,7 @@ func TestKeyBindingRepeatHonorsDelayRateAndRelease(t *testing.T) {
 				}
 			}
 			_ = c.Post(func() {
-				keyboard.key(56, false)
+				keyboard.key(c.modKeycode(), false)
 				keyboard.key(30, false)
 				c.Terminate()
 			})
@@ -402,7 +400,7 @@ func TestKeyBindingRepeatFalseRunsOnlyOnPress(t *testing.T) {
 			return
 		}
 		c.focusView(view)
-		keyboard.key(56, true)
+		keyboard.key(c.modKeycode(), true)
 		keyboard.key(33, true)
 		window, found := findWindowSnapshot(c.WorkspaceSnapshot().Windows, view.id)
 		if !found || !window.Tile.Floating {
@@ -421,7 +419,7 @@ func TestKeyBindingRepeatFalseRunsOnlyOnPress(t *testing.T) {
 			}
 			_ = c.Post(func() {
 				keyboard.key(33, false)
-				keyboard.key(56, false)
+				keyboard.key(c.modKeycode(), false)
 				c.Terminate()
 			})
 		}()

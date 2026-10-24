@@ -20,14 +20,21 @@ echo "WLR_DRM_DEVICES=$WLR_DRM_DEVICES"
 go generate ./internal/wlr
 
 quarantine=$(grep -v '^#' .github/ci/quarantine.txt | awk 'NF {print $1}' | sort -u)
+skips=$(grep -v '^#' .github/ci/skips.txt | awk 'NF {print $1}' | sort -u)
 status=0
 for pkg in ./internal/wlr ./internal/server; do
 	log=$(mktemp)
 	passed=1
-	go test -count=1 -v -timeout 15m "$pkg" 2>&1 | tee "$log" || passed=0
-	# Top-level tests that failed or skipped. A skip means the lane checked
-	# less than it claims, so it counts like a failure.
-	bad=$({ grep -oE '^--- (FAIL|SKIP): [A-Za-z0-9_]+' "$log" || true; } | awk '{print $3}' | sort -u)
+	# A session has a session bus; GTK clients such as waybar exit silently
+	# without one, and the container has none.
+	dbus-run-session -- go test -count=1 -v -timeout 15m "$pkg" 2>&1 | tee "$log" || passed=0
+	# Top-level tests that failed, or skipped without being listed in
+	# skips.txt. An unlisted skip means the lane checked less than it claims,
+	# so it counts like a failure.
+	failed=$({ grep -oE '^--- FAIL: [A-Za-z0-9_]+' "$log" || true; } | awk '{print $3}' | sort -u)
+	skipped=$({ grep -oE '^--- SKIP: [A-Za-z0-9_]+' "$log" || true; } | awk '{print $3}' | sort -u)
+	bad=$(printf '%s\n%s\n' "$failed" "$(comm -23 <(printf '%s\n' "$skipped" | sed '/^$/d') <(printf '%s\n' "$skips"))" |
+		sed '/^$/d' | sort -u)
 	unexpected=$(comm -23 <(printf '%s\n' "$bad" | sed '/^$/d') <(printf '%s\n' "$quarantine"))
 	if [ -n "$unexpected" ]; then
 		echo "::error::$pkg: failed or skipped outside the quarantine: $(echo $unexpected)"
@@ -43,6 +50,11 @@ for pkg in ./internal/wlr ./internal/server; do
 	for name in $quarantine; do
 		if grep -q "^--- PASS: $name " "$log"; then
 			echo "::warning::$name passes now: remove it from .github/ci/quarantine.txt"
+		fi
+	done
+	for name in $skips; do
+		if grep -q "^--- PASS: $name " "$log"; then
+			echo "::warning::$name runs now: remove it from .github/ci/skips.txt"
 		fi
 	done
 	for name in $(comm -12 <(printf '%s\n' "$bad" | sed '/^$/d') <(printf '%s\n' "$quarantine")); do

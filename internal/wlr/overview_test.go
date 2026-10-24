@@ -605,7 +605,7 @@ func TestTiledModDragShowsInsertHintAndCommitsOnRelease(t *testing.T) {
 			c.Terminate()
 			return
 		}
-		keyboard.key(56, true)
+		keyboard.key(c.modKeycode(), true)
 		pointer.moveTo(c.viewCenter(view))
 		pointer.button(buttonLeft, true)
 		if _, ok := c.model.WindowDragState(); !ok || c.tiledMove == nil || c.tiledMove.started {
@@ -669,7 +669,7 @@ func TestTiledModDragShowsInsertHintAndCommitsOnRelease(t *testing.T) {
 			t.Errorf("scene position after drag cancellation = (%d, %d), want (%d, %d)", gotX, gotY, beforeX, beforeY)
 		}
 		pointer.button(buttonLeft, false)
-		keyboard.key(56, false)
+		keyboard.key(c.modKeycode(), false)
 		done = true
 		c.Terminate()
 	}

@@ -7,8 +7,6 @@ import (
 	"unsafe"
 )
 
-const keyLeftAlt = 56 // evdev KEY_LEFTALT; Mod defaults to Alt in nested sessions.
-
 var (
 	rePointerRelease = regexp.MustCompile(`wl_pointer#\d+\.button\(\d+, \d+, 272, 0\)`)
 	rePointerLeave   = regexp.MustCompile(`wl_pointer#\d+\.leave\(`)
@@ -326,14 +324,14 @@ func TestCompositorGrabClearsPointerFocus(t *testing.T) {
 				before = c.userPointerFocus()
 			},
 			func() {
-				keyboard.key(keyLeftAlt, true)
+				keyboard.key(c.modKeycode(), true)
 				p.button(btnLeft, true)
 				grabbing = c.pointerGrab != nil
 				during = c.userPointerFocus()
 			},
 			func() {
 				p.button(btnLeft, false)
-				keyboard.key(keyLeftAlt, false)
+				keyboard.key(c.modKeycode(), false)
 				after = c.userPointerFocus()
 			},
 		}

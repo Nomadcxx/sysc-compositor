@@ -12,6 +12,9 @@ import (
 
 const keyTab = 15 // evdev KEY_TAB
 
+// keyLeftAlt is a literal Alt: the recent-windows binds are Alt+Tab, not Mod.
+const keyLeftAlt = 56 // evdev KEY_LEFTALT
+
 // The open switcher's keys taken from general binds: Niri's mapped actions
 // only, matching under any modifiers, the bind with the fewest modifiers per
 // key.

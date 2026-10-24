@@ -1,6 +1,7 @@
 package wlr
 
 import (
+	"os"
 	"regexp"
 	"strings"
 	"sync/atomic"
@@ -22,6 +23,12 @@ func TestFractionalScaleFollowsOutput(t *testing.T) {
 	} {
 		t.Run(tc.want, func(t *testing.T) {
 			c := newNested(t)
+			// The theme loads with the first pointer; DRM in CI has none.
+			pointer := c.addFakePointer()
+			if pointer == nil {
+				t.Fatal("could not attach a fake pointer")
+			}
+			t.Cleanup(pointer.remove)
 			if err := c.setOutputScale(tc.scale); err != nil {
 				t.Fatal(err)
 			}
@@ -65,6 +72,10 @@ func TestDmabufClientMaps(t *testing.T) {
 		}
 	})
 	t.Run("maps", func(t *testing.T) {
+		// weston-simple-dmabuf-egl allocates on this node and exits without it.
+		if _, err := os.Stat("/dev/dri/renderD128"); err != nil {
+			t.Skip("needs a render node: the client allocates its buffers on the GPU")
+		}
 		c := newNested(t)
 		var mapped atomic.Bool
 		c.viewMapped = func(*toplevelView) {
