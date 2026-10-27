@@ -163,3 +163,12 @@ The ext-list endpoint now announces each decimal IPC ID from its first event. Go
 After that correction, the VM's full vkms runs passed: `internal/wlr` in 53.151 s (168 top-level passes, two existing allowed skips), and `internal/server` in 2.435 s. Vet, both entry-point builds, formatting, whitespace and unchanged dependency checks passed. Local review found no remaining critical or important issues. No host compositor test ran.
 
 The ext-list matrix row is complete. Wlr management stays partial for maximize/unmaximize, tracked with M15's missing Niri column sizing policy. The foreign capture-source global remains with Task 3's capture/privacy implementation.
+
+
+## Execution record: virtual input, 2026-10-27
+
+The virtual keyboard and pointer managers attach validated user-seat devices through the existing input paths. Virtual keyboards retain their Wayland client identity, so only the active IME's own virtual keyboard bypasses its grab. Application delivery uses a stable native seat keyboard and per-source press destinations, preserving held state through late binding, focus changes, overlapping devices and disconnect. Lock, blanking and injected-seat gates release virtual state before blocking it. Explicit inert seat/output resources fail validation instead of becoming unrestricted requests.
+
+Review found that focus changes could replace the active metadata source with the logical seat keyboard. `TestKeyboardFocusPreservesActiveSourceMetadata` failed on stale physical keymaps/repeat and virtual keymap ownership, then passed after source selection retained the real keyboard. All 15 named tests in `virtual_input_test.go` passed individually in the laptop bench's live Wayland session, using Go 1.27.3, wlroots 0.20.2 and SceneFX 0.5.0. No desktop compositor test ran in this continuation.
+
+Local vet, builds of the two entry points, formatting and whitespace checks passed. Spec and code review found no remaining critical or important issue after the source-selection fix. No dependency changed. CI still gates the merge; the real IME/GTK acceptance check remains with Task 8 and `sysc-1639`.

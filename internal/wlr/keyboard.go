@@ -482,10 +482,8 @@ func (c *Compositor) currentKeyboard() *C.struct_wlr_keyboard {
 	if c.bindingKeyboard != nil {
 		return c.bindingKeyboard
 	}
-	if c.seat != nil {
-		if keyboard := C.wlr_seat_get_keyboard(c.seat); keyboard != nil {
-			return keyboard
-		}
+	if c.activeKeyboard != nil {
+		return c.activeKeyboard
 	}
 	return c.keyboard
 }

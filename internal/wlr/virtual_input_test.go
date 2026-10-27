@@ -1038,3 +1038,80 @@ func TestVirtualPointerStopsAtOutputRemovalAndRejectsRetiredOutput(t *testing.T)
 		t.Fatal("retired output check timed out")
 	}
 }
+
+// Focus changes must retain the source whose metadata the logical wl_seat
+// keyboard exports; updating configuration must not require a key event.
+func TestKeyboardFocusPreservesActiveSourceMetadata(t *testing.T) {
+	c := newNested(t)
+	attachFakeKeyboard(t, c)
+	runTools(t, c, func(func(string, ...string) *exec.Cmd) {
+		client, err := testclient.StartToplevelClient(c.SocketName(), time.Hour)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer client.Close()
+		onCompositor(t, c, func() {
+			if err = c.reconfigureKeyboard(Keyboard{Layout: "de", RepeatRate: 37, RepeatDelay: 210}); err != nil {
+				return
+			}
+			if c.seatKeyboard.keymap != c.keyboard.keymap || c.seatKeyboard.repeat_info != c.keyboard.repeat_info {
+				t.Error("focused client retained stale physical keymap or repeat settings")
+			}
+		})
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		if err = client.SyncInput(); err != nil {
+			t.Error(err)
+			return
+		}
+		if err = client.CreateVirtualKeyboard(false); err != nil {
+			t.Error(err)
+			return
+		}
+		if err = client.VirtualModifiers(1); err != nil {
+			t.Error(err)
+			return
+		}
+		if err = client.VirtualModifiers(0); err != nil {
+			t.Error(err)
+			return
+		}
+		other, err := testclient.StartToplevelClient(c.SocketName(), time.Hour)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer other.Close()
+		onCompositor(t, c, func() {
+			for source := range c.virtualKeyboards {
+				keymap := source.keymap
+				if c.activeKeyboard != source {
+					t.Error("focus change replaced the active virtual source with the logical seat keyboard")
+				}
+				if err = c.reconfigureKeyboard(Keyboard{Layout: "fr", RepeatRate: 41, RepeatDelay: 230}); err != nil {
+					return
+				}
+				if source.keymap != keymap || c.seatKeyboard.keymap != keymap || c.seatKeyboard.repeat_info != source.repeat_info {
+					t.Error("focused client lost virtual keymap ownership or retained stale repeat settings")
+				}
+			}
+		})
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		if err = other.SyncInput(); err != nil {
+			t.Error(err)
+			return
+		}
+		if events := client.InputEvents(); events.Presses != 0 || events.Releases != 0 {
+			t.Errorf("metadata refresh fabricated key events: %+v", events)
+		}
+		if events := other.InputEvents(); events.KeyboardEnters == 0 || events.Presses != 0 || events.Releases != 0 {
+			t.Errorf("new focus did not receive metadata without a key event: %+v", events)
+		}
+	})
+}
