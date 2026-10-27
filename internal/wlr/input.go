@@ -333,15 +333,14 @@ func (c *Compositor) handleInputDestroy(device unsafe.Pointer) {
 		delete(c.inputDestroyListeners, device)
 	}
 	if c.pointerDevices[device] {
-		if c.tiledMove != nil {
-			c.cancelTiledWindowMove()
+		pointer := C.wlr_pointer_from_input_device((*C.struct_wlr_input_device)(device))
+		c.releasePointerButtons(pointer)
+		if virtual := c.virtualPointers[pointer]; virtual != nil {
+			c.drop(virtual.outputGone)
+			delete(c.virtualPointers, pointer)
 		}
 		C.wlr_cursor_detach_input_device(c.cursor, (*C.struct_wlr_input_device)(device))
 		delete(c.pointerDevices, device)
-		c.clearPointerGrab()
-		clear(c.pressedPointerButtons)
-		clear(c.pointerSerialButtons)
-		clear(c.consumedPointerButtons)
 	}
 	// The keyboard group lets a destroyed keyboard go by itself.
 	delete(c.keyboardDevices, device)
@@ -673,16 +672,20 @@ func (c *Compositor) destroyDndScrollState(state *dndEdgeScrollState) {
 
 func (c *Compositor) handleCursorMotion(data unsafe.Pointer) {
 	event := (*C.struct_wlr_pointer_motion_event)(data)
+	if !c.pointerInputAllowed(event.pointer) {
+		return
+	}
 	device := (*C.struct_wlr_input_device)(unsafe.Pointer(event.pointer))
-	c.userActivity()
 	c.pointerMotion(device, event.time_msec, float64(event.delta_x), float64(event.delta_y),
 		float64(event.unaccel_dx), float64(event.unaccel_dy))
 }
 
 func (c *Compositor) handleCursorMotionAbsolute(data unsafe.Pointer) {
 	event := (*C.struct_wlr_pointer_motion_absolute_event)(data)
+	if !c.pointerInputAllowed(event.pointer) {
+		return
+	}
 	device := (*C.struct_wlr_input_device)(unsafe.Pointer(event.pointer))
-	c.userActivity()
 	dx, dy := c.absoluteDelta(device, event.x, event.y)
 	c.pointerMotion(device, event.time_msec, dx, dy, dx, dy)
 }
@@ -836,9 +839,42 @@ func (c *Compositor) restoreCursorImage() {
 
 func (c *Compositor) handleCursorButton(data unsafe.Pointer) {
 	event := (*C.struct_wlr_pointer_button_event)(data)
+	if !c.pointerInputAllowed(event.pointer) {
+		return
+	}
+	c.deliverPointerButton(event)
+}
+
+func (c *Compositor) deliverPointerButton(event *C.struct_wlr_pointer_button_event) {
 	button := uint32(event.button)
 	pressed := event.state == C.WL_POINTER_BUTTON_STATE_PRESSED
-	c.userActivity()
+	owners := c.pointerButtons[event.pointer]
+	if pressed {
+		if owners[button] {
+			return
+		}
+		if c.pointerButtons == nil {
+			c.pointerButtons = make(map[*C.struct_wlr_pointer]map[uint32]bool)
+		}
+		if owners == nil {
+			owners = make(map[uint32]bool)
+			c.pointerButtons[event.pointer] = owners
+		}
+		owners[button] = true
+	} else {
+		if !owners[button] {
+			return
+		}
+		delete(owners, button)
+		if len(owners) == 0 {
+			delete(c.pointerButtons, event.pointer)
+		}
+	}
+	for pointer, held := range c.pointerButtons {
+		if pointer != event.pointer && held[button] {
+			return
+		}
+	}
 
 	if pressed {
 		c.pressedPointerButtons[button] = true
@@ -939,7 +975,9 @@ func (c *Compositor) handleCursorButton(data unsafe.Pointer) {
 
 func (c *Compositor) handleCursorAxis(data unsafe.Pointer) {
 	event := (*C.struct_wlr_pointer_axis_event)(data)
-	c.userActivity()
+	if !c.pointerInputAllowed(event.pointer) {
+		return
+	}
 	c.hideExitDialog()
 	c.hideHotkeyOverlay()
 	C.wlr_seat_pointer_notify_axis(c.seat, event.time_msec,
@@ -1063,7 +1101,7 @@ func (c *Compositor) updateKeyboardFocus() {
 		if surface := c.lockKeyboardSurface(); surface == nil {
 			C.wlr_seat_keyboard_notify_clear_focus(c.seat)
 		} else if c.seat.keyboard_state.focused_surface != surface {
-			C.sysc_seat_keyboard_focus(c.seat, surface, c.keyboard)
+			c.enterKeyboardSurface(surface, c.keyboard)
 		}
 		c.keyboardFocusChanged(previousFocusedView)
 		return
@@ -1119,9 +1157,15 @@ func (c *Compositor) updateKeyboardFocus() {
 	}
 	surface = C.wlr_surface_get_root_surface(surface)
 	if c.seat.keyboard_state.focused_surface != surface {
-		C.sysc_seat_keyboard_focus(c.seat, surface, c.keyboard)
+		c.enterKeyboardSurface(surface, c.currentKeyboard())
 	}
 	c.keyboardFocusChanged(previousFocusedView)
+}
+
+func (c *Compositor) enterKeyboardSurface(surface *C.struct_wlr_surface, keyboard *C.struct_wlr_keyboard) {
+	c.prepareKeyboardFocus()
+	c.activateKeyboard(keyboard)
+	C.sysc_seat_keyboard_focus(c.seat, surface, c.seatKeyboard)
 }
 
 func (c *Compositor) keyboardFocusChanged(previous *toplevelView) {
@@ -1600,7 +1644,7 @@ func (c *Compositor) refreshCapabilities() {
 	if len(c.pointerDevices) > 0 {
 		caps |= C.WL_SEAT_CAPABILITY_POINTER
 	}
-	if len(c.keyboardDevices) > 0 {
+	if len(c.keyboardDevices)+len(c.virtualKeyboards) > 0 {
 		caps |= C.WL_SEAT_CAPABILITY_KEYBOARD
 	}
 	C.wlr_seat_set_capabilities(c.seat, caps)

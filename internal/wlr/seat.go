@@ -15,20 +15,21 @@ package wlr
 #include <wlr/types/wlr_seat.h>
 #include <wlr/types/wlr_xdg_shell.h>
 
-static const struct wlr_keyboard_impl sysc_injected_keyboard_impl = {
-	.name = "sysc-injected-keyboard",
+static const struct wlr_keyboard_impl sysc_native_keyboard_impl = {
+	.name = "sysc-native-keyboard",
 };
 
-// An injected keyboard is created in process: wlr_keyboard_init is public
-// in 0.20, so no virtual-keyboard protocol global is advertised (D8.6). The
-// keymap is fixed to US so injected keycodes mean the same thing on every
-// host. The struct lives in C memory because wlroots keeps pointers to it.
-static struct wlr_keyboard *sysc_injected_keyboard_create(void) {
+static struct wlr_keyboard *sysc_native_keyboard_create(const char *name) {
 	struct wlr_keyboard *kb = calloc(1, sizeof(*kb));
-	if (kb == NULL) {
-		return NULL;
-	}
-	wlr_keyboard_init(kb, &sysc_injected_keyboard_impl, "sysc-injected-keyboard");
+	if (kb != NULL) wlr_keyboard_init(kb, &sysc_native_keyboard_impl, name);
+	return kb;
+}
+
+// Injected seats retain their own fixed-US keyboard, independent of the user
+// seat and of client-owned virtual keyboard keymaps.
+static struct wlr_keyboard *sysc_injected_keyboard_create(void) {
+	struct wlr_keyboard *kb = sysc_native_keyboard_create("sysc-injected-keyboard");
+	if (kb == NULL) return NULL;
 	struct xkb_context *ctx = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
 	struct xkb_rule_names names = { .layout = "us" };
 	struct xkb_keymap *keymap = ctx == NULL ? NULL :
@@ -44,7 +45,7 @@ static struct wlr_keyboard *sysc_injected_keyboard_create(void) {
 	return kb;
 }
 
-static void sysc_injected_keyboard_destroy(struct wlr_keyboard *kb) {
+static void sysc_native_keyboard_destroy(struct wlr_keyboard *kb) {
 	wlr_keyboard_finish(kb);
 	free(kb);
 }
@@ -141,6 +142,19 @@ import (
 	"unsafe"
 )
 
+// newNativeKeyboard owns a native keyboard without backend attachment.
+func newNativeKeyboard(name string) *C.struct_wlr_keyboard {
+	text := C.CString(name)
+	defer C.free(unsafe.Pointer(text))
+	return C.sysc_native_keyboard_create(text)
+}
+
+func destroyNativeKeyboard(keyboard *C.struct_wlr_keyboard) {
+	if keyboard != nil {
+		C.sysc_native_keyboard_destroy(keyboard)
+	}
+}
+
 // Seat capability bits, mirrored so tests can assert without cgo.
 const (
 	CKeyboard = 1 << iota
@@ -220,7 +234,7 @@ func (c *Compositor) RemoveInjectedSeat(name string) error {
 
 func (s *injectedSeat) destroy() {
 	C.wlr_seat_set_keyboard(s.seat, nil)
-	C.sysc_injected_keyboard_destroy(s.keyboard)
+	C.sysc_native_keyboard_destroy(s.keyboard)
 	C.wlr_seat_destroy(s.seat)
 	C.free(unsafe.Pointer(s.cname))
 }
@@ -325,6 +339,7 @@ func (c *Compositor) setSessionLocked(locked bool) {
 // As it closes, every injected seat lets go of what it holds, so no client is
 // left with a key or button down that the agent can no longer release.
 func (c *Compositor) updateInjectedInputGate() {
+	c.updateVirtualInputGate()
 	blocked := c.injectedInputBlocked()
 	if blocked && !c.injectedGated {
 		for _, s := range c.injected {

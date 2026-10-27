@@ -190,7 +190,7 @@ global is ticked only with its handler and a test (Q7). Versions follow the wlro
 | zwp_relative_pointer_manager_v1 | [x] | M10 | `TestLockedPointerStaysAndReportsRelativeMotion` |
 | zwp_pointer_constraints_v1 | [~] | M10 | lock tested; confine implemented, untested |
 | zwp_text_input_manager_v3 | [x] | M10 | `TestTextInputRelaysToTheInputMethod` |
-| zwp_input_method_manager_v2 | [~] | M10 | relay and popups tested; keyboard grab gets no keys until virtual-keyboard (M12, `sysc-1639`) |
+| zwp_input_method_manager_v2 | [~] | M10/M12 | relay, popups and grab passthrough tested (`TestInputMethodGrabReturnsKeysThroughVirtualKeyboard`); real IME acceptance remains with Task 8 and `sysc-1639` |
 | zwlr_output_power_manager_v1 | [ ] | M10 | handler written, unwired: no packaged client to test it (`wlopm` is AUR-only) |
 | ext_data_control_manager_v1, zwlr_data_control_manager_v1 | [x] | M11 | `TestDataControlServesTheSelectionWithoutFocus` (wl-copy → wl-paste, no focus); sysc-clipboard records selections through it (M11 laptop gate) |
 | zwlr_screencopy_manager_v1 | [x] | M11/M12 | filtered SHM capture; `TestLegacyScreencopyPrivacyRegionAndDamage` and `TestLegacyScreencopyFractionalRegionPreservesPhysicalEdges` drive the legacy wire protocol, including privacy, damage, clipping, malformed buffers and fractional edge pixels |
@@ -201,7 +201,7 @@ global is ticked only with its handler and a test (Q7). Versions follow the wlro
 | ext_foreign_toplevel_list_v1 | [x] | M12 | `TestForeignToplevelIdentifierMatchesIPCFromFirstAnnouncement`: decimal IPC identity, early/late binding, metadata, stop, destruction and remap |
 | zwlr_foreign_toplevel_manager_v1 | [~] | M12 | `TestForeignToplevelRequestsUseWindowPolicy`: metadata, focus/fullscreen/output state, activate/close/fullscreen, lock gating and inert handles; maximize/unmaximize await M15 column sizing |
 | foreign-toplevel image-capture source | [x] | M12 | `TestWindowCaptureTracksDamageResizeAndUnmap` and `TestCapturePointerMetadataAndImageLifetime`: decimal-ID join, initial/damaged frames, unchanged hold, child damage, resize, unmap/stale handles, pointer metadata and image lifetime |
-| zwp_virtual_keyboard_manager_v1, zwlr_virtual_pointer_manager_v1 | [ ] | M12 | |
+| zwp_virtual_keyboard_manager_v1, zwlr_virtual_pointer_manager_v1 | [x] | M12 | `TestVirtualInputPreservesSeatAndLockBoundaries`, held-key/focus/device-retirement regressions and `TestKeyboardFocusPreservesActiveSourceMetadata`; 15 named protocol tests passed on the laptop bench |
 | zwlr_gamma_control_manager_v1 | [ ] | M12 | |
 | wp_tearing_control_manager_v1 | [ ] | M12 | |
 | wp_linux_drm_syncobj_manager_v1 | [ ] | M12 | |

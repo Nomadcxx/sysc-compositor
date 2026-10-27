@@ -9,6 +9,7 @@ package wlr
 #include <wlr/types/wlr_scene.h>
 #include <wlr/types/wlr_seat.h>
 #include <wlr/types/wlr_text_input_v3.h>
+#include <wlr/types/wlr_virtual_keyboard_v1.h>
 
 // The text input's state, as the input method sees it, then done.
 static void sysc_im_send_state(struct wlr_input_method_v2 *im, struct wlr_text_input_v3 *ti) {
@@ -44,6 +45,12 @@ static void sysc_ti_send_im_state(struct wlr_text_input_v3 *ti, struct wlr_input
 
 static bool sysc_same_client(struct wlr_text_input_v3 *ti, struct wlr_surface *surface) {
 	return wl_resource_get_client(ti->resource) == wl_resource_get_client(surface->resource);
+}
+
+static bool sysc_keyboard_from_input_method(struct wlr_keyboard *keyboard,
+		struct wlr_input_method_v2 *im) {
+	struct wlr_virtual_keyboard_v1 *virtual = wlr_input_device_get_virtual_keyboard(&keyboard->base);
+	return virtual != NULL && wl_resource_get_client(virtual->resource) == wl_resource_get_client(im->resource);
 }
 
 struct sysc_find_buffer {
@@ -82,10 +89,8 @@ import "unsafe"
 // input method's preedit, commit and delete come back to it. Input-method
 // popups are drawn in the overlay layer under the text cursor rectangle.
 //
-// A keyboard grab gets the user keyboard's keymap, but keys are not routed
-// to it: an input method returns the keys it does not use through
-// virtual-keyboard, which is M12 (owner decision Q9). Routing them before
-// then would lose them (bd sysc-1639).
+// An IME keyboard grab receives unhandled keys and modifiers. Only a virtual
+// keyboard belonging to that IME's Wayland client bypasses its grab.
 
 type textInput struct {
 	input     *C.struct_wlr_text_input_v3
@@ -177,6 +182,11 @@ func (c *Compositor) updateTextInputFocus() {
 	}
 }
 
+type keyboardRoute struct {
+	grab      *C.struct_wlr_input_method_keyboard_grab_v2
+	announced bool
+}
+
 func (c *Compositor) handleNewInputMethod(data unsafe.Pointer) {
 	im := (*C.struct_wlr_input_method_v2)(data)
 	if im.seat != c.seat || c.inputMethod != nil {
@@ -198,6 +208,32 @@ func (c *Compositor) handleNewInputMethod(data unsafe.Pointer) {
 	add(unsafe.Pointer(&im.events.grab_keyboard), func(data unsafe.Pointer) {
 		grab := (*C.struct_wlr_input_method_keyboard_grab_v2)(data)
 		C.wlr_input_method_keyboard_grab_v2_set_keyboard(grab, c.keyboard)
+		for source, routes := range c.keyboardRoutes {
+			for key, route := range routes {
+				if !route.announced && route.grab == nil && c.inputMethodGrab(source) == grab {
+					route.grab = grab
+					routes[key] = route
+				}
+			}
+		}
+		var destroy *Listener
+		destroy = AddListener(unsafe.Pointer(&grab.events.destroy), func(unsafe.Pointer) {
+			c.drop(destroy)
+			// Retire only presses delivered to this grab. Client-owned keys
+			// keep their release route, and a reused native address owns none.
+			for keyboard, routes := range c.keyboardRoutes {
+				for key, destination := range routes {
+					if destination.grab == grab {
+						delete(routes, key)
+					}
+				}
+				if len(routes) == 0 {
+					delete(c.keyboardRoutes, keyboard)
+				}
+			}
+			c.activateKeyboard(c.keyboard)
+		})
+		c.keep(destroy)
 	})
 	add(unsafe.Pointer(&im.events.new_popup_surface), c.handleNewInputPopup)
 	add(unsafe.Pointer(&im.events.destroy), func(unsafe.Pointer) {
@@ -210,6 +246,75 @@ func (c *Compositor) handleNewInputMethod(data unsafe.Pointer) {
 		C.wlr_input_method_v2_send_activate(im)
 		C.sysc_im_send_state(im, c.activeTextInput)
 	}
+}
+
+func (c *Compositor) inputMethodGrab(keyboard *C.struct_wlr_keyboard) *C.struct_wlr_input_method_keyboard_grab_v2 {
+	if c.sessionLocked || c.inputMethod == nil || c.inputMethod.keyboard_grab == nil ||
+		bool(C.sysc_keyboard_from_input_method(keyboard, c.inputMethod)) {
+		return nil
+	}
+	return c.inputMethod.keyboard_grab
+}
+
+// A key release follows its press destination. The application and each
+// live IME grab see the union of their sources: first press, final release.
+func (c *Compositor) forwardKeyboardKey(keyboard *C.struct_wlr_keyboard, event *C.struct_wlr_keyboard_key_event) {
+	key := uint32(event.keycode)
+	routes := c.keyboardRoutes[keyboard]
+	pressed := event.state == C.WL_KEYBOARD_KEY_STATE_PRESSED
+	var route keyboardRoute
+	if pressed {
+		if _, exists := routes[key]; exists {
+			return
+		}
+		route.grab = c.inputMethodGrab(keyboard)
+		route.announced = c.keyDestinationHeld(key, route.grab)
+		if c.keyboardRoutes == nil {
+			c.keyboardRoutes = make(map[*C.struct_wlr_keyboard]map[uint32]keyboardRoute)
+		}
+		if routes == nil {
+			routes = make(map[uint32]keyboardRoute)
+			c.keyboardRoutes[keyboard] = routes
+		}
+		routes[key] = route
+		if route.announced {
+			return
+		}
+	} else {
+		var exists bool
+		route, exists = routes[key]
+		if !exists {
+			return
+		}
+		delete(routes, key)
+		if len(routes) == 0 {
+			delete(c.keyboardRoutes, keyboard)
+		}
+		if !route.announced || c.keyDestinationHeld(key, route.grab) {
+			return
+		}
+	}
+	if route.grab != nil {
+		C.wlr_input_method_keyboard_grab_v2_set_keyboard(route.grab, keyboard)
+		C.wlr_input_method_keyboard_grab_v2_send_key(route.grab, event.time_msec, event.keycode, C.uint32_t(event.state))
+		route.announced = true
+	} else if c.activateKeyboard(keyboard) || !pressed {
+		route.announced = c.updateSeatKey(event, true)
+	}
+	if pressed {
+		routes[key] = route
+	}
+}
+
+func (c *Compositor) keyDestinationHeld(key uint32, grab *C.struct_wlr_input_method_keyboard_grab_v2) bool {
+	// ponytail: scan held routes (O(held input)); per-destination counts are
+	// the upgrade if a measured device count makes this path expensive.
+	for _, routes := range c.keyboardRoutes {
+		if destination, exists := routes[key]; exists && destination.announced && destination.grab == grab {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Compositor) handleNewInputPopup(data unsafe.Pointer) {

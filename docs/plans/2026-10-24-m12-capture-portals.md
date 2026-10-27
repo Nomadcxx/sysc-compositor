@@ -185,3 +185,15 @@ The owner returned testing to the laptop bench, whose standing approval permits 
 Review and failing wire regressions exposed missing notifications for hotkeys, immediate exit-dialog changes, direct overview gestures and delayed switcher show/removal. Their existing scene-update owners now notify capture after each update; unchanged frames remain pending. A separate region regression exposed truncation before fractional clipping. Legacy requests now round physical endpoints before clipping and inverse transformation, matching Niri's pinned implementation. The fractional wire test checks dimensions and pixels against a full-output frame.
 
 The reviewed implementation retains wlroots' ext-copy frame/session engine, advertises SHM formats only, validates the 64 MiB allocation/stride ceiling and stops sources when their mapping or policy retires. Node-owned privacy covers retained scene images after source buffers disappear; native masks preserve cached textures and acquire state. Vet, entry-point builds, formatting and whitespace checks pass with unchanged dependencies. CI and integration gates still precede merge; portal, PipeWire and real IME acceptance remain outside this Task 3 record.
+
+
+## Execution record: virtual input, 2026-10-27
+
+The virtual keyboard and pointer managers attach validated user-seat devices through the existing input paths. Virtual keyboards retain their Wayland client identity, so only the active IME's own virtual keyboard bypasses its grab. Application delivery uses a stable native seat keyboard and per-source press destinations, preserving held state through late binding, focus changes, overlapping devices and disconnect. Lock, blanking and injected-seat gates release virtual state before blocking it. Explicit inert seat/output resources fail validation instead of becoming unrestricted requests.
+
+Review found that focus changes could replace the active metadata source with the logical seat keyboard. `TestKeyboardFocusPreservesActiveSourceMetadata` failed on stale physical keymaps/repeat and virtual keymap ownership, then passed after source selection retained the real keyboard. All 15 named tests in `virtual_input_test.go` passed individually in the laptop bench's live Wayland session, using Go 1.27.3, wlroots 0.20.2 and SceneFX 0.5.0. No desktop compositor test ran in this continuation.
+
+Local vet, builds of the two entry points, formatting and whitespace checks passed. Spec and code review found no remaining critical or important issue after the source-selection fix. No dependency changed. CI still gates the merge; the real IME/GTK acceptance check remains with Task 8 and `sysc-1639`.
+
+
+The first Task 4 CI run passed static checks and the full compositor package, then exposed a race in `TestNiriWindowActionsOverSocket`. Its separate connections received `Handled` before the server posted each action, so column consumption could precede column placement. The test now waits for the published placement and grouped state before sending dependent actions. The focused bench test passed after this test-only correction; CI must pass again before merge.
