@@ -298,8 +298,29 @@ func TestNiriWindowActionsOverSocket(t *testing.T) {
 	requestAction(ipc.Action{Name: "FocusWindow", WindowID: &firstID})
 	waitForState(func(state niriSnapshot) bool { return containsFocused(state, firstID) }, "FocusWindow before consume")
 	requestAction(ipc.Action{Name: "MoveColumnToFirst"})
+	// Handled precedes posting the action. Separate socket connections do not
+	// order dependent actions, so observe each prerequisite before proceeding.
+	waitForState(func(state niriSnapshot) bool {
+		for _, window := range state.windows {
+			if window.ID == firstID {
+				return window.WorkspaceID != nil && *window.WorkspaceID == workspaceID &&
+					window.Layout.PosInScrollingLayout != nil && window.Layout.PosInScrollingLayout[0] == 1
+			}
+		}
+		return false
+	}, "MoveColumnToFirst before consume")
 	requestAction(ipc.Action{Name: "ConsumeWindowIntoColumn"})
-	state = s.state.snapshot()
+	state = waitForState(func(state niriSnapshot) bool {
+		var grouped int
+		for _, window := range state.windows {
+			if (window.ID == firstID || window.ID == secondID) &&
+				window.WorkspaceID != nil && *window.WorkspaceID == workspaceID &&
+				window.Layout.PosInScrollingLayout != nil && window.Layout.PosInScrollingLayout[0] == 1 {
+				grouped++
+			}
+		}
+		return grouped == 2
+	}, "ConsumeWindowIntoColumn before workspace move")
 	nextWorkspaceID = 0
 	for _, workspace := range state.workspaces {
 		if workspace.Idx == 2 && workspace.Output != nil && state.focusedOutput != nil && *workspace.Output == state.focusedOutput.Name {

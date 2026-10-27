@@ -172,3 +172,6 @@ The virtual keyboard and pointer managers attach validated user-seat devices thr
 Review found that focus changes could replace the active metadata source with the logical seat keyboard. `TestKeyboardFocusPreservesActiveSourceMetadata` failed on stale physical keymaps/repeat and virtual keymap ownership, then passed after source selection retained the real keyboard. All 15 named tests in `virtual_input_test.go` passed individually in the laptop bench's live Wayland session, using Go 1.27.3, wlroots 0.20.2 and SceneFX 0.5.0. No desktop compositor test ran in this continuation.
 
 Local vet, builds of the two entry points, formatting and whitespace checks passed. Spec and code review found no remaining critical or important issue after the source-selection fix. No dependency changed. CI still gates the merge; the real IME/GTK acceptance check remains with Task 8 and `sysc-1639`.
+
+
+The first Task 4 CI run passed static checks and the full compositor package, then exposed a race in `TestNiriWindowActionsOverSocket`. Its separate connections received `Handled` before the server posted each action, so column consumption could precede column placement. The test now waits for the published placement and grouped state before sending dependent actions. The focused bench test passed after this test-only correction; CI must pass again before merge.
