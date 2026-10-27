@@ -5,6 +5,7 @@ package wlr
 #cgo CFLAGS: -DWLR_USE_UNSTABLE
 
 #include <stdlib.h>
+#include <wlr/types/wlr_output.h>
 #include <wlr/types/wlr_xcursor_manager.h>
 #include <wlr/xcursor.h>
 
@@ -50,6 +51,9 @@ func (c *Compositor) pointerImage(scale float64) (img *image.RGBA, hotspot image
 		if !bool(C.sysc_xcursor_image(c.xcursorManager, name, C.float(scale), &w, &h, &hx, &hy, &pixels)) {
 			return nil, image.Point{}, false
 		}
+		if _, err := captureAllocation(int(w), int(h), int(w)*4); err != nil {
+			return nil, image.Point{}, false
+		}
 		src := unsafe.Slice((*byte)(unsafe.Pointer(pixels)), int(w)*int(h)*4)
 		return rgbaFromARGB(src, int(w), int(h)), image.Pt(int(hx), int(hy)), true
 	}
@@ -79,15 +83,66 @@ func (c *Compositor) pointerOrigin(box image.Rectangle, scale float64, hotspot i
 }
 
 // drawPointer draws the pointer over dst, an image of box (layout
-// coordinates) at scale, when the pointer is over it.
+// coordinates) at scale. Draw clips a partially visible pointer too.
 func (c *Compositor) drawPointer(dst draw.Image, box image.Rectangle, scale float64) {
-	if !image.Pt(int(c.cursor.x), int(c.cursor.y)).In(box) {
-		return
-	}
 	img, hotspot, ok := c.pointerImage(scale)
 	if !ok {
 		return
 	}
 	at := c.pointerOrigin(box, scale, hotspot)
 	draw.Draw(dst, img.Bounds().Add(at), img, image.Point{}, draw.Over)
+}
+
+// Output buffers precede the output transform; pointer coordinates follow it.
+func (c *Compositor) drawOutputPointer(dst draw.Image, output unsafe.Pointer) {
+	scale := float64((*C.struct_wlr_output)(output).scale)
+	img, hotspot, ok := c.pointerImage(scale)
+	if !ok {
+		return
+	}
+	at := c.pointerOrigin(c.outputLayoutBox(output), scale, hotspot)
+	drawTransformedPointer(dst, img, at, uint32((*C.struct_wlr_output)(output).transform))
+}
+
+func drawTransformedPointer(dst draw.Image, icon *image.RGBA, at image.Point, transform uint32) {
+	if transform == C.WL_OUTPUT_TRANSFORM_NORMAL {
+		origin := dst.Bounds().Min.Add(at)
+		draw.Draw(dst, image.Rectangle{Min: origin, Max: origin.Add(icon.Bounds().Size())}, icon, icon.Bounds().Min, draw.Over)
+		return
+	}
+	bounds := dst.Bounds()
+	w, h := bounds.Dx(), bounds.Dy()
+	toBuffer := func(p image.Point) image.Point {
+		x, y := p.X, p.Y
+		switch transform {
+		case C.WL_OUTPUT_TRANSFORM_90:
+			p = image.Pt(y, h-1-x)
+		case C.WL_OUTPUT_TRANSFORM_180:
+			p = image.Pt(w-1-x, h-1-y)
+		case C.WL_OUTPUT_TRANSFORM_270:
+			p = image.Pt(w-1-y, x)
+		case C.WL_OUTPUT_TRANSFORM_FLIPPED:
+			p = image.Pt(w-1-x, y)
+		case C.WL_OUTPUT_TRANSFORM_FLIPPED_90:
+			p = image.Pt(w-1-y, h-1-x)
+		case C.WL_OUTPUT_TRANSFORM_FLIPPED_180:
+			p = image.Pt(x, h-1-y)
+		case C.WL_OUTPUT_TRANSFORM_FLIPPED_270:
+			p = image.Pt(y, x)
+		}
+		return p.Add(bounds.Min)
+	}
+	first, last := toBuffer(at), toBuffer(at.Add(icon.Bounds().Size()).Sub(image.Pt(1, 1)))
+	box := image.Rect(min(first.X, last.X), min(first.Y, last.Y), max(first.X, last.X)+1, max(first.Y, last.Y)+1)
+	if !box.Overlaps(bounds) {
+		return
+	}
+	rotated := image.NewRGBA(image.Rect(0, 0, box.Dx(), box.Dy()))
+	for y := icon.Rect.Min.Y; y < icon.Rect.Max.Y; y++ {
+		for x := icon.Rect.Min.X; x < icon.Rect.Max.X; x++ {
+			p := toBuffer(at.Add(image.Pt(x, y).Sub(icon.Rect.Min))).Sub(box.Min)
+			rotated.SetRGBA(p.X, p.Y, icon.RGBAAt(x, y))
+		}
+	}
+	draw.Draw(dst, box, rotated, image.Point{}, draw.Over)
 }

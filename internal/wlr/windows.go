@@ -104,6 +104,8 @@ func cStringPointer(value *C.char) *string {
 }
 
 func (c *Compositor) notifyWindowStateChanged() {
+	c.syncCapturePrivacy()
+	c.syncCaptureSources()
 	windows := c.Windows()
 	if reflect.DeepEqual(windows, c.lastWindowState) {
 		return
@@ -349,10 +351,12 @@ func (c *Compositor) captureCloseSnapshot(view *toplevelView) {
 		c.animationConfig.WindowClose.Off || c.animationConfig.WindowClose.Spring == nil {
 		return
 	}
+	c.rememberCaptureNodes(view)
 	snapshot, count := sceneFXCloneView(unsafe.Pointer(c.windowAnimationTree), unsafe.Pointer(view.tree))
 	if count == 0 || snapshot == nil {
 		return
 	}
+	c.rememberCaptureTree(snapshot, view.captureIdentity)
 	view.closeSnapshot = snapshot
 	view.closeSnapshotGeneration++
 	generation := view.closeSnapshotGeneration

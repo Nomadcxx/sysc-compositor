@@ -123,7 +123,10 @@ func (c *Compositor) trackXDGTree(xdgSurface *C.struct_wlr_xdg_surface, tree *C.
 func (c *Compositor) handleNewPopup(data unsafe.Pointer) {
 	popup := (*C.struct_wlr_xdg_popup)(data)
 	c.popups[popup] = struct{}{}
-	var commit, reposition, destroy *Listener
+	var commit, reposition, damage, destroy *Listener
+	damage = AddListener(unsafe.Pointer(&popup.base.surface.events.commit), func(unsafe.Pointer) {
+		c.damageCaptureSources()
+	})
 	commit = AddListener(unsafe.Pointer(&popup.base.surface.events.commit), func(unsafe.Pointer) {
 		if !bool(popup.base.initial_commit) {
 			return
@@ -147,13 +150,13 @@ func (c *Compositor) handleNewPopup(data unsafe.Pointer) {
 	})
 	destroy = AddListener(unsafe.Pointer(&popup.events.destroy), func(unsafe.Pointer) {
 		delete(c.popups, popup)
-		for _, l := range []*Listener{commit, reposition, destroy} {
+		for _, l := range []*Listener{commit, reposition, damage, destroy} {
 			if l != nil {
 				c.drop(l)
 			}
 		}
 	})
-	c.keep(commit, reposition, destroy)
+	c.keep(commit, reposition, damage, destroy)
 }
 
 func (c *Compositor) clearPopupClips(view *toplevelView) {

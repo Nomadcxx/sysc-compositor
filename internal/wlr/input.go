@@ -184,6 +184,7 @@ func (g pointerGrab) resizeOptions() layout.ResizeOptions {
 }
 
 type toplevelView struct {
+	captureIdentity         *captureIdentity
 	foreign                 *foreignToplevel
 	toplevel                *C.struct_wlr_xdg_toplevel
 	tree                    *C.struct_wlr_scene_tree
@@ -773,7 +774,11 @@ func (c *Compositor) showDefaultImage() {
 		return
 	}
 	C.sysc_default_image(c.cursor, c.xcursorManager)
+	changed := c.drawnImage != "default"
 	c.drawnImage = "default"
+	if changed {
+		c.damageCapturePointers()
+	}
 }
 
 func (c *Compositor) reconfigureCursor(theme string, size int) {
@@ -799,6 +804,7 @@ func (c *Compositor) reconfigureCursor(theme string, size int) {
 	C.free(unsafe.Pointer(name))
 	if c.xcursorManager != nil && C.wlr_xcursor_manager_load(c.xcursorManager, 1.0) {
 		c.restoreCursorImage()
+		c.damageCapturePointers()
 	}
 }
 
@@ -809,7 +815,11 @@ func (c *Compositor) showCursorImage(name string) {
 	image := C.CString(name)
 	C.sysc_named_image(c.cursor, c.xcursorManager, image)
 	C.free(unsafe.Pointer(image))
+	changed := c.drawnImage != name
 	c.drawnImage = name
+	if changed {
+		c.damageCapturePointers()
+	}
 }
 
 func (c *Compositor) restoreCursorImage() {
@@ -817,6 +827,7 @@ func (c *Compositor) restoreCursorImage() {
 		C.sysc_restore_client_image(c.cursor, c.cursorSurface,
 			C.int(c.cursorHotspotX), C.int(c.cursorHotspotY))
 		c.drawnImage = ""
+		c.damageCapturePointers()
 		return
 	}
 	if c.cursorShape != "" {
@@ -1335,15 +1346,19 @@ func (c *Compositor) handleNewToplevel(data unsafe.Pointer) {
 	// wlroots clears a seat's pointer focus when the surface is destroyed,
 	// never on unmap, and a destroyed toplevel unmaps first.
 	add(unsafe.Pointer(&toplevel.base.surface.events.unmap), func(unsafe.Pointer) {
+		c.rememberCaptureNodes(view)
+		c.closeWindowCaptureSources(view)
 		if c.tiledMove != nil && c.tiledMove.view == view {
 			c.cancelTiledWindowMove()
 		}
 		if view.closeSnapshot == nil && view.presentationVisible {
 			if snapshot, count := sceneFXCloneView(unsafe.Pointer(c.windowAnimationTree), unsafe.Pointer(view.tree)); count > 0 {
+				c.rememberCaptureTree(snapshot, view.captureIdentity)
 				view.closeSnapshot = snapshot
 			}
 		}
 		view.mapped = false
+		view.captureIdentity = nil
 		c.closeForeignToplevel(view)
 		view.presentationVisible = false
 		view.openAnimationStarted = false
@@ -1422,6 +1437,8 @@ func (c *Compositor) handleNewToplevel(data unsafe.Pointer) {
 			c.applyWorkspaceModel()
 		}
 		c.applyViewAppearance(view)
+		c.rememberCaptureNodes(view)
+		c.damageCaptureSources(view)
 		c.notifyWindowStateChanged()
 		c.syncOverviewScene()
 		c.syncSwitcher()
@@ -1436,6 +1453,8 @@ func (c *Compositor) handleNewToplevel(data unsafe.Pointer) {
 func (c *Compositor) handleRequestSetCursor(data unsafe.Pointer) {
 	event := (*C.struct_wlr_seat_pointer_request_set_cursor_event)(data)
 	if C.sysc_set_cursor_from_seat(c.cursor, c.seat, event) {
+		c.drop(c.cursorSurfaceCommit)
+		c.cursorSurfaceCommit = nil
 		if c.cursorSurfaceDestroy != nil {
 			c.drop(c.cursorSurfaceDestroy)
 			c.cursorSurfaceDestroy = nil
@@ -1445,9 +1464,15 @@ func (c *Compositor) handleRequestSetCursor(data unsafe.Pointer) {
 		c.cursorHotspotX, c.cursorHotspotY = int(event.hotspot_x), int(event.hotspot_y)
 		if event.surface != nil {
 			surface := event.surface
+			c.cursorSurfaceCommit = AddListener(unsafe.Pointer(&surface.events.commit), func(unsafe.Pointer) {
+				c.damageCapturePointers()
+			})
+			c.keep(c.cursorSurfaceCommit)
 			var listener *Listener
 			listener = AddListener(unsafe.Pointer(&surface.events.destroy), func(unsafe.Pointer) {
 				if c.cursorSurface == surface {
+					c.drop(c.cursorSurfaceCommit)
+					c.cursorSurfaceCommit = nil
 					c.cursorSurface = nil
 					c.cursorSurfaceDestroy = nil
 					c.cursorClientSet = false
@@ -1461,6 +1486,7 @@ func (c *Compositor) handleRequestSetCursor(data unsafe.Pointer) {
 			c.keep(listener)
 		}
 		c.drawnImage = ""
+		c.damageCapturePointers()
 	}
 }
 
@@ -1578,6 +1604,7 @@ func (c *Compositor) handleToplevelDestroy(view *toplevelView) {
 	if view == nil {
 		return
 	}
+	c.closeWindowCaptureSources(view)
 	c.closeForeignToplevel(view)
 	c.cancelViewAnimations(view)
 	c.cancelResizeAnimation(view)

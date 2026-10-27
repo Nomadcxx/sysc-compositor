@@ -165,6 +165,28 @@ After that correction, the VM's full vkms runs passed: `internal/wlr` in 53.151 
 The ext-list matrix row is complete. Wlr management stays partial for maximize/unmaximize, tracked with M15's missing Niri column sizing policy. The foreign capture-source global remains with Task 3's capture/privacy implementation.
 
 
+## Execution record: capture recovery and desktop checks, 2026-10-27
+
+The uncommitted temporary worktrees disappeared before this continuation. Recovered source and tests from the session's recorded patches and editing commands into repository-local worktrees; staged checkpoints preserve the recovered files. The main checkout remains at the Task 2 merge.
+
+The owner made the laptop unavailable and approved named nested runs on the desktop. The first output captures failed during framebuffer creation. The capture helper had forced an implicit DRM modifier; output capture now uses wlroots' primary-swapchain negotiation, and transparent surface capture uses the renderer's renderable ARGB modifiers.
+
+Desktop runs passed `TestCapturePrivacyFollowsDetachedSnapshotBuffers`, `TestCapturePrivacyChangesBeforeNextFrame`, `TestWindowCaptureTracksDamageResizeAndUnmap`, `TestCapturePointerMetadataAndImageLifetime`, `TestLegacyScreencopyPrivacyRegionAndDamage`, and `TestCaptureOutputFollowsScreenshotSelectionDamage`. The retained-snapshot regression proves protected pixels stay black after SceneFX releases the original readonly buffer and proves ordinary display pixels survive capture. Privacy ownership follows scene nodes and propagates to close/resize snapshots and overview/switcher projections.
+
+Lock-root and screenshot-selection damage regressions each failed while pending ext-copy and legacy frames received no update. Owning-layer notifications and deferred legacy delivery fixed those checks. Capture now observes client-surface commit/unmap/destruction and coalesces updates after native scene listeners, covering surfaces beyond toplevels. Additional hotkey/exit UI and desynchronized lock-child regressions were preserved for the next bench run. The matrix stayed unchanged at this checkpoint.
+
+Named pure-Go config, allocation, region-clipping and pointer-transform checks passed. Vet, entry-point builds, formatting and whitespace checks passed. No dependency changed. Full package, integration and CI gates remain outstanding; this record does not close Task 3 or M12.
+
+
+## Execution record: capture bench validation, 2026-10-27
+
+The owner returned testing to the laptop bench, whose standing approval permits named nested runs. Twelve named capture runtime checks passed there, covering live-window identity/lifecycle, pointer metadata and images, privacy reload, retired frozen pixels, retained snapshots, legacy requests and fractional clipping, lock roots/children, screenshot selection, compositor UI and delayed switcher previews. Five named pure-logic checks passed for rules, allocation, clipping, scaling and pointer transforms. No desktop compositor test ran in this continuation.
+
+Review and failing wire regressions exposed missing notifications for hotkeys, immediate exit-dialog changes, direct overview gestures and delayed switcher show/removal. Their existing scene-update owners now notify capture after each update; unchanged frames remain pending. A separate region regression exposed truncation before fractional clipping. Legacy requests now round physical endpoints before clipping and inverse transformation, matching Niri's pinned implementation. The fractional wire test checks dimensions and pixels against a full-output frame.
+
+The reviewed implementation retains wlroots' ext-copy frame/session engine, advertises SHM formats only, validates the 64 MiB allocation/stride ceiling and stops sources when their mapping or policy retires. Node-owned privacy covers retained scene images after source buffers disappear; native masks preserve cached textures and acquire state. Vet, entry-point builds, formatting and whitespace checks pass with unchanged dependencies. CI and integration gates still precede merge; portal, PipeWire and real IME acceptance remain outside this Task 3 record.
+
+
 ## Execution record: virtual input, 2026-10-27
 
 The virtual keyboard and pointer managers attach validated user-seat devices through the existing input paths. Virtual keyboards retain their Wayland client identity, so only the active IME's own virtual keyboard bypasses its grab. Application delivery uses a stable native seat keyboard and per-source press destinations, preserving held state through late binding, focus changes, overlapping devices and disconnect. Lock, blanking and injected-seat gates release virtual state before blocking it. Explicit inert seat/output resources fail validation instead of becoming unrestricted requests.
@@ -175,3 +197,6 @@ Local vet, builds of the two entry points, formatting and whitespace checks pass
 
 
 The first Task 4 CI run passed static checks and the full compositor package, then exposed a race in `TestNiriWindowActionsOverSocket`. Its separate connections received `Handled` before the server posted each action, so column consumption could precede column placement. The test now waits for the published placement and grouped state before sending dependent actions. The focused bench test passed after this test-only correction; CI must pass again before merge.
+
+
+Task 4 merged as PR #59 (`a4312e7`) after its corrected static and compositor CI lanes passed. The combined capture/input branch then passed eight named bench integration checks: privacy reload, IME passthrough, seat/lock boundaries, live-window lifecycle, pointer image lifetime, socket window actions, compositor UI damage and delayed switcher damage. Conflict resolution retained the capture teardown and virtual-input guard cleanup, and preserved the two sets of test-client helpers. The combined tree passes vet, entry-point builds, formatting and whitespace checks. Capture still requires its own PR gates before merge.

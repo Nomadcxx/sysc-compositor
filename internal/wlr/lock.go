@@ -132,6 +132,7 @@ func (c *Compositor) handleNewSessionLock(data unsafe.Pointer) {
 
 // sealSession closes the session to everything but lock surfaces.
 func (c *Compositor) sealSession() {
+	defer c.damageCaptureSources()
 	c.setSessionLocked(true)
 	c.closeScreenshotUI()
 	c.closeSwitcher(false)
@@ -156,6 +157,7 @@ func (c *Compositor) sealSession() {
 
 // unsealSession runs on a valid unlock_and_destroy, and only then.
 func (c *Compositor) unsealSession() {
+	defer c.damageCaptureSources()
 	c.lockPendingOutputs = nil
 	for pointer, backdrop := range c.lockBackdrops {
 		C.wlr_scene_node_destroy(&backdrop.node)
@@ -192,6 +194,7 @@ func (c *Compositor) handleNewLockSurface(data unsafe.Pointer) {
 	add(unsafe.Pointer(&surface.events.destroy), func(unsafe.Pointer) {
 		delete(l.surfaces, surface)
 		c.dropLockSurface(s)
+		c.damageCaptureSources()
 		c.updateKeyboardFocus()
 		c.refocusPointer(nowMsec())
 	})

@@ -47,8 +47,7 @@ static const struct wlr_buffer_impl sysc_image_buffer_impl = {
 
 // sysc_scene_image takes ownership of data and puts it in the scene under
 // parent. The scene node holds the only buffer lock.
-static struct wlr_scene_buffer *sysc_scene_image(struct wlr_scene_tree *parent,
-		void *data, int width, int height, size_t stride) {
+static struct wlr_buffer *sysc_image_buffer_create(void *data, int width, int height, size_t stride) {
 	struct sysc_image_buffer *buffer = calloc(1, sizeof(*buffer));
 	if (buffer == NULL) {
 		free(data);
@@ -57,9 +56,7 @@ static struct wlr_scene_buffer *sysc_scene_image(struct wlr_scene_tree *parent,
 	wlr_buffer_init(&buffer->base, &sysc_image_buffer_impl, width, height);
 	buffer->data = data;
 	buffer->stride = stride;
-	struct wlr_scene_buffer *node = wlr_scene_buffer_create(parent, &buffer->base);
-	wlr_buffer_drop(&buffer->base);
-	return node;
+	return &buffer->base;
 }
 
 static void sysc_scene_image_place(struct wlr_scene_buffer *node, int x, int y,
@@ -94,12 +91,25 @@ import (
 // sceneImage puts a copy of img under parent as a buffer node at its
 // physical size; sceneImagePlace sets where and how big it is drawn.
 func sceneImage(parent *C.struct_wlr_scene_tree, img *image.RGBA) *C.struct_wlr_scene_buffer {
+	buffer := imageBuffer(img)
+	if buffer == nil {
+		return nil
+	}
+	node := C.wlr_scene_buffer_create(parent, buffer)
+	C.wlr_buffer_drop(buffer)
+	return node
+}
+
+// imageBuffer copies premultiplied pixels into a producer-owned native buffer.
+// The caller drops the producer reference after attaching or copying it.
+func imageBuffer(img *image.RGBA) *C.struct_wlr_buffer {
 	w, h := img.Rect.Dx(), img.Rect.Dy()
-	if w == 0 || h == 0 {
+	size, err := captureAllocation(w, h, w*4)
+	if err != nil {
 		return nil
 	}
 	stride := 4 * w
-	data := C.malloc(C.size_t(stride * h))
+	data := C.malloc(C.size_t(size))
 	if data == nil {
 		return nil
 	}
@@ -107,7 +117,7 @@ func sceneImage(parent *C.struct_wlr_scene_tree, img *image.RGBA) *C.struct_wlr_
 	for y := range h {
 		copy(dst[y*stride:(y+1)*stride], img.Pix[img.PixOffset(img.Rect.Min.X, img.Rect.Min.Y+y):])
 	}
-	return C.sysc_scene_image(parent, data, C.int(w), C.int(h), C.size_t(stride))
+	return C.sysc_image_buffer_create(data, C.int(w), C.int(h), C.size_t(stride))
 }
 
 func sceneImagePlace(node *C.struct_wlr_scene_buffer, box image.Rectangle, opacity float64) {

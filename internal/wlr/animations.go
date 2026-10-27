@@ -58,6 +58,7 @@ func (c *Compositor) tickAnimations(now time.Time) {
 	if c.switcher.dirty {
 		c.syncSwitcher()
 	}
+	c.damageCaptureSources()
 	c.scheduleAnimationTick()
 }
 
@@ -316,11 +317,13 @@ func (c *Compositor) animateViewSize(view *toplevelView, width, height int, kind
 			return
 		}
 		var count int
+		c.rememberCaptureNodes(view)
 		view.resizeSnapshot, count = sceneFXCloneView(unsafe.Pointer(c.windowAnimationTree), unsafe.Pointer(view.tree))
 		if count == 0 || view.resizeSnapshot == nil {
 			view.resizeSnapshot = nil
 			return
 		}
+		c.rememberCaptureTree(view.resizeSnapshot, view.captureIdentity)
 		x, y := view.treePosition()
 		sceneFXTreeSetPosition(view.resizeSnapshot, x, y)
 		view.resizeBaseWidth, view.resizeBaseHeight = max(1, geometry.w), max(1, geometry.h)

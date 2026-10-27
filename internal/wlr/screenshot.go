@@ -16,6 +16,7 @@ package wlr
 #include <wlr/types/wlr_data_device.h>
 #include <wlr/types/wlr_output.h>
 #include <wlr/render/pass.h>
+#include <wlr/render/interface.h>
 #include <wlr/types/wlr_compositor.h>
 #include <wlr/types/wlr_seat.h>
 #include <wlr/types/wlr_xdg_shell.h>
@@ -26,18 +27,12 @@ package wlr
 // buffers and damage tracking are untouched, and returns the buffer locked;
 // the caller unlocks it. A fresh buffer has no age, so the scene draws all of
 // it. (Only wlr_scene_output_commit skips an output that needs no frame.)
-static struct wlr_buffer *sysc_render_output(void *scene_output, struct wlr_output *output,
-		struct wlr_allocator *alloc) {
-	struct wlr_drm_format_set formats = {0};
-	if (!wlr_drm_format_set_add(&formats, DRM_FORMAT_XRGB8888, DRM_FORMAT_MOD_INVALID)) {
+static struct wlr_buffer *sysc_render_output(void *scene_output, struct wlr_output *output) {
+	struct wlr_swapchain *swapchain = NULL;
+	if (!wlr_output_configure_primary_swapchain(output, NULL, &swapchain)) {
 		return NULL;
 	}
-	struct wlr_swapchain *swapchain = wlr_swapchain_create(alloc, output->width, output->height,
-		wlr_drm_format_set_get(&formats, DRM_FORMAT_XRGB8888));
-	wlr_drm_format_set_finish(&formats);
-	if (swapchain == NULL) {
-		return NULL;
-	}
+
 	struct wlr_scene_output_state_options options = { .swapchain = swapchain };
 	struct wlr_output_state state;
 	wlr_output_state_init(&state);
@@ -112,13 +107,13 @@ static void sysc_window_shot_surface(struct wlr_surface *surface, int sx, int sy
 // the same way. width and height are the drawn size times scale.
 static bool sysc_render_surface_tree(struct wlr_surface *surface, int ox, int oy, double scale,
 		int width, int height, struct wlr_allocator *alloc, struct wlr_renderer *renderer, void *data) {
-	struct wlr_drm_format_set formats = {0};
-	if (!wlr_drm_format_set_add(&formats, DRM_FORMAT_ARGB8888, DRM_FORMAT_MOD_INVALID)) {
+	const struct wlr_drm_format_set *formats = renderer->WLR_PRIVATE.impl->get_render_formats(renderer);
+	const struct wlr_drm_format *format = wlr_drm_format_set_get(formats, DRM_FORMAT_ARGB8888);
+	if (format == NULL) {
 		return false;
 	}
-	struct wlr_buffer *buffer = wlr_allocator_create_buffer(alloc, width, height,
-		wlr_drm_format_set_get(&formats, DRM_FORMAT_ARGB8888));
-	wlr_drm_format_set_finish(&formats);
+	struct wlr_buffer *buffer = wlr_allocator_create_buffer(alloc, width, height, format);
+
 	if (buffer == NULL) {
 		return false;
 	}
@@ -200,12 +195,18 @@ import (
 	"runtime/cgo"
 	"strings"
 	"unsafe"
+
+	"github.com/Nomadcxx/sysc-compositor/internal/config"
 )
 
 // captureOutput renders one output as it would next be shown and returns it
 // as an image. It runs on the compositor thread.
 func (c *Compositor) captureOutput(pointer unsafe.Pointer) (*image.NRGBA, error) {
-	buffer, err := c.renderOutput(pointer)
+	return c.captureOutputForTarget(pointer, config.CaptureScreen)
+}
+
+func (c *Compositor) captureOutputForTarget(pointer unsafe.Pointer, target config.CaptureTarget) (*image.NRGBA, error) {
+	buffer, err := c.renderOutputForTarget(pointer, target)
 	if err != nil {
 		return nil, err
 	}
@@ -217,15 +218,24 @@ func (c *Compositor) captureOutput(pointer unsafe.Pointer) (*image.NRGBA, error)
 // renderOutput renders an output's scene into a buffer of its own, returned
 // locked.
 func (c *Compositor) renderOutput(pointer unsafe.Pointer) (*C.struct_wlr_buffer, error) {
+	return c.renderOutputForTarget(pointer, config.CaptureScreen)
+}
+
+func (c *Compositor) renderOutputForTarget(pointer unsafe.Pointer, target config.CaptureTarget) (*C.struct_wlr_buffer, error) {
 	so, ok := c.sceneOutputs[pointer]
 	if !ok {
 		return nil, errors.New("wlr: no such output")
 	}
 	output := (*C.struct_wlr_output)(pointer)
-	if output.width <= 0 || output.height <= 0 {
-		return nil, errors.New("wlr: the output has no size")
+	if _, err := captureAllocation(int(output.width), int(output.height), int(output.width)*4); err != nil {
+		return nil, err
 	}
-	buffer := C.sysc_render_output(unsafe.Pointer(so), output, c.alloc)
+	restore, err := c.beginCapturePrivacy(target)
+	if err != nil {
+		return nil, err
+	}
+	defer restore()
+	buffer := C.sysc_render_output(unsafe.Pointer(so), output)
 	if buffer == nil {
 		return nil, fmt.Errorf("wlr: rendering output %q for a screenshot failed", C.GoString(output.name))
 	}
@@ -238,7 +248,14 @@ func (c *Compositor) readBuffer(buffer *C.struct_wlr_buffer, box image.Rectangle
 	if w <= 0 || h <= 0 {
 		return nil, errors.New("wlr: an empty screenshot")
 	}
-	pixels := C.malloc(C.size_t(w * h * 4))
+	size, err := captureAllocation(w, h, w*4)
+	if err != nil {
+		return nil, err
+	}
+	if box.Min.X < 0 || box.Min.Y < 0 || box.Max.X > int(buffer.width) || box.Max.Y > int(buffer.height) {
+		return nil, errors.New("wlr: capture region exceeds buffer")
+	}
+	pixels := C.malloc(C.size_t(size))
 	if pixels == nil {
 		return nil, errors.New("wlr: out of memory for a screenshot")
 	}
@@ -338,7 +355,7 @@ func (c *Compositor) ScreenshotScreen(writeToDisk, showPointer bool, path string
 		return err
 	}
 	if showPointer {
-		c.drawPointer(img, c.outputLayoutBox(target), float64((*C.struct_wlr_output)(target).scale))
+		c.drawOutputPointer(img, target)
 	}
 	c.saveScreenshot(img, writeToDisk, path)
 	return nil
@@ -411,18 +428,8 @@ func (c *Compositor) ScreenshotWindow(id *uint64, writeToDisk, showPointer bool,
 		return errors.New("wlr: no window to screenshot")
 	}
 	xdg := view.toplevel.base
-	scale := 1.0
-	for pointer := range c.sceneOutputs {
-		if C.GoString((*C.struct_wlr_output)(pointer).name) == c.outputNameForView(view) {
-			scale = float64((*C.struct_wlr_output)(pointer).scale)
-		}
-	}
-	width := int(float64(xdg.geometry.width) * scale)
-	height := int(float64(xdg.geometry.height) * scale)
-	if width <= 0 || height <= 0 {
-		return errors.New("wlr: the window has no size")
-	}
-	img, err := c.renderSurfaceTree(xdg.surface, int(xdg.geometry.x), int(xdg.geometry.y), scale, width, height)
+	scale := c.windowCaptureScale(view)
+	img, err := c.renderWindowCapture(view, config.CaptureScreen)
 	if err != nil {
 		return err
 	}
@@ -439,7 +446,11 @@ func (c *Compositor) ScreenshotWindow(id *uint64, writeToDisk, showPointer bool,
 // width by height image.
 func (c *Compositor) renderSurfaceTree(surface *C.struct_wlr_surface, ox, oy int, scale float64,
 	width, height int) (*image.RGBA, error) {
-	pixels := C.malloc(C.size_t(width * height * 4))
+	size, err := captureAllocation(width, height, width*4)
+	if err != nil {
+		return nil, err
+	}
+	pixels := C.malloc(C.size_t(size))
 	if pixels == nil {
 		return nil, errors.New("wlr: out of memory for a screenshot")
 	}

@@ -344,6 +344,9 @@ func (c *Compositor) handleNewInputPopup(data unsafe.Pointer) {
 // placeInputPopups puts every input-method popup just below the active text
 // input's cursor rectangle, and hides them while no text input is active.
 func (c *Compositor) placeInputPopups() {
+	if len(c.inputPopups) != 0 {
+		defer c.damageCaptureSources()
+	}
 	input := c.activeTextInput
 	var x, y C.int
 	visible := input != nil && input.focused_surface != nil &&

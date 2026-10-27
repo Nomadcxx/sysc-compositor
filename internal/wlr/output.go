@@ -88,6 +88,10 @@ static bool sysc_commit_changed_geometry(struct wlr_output_event_commit *event) 
 		WLR_OUTPUT_STATE_TRANSFORM)) != 0;
 }
 
+static bool sysc_commit_changed_enabled(struct wlr_output_event_commit *event) {
+	return (event->state->committed & WLR_OUTPUT_STATE_ENABLED) != 0;
+}
+
 static bool sysc_output_set_scale(struct wlr_output *output, float scale) {
 	struct wlr_output_state state;
 	wlr_output_state_init(&state);
@@ -502,6 +506,9 @@ func (c *Compositor) handleNewOutput(data unsafe.Pointer) {
 	// The layout follows the output's commit first (its listener came
 	// first); layer surfaces then follow the new box.
 	commit := AddListener(unsafe.Pointer(&output.events.commit), func(event unsafe.Pointer) {
+		if bool(C.sysc_commit_changed_enabled((*C.struct_wlr_output_event_commit)(event))) {
+			c.syncCaptureSources()
+		}
 		if bool(C.sysc_commit_changed_geometry((*C.struct_wlr_output_event_commit)(event))) {
 			c.arrangeLayers(data)
 			c.arrangeLockOutput(data)

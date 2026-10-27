@@ -257,6 +257,9 @@ func (c *Compositor) syncOverviewScene() {
 	if c.overviewTree == nil || c.model == nil {
 		return
 	}
+	if bool(c.overviewTree.node.enabled) || c.model.OverviewProgress() > 0 {
+		defer c.damageCaptureSources()
+	}
 	c.clearOverviewScene()
 	progress := c.model.OverviewProgress()
 	if progress <= 0 {
@@ -325,6 +328,7 @@ func (c *Compositor) syncOverviewScene() {
 					continue
 				}
 				var sourceFirst, sourceLast C.uintptr_t
+				c.rememberCaptureNodes(view)
 				count := int(C.sysc_overview_project_buffers(tree, view.tree,
 					C.int(current.frame.Output.X), C.int(current.frame.Output.Y),
 					C.int(workspace.Bounds.X), C.int(workspace.Bounds.Y), C.double(current.frame.Zoom),
@@ -333,6 +337,7 @@ func (c *Compositor) syncOverviewScene() {
 					C.wlr_scene_node_destroy(&tree.node)
 					continue
 				}
+				c.rememberCaptureTree(unsafe.Pointer(tree), view.captureIdentity)
 				c.overviewProjections = append(c.overviewProjections, overviewProjection{
 					Output: current.name, WorkspaceID: workspace.ID,
 					WindowID: window.ID, Bounds: window.Bounds, BufferCount: count,
@@ -434,10 +439,13 @@ func (c *Compositor) syncOverviewSurfaceListeners(view *toplevelView) {
 		listeners := &overviewSurfaceListeners{}
 		if surface != root {
 			listeners.commit = AddListener(unsafe.Pointer(&surface.events.commit), func(unsafe.Pointer) {
+				c.rememberCaptureNodes(view)
+				c.damageCaptureSources(view)
 				c.syncOverviewScene()
 				c.syncSwitcher()
 			})
 			listeners.unmap = AddListener(unsafe.Pointer(&surface.events.unmap), func(unsafe.Pointer) {
+				c.damageCaptureSources(view)
 				c.syncOverviewScene()
 				c.syncSwitcher()
 			})

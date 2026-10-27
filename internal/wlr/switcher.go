@@ -432,6 +432,9 @@ func (c *Compositor) closeSwitcher(confirm bool) {
 // dropSwitcher removes the switcher's scene at once.
 func (c *Compositor) dropSwitcher() {
 	s := &c.switcher
+	if s.tree != nil {
+		defer c.damageCaptureSources()
+	}
 	c.cancelAnimation(switcherCloseKey)
 	c.cancelAnimation(switcherViewKey)
 	for id := range s.moves {
@@ -544,6 +547,9 @@ func (c *Compositor) switcherHitAt(x, y float64) (uint64, bool) {
 // one highlighted, each with its title.
 func (c *Compositor) syncSwitcher() {
 	s := &c.switcher
+	if s.tree != nil || (s.mru != nil && s.shown) {
+		defer c.damageCaptureSources()
+	}
 	s.syncing, s.dirty = true, false
 	defer func() { s.syncing = false }()
 	if s.tree != nil {
@@ -671,7 +677,9 @@ func (c *Compositor) syncSwitcher() {
 		}
 		x, y := at(r.X, r.Y)
 		zoom := r.W / float64(max(v.geometry().w, 1))
+		c.rememberCaptureNodes(v)
 		if preview := projectViewPreview(s.tree, v, x, y, zoom); preview != nil {
+			c.rememberCaptureTree(unsafe.Pointer(preview), v.captureIdentity)
 			// Niri clips previews to the window geometry and its corner
 			// radius whether or not the window itself is clipped.
 			var radii config.CornerRadius
