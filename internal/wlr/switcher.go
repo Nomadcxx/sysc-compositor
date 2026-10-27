@@ -671,7 +671,9 @@ func (c *Compositor) syncSwitcher() {
 		}
 		x, y := at(r.X, r.Y)
 		zoom := r.W / float64(max(v.geometry().w, 1))
+		c.rememberCaptureNodes(v)
 		if preview := projectViewPreview(s.tree, v, x, y, zoom); preview != nil {
+			c.rememberCaptureTree(unsafe.Pointer(preview), v.captureIdentity)
 			// Niri clips previews to the window geometry and its corner
 			// radius whether or not the window itself is clipped.
 			var radii config.CornerRadius

@@ -120,6 +120,7 @@ func (c *Compositor) pointerMotion(device *C.struct_wlr_input_device, timeMsec C
 	dx, dy = c.constrainDelta(dx, dy)
 	if dx != 0 || dy != 0 {
 		C.wlr_cursor_move(c.cursor, device, C.double(dx), C.double(dy))
+		c.damageCapturePointers()
 	}
 	if c.shotUIMotion() {
 		return

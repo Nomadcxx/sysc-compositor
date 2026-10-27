@@ -264,6 +264,10 @@ struct sysc_idle_client {
 	bool close_requested;
 	struct wl_display *display;
 	struct wl_compositor *compositor;
+	struct wl_subcompositor *subcompositor;
+	struct wl_surface *child_surface;
+	struct wl_subsurface *child;
+	struct wl_buffer *child_buffer;
 	struct wl_shm *shm;
 	struct wl_seat *seat;
 	struct wl_proxy *wm_base, *notifier, *inhibit_manager, *cursor_shape_manager;
@@ -322,6 +326,8 @@ static void sysc_idle_global(void *data, struct wl_registry *registry,
 				&sysc_relative_pointer_manager_interface, 1);
 	} else if (strcmp(interface, "zwp_pointer_constraints_v1") == 0) {
 		c->constraints = wl_registry_bind(registry, name, &sysc_pointer_constraints_interface, 1);
+	} else if (strcmp(interface, "wl_subcompositor") == 0) {
+		c->subcompositor = wl_registry_bind(registry, name, &wl_subcompositor_interface, 1);
 	} else if (strcmp(interface, "zwp_keyboard_shortcuts_inhibit_manager_v1") == 0) {
 		c->shortcuts_manager = wl_registry_bind(registry, name,
 				&sysc_shortcuts_inhibit_manager_interface, 1);
@@ -422,7 +428,7 @@ static const struct wl_seat_listener sysc_seat_listener = {
 	.name = sysc_seat_name,
 };
 
-static struct wl_buffer *sysc_idle_buffer(struct wl_shm *shm, int width, int height) {
+static struct wl_buffer *sysc_idle_color_buffer(struct wl_shm *shm, int width, int height, uint32_t color) {
 	int stride = width * 4, size = stride * height;
 	int fd = memfd_create("sysc-idle-test", MFD_CLOEXEC);
 	if (fd < 0) {
@@ -432,6 +438,10 @@ static struct wl_buffer *sysc_idle_buffer(struct wl_shm *shm, int width, int hei
 		close(fd);
 		return NULL;
 	}
+	uint32_t *pixels = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+	if (pixels == MAP_FAILED) { close(fd); return NULL; }
+	for (int i = 0; i < width * height; i++) pixels[i] = color;
+	munmap(pixels, size);
 	struct wl_shm_pool *pool = wl_shm_create_pool(shm, fd, size);
 	close(fd);
 	if (pool == NULL) {
@@ -441,6 +451,39 @@ static struct wl_buffer *sysc_idle_buffer(struct wl_shm *shm, int width, int hei
 			WL_SHM_FORMAT_XRGB8888);
 	wl_shm_pool_destroy(pool);
 	return buffer;
+}
+
+static int sysc_idle_paint_child(struct sysc_idle_client *c, uint32_t color, int x, int y, int width, int height) {
+ if (!c->subcompositor) return -1;
+ if (!c->child) {
+  c->child_surface = wl_compositor_create_surface(c->compositor);
+  c->child = wl_subcompositor_get_subsurface(c->subcompositor, c->child_surface, c->surface);
+  wl_subsurface_set_desync(c->child);
+ }
+ struct wl_buffer *buffer = sysc_idle_color_buffer(c->shm, width, height, color);
+ if (!buffer) return -1;
+ if (c->child_buffer) wl_buffer_destroy(c->child_buffer);
+ c->child_buffer = buffer;
+ wl_subsurface_set_position(c->child, x, y);
+ wl_surface_attach(c->child_surface, buffer, 0, 0);
+ wl_surface_damage(c->child_surface, 0, 0, width, height);
+ wl_surface_commit(c->child_surface);
+ wl_surface_commit(c->surface);
+ return wl_display_roundtrip(c->display);
+}
+
+static struct wl_buffer *sysc_idle_buffer(struct wl_shm *shm, int width, int height) {
+	return sysc_idle_color_buffer(shm, width, height, 0);
+}
+
+static int sysc_idle_paint(struct sysc_idle_client *c, uint32_t color, int width, int height) {
+	struct wl_buffer *next = sysc_idle_color_buffer(c->shm, width, height, color);
+	if (next == NULL) return -1;
+	wl_buffer_destroy(c->buffer); c->buffer = next;
+	wl_surface_attach(c->surface, next, 0, 0);
+	wl_surface_damage(c->surface, 0, 0, width, height);
+	wl_surface_commit(c->surface);
+	return wl_display_roundtrip(c->display);
 }
 
 // Describes why the connection failed, for test errors.
@@ -849,6 +892,28 @@ func (c *ToplevelClient) CommitBuffer() error {
 	C.wl_surface_commit(c.state.surface)
 	if C.wl_display_roundtrip(c.state.display) < 0 {
 		return fmt.Errorf("Wayland toplevel buffer commit failed: %s", c.failure())
+	}
+	return nil
+}
+
+// PaintSubsurface commits a colored child surface and checkpoints the surface tree.
+func (c *ToplevelClient) PaintSubsurface(color uint32, x, y, width, height int) error {
+	if width <= 0 || height <= 0 || width > 4096 || height > 4096 {
+		return fmt.Errorf("invalid test child dimensions")
+	}
+	if C.sysc_idle_paint_child(c.state, C.uint32_t(color), C.int(x), C.int(y), C.int(width), C.int(height)) < 0 {
+		return fmt.Errorf("paint child failed: %s", c.failure())
+	}
+	return nil
+}
+
+// Paint replaces the client buffer with a solid XRGB image and checkpoints its commit.
+func (c *ToplevelClient) Paint(color uint32, width, height int) error {
+	if width <= 0 || height <= 0 || width > 4096 || height > 4096 {
+		return fmt.Errorf("invalid test image dimensions")
+	}
+	if C.sysc_idle_paint(c.state, C.uint32_t(color), C.int(width), C.int(height)) < 0 {
+		return fmt.Errorf("paint failed: %s", c.failure())
 	}
 	return nil
 }

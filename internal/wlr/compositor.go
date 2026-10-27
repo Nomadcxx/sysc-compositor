@@ -101,6 +101,7 @@ import (
 	"errors"
 	"image"
 	"os"
+	"reflect"
 	"slices"
 	"testing"
 	"time"
@@ -122,6 +123,8 @@ type Compositor struct {
 	comp                 *C.struct_wlr_compositor
 	layout               *C.struct_wlr_output_layout
 	scene                *C.struct_wlr_scene
+	capture              *captureProtocol
+	captureNodes         map[*C.struct_wlr_scene_node]*captureNodeOwner
 	xdgDecorationManager unsafe.Pointer
 	kdeDecorationManager unsafe.Pointer
 	windowShadowTree     *C.struct_wlr_scene_tree
@@ -207,6 +210,7 @@ type Compositor struct {
 	cursorSurface                  *C.struct_wlr_surface
 	cursorHotspotX, cursorHotspotY int
 	cursorSurfaceDestroy           *Listener
+	cursorSurfaceCommit            *Listener
 	cursorClientSet                bool
 	// cursorShape is the theme image the pointer's client last asked for
 	// through cursor-shape-v1, restored after a compositor grab; "" when it
@@ -629,7 +633,12 @@ func (c *Compositor) Reconfigure(opts Options) error {
 	}
 	c.hotCorners = opts.Gestures.HotCorners
 	c.dndEdgeConfig = opts.Gestures.DNDEdgeViewScroll
+	rulesChanged := !reflect.DeepEqual(c.windowRules, opts.WindowRules)
 	c.windowRules = slices.Clone(opts.WindowRules)
+	if rulesChanged {
+		// Frozen pixels may outlive the window and its original buffer.
+		c.closeScreenshotUI()
+	}
 	c.layerRules = slices.Clone(opts.LayerRules)
 	c.preferNoCSD = opts.PreferNoCSD
 	c.reconfigureCursor(opts.CursorTheme, opts.CursorSize)
@@ -685,6 +694,9 @@ func (c *Compositor) WorkspaceSnapshot() wm.Snapshot {
 }
 
 func (c *Compositor) notifyStateChanged() {
+	c.syncCapturePrivacy()
+	c.syncCaptureSources()
+	c.damageCaptureSources()
 	c.syncForeignToplevels()
 	if c.stateChanged != nil {
 		c.stateChanged()
@@ -735,6 +747,8 @@ func (c *Compositor) Terminate() {
 // Destroy releases the compositor. Listeners added through AddListener are
 // removed first so no token outlives its wl_signal.
 func (c *Compositor) Destroy() {
+	c.destroyCaptureSources()
+	c.destroyCapturePrivacy()
 	c.stopKeyboardRepeat()
 	if c.focusTimer != nil {
 		c.focusTimer.Stop()
@@ -802,6 +816,7 @@ func (c *Compositor) Destroy() {
 	if c.display != nil {
 		C.wl_display_destroy_clients(c.display)
 	}
+	c.finishCaptureProtocol()
 	c.destroyBackend()
 	if c.session != nil {
 		C.wlr_session_destroy(c.session)

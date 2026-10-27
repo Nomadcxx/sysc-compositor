@@ -34,6 +34,7 @@ type RuleMatch struct {
 }
 
 type WindowRule struct {
+	BlockOutFrom         *string
 	Matches              []RuleMatch
 	Excludes             []RuleMatch
 	OpenOnOutput         *string
@@ -47,6 +48,7 @@ type WindowRule struct {
 }
 
 type WindowRuleResult struct {
+	BlockOutFrom         *string
 	OpenOnOutput         *string
 	OpenOnWorkspace      *string
 	OpenFloating         *bool
@@ -86,8 +88,24 @@ func ResolveWindowRules(rules []WindowRule, appID, title string) WindowRuleResul
 		applyRuleValue(&result.DefaultWindowHeight, rule.DefaultWindowHeight)
 		applyRuleValue(&result.GeometryCornerRadius, rule.GeometryCornerRadius)
 		applyRuleValue(&result.ClipToGeometry, rule.ClipToGeometry)
+		applyRuleValue(&result.BlockOutFrom, rule.BlockOutFrom)
 	}
 	return result
+}
+
+type CaptureTarget uint8
+
+const (
+	CaptureDisplay CaptureTarget = iota
+	CaptureScreen
+	CaptureCast
+)
+
+// BlocksCapture follows Niri's RenderTarget: screen-capture protects all
+// capture targets, while screencast protects only PipeWire streams.
+func (r WindowRuleResult) BlocksCapture(target CaptureTarget) bool {
+	return target != CaptureDisplay && r.BlockOutFrom != nil &&
+		(*r.BlockOutFrom == "screen-capture" || target == CaptureCast && *r.BlockOutFrom == "screencast")
 }
 
 func (r WindowRule) matches(appID, title string) bool {
@@ -277,6 +295,16 @@ func (c *Config) windowRule(node *document.Node) error {
 			value, err = boolArg(child)
 			if err == nil {
 				rule.ClipToGeometry = &value
+			}
+		case "block-out-from":
+			var value []string
+			value, err = stringArgs(child, 1, 1)
+			if err == nil {
+				if value[0] != "screen-capture" && value[0] != "screencast" {
+					err = fmt.Errorf("expected screen-capture or screencast")
+				} else {
+					rule.BlockOutFrom = &value[0]
+				}
 			}
 		default:
 			c.addWarning("window-rule")

@@ -163,3 +163,16 @@ The ext-list endpoint now announces each decimal IPC ID from its first event. Go
 After that correction, the VM's full vkms runs passed: `internal/wlr` in 53.151 s (168 top-level passes, two existing allowed skips), and `internal/server` in 2.435 s. Vet, both entry-point builds, formatting, whitespace and unchanged dependency checks passed. Local review found no remaining critical or important issues. No host compositor test ran.
 
 The ext-list matrix row is complete. Wlr management stays partial for maximize/unmaximize, tracked with M15's missing Niri column sizing policy. The foreign capture-source global remains with Task 3's capture/privacy implementation.
+
+
+## Execution record: capture recovery and desktop checks, 2026-10-27
+
+The uncommitted temporary worktrees disappeared before this continuation. Recovered source and tests from the session's recorded patches and editing commands into repository-local worktrees; staged checkpoints preserve the recovered files. The main checkout remains at the Task 2 merge.
+
+The owner made the laptop unavailable and approved named nested runs on the desktop. The first output captures failed during framebuffer creation. The capture helper had forced an implicit DRM modifier; output capture now uses wlroots' primary-swapchain negotiation, and transparent surface capture uses the renderer's renderable ARGB modifiers.
+
+Desktop runs passed `TestCapturePrivacyFollowsDetachedSnapshotBuffers`, `TestCapturePrivacyChangesBeforeNextFrame`, `TestWindowCaptureTracksDamageResizeAndUnmap`, `TestCapturePointerMetadataAndImageLifetime`, `TestLegacyScreencopyPrivacyRegionAndDamage`, and `TestCaptureOutputFollowsScreenshotSelectionDamage`. The retained-snapshot regression proves protected pixels stay black after SceneFX releases the original readonly buffer and proves ordinary display pixels survive capture. Privacy ownership follows scene nodes and propagates to close/resize snapshots and overview/switcher projections.
+
+Lock-root and screenshot-selection damage regressions each failed while pending ext-copy and legacy frames received no update. Owning-layer notifications and deferred legacy delivery fixed those checks. Capture now observes client-surface commit/unmap/destruction and coalesces updates after native scene listeners, covering surfaces beyond toplevels. Hotkey/exit UI and desynchronized lock-child regressions remain pending their approved runtime runs and any required fixes. The parity matrix stays unchanged until review and runtime gates finish.
+
+Named pure-Go config, allocation, region-clipping and pointer-transform checks passed. Vet, entry-point builds, formatting and whitespace checks passed. No dependency changed. Full package, integration and CI gates remain outstanding; this record does not close Task 3 or M12.

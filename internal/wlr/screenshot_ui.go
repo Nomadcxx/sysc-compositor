@@ -247,6 +247,7 @@ func (f *frozenFrame) onShotButton(p image.Point) bool {
 // drawShotSelection dims every frozen frame outside the selection and draws
 // a border around it.
 func (c *Compositor) drawShotSelection() {
+	defer c.damageCaptureSources()
 	ui := c.shotUI
 	if ui.overlay != nil {
 		C.sysc_shot_tree_destroy(ui.overlay)
@@ -302,6 +303,7 @@ func (c *Compositor) closeScreenshotUI() {
 		return
 	}
 	c.shotUI = nil
+	defer c.damageCaptureSources()
 	c.lastShotSelection = ui.selection
 	for _, frame := range ui.frames {
 		C.wlr_buffer_unlock(frame.buffer)

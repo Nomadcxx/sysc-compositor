@@ -61,6 +61,9 @@ struct sysc_lock_surface {
 	struct wl_surface *surface;
 	struct wl_proxy *lock_surface;
 	struct wl_buffer *buffer;
+	struct wl_surface *child;
+	struct wl_subsurface *subsurface;
+	struct wl_buffer *child_buffer;
 	uint32_t serial, width, height;
 	bool configured;
 };
@@ -69,6 +72,7 @@ struct sysc_lock_client {
 	struct wl_display *display;
 	struct wl_registry *registry;
 	struct wl_compositor *compositor;
+	struct wl_subcompositor *subcompositor;
 	struct wl_shm *shm;
 	struct wl_proxy *manager;
 	struct wl_proxy *lock;
@@ -83,6 +87,8 @@ static void sysc_lock_global(void *data, struct wl_registry *registry,
 	struct sysc_lock_client *client = data;
 	if (strcmp(interface, wl_compositor_interface.name) == 0) {
 		client->compositor = wl_registry_bind(registry, name, &wl_compositor_interface, 4);
+	} else if (strcmp(interface, wl_subcompositor_interface.name) == 0) {
+		client->subcompositor = wl_registry_bind(registry, name, &wl_subcompositor_interface, 1);
 	} else if (strcmp(interface, wl_shm_interface.name) == 0) {
 		client->shm = wl_registry_bind(registry, name, &wl_shm_interface, 1);
 	} else if (strcmp(interface, wl_output_interface.name) == 0) {
@@ -136,7 +142,7 @@ static const struct sysc_lock_surface_listener sysc_lock_surface_listener = {
 	.configure = sysc_lock_surface_configure,
 };
 
-static struct wl_buffer *sysc_lock_buffer(struct wl_shm *shm, uint32_t width, uint32_t height) {
+static struct wl_buffer *sysc_lock_buffer(struct wl_shm *shm, uint32_t width, uint32_t height, uint32_t color) {
 	int stride = (int)width * 4;
 	int size = stride * (int)height;
 	int fd = memfd_create("sysc-lock-test", MFD_CLOEXEC);
@@ -147,6 +153,10 @@ static struct wl_buffer *sysc_lock_buffer(struct wl_shm *shm, uint32_t width, ui
 		close(fd);
 		return NULL;
 	}
+	uint32_t *pixels = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+	if (pixels == MAP_FAILED) { close(fd); return NULL; }
+	for (int i = 0; i < size / 4; i++) pixels[i] = color;
+	munmap(pixels, size);
 	struct wl_shm_pool *pool = wl_shm_create_pool(shm, fd, size);
 	close(fd);
 	if (pool == NULL) {
@@ -270,7 +280,7 @@ static int sysc_lock_client_start(const char *display_name, bool map_surfaces,
 				return 13; // no configure within the deadline
 			}
 		}
-		s->buffer = sysc_lock_buffer(client->shm, s->width, s->height);
+		s->buffer = sysc_lock_buffer(client->shm, s->width, s->height, 0);
 		if (s->buffer == NULL) {
 			return 10;
 		}
@@ -283,6 +293,46 @@ static int sysc_lock_client_start(const char *display_name, bool map_surfaces,
 		return 11;
 	}
 	return 0;
+}
+
+static int sysc_lock_client_paint(struct sysc_lock_client *client, uint32_t color) {
+	for (int i = 0; i < client->num_outputs; i++) {
+		struct sysc_lock_surface *s = &client->surfaces[i];
+		if (s->surface == NULL) return -1;
+		struct wl_buffer *buffer = sysc_lock_buffer(client->shm, s->width, s->height, color);
+		if (buffer == NULL) return -1;
+		if (s->buffer != NULL) wl_buffer_destroy(s->buffer);
+		s->buffer = buffer;
+		wl_surface_attach(s->surface, buffer, 0, 0);
+		wl_surface_damage(s->surface, 0, 0, s->width, s->height);
+		wl_surface_commit(s->surface);
+	}
+	return wl_display_roundtrip(client->display);
+}
+
+// First call establishes the child relationship; later paints commit only
+// the desynchronized child, so parent-only damage tracking cannot observe it.
+static int sysc_lock_client_paint_child(struct sysc_lock_client *client, uint32_t color) {
+	if (client->subcompositor == NULL || client->num_outputs == 0) return -1;
+	struct sysc_lock_surface *s = &client->surfaces[0];
+	if (s->surface == NULL) return -1;
+	if (s->child == NULL) {
+		s->child = wl_compositor_create_surface(client->compositor);
+		if (s->child == NULL) return -1;
+		s->subsurface = wl_subcompositor_get_subsurface(client->subcompositor, s->child, s->surface);
+		if (s->subsurface == NULL) return -1;
+		wl_subsurface_set_position(s->subsurface, 40, 40);
+		wl_subsurface_set_desync(s->subsurface);
+		wl_surface_commit(s->surface);
+	}
+	struct wl_buffer *buffer = sysc_lock_buffer(client->shm, 64, 64, color);
+	if (buffer == NULL) return -1;
+	if (s->child_buffer != NULL) wl_buffer_destroy(s->child_buffer);
+	s->child_buffer = buffer;
+	wl_surface_attach(s->child, buffer, 0, 0);
+	wl_surface_damage(s->child, 0, 0, 64, 64);
+	wl_surface_commit(s->child);
+	return wl_display_roundtrip(client->display);
 }
 
 static int sysc_lock_client_unlock(struct sysc_lock_client *client) {
@@ -342,6 +392,28 @@ func StartLockClient(display string, mapSurfaces bool) (*LockClient, error) {
 
 // Outputs is how many wl_output globals the locker saw.
 func (l *LockClient) Outputs() int { return int(C.sysc_lock_client_outputs(l.state)) }
+
+// Paint replaces every lock surface with a solid XRGB frame and commits it.
+func (l *LockClient) Paint(color uint32) error {
+	if l == nil || l.state == nil {
+		return errors.New("session-lock client is closed")
+	}
+	if C.sysc_lock_client_paint(l.state, C.uint32_t(color)) < 0 {
+		return errors.New("session-lock paint failed")
+	}
+	return nil
+}
+
+// PaintSubsurface paints a desynchronized child of the first lock surface.
+func (l *LockClient) PaintSubsurface(color uint32) error {
+	if l == nil || l.state == nil {
+		return errors.New("session-lock client is closed")
+	}
+	if C.sysc_lock_client_paint_child(l.state, C.uint32_t(color)) < 0 {
+		return errors.New("session-lock child paint failed")
+	}
+	return nil
+}
 
 // Unlock destroys the lock surfaces and sends unlock_and_destroy.
 func (l *LockClient) Unlock() error {
