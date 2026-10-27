@@ -419,7 +419,7 @@ func TestCaptureRegionClipsUntrustedCoordinates(t *testing.T) {
 		{0, 0, -1, 10, image.Rectangle{}},
 		{0, 0, 10, 0, image.Rectangle{}},
 	} {
-		got, valid := clipCaptureRegion(tc.x, tc.y, tc.w, tc.h, bounds)
+		got, valid := clipCaptureRegion(tc.x, tc.y, tc.w, tc.h, 1, bounds)
 		if got != tc.want || valid != !tc.want.Empty() {
 			t.Errorf("region %d,%d %dx%d = %v,%t want %v", tc.x, tc.y, tc.w, tc.h, got, valid, tc.want)
 		}
@@ -586,6 +586,107 @@ func TestLegacyScreencopyPrivacyRegionAndDamage(t *testing.T) {
 		if err = waitCapture(client, func(s testclient.CaptureState) bool { return s.Failed == 1 }); err != nil {
 			t.Error(err)
 			return
+		}
+	})
+}
+
+func TestCaptureRegionScalesBeforeClipping(t *testing.T) {
+	bounds := image.Rect(0, 0, 101, 79)
+	for _, tc := range []struct {
+		name       string
+		x, y, w, h int32
+		scale      float64
+		want       image.Rectangle
+	}{
+		{"round extent", 0, 0, 1, 1, 1.5, image.Rect(0, 0, 2, 2)},
+		{"round endpoints", 1, 1, 1, 1, 1.5, image.Rect(2, 2, 3, 3)},
+		{"cover fractional edge", 0, 0, 68, 53, 1.5, bounds},
+		{"clip scaled negative origin", -1, -1, 2, 2, 1.5, image.Rect(0, 0, 2, 2)},
+		{"last physical pixels", 66, 52, 2, 1, 1.5, image.Rect(99, 78, 101, 79)},
+		{"rounded beyond edge", 67, 52, 1, 1, 1.5, image.Rectangle{}},
+		{"large request", -1, -1, math.MaxInt32, math.MaxInt32, 1.5, bounds},
+		{"outside", math.MaxInt32, 0, math.MaxInt32, 1, 1.5, image.Rectangle{}},
+		{"rounded empty", 0, 0, 1, 1, 0.1, image.Rectangle{}},
+		{"zero scale", 0, 0, 1, 1, 0, image.Rectangle{}},
+		{"negative scale", 0, 0, 1, 1, -1, image.Rectangle{}},
+		{"nan scale", 0, 0, 1, 1, math.NaN(), image.Rectangle{}},
+		{"infinite scale", 0, 0, 1, 1, math.Inf(1), image.Rectangle{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, valid := clipCaptureRegion(tc.x, tc.y, tc.w, tc.h, tc.scale, bounds)
+			if got != tc.want || valid != !tc.want.Empty() {
+				t.Errorf("got %v,%t, want %v", got, valid, tc.want)
+			}
+		})
+	}
+}
+
+func TestLegacyScreencopyFractionalRegionPreservesPhysicalEdges(t *testing.T) {
+	c := newNested(t)
+	if err := c.setOutputScale(1.5); err != nil {
+		t.Fatal(err)
+	}
+	runTools(t, c, func(_ func(string, ...string) *exec.Cmd) {
+		lock, err := testclient.StartLockClient(c.SocketName(), true)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer lock.Close()
+		if err = lock.Paint(0xff3498db); err != nil {
+			t.Error(err)
+			return
+		}
+		full, err := testclient.StartLegacyCapture(c.SocketName(), nil)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer full.Close()
+		if err = full.ArmLegacy(false, false); err != nil {
+			t.Error(err)
+			return
+		}
+		if err = waitCapture(full, func(s testclient.CaptureState) bool { return s.Ready == 1 }); err != nil {
+			t.Error(err)
+			return
+		}
+		size := full.State()
+		for _, tc := range []struct {
+			region [4]int32
+			box    image.Rectangle
+		}{
+			{[4]int32{0, 0, 1, 1}, image.Rect(0, 0, 2, 2)},
+			{[4]int32{1, 1, 1, 1}, image.Rect(2, 2, 3, 3)},
+			{[4]int32{0, 0, int32(math.Ceil(float64(size.Width) / 1.5)), int32(math.Ceil(float64(size.Height) / 1.5))}, image.Rect(0, 0, size.Width, size.Height)},
+		} {
+			region, box := tc.region, tc.box
+			client, err := testclient.StartLegacyCapture(c.SocketName(), &region)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			if state := client.State(); state.Width != box.Dx() || state.Height != box.Dy() || state.Failed != 0 {
+				t.Errorf("fractional region %v constraints %+v want %v", region, state, box.Size())
+				client.Close()
+				return
+			}
+			if err = client.ArmLegacy(false, false); err == nil {
+				err = waitCapture(client, func(s testclient.CaptureState) bool { return s.Ready == 1 })
+			}
+			if err != nil {
+				t.Error(err)
+				client.Close()
+				return
+			}
+			for _, at := range []image.Point{{0, 0}, box.Size().Sub(image.Pt(1, 1))} {
+				got := client.Image().NRGBAAt(at.X, at.Y)
+				want := full.Image().NRGBAAt(at.X+box.Min.X, at.Y+box.Min.Y)
+				if got != want {
+					t.Errorf("fractional region %v pixel %v=%v want %v", region, at, got, want)
+				}
+			}
+			client.Close()
 		}
 	})
 }

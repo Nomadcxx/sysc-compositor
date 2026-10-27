@@ -384,16 +384,12 @@ bool sysc_legacy_box(struct wlr_output *out, int x, int y, int width, int height
 		     struct wlr_box *box)
 {
 	int ow, oh;
-	wlr_output_effective_resolution(out, &ow, &oh);
+	wlr_output_transformed_resolution(out, &ow, &oh);
 	if (x < 0 || y < 0 || width <= 0 || height <= 0 || (int64_t)x + width > ow ||
 	    (int64_t)y + height > oh)
 		return false;
 	*box = (struct wlr_box){x, y, width, height};
 	wlr_box_transform(box, box, wlr_output_transform_invert(out->transform), ow, oh);
-	box->x *= out->scale;
-	box->y *= out->scale;
-	box->width *= out->scale;
-	box->height *= out->scale;
 	return true;
 }
 */

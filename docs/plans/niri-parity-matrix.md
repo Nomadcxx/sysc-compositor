@@ -193,14 +193,14 @@ global is ticked only with its handler and a test (Q7). Versions follow the wlro
 | zwp_input_method_manager_v2 | [~] | M10 | relay and popups tested; keyboard grab gets no keys until virtual-keyboard (M12, `sysc-1639`) |
 | zwlr_output_power_manager_v1 | [ ] | M10 | handler written, unwired: no packaged client to test it (`wlopm` is AUR-only) |
 | ext_data_control_manager_v1, zwlr_data_control_manager_v1 | [x] | M11 | `TestDataControlServesTheSelectionWithoutFocus` (wl-copy → wl-paste, no focus); sysc-clipboard records selections through it (M11 laptop gate) |
-| zwlr_screencopy_manager_v1 | [~] | M11 | advertised; wlroots refuses a non-exact buffer, as Niri does. grim 1.5 (CI and the laptop) prefers ext-image-copy-capture when both are offered, so no client drives this one yet |
-| ext_image_copy_capture_manager_v1 (output source) | [x] | M11 | grim 1.5 captures through it: `TestScreencopyCapturesTheOutputAtItsSize`, and the M11 laptop gate (`WAYLAND_DEBUG`: output source, one frame `ready` at the output's size) |
+| zwlr_screencopy_manager_v1 | [x] | M11/M12 | filtered SHM capture; `TestLegacyScreencopyPrivacyRegionAndDamage` and `TestLegacyScreencopyFractionalRegionPreservesPhysicalEdges` drive the legacy wire protocol, including privacy, damage, clipping, malformed buffers and fractional edge pixels |
+| ext_image_copy_capture_manager_v1 (output source) | [x] | M11/M12 | grim and protocol clients; privacy reload, lock/subsurface commits, screenshot UI, hotkeys/exit/overview and delayed switcher damage; retained snapshots stay private without changing display pixels |
 | wp_presentation | [~] | M11 | advertised; the SceneFX scene sends feedback; no feedback test yet |
 | wp_single_pixel_buffer_manager_v1 | [~] | M11 | advertised; scene-handled; no client test yet |
 | wp_alpha_modifier_v1 | [~] | M11 | advertised; scene-handled; no client test yet |
 | ext_foreign_toplevel_list_v1 | [x] | M12 | `TestForeignToplevelIdentifierMatchesIPCFromFirstAnnouncement`: decimal IPC identity, early/late binding, metadata, stop, destruction and remap |
 | zwlr_foreign_toplevel_manager_v1 | [~] | M12 | `TestForeignToplevelRequestsUseWindowPolicy`: metadata, focus/fullscreen/output state, activate/close/fullscreen, lock gating and inert handles; maximize/unmaximize await M15 column sizing |
-| foreign-toplevel image-capture source | [ ] | M12 | |
+| foreign-toplevel image-capture source | [x] | M12 | `TestWindowCaptureTracksDamageResizeAndUnmap` and `TestCapturePointerMetadataAndImageLifetime`: decimal-ID join, initial/damaged frames, unchanged hold, child damage, resize, unmap/stale handles, pointer metadata and image lifetime |
 | zwp_virtual_keyboard_manager_v1, zwlr_virtual_pointer_manager_v1 | [ ] | M12 | |
 | zwlr_gamma_control_manager_v1 | [ ] | M12 | |
 | wp_tearing_control_manager_v1 | [ ] | M12 | |

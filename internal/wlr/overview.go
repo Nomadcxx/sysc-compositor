@@ -257,6 +257,9 @@ func (c *Compositor) syncOverviewScene() {
 	if c.overviewTree == nil || c.model == nil {
 		return
 	}
+	if bool(c.overviewTree.node.enabled) || c.model.OverviewProgress() > 0 {
+		defer c.damageCaptureSources()
+	}
 	c.clearOverviewScene()
 	progress := c.model.OverviewProgress()
 	if progress <= 0 {

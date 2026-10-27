@@ -121,6 +121,9 @@ func (c *Compositor) hotkeyOverlayPanel(scale float64) *image.RGBA {
 // syncHotkeyOverlay redraws the overlay for the current outputs and state.
 func (c *Compositor) syncHotkeyOverlay() {
 	o := &c.hotkeyOverlay
+	if o.tree != nil || o.open {
+		defer c.damageCaptureSources()
+	}
 	if o.tree != nil {
 		C.wlr_scene_node_destroy(&o.tree.node)
 		o.tree = nil

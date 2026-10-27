@@ -87,15 +87,16 @@ type legacyCapture struct {
 	pointer, damage, used, finished, queued bool
 }
 
-// Protocol coordinates are signed 32-bit. Clip in 64-bit arithmetic before
-// narrowing to output coordinates, including requests extending past INT_MAX.
-func clipCaptureRegion(x, y, width, height int32, bounds image.Rectangle) (image.Rectangle, bool) {
-	if width <= 0 || height <= 0 {
+// Protocol coordinates are signed 32-bit. Widen endpoints before scaling,
+// round each physical edge as Niri does, then clip before narrowing to ints.
+func clipCaptureRegion(x, y, width, height int32, scale float64, bounds image.Rectangle) (image.Rectangle, bool) {
+	if width <= 0 || height <= 0 || scale <= 0 || math.IsNaN(scale) || math.IsInf(scale, 0) {
 		return image.Rectangle{}, false
 	}
-	x0, y0 := max(int64(x), int64(bounds.Min.X)), max(int64(y), int64(bounds.Min.Y))
-	x1 := min(int64(x)+int64(width), int64(bounds.Max.X))
-	y1 := min(int64(y)+int64(height), int64(bounds.Max.Y))
+	x0 := max(math.Round(float64(x)*scale), float64(bounds.Min.X))
+	y0 := max(math.Round(float64(y)*scale), float64(bounds.Min.Y))
+	x1 := min(math.Round(float64(int64(x)+int64(width))*scale), float64(bounds.Max.X))
+	y1 := min(math.Round(float64(int64(y)+int64(height))*scale), float64(bounds.Max.Y))
 	if x1 <= x0 || y1 <= y0 {
 		return image.Rectangle{}, false
 	}
@@ -601,8 +602,8 @@ func sysc_legacy_create(handle C.uintptr_t, manager, resource, outputResource *C
 	}
 	if region != 0 {
 		var ow, oh C.int
-		C.wlr_output_effective_resolution(out, &ow, &oh)
-		clipped, valid := clipCaptureRegion(int32(x), int32(y), int32(width), int32(height), image.Rect(0, 0, int(ow), int(oh)))
+		C.wlr_output_transformed_resolution(out, &ow, &oh)
+		clipped, valid := clipCaptureRegion(int32(x), int32(y), int32(width), int32(height), float64(out.scale), image.Rect(0, 0, int(ow), int(oh)))
 		if !valid {
 			frame.fail()
 			return

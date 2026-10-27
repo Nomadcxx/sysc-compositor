@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Nomadcxx/sysc-compositor/internal/bind"
 	"github.com/Nomadcxx/sysc-compositor/internal/config"
 	"github.com/Nomadcxx/sysc-compositor/internal/wlr/testclient"
 )
@@ -18,7 +19,9 @@ func TestCaptureOutputFollowsCompositorUIDamage(t *testing.T) {
 			name = "legacy"
 		}
 		t.Run(name, func(t *testing.T) {
-			c := newNestedWith(t, Options{Animations: config.Animations{Off: true}})
+			overview := config.Default().Overview
+			overview.BackdropColor = config.Color{R: 0.6, G: 0.1, B: 0.3, A: 1}
+			c := newNestedWith(t, Options{Animations: config.Animations{Off: true}, Overview: overview})
 			runTools(t, c, func(_ func(string, ...string) *exec.Cmd) {
 				var client *testclient.CaptureClient
 				var err error
@@ -60,6 +63,12 @@ func TestCaptureOutputFollowsCompositorUIDamage(t *testing.T) {
 						}
 					}, false},
 					{"hide exit dialog", c.hideExitDialog, true},
+					{"overview gesture", func() {
+						c.model.BeginOverviewGestureAt(0)
+						c.model.UpdateOverviewGesture(150, 100*time.Millisecond)
+						c.syncOverviewScene()
+					}, false},
+					{"close overview", func() { c.model.CloseOverview(); c.syncOverviewScene() }, true},
 				}
 				for i, step := range steps {
 					if err = arm(); err != nil {
@@ -163,6 +172,103 @@ func TestCaptureOutputFollowsLockSubsurfaceDamage(t *testing.T) {
 				}
 				if got := client.Image().NRGBAAt(60, 60); got != (color.NRGBA{220, 40, 40, 255}) {
 					t.Errorf("lock child capture pixel %v", got)
+				}
+			})
+		})
+	}
+}
+
+func TestCaptureOutputFollowsDelayedSwitcherDamage(t *testing.T) {
+	for _, legacy := range []bool{false, true} {
+		name := "ext-copy"
+		if legacy {
+			name = "legacy"
+		}
+		t.Run(name, func(t *testing.T) {
+			recent := config.Default().RecentWindows
+			recent.OpenDelayMS = 400
+			c := newNestedWith(t, Options{Animations: config.Animations{Off: true}, RecentWindows: &recent})
+			runTools(t, c, func(_ func(string, ...string) *exec.Cmd) {
+				window, err := testclient.StartToplevelClient(c.SocketName(), time.Hour)
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				defer window.Close()
+				if err = window.Paint(0xff3498db, 200, 150); err != nil {
+					t.Error(err)
+					return
+				}
+				onCompositor(t, c, func() { c.openSwitcher(bind.Action{Name: bind.ActionMRUAdvance}) })
+				defer onCompositor(t, c, func() { c.closeSwitcher(false) })
+				var client *testclient.CaptureClient
+				if legacy {
+					client, err = testclient.StartLegacyCapture(c.SocketName(), nil)
+				} else {
+					client, err = testclient.StartCapture(c.SocketName(), "")
+				}
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				defer client.Close()
+				arm := func() error {
+					if legacy {
+						return client.ArmLegacy(true, false)
+					}
+					return client.Arm(false)
+				}
+				if err = arm(); err != nil {
+					t.Error(err)
+					return
+				}
+				if err = waitCapture(client, func(s testclient.CaptureState) bool { return s.Ready == 1 }); err != nil {
+					t.Error(err)
+					return
+				}
+				shown := false
+				onCompositor(t, c, func() {
+					if !c.switcher.isOpen() {
+						t.Error("switcher did not open")
+					}
+					shown = c.switcher.shown
+				})
+				if shown {
+					t.Error("switcher delay elapsed before baseline capture")
+					return
+				}
+				baseline := append([]byte(nil), client.Image().Pix...)
+				if err = arm(); err != nil {
+					t.Error(err)
+					return
+				}
+				if err = client.Sync(); err != nil {
+					t.Error(err)
+					return
+				}
+				if err = waitCapture(client, func(s testclient.CaptureState) bool { return s.Ready == 2 }); err != nil {
+					t.Errorf("delayed switcher: %v", err)
+					return
+				}
+				if bytes.Equal(client.Image().Pix, baseline) {
+					t.Error("delayed switcher pixels missing")
+					return
+				}
+				if err = arm(); err != nil {
+					t.Error(err)
+					return
+				}
+				if err = client.Sync(); err != nil {
+					t.Error(err)
+					return
+				}
+				onCompositor(t, c, func() { c.dropSwitcher() })
+				if err = waitCapture(client, func(s testclient.CaptureState) bool { return s.Ready == 3 }); err != nil {
+					t.Errorf("removed switcher: %v", err)
+					return
+				}
+				if !bytes.Equal(client.Image().Pix, baseline) {
+					t.Error("removed switcher pixels remain")
 				}
 			})
 		})

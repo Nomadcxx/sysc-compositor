@@ -160,6 +160,9 @@ func (c *Compositor) buildExitDialog() bool {
 // about its centre with the unclamped value, so a spring overshoot shows.
 func (c *Compositor) setExitDialogProgress(value float64) {
 	d := &c.exitDialog
+	if d.tree != nil {
+		defer c.damageCaptureSources()
+	}
 	d.progress = value
 	alpha := clampOpacity(value)
 	zoom := max(value, 0)*0.2 + 0.8
