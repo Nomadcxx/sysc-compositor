@@ -185,8 +185,18 @@ type Compositor struct {
 	suppressedKeys          map[uint32]bool
 	keyboardGroup           *C.struct_wlr_keyboard_group
 	keyboard                *C.struct_wlr_keyboard // the group's, which the user seat hears
+	seatKeyboard            *C.struct_wlr_keyboard // native app-held union exported by wl_seat
+	activeKeyboard          *C.struct_wlr_keyboard // source of the current keymap/modifiers
+	bindingKeyboard         *C.struct_wlr_keyboard // source of the current bind dispatch
+	virtualKeyboards        map[*C.struct_wlr_keyboard]*virtualKeyboard
+	virtualPointers         map[*C.struct_wlr_pointer]*virtualPointer
+	virtualInputGated       bool
+	virtualPointerGuard     unsafe.Pointer
+	keyboardRoutes          map[*C.struct_wlr_keyboard]map[uint32]keyboardRoute
+	pointerButtons          map[*C.struct_wlr_pointer]map[uint32]bool
 	keyboardConfig          Keyboard
 	keyboardRepeatSource    *C.struct_wl_event_source
+	keyboardRepeatKeyboard  *C.struct_wlr_keyboard
 	keyboardRepeatToken     uintptr
 	keyboardRepeatBinding   bind.Binding
 	keyboardRepeatInterval  int
@@ -526,6 +536,9 @@ func NewWith(opts Options) (*Compositor, error) {
 		return nil, errors.New("wlr_cursor_create failed")
 	}
 	C.wlr_cursor_attach_output_layout(c.cursor, c.layout)
+	if !c.createVirtualInput() {
+		return nil, errors.New("virtual input manager create failed")
+	}
 
 	// wlroots 0.20 raises these itself; the compositor must listen before the
 	// backend starts, because wlr_backend_start announces outputs immediately.
@@ -735,6 +748,7 @@ func (c *Compositor) Terminate() {
 // Destroy releases the compositor. Listeners added through AddListener are
 // removed first so no token outlives its wl_signal.
 func (c *Compositor) Destroy() {
+	c.destroyVirtualInputGuard()
 	c.stopKeyboardRepeat()
 	if c.focusTimer != nil {
 		c.focusTimer.Stop()
@@ -788,6 +802,10 @@ func (c *Compositor) Destroy() {
 	c.pointerDevices = nil
 	c.keyboardDevices = nil
 	c.suppressedKeys = nil
+	c.keyboardRoutes = nil
+	c.pointerButtons = nil
+	c.virtualKeyboards = nil
+	c.virtualPointers = nil
 	c.inputDestroyListeners = nil
 	c.destroyInjectedSeats()
 	c.destroyKeyboardGroup()

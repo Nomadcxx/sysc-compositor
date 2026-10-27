@@ -12,6 +12,7 @@ package wlr
 #include <wlr/interfaces/wlr_keyboard.h>
 #include <wlr/types/wlr_keyboard.h>
 #include <wlr/types/wlr_keyboard_group.h>
+#include <wlr/types/wlr_input_method_v2.h>
 #include <wlr/types/wlr_seat.h>
 
 extern void sysc_listener_fire(uintptr_t handle, void *data);
@@ -300,10 +301,18 @@ func (c *Compositor) startKeyboardGroup(k Keyboard) error {
 		return errors.New("keyboard group: the keymap could not be set")
 	}
 	c.keyboard = &c.keyboardGroup.keyboard
-	C.wlr_seat_set_keyboard(c.seat, c.keyboard)
+	c.seatKeyboard = newNativeKeyboard("sysc-user-seat-keyboard")
+	if c.seatKeyboard == nil || !c.activateKeyboard(c.keyboard) {
+		return errors.New("keyboard group: the user seat keyboard could not be initialized")
+	}
+	C.wlr_seat_set_keyboard(c.seat, c.seatKeyboard)
 	c.keep(
 		AddListener(unsafe.Pointer(&c.keyboard.events.key), c.handleKeyboardKey),
 		AddListener(unsafe.Pointer(&c.keyboard.events.modifiers), c.handleKeyboardModifiers),
+		AddListener(unsafe.Pointer(&c.keyboardGroup.events.enter), c.keyboardGroupEntered),
+		AddListener(unsafe.Pointer(&c.keyboardGroup.events.leave), c.keyboardGroupLeft),
+		AddListener(unsafe.Pointer(&c.keyboard.events.keymap), func(unsafe.Pointer) { c.refreshActiveKeyboard(c.keyboard) }),
+		AddListener(unsafe.Pointer(&c.keyboard.events.repeat_info), func(unsafe.Pointer) { c.refreshActiveKeyboard(c.keyboard) }),
 	)
 	return nil
 }
@@ -335,14 +344,126 @@ func (c *Compositor) reconfigureKeyboard(k Keyboard) error {
 		}
 		C.wlr_keyboard_set_repeat_info(keyboard, C.int(rate), C.int(delay))
 	}
+	for keyboard := range c.virtualKeyboards {
+		C.wlr_keyboard_set_repeat_info(keyboard, C.int(rate), C.int(delay))
+	}
 	return nil
 }
 
 func (c *Compositor) destroyKeyboardGroup() {
+	destroyNativeKeyboard(c.seatKeyboard)
+	c.seatKeyboard, c.activeKeyboard = nil, nil
 	if c.keyboardGroup != nil {
 		C.wlr_keyboard_group_destroy(c.keyboardGroup)
 		c.keyboardGroup = nil
 		c.keyboard = nil
+	}
+}
+
+// activateKeyboard mirrors source metadata while the stable seat keyboard owns
+// application-held keycodes. Native late wl_keyboard bindings see that union.
+func (c *Compositor) activateKeyboard(source *C.struct_wlr_keyboard) bool {
+	if source == nil || source.keymap == nil || c.seatKeyboard == nil {
+		return false
+	}
+	keyboard := c.seatKeyboard
+	previous := keyboard.modifiers
+	changed := keyboard.keymap != source.keymap
+	if changed && !bool(C.wlr_keyboard_set_keymap(keyboard, source.keymap)) {
+		fmt.Fprintln(os.Stderr, "sysc-compositor: could not mirror the seat keymap")
+		return false
+	}
+	C.wlr_keyboard_set_repeat_info(keyboard, source.repeat_info.rate, source.repeat_info.delay)
+	C.wlr_keyboard_notify_modifiers(keyboard, source.modifiers.depressed,
+		source.modifiers.latched, source.modifiers.locked, source.modifiers.group)
+	c.activeKeyboard = source
+	if changed || previous != keyboard.modifiers {
+		C.wlr_seat_keyboard_notify_modifiers(c.seat, &keyboard.modifiers)
+	}
+	return true
+}
+
+func (c *Compositor) refreshActiveKeyboard(source *C.struct_wlr_keyboard) {
+	if c.activeKeyboard == source {
+		c.activateKeyboard(source)
+	}
+}
+
+// updateSeatKey retains wlroots' fixed held-key capacity; a dropped press has
+// no application release. Deferred group joins update state without a press.
+func (c *Compositor) updateSeatKey(event *C.struct_wlr_keyboard_key_event, notify bool) bool {
+	keyboard := c.seatKeyboard
+	if keyboard == nil {
+		return false
+	}
+	pressed := event.state == C.WL_KEYBOARD_KEY_STATE_PRESSED
+	held := false
+	for i := 0; i < int(keyboard.num_keycodes); i++ {
+		if keyboard.keycodes[i] == event.keycode {
+			held = true
+			break
+		}
+	}
+	if pressed == held {
+		return held
+	}
+	if pressed && int(keyboard.num_keycodes) == len(keyboard.keycodes) {
+		return false
+	}
+	copy := *event
+	copy.update_state = false
+	C.wlr_keyboard_notify_key(keyboard, &copy)
+	if notify {
+		C.wlr_seat_keyboard_notify_key(c.seat, event.time_msec, event.keycode, C.uint32_t(event.state))
+	}
+	return true
+}
+
+func (c *Compositor) keyboardGroupEntered(data unsafe.Pointer) {
+	array := (*C.struct_wl_array)(data)
+	keys := unsafe.Slice((*C.uint32_t)(array.data), int(array.size)/4)
+	if c.keyboardRoutes == nil {
+		c.keyboardRoutes = make(map[*C.struct_wlr_keyboard]map[uint32]keyboardRoute)
+	}
+	routes := c.keyboardRoutes[c.keyboard]
+	if routes == nil {
+		routes = make(map[uint32]keyboardRoute)
+		c.keyboardRoutes[c.keyboard] = routes
+	}
+	for _, key := range keys {
+		grab := c.inputMethodGrab(c.keyboard)
+		routes[uint32(key)] = keyboardRoute{grab: grab, announced: c.keyDestinationHeld(uint32(key), grab)}
+	}
+}
+
+func (c *Compositor) keyboardGroupLeft(data unsafe.Pointer) {
+	array := (*C.struct_wl_array)(data)
+	if array.size != 0 && c.keyboardRepeatKeyboard == c.keyboard {
+		c.stopKeyboardRepeat()
+	}
+	for _, key := range unsafe.Slice((*C.uint32_t)(array.data), int(array.size)/4) {
+		event := C.struct_wlr_keyboard_key_event{keycode: key, time_msec: nowMsec(), state: C.WL_KEYBOARD_KEY_STATE_RELEASED}
+		delete(c.suppressedKeys, uint32(key))
+		c.forwardKeyboardKey(c.keyboard, &event)
+	}
+}
+
+// A joining keyboard must not fabricate a press to the old focus. Its deferred
+// state becomes visible when a later focus receives the native held-key array.
+func (c *Compositor) prepareKeyboardFocus() {
+	for source, routes := range c.keyboardRoutes {
+		for key, route := range routes {
+			if route.announced || route.grab != nil {
+				continue
+			}
+			if route.grab = c.inputMethodGrab(source); route.grab != nil {
+				routes[key] = route
+				continue
+			}
+			event := C.struct_wlr_keyboard_key_event{keycode: C.uint32_t(key), state: C.WL_KEYBOARD_KEY_STATE_PRESSED}
+			route.announced = c.keyDestinationHeld(key, nil) || c.updateSeatKey(&event, false)
+			routes[key] = route
+		}
 	}
 }
 
@@ -354,9 +475,30 @@ func (c *Compositor) addKeyboard(kb *C.struct_wlr_keyboard) bool {
 
 // handleKeyboardKey delivers a key from any keyboard to the user seat's focus.
 func (c *Compositor) handleKeyboardKey(data unsafe.Pointer) {
+	c.handleKeyboardKeyFrom(c.keyboard, c.suppressedKeys, data)
+}
+
+func (c *Compositor) currentKeyboard() *C.struct_wlr_keyboard {
+	if c.bindingKeyboard != nil {
+		return c.bindingKeyboard
+	}
+	if c.seat != nil {
+		if keyboard := C.wlr_seat_get_keyboard(c.seat); keyboard != nil {
+			return keyboard
+		}
+	}
+	return c.keyboard
+}
+
+func (c *Compositor) handleKeyboardKeyFrom(keyboard *C.struct_wlr_keyboard, suppressed map[uint32]bool, data unsafe.Pointer) {
+	previous := c.bindingKeyboard
+	c.bindingKeyboard = keyboard
+	defer func() { c.bindingKeyboard = previous }()
 	event := (*C.struct_wlr_keyboard_key_event)(data)
 	keycode := uint32(event.keycode)
-	c.userActivity()
+	if keyboard == c.keyboard {
+		c.userActivity()
+	}
 	if event.state == C.WL_KEYBOARD_KEY_STATE_PRESSED {
 		// Niri closes the hotkey overlay after the press is handled, so a
 		// press still reaches its bind or client, and one that opens the
@@ -366,49 +508,50 @@ func (c *Compositor) handleKeyboardKey(data unsafe.Pointer) {
 		}
 		// A key may have been released while the session was inactive. A fresh
 		// press starts a new suppression lifetime for this evdev keycode.
-		delete(c.suppressedKeys, keycode)
-		if vt := int(C.sysc_switch_vt_for_key(c.keyboard, event.keycode)); vt != 0 {
-			c.suppressedKeys[keycode] = true
+		delete(suppressed, keycode)
+		if vt := int(C.sysc_switch_vt_for_key(keyboard, event.keycode)); vt != 0 && keyboard == c.keyboard {
+			suppressed[keycode] = true
 			if c.session != nil && !bool(C.wlr_session_change_vt(c.session, C.uint(vt))) {
 				fmt.Fprintf(os.Stderr, "sysc-compositor: switching to VT %d failed\n", vt)
 			}
 			return
 		}
 		if c.exitDialogKeyPress(keycode) {
-			c.suppressedKeys[keycode] = true
+			suppressed[keycode] = true
 			return
 		}
 		if c.shotUI != nil {
-			c.suppressedKeys[keycode] = true
+			suppressed[keycode] = true
 			if binding, ok := c.shotUIKey(keycode); ok && binding.Repeat {
 				c.startKeyboardRepeat(binding)
 			}
 			return
 		}
 		if binding, matched := c.dispatchKeyBinding(keycode); matched {
-			c.suppressedKeys[keycode] = true
+			suppressed[keycode] = true
 			if binding.Repeat {
 				c.startKeyboardRepeat(binding)
 			}
 			return
 		}
 	} else {
-		c.stopKeyboardRepeat()
-		if c.suppressedKeys[keycode] {
-			delete(c.suppressedKeys, keycode)
+		if c.keyboardRepeatKeyboard == keyboard {
+			c.stopKeyboardRepeat()
+		}
+		if suppressed[keycode] {
+			delete(suppressed, keycode)
 			return
 		}
 	}
 	// Typing into the focused window marks it recently used at once.
 	c.applyPendingWindowFocus()
-	C.wlr_seat_keyboard_notify_key(c.seat, event.time_msec, event.keycode,
-		C.uint32_t(event.state))
+	c.forwardKeyboardKey(keyboard, event)
 }
 
 // keysymIs reports whether keycode is the named bind key on the user
 // keyboard.
 func (c *Compositor) keysymIs(keycode uint32, name string) bool {
-	return keysymMatches(c.keyboard, keycode, name)
+	return keysymMatches(c.currentKeyboard(), keycode, name)
 }
 
 // keysymMatches reports whether keycode on kb is the key a bind names.
@@ -477,7 +620,8 @@ func (c *Compositor) executeKeyBinding(binding bind.Binding) {
 
 func (c *Compositor) startKeyboardRepeat(binding bind.Binding) {
 	c.stopKeyboardRepeat()
-	rate := int(c.keyboard.repeat_info.rate)
+	keyboard := c.currentKeyboard()
+	rate := int(keyboard.repeat_info.rate)
 	if rate <= 0 {
 		return
 	}
@@ -489,12 +633,13 @@ func (c *Compositor) startKeyboardRepeat(binding bind.Binding) {
 		return
 	}
 	c.keyboardRepeatSource = source
+	c.keyboardRepeatKeyboard = keyboard
 	c.keyboardRepeatToken = token
 	c.keyboardRepeatBinding = binding
 	// ponytail: Wayland timers use whole milliseconds, so round up to avoid
 	// exceeding the requested rate; fractional cadence needs deadline accumulation.
 	c.keyboardRepeatInterval = (1000 + rate - 1) / rate
-	if C.wl_event_source_timer_update(source, C.int(c.keyboard.repeat_info.delay)) < 0 {
+	if C.wl_event_source_timer_update(source, C.int(keyboard.repeat_info.delay)) < 0 {
 		c.stopKeyboardRepeat()
 		fmt.Fprintln(os.Stderr, "sysc-compositor: could not start keyboard bind repeat timer")
 	}
@@ -522,6 +667,7 @@ func (c *Compositor) stopKeyboardRepeat() {
 		c.keyboardRepeatToken = 0
 	}
 	c.keyboardRepeatBinding = bind.Binding{}
+	c.keyboardRepeatKeyboard = nil
 	c.keyboardRepeatInterval = 0
 }
 
@@ -536,7 +682,7 @@ func (c *Compositor) activeBindModifiers() bind.Modifiers {
 		{bind.ModifierLevel3, "Mod5"}, {bind.ModifierLevel5, "Mod3"},
 	} {
 		name := C.CString(item.name)
-		active := bool(C.sysc_modifier_active(c.keyboard, name))
+		active := bool(C.sysc_modifier_active(c.currentKeyboard(), name))
 		C.free(unsafe.Pointer(name))
 		if active {
 			modifiers |= bind.Modifiers(item.bit)
@@ -823,8 +969,20 @@ func (c *Compositor) executeBindAction(action bind.Action) {
 }
 
 func (c *Compositor) handleKeyboardModifiers(unsafe.Pointer) {
-	c.modifiers = uint32(C.wlr_keyboard_get_modifiers(c.keyboard))
-	C.wlr_seat_keyboard_notify_modifiers(c.seat, &c.keyboard.modifiers)
+	c.handleKeyboardModifiersFrom(c.keyboard)
+}
+
+func (c *Compositor) handleKeyboardModifiersFrom(keyboard *C.struct_wlr_keyboard) {
+	previous := c.bindingKeyboard
+	c.bindingKeyboard = keyboard
+	defer func() { c.bindingKeyboard = previous }()
+	c.modifiers = uint32(C.wlr_keyboard_get_modifiers(keyboard))
+	if grab := c.inputMethodGrab(keyboard); grab != nil {
+		C.wlr_input_method_keyboard_grab_v2_set_keyboard(grab, keyboard)
+		C.wlr_input_method_keyboard_grab_v2_send_modifiers(grab, &keyboard.modifiers)
+	} else {
+		c.activateKeyboard(keyboard)
+	}
 	c.switcherModifiersReleased()
 	c.notifyStateChanged()
 }

@@ -27,6 +27,8 @@ static const struct wl_interface sysc_locked_pointer_interface;
 static const struct wl_interface sysc_text_input_interface;
 static const struct wl_interface sysc_input_method_interface;
 static const struct wl_interface sysc_input_popup_interface;
+static const struct wl_interface sysc_im_grab_interface;
+static const struct wl_interface sysc_virtual_keyboard_interface, sysc_virtual_pointer_interface;
 static const struct wl_interface sysc_idle_xdg_toplevel_interface;
 static const struct wl_interface sysc_idle_notification_interface;
 static const struct wl_interface sysc_idle_inhibitor_interface;
@@ -238,6 +240,44 @@ static const struct wl_message sysc_input_method_requests[] = {
 	{"grab_keyboard", "n", NULL},
 	{"destroy", "", NULL},
 };
+
+static const struct wl_interface *sysc_virtual_keyboard_types[] = {&wl_seat_interface, &sysc_virtual_keyboard_interface};
+static const struct wl_message sysc_virtual_keyboard_manager_requests[] = {{"create_virtual_keyboard", "on", sysc_virtual_keyboard_types}};
+static const struct wl_interface sysc_virtual_keyboard_manager_interface = {
+	"zwp_virtual_keyboard_manager_v1", 1, 1, sysc_virtual_keyboard_manager_requests, 0, NULL,
+};
+static const struct wl_message sysc_virtual_keyboard_requests[] = {
+	{"keymap", "uhu", NULL}, {"key", "uuu", NULL}, {"modifiers", "uuuu", NULL}, {"destroy", "", NULL},
+};
+static const struct wl_interface sysc_virtual_keyboard_interface = {
+	"zwp_virtual_keyboard_v1", 1, 4, sysc_virtual_keyboard_requests, 0, NULL,
+};
+static const struct wl_interface *sysc_virtual_pointer_types[] = {
+	&wl_seat_interface, &sysc_virtual_pointer_interface,
+	&wl_seat_interface, &wl_output_interface, &sysc_virtual_pointer_interface,
+};
+static const struct wl_message sysc_virtual_pointer_manager_requests[] = {
+	{"create_virtual_pointer", "?on", sysc_virtual_pointer_types}, {"destroy", "", NULL},
+	{"create_virtual_pointer_with_output", "2?o?on", sysc_virtual_pointer_types + 2},
+};
+static const struct wl_interface sysc_virtual_pointer_manager_interface = {
+	"zwlr_virtual_pointer_manager_v1", 2, 3, sysc_virtual_pointer_manager_requests, 0, NULL,
+};
+static const struct wl_message sysc_virtual_pointer_requests[] = {
+	{"motion", "uff", NULL}, {"motion_absolute", "uuuuu", NULL}, {"button", "uuu", NULL},
+	{"axis", "uuf", NULL}, {"frame", "", NULL}, {"axis_source", "u", NULL},
+	{"axis_stop", "uu", NULL}, {"axis_discrete", "uufi", NULL}, {"destroy", "", NULL},
+};
+static const struct wl_interface sysc_virtual_pointer_interface = {
+	"zwlr_virtual_pointer_v1", 2, 9, sysc_virtual_pointer_requests, 0, NULL,
+};
+static const struct wl_message sysc_im_grab_requests[] = {{"release", "", NULL}};
+static const struct wl_message sysc_im_grab_events[] = {
+	{"keymap", "uhu", NULL}, {"key", "uuuu", NULL}, {"modifiers", "uuuuu", NULL}, {"repeat_info", "ii", NULL},
+};
+static const struct wl_interface sysc_im_grab_interface = {
+	"zwp_input_method_keyboard_grab_v2", 1, 1, sysc_im_grab_requests, 4, sysc_im_grab_events,
+};
 static const struct wl_message sysc_input_method_events[] = {
 	{"activate", "", NULL},
 	{"deactivate", "", NULL},
@@ -266,6 +306,21 @@ struct sysc_idle_client {
 	struct wl_compositor *compositor;
 	struct wl_shm *shm;
 	struct wl_seat *seat;
+	struct wl_seat *other_seat;
+	struct wl_output *output, *other_output;
+	struct wl_keyboard *keyboard, *additional_keyboard;
+	int keymap_fd;
+	uint32_t keymap_size;
+	int key_presses, key_releases, keyboard_modifiers;
+	uint32_t enter_keys[32];
+	size_t enter_key_count;
+	int keyboard_enters;
+	uint32_t last_key;
+	struct wl_proxy *virtual_keyboard_manager, *virtual_keyboard;
+	struct wl_proxy *virtual_pointer_manager, *virtual_pointer, *im_grab;
+	int im_keys, im_modifiers, im_keymaps, im_rate, im_delay;
+	uint32_t im_last_key, im_last_state;
+	int pointer_buttons, pointer_axes;
 	struct wl_proxy *wm_base, *notifier, *inhibit_manager, *cursor_shape_manager;
 	struct wl_proxy *effect_manager, *effect;
 	struct wl_proxy *shortcuts_manager, *shortcuts_inhibitor;
@@ -294,6 +349,14 @@ struct sysc_idle_client {
 	int head, tail;
 };
 
+static void sysc_input_output_geometry(void *data, struct wl_output *output, int32_t x, int32_t y,
+		int32_t pw, int32_t ph, int32_t subpixel, const char *make, const char *model, int32_t transform) {}
+static void sysc_input_output_mode(void *data, struct wl_output *output, uint32_t flags,
+		int32_t width, int32_t height, int32_t refresh) {}
+static const struct wl_output_listener sysc_input_output_listener = {
+	.geometry = sysc_input_output_geometry, .mode = sysc_input_output_mode,
+};
+
 static void sysc_idle_global(void *data, struct wl_registry *registry,
 		uint32_t name, const char *interface, uint32_t version) {
 	struct sysc_idle_client *c = data;
@@ -301,11 +364,21 @@ static void sysc_idle_global(void *data, struct wl_registry *registry,
 		c->compositor = wl_registry_bind(registry, name, &wl_compositor_interface, 4);
 	} else if (strcmp(interface, wl_shm_interface.name) == 0) {
 		c->shm = wl_registry_bind(registry, name, &wl_shm_interface, 1);
+	} else if (strcmp(interface, wl_output_interface.name) == 0 && c->other_output == NULL) {
+		struct wl_output *output = wl_registry_bind(registry, name, &wl_output_interface, 1);
+		wl_output_add_listener(output, &sysc_input_output_listener, c);
+		if (c->output == NULL) c->output = output; else c->other_output = output;
 	} else if (strcmp(interface, wl_seat_interface.name) == 0) {
 		// The user seat is created first, so it is advertised first.
 		if (c->seat == NULL) {
 			c->seat = wl_registry_bind(registry, name, &wl_seat_interface, 1);
+		} else if (c->other_seat == NULL) {
+			c->other_seat = wl_registry_bind(registry, name, &wl_seat_interface, 1);
 		}
+	} else if (strcmp(interface, "zwp_virtual_keyboard_manager_v1") == 0) {
+		c->virtual_keyboard_manager = wl_registry_bind(registry, name, &sysc_virtual_keyboard_manager_interface, 1);
+	} else if (strcmp(interface, "zwlr_virtual_pointer_manager_v1") == 0) {
+		c->virtual_pointer_manager = wl_registry_bind(registry, name, &sysc_virtual_pointer_manager_interface, 2);
 	} else if (strcmp(interface, "xdg_wm_base") == 0) {
 		c->wm_base = wl_registry_bind(registry, name, &sysc_idle_wm_base_interface, 1);
 	} else if (strcmp(interface, "ext_idle_notifier_v1") == 0) {
@@ -394,9 +467,11 @@ static void sysc_pointer_motion(void *data, struct wl_pointer *pointer, uint32_t
 }
 static void sysc_pointer_button(void *data, struct wl_pointer *pointer, uint32_t serial,
 		uint32_t time, uint32_t button, uint32_t state) {
+	((struct sysc_idle_client *)data)->pointer_buttons++;
 }
 static void sysc_pointer_axis(void *data, struct wl_pointer *pointer, uint32_t time,
 		uint32_t axis, wl_fixed_t value) {
+	((struct sysc_idle_client *)data)->pointer_axes++;
 }
 static const struct wl_pointer_listener sysc_pointer_listener = {
 	.enter = sysc_pointer_enter,
@@ -406,8 +481,48 @@ static const struct wl_pointer_listener sysc_pointer_listener = {
 	.axis = sysc_pointer_axis,
 };
 
+static void sysc_keyboard_keymap(void *data, struct wl_keyboard *keyboard, uint32_t format, int fd, uint32_t size) {
+	struct sysc_idle_client *c = data;
+	if (c->keymap_fd >= 0) close(c->keymap_fd);
+	c->keymap_fd = dup(fd);
+	c->keymap_size = size;
+	close(fd);
+}
+static void sysc_keyboard_enter(void *data, struct wl_keyboard *k, uint32_t serial, struct wl_surface *s, struct wl_array *keys) {
+	struct sysc_idle_client *c = data;
+	c->keyboard_enters++;
+	c->enter_key_count = keys->size / sizeof(uint32_t);
+	if (c->enter_key_count > 32) c->enter_key_count = 32;
+	memcpy(c->enter_keys, keys->data, c->enter_key_count * sizeof(uint32_t));
+}
+static void sysc_keyboard_leave(void *d, struct wl_keyboard *k, uint32_t serial, struct wl_surface *s) {}
+static void sysc_keyboard_key(void *data, struct wl_keyboard *keyboard, uint32_t serial, uint32_t time, uint32_t key, uint32_t state) {
+	struct sysc_idle_client *c = data;
+	c->last_key = key;
+	if (state) c->key_presses++; else c->key_releases++;
+}
+static void sysc_keyboard_modifiers(void *data, struct wl_keyboard *keyboard, uint32_t serial,
+		uint32_t depressed, uint32_t latched, uint32_t locked, uint32_t group) {
+	((struct sysc_idle_client *)data)->keyboard_modifiers++;
+}
+static const struct wl_keyboard_listener sysc_keyboard_listener = {
+	.keymap = sysc_keyboard_keymap, .enter = sysc_keyboard_enter, .leave = sysc_keyboard_leave,
+	.key = sysc_keyboard_key, .modifiers = sysc_keyboard_modifiers,
+};
+
+static int sysc_client_bind_additional_keyboard(struct sysc_idle_client *client) {
+	client->additional_keyboard = wl_seat_get_keyboard(client->seat);
+	if (client->additional_keyboard == NULL) return -1;
+	wl_keyboard_add_listener(client->additional_keyboard, &sysc_keyboard_listener, client);
+	return wl_display_roundtrip(client->display);
+}
+
 static void sysc_seat_capabilities(void *data, struct wl_seat *seat, uint32_t caps) {
 	struct sysc_idle_client *c = data;
+	if ((caps & WL_SEAT_CAPABILITY_KEYBOARD) && c->keyboard == NULL) {
+		c->keyboard = wl_seat_get_keyboard(seat);
+		if (c->keyboard != NULL) wl_keyboard_add_listener(c->keyboard, &sysc_keyboard_listener, c);
+	}
 	if ((caps & WL_SEAT_CAPABILITY_POINTER) && c->pointer == NULL) {
 		c->pointer = wl_seat_get_pointer(seat);
 		if (c->pointer != NULL) {
@@ -461,6 +576,7 @@ static void sysc_idle_client_free(struct sysc_idle_client *c) {
 	if (c->display != NULL) {
 		wl_display_disconnect(c->display);
 	}
+	if (c->keymap_fd >= 0) close(c->keymap_fd);
 	free(c);
 }
 
@@ -473,6 +589,7 @@ static int sysc_idle_client_start(const char *display_name, uint32_t timeout_ms,
 		return 1;
 	}
 	*out = c;
+	c->keymap_fd = -1;
 	if ((c->display = wl_display_connect(display_name)) == NULL) {
 		return 2;
 	}
@@ -739,6 +856,115 @@ static int sysc_client_im_commit(struct sysc_idle_client *c, const char *text) {
 	return wl_display_roundtrip(c->display) < 0 ? 1 : 0;
 }
 
+static void sysc_im_grab_keymap(void *data, struct wl_proxy *p, uint32_t format, int fd, uint32_t size) {
+	((struct sysc_idle_client *)data)->im_keymaps++;
+	close(fd);
+}
+static void sysc_im_grab_key(void *data, struct wl_proxy *p, uint32_t serial, uint32_t time, uint32_t key, uint32_t state) {
+	struct sysc_idle_client *c = data;
+	c->im_keys++;
+	c->im_last_key = key;
+	c->im_last_state = state;
+}
+static void sysc_im_grab_modifiers(void *data, struct wl_proxy *p, uint32_t serial, uint32_t depressed,
+		uint32_t latched, uint32_t locked, uint32_t group) {
+	((struct sysc_idle_client *)data)->im_modifiers++;
+}
+static void sysc_im_grab_repeat(void *data, struct wl_proxy *p, int32_t rate, int32_t delay) {
+	struct sysc_idle_client *c = data;
+	c->im_rate = rate;
+	c->im_delay = delay;
+}
+static void (*sysc_im_grab_listener[])(void) = {
+	(void (*)(void))sysc_im_grab_keymap, (void (*)(void))sysc_im_grab_key,
+	(void (*)(void))sysc_im_grab_modifiers, (void (*)(void))sysc_im_grab_repeat,
+};
+static int sysc_client_grab_keyboard(struct sysc_idle_client *c) {
+	c->im_grab = wl_proxy_marshal_flags(c->input_method, 5, &sysc_im_grab_interface, 1, 0, NULL);
+	if (c->im_grab == NULL) return -1;
+	wl_proxy_add_listener(c->im_grab, sysc_im_grab_listener, c);
+	return wl_display_roundtrip(c->display) < 0 ? -1 : 0;
+}
+static int sysc_client_release_keyboard(struct sysc_idle_client *c) {
+	if (c->im_grab != NULL) {
+		wl_proxy_marshal_flags(c->im_grab, 0, NULL, 1, WL_MARSHAL_FLAG_DESTROY);
+		c->im_grab = NULL;
+	}
+	return wl_display_roundtrip(c->display) < 0 ? -1 : 0;
+}
+static int sysc_client_virtual_keyboard(struct sysc_idle_client *c, bool other) {
+	if (c->virtual_keyboard_manager == NULL || (other && c->other_seat == NULL)) return -1;
+	c->virtual_keyboard = wl_proxy_marshal_flags(c->virtual_keyboard_manager, 0,
+		&sysc_virtual_keyboard_interface, 1, 0, other ? c->other_seat : c->seat, NULL);
+	if (c->virtual_keyboard == NULL || wl_display_roundtrip(c->display) < 0 || wl_display_roundtrip(c->display) < 0) return -1;
+	if (c->keymap_fd < 0) return -1;
+	wl_proxy_marshal_flags(c->virtual_keyboard, 0, NULL, 1, 0,
+		WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1, c->keymap_fd, c->keymap_size);
+	return wl_display_roundtrip(c->display) < 0 ? -1 : 0;
+}
+static int sysc_client_virtual_key(struct sysc_idle_client *c, uint32_t key, bool press) {
+	if (c->virtual_keyboard == NULL) return -1;
+	wl_proxy_marshal_flags(c->virtual_keyboard, 1, NULL, 1, 0, 1u, key, (uint32_t)press);
+	return wl_display_roundtrip(c->display) < 0 ? -1 : 0;
+}
+static int sysc_client_virtual_modifiers(struct sysc_idle_client *c, uint32_t depressed) {
+	if (c->virtual_keyboard == NULL) return -1;
+	wl_proxy_marshal_flags(c->virtual_keyboard, 2, NULL, 1, 0, depressed, 0u, 0u, 0u);
+	return wl_display_roundtrip(c->display) < 0 ? -1 : 0;
+}
+static int sysc_client_virtual_keyboard_destroy(struct sysc_idle_client *c) {
+	if (c->virtual_keyboard != NULL) {
+		wl_proxy_marshal_flags(c->virtual_keyboard, 3, NULL, 1, WL_MARSHAL_FLAG_DESTROY);
+		c->virtual_keyboard = NULL;
+	}
+	return wl_display_roundtrip(c->display) < 0 ? -1 : 0;
+}
+static int sysc_client_virtual_pointer(struct sysc_idle_client *c, int seat) {
+	if (c->virtual_pointer_manager == NULL || (seat > 0 && c->other_seat == NULL)) return -1;
+	c->virtual_pointer = wl_proxy_marshal_flags(c->virtual_pointer_manager, 0,
+		&sysc_virtual_pointer_interface, 2, 0, seat < 0 ? NULL : seat > 0 ? c->other_seat : c->seat, NULL);
+	return c->virtual_pointer == NULL || wl_display_roundtrip(c->display) < 0 || wl_display_roundtrip(c->display) < 0 ? -1 : 0;
+}
+static int sysc_client_virtual_pointer_output(struct sysc_idle_client *c, bool other) {
+	struct wl_output *output = other ? c->other_output : c->output;
+	if (c->virtual_pointer_manager == NULL || output == NULL) return -1;
+	c->virtual_pointer = wl_proxy_marshal_flags(c->virtual_pointer_manager, 2,
+		&sysc_virtual_pointer_interface, 2, 0, NULL, output, NULL);
+	return c->virtual_pointer == NULL || wl_display_roundtrip(c->display) < 0 || wl_display_roundtrip(c->display) < 0 ? -1 : 0;
+}
+static int sysc_client_virtual_motion(struct sysc_idle_client *c, double dx, double dy) {
+	if (c->virtual_pointer == NULL) return -1;
+	wl_proxy_marshal_flags(c->virtual_pointer, 0, NULL, 2, 0, 1u, wl_fixed_from_double(dx), wl_fixed_from_double(dy));
+	wl_proxy_marshal_flags(c->virtual_pointer, 4, NULL, 2, 0);
+	return wl_display_roundtrip(c->display) < 0 ? -1 : 0;
+}
+static int sysc_client_virtual_absolute(struct sysc_idle_client *c, uint32_t x, uint32_t y, uint32_t width, uint32_t height) {
+	if (c->virtual_pointer == NULL) return -1;
+	wl_proxy_marshal_flags(c->virtual_pointer, 1, NULL, 2, 0, 1u, x, y, width, height);
+	wl_proxy_marshal_flags(c->virtual_pointer, 4, NULL, 2, 0);
+	return wl_display_roundtrip(c->display) < 0 ? -1 : 0;
+}
+static int sysc_client_virtual_button(struct sysc_idle_client *c, uint32_t button, bool press) {
+	if (c->virtual_pointer == NULL) return -1;
+	wl_proxy_marshal_flags(c->virtual_pointer, 2, NULL, 2, 0, 1u, button, (uint32_t)press);
+	wl_proxy_marshal_flags(c->virtual_pointer, 4, NULL, 2, 0);
+	return wl_display_roundtrip(c->display) < 0 ? -1 : 0;
+}
+static int sysc_client_virtual_axis(struct sysc_idle_client *c, double value) {
+	if (c->virtual_pointer == NULL) return -1;
+	wl_proxy_marshal_flags(c->virtual_pointer, 5, NULL, 2, 0, 0u);
+	wl_proxy_marshal_flags(c->virtual_pointer, 7, NULL, 2, 0, 1u, 0u, wl_fixed_from_double(value), 1);
+	wl_proxy_marshal_flags(c->virtual_pointer, 4, NULL, 2, 0);
+	return wl_display_roundtrip(c->display) < 0 ? -1 : 0;
+}
+static int sysc_client_virtual_pointer_destroy(struct sysc_idle_client *c) {
+	if (c->virtual_pointer != NULL) {
+		wl_proxy_marshal_flags(c->virtual_pointer, 8, NULL, 2, WL_MARSHAL_FLAG_DESTROY);
+		c->virtual_pointer = NULL;
+	}
+	return wl_display_roundtrip(c->display) < 0 ? -1 : 0;
+}
+
 // The input method maps a w x h popup surface.
 static int sysc_client_im_popup(struct sysc_idle_client *c, int w, int h) {
 	c->popup_surface = wl_compositor_create_surface(c->compositor);
@@ -864,6 +1090,130 @@ func (c *ToplevelClient) SetIdentity(title, appID string) error {
 }
 
 func (c *ToplevelClient) CloseRequested() bool { return bool(c.state.close_requested) }
+
+type InputEvents struct {
+	Presses, Releases, Modifiers, PointerButtons, PointerAxes     int
+	GrabKeys, GrabModifiers, GrabKeymaps, RepeatRate, RepeatDelay int
+	LastKey, GrabLastKey, GrabLastState                           uint32
+	KeyboardEnters                                                int
+	EnterKeys                                                     []uint32
+}
+
+func (c *ToplevelClient) SyncInput() error {
+	if C.wl_display_roundtrip(c.state.display) < 0 {
+		return fmt.Errorf("input roundtrip failed: %s", c.failure())
+	}
+	return nil
+}
+
+// BindAdditionalKeyboard observes native enter state without changing focus.
+func (c *ToplevelClient) BindAdditionalKeyboard() error {
+	if C.sysc_client_bind_additional_keyboard(c.state) < 0 {
+		return fmt.Errorf("additional keyboard binding failed: %s", c.failure())
+	}
+	return nil
+}
+
+func (c *ToplevelClient) InputEvents() InputEvents {
+	keys := make([]uint32, int(c.state.enter_key_count))
+	for i := range keys {
+		keys[i] = uint32(c.state.enter_keys[i])
+	}
+	return InputEvents{Presses: int(c.state.key_presses), Releases: int(c.state.key_releases), Modifiers: int(c.state.keyboard_modifiers),
+		KeyboardEnters: int(c.state.keyboard_enters), EnterKeys: keys,
+		PointerButtons: int(c.state.pointer_buttons), PointerAxes: int(c.state.pointer_axes), GrabKeys: int(c.state.im_keys),
+		GrabModifiers: int(c.state.im_modifiers), GrabKeymaps: int(c.state.im_keymaps), RepeatRate: int(c.state.im_rate), RepeatDelay: int(c.state.im_delay),
+		LastKey: uint32(c.state.last_key), GrabLastKey: uint32(c.state.im_last_key), GrabLastState: uint32(c.state.im_last_state)}
+}
+
+func (c *ToplevelClient) GrabInputMethodKeyboard() error {
+	if C.sysc_client_grab_keyboard(c.state) != 0 {
+		return fmt.Errorf("input method keyboard grab failed: %s", c.failure())
+	}
+	return nil
+}
+func (c *ToplevelClient) ReleaseInputMethodKeyboard() error {
+	if C.sysc_client_release_keyboard(c.state) != 0 {
+		return fmt.Errorf("input method keyboard release failed")
+	}
+	return nil
+}
+func (c *ToplevelClient) CreateVirtualKeyboard(otherSeat bool) error {
+	if C.sysc_client_virtual_keyboard(c.state, C.bool(otherSeat)) != 0 {
+		return fmt.Errorf("virtual keyboard unavailable or rejected: %s", c.failure())
+	}
+	return nil
+}
+func (c *ToplevelClient) VirtualKey(key uint32, pressed bool) error {
+	if C.sysc_client_virtual_key(c.state, C.uint32_t(key), C.bool(pressed)) != 0 {
+		return fmt.Errorf("virtual key failed: %s", c.failure())
+	}
+	return nil
+}
+func (c *ToplevelClient) VirtualModifiers(depressed uint32) error {
+	if C.sysc_client_virtual_modifiers(c.state, C.uint32_t(depressed)) != 0 {
+		return fmt.Errorf("virtual modifiers failed")
+	}
+	return nil
+}
+func (c *ToplevelClient) DestroyVirtualKeyboard() error {
+	if C.sysc_client_virtual_keyboard_destroy(c.state) != 0 {
+		return fmt.Errorf("virtual keyboard destruction failed")
+	}
+	return nil
+}
+func (c *ToplevelClient) CreateVirtualPointer(otherSeat bool) error {
+	seat := C.int(0)
+	if otherSeat {
+		seat = 1
+	}
+	if C.sysc_client_virtual_pointer(c.state, seat) != 0 {
+		return fmt.Errorf("virtual pointer unavailable or rejected: %s", c.failure())
+	}
+	return nil
+}
+func (c *ToplevelClient) CreateDefaultVirtualPointer() error {
+	if C.sysc_client_virtual_pointer(c.state, -1) != 0 {
+		return fmt.Errorf("default virtual pointer unavailable or rejected: %s", c.failure())
+	}
+	return nil
+}
+func (c *ToplevelClient) CreateVirtualPointerForOutput(otherOutput bool) error {
+	if C.sysc_client_virtual_pointer_output(c.state, C.bool(otherOutput)) != 0 {
+		return fmt.Errorf("output virtual pointer unavailable or rejected: %s", c.failure())
+	}
+	return nil
+}
+func (c *ToplevelClient) VirtualMotion(dx, dy float64) error {
+	if C.sysc_client_virtual_motion(c.state, C.double(dx), C.double(dy)) != 0 {
+		return fmt.Errorf("virtual motion failed")
+	}
+	return nil
+}
+func (c *ToplevelClient) VirtualAbsolute(x, y, width, height uint32) error {
+	if C.sysc_client_virtual_absolute(c.state, C.uint32_t(x), C.uint32_t(y), C.uint32_t(width), C.uint32_t(height)) != 0 {
+		return fmt.Errorf("virtual absolute motion failed")
+	}
+	return nil
+}
+func (c *ToplevelClient) VirtualButton(button uint32, pressed bool) error {
+	if C.sysc_client_virtual_button(c.state, C.uint32_t(button), C.bool(pressed)) != 0 {
+		return fmt.Errorf("virtual button failed")
+	}
+	return nil
+}
+func (c *ToplevelClient) VirtualAxis(value float64) error {
+	if C.sysc_client_virtual_axis(c.state, C.double(value)) != 0 {
+		return fmt.Errorf("virtual axis failed")
+	}
+	return nil
+}
+func (c *ToplevelClient) DestroyVirtualPointer() error {
+	if C.sysc_client_virtual_pointer_destroy(c.state) != 0 {
+		return fmt.Errorf("virtual pointer destruction failed")
+	}
+	return nil
+}
 
 // Next waits up to timeout for the notification's next event and returns
 // "idled", "resumed", or "" when none came.
