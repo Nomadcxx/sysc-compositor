@@ -197,3 +197,6 @@ Local vet, builds of the two entry points, formatting and whitespace checks pass
 
 
 The first Task 4 CI run passed static checks and the full compositor package, then exposed a race in `TestNiriWindowActionsOverSocket`. Its separate connections received `Handled` before the server posted each action, so column consumption could precede column placement. The test now waits for the published placement and grouped state before sending dependent actions. The focused bench test passed after this test-only correction; CI must pass again before merge.
+
+
+Task 4 merged as PR #59 (`a4312e7`) after its corrected static and compositor CI lanes passed. The combined capture/input branch then passed eight named bench integration checks: privacy reload, IME passthrough, seat/lock boundaries, live-window lifecycle, pointer image lifetime, socket window actions, compositor UI damage and delayed switcher damage. Conflict resolution retained the capture teardown and virtual-input guard cleanup, and preserved the two sets of test-client helpers. The combined tree passes vet, entry-point builds, formatting and whitespace checks. Capture still requires its own PR gates before merge.
