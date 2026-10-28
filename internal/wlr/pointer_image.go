@@ -113,24 +113,7 @@ func drawTransformedPointer(dst draw.Image, icon *image.RGBA, at image.Point, tr
 	bounds := dst.Bounds()
 	w, h := bounds.Dx(), bounds.Dy()
 	toBuffer := func(p image.Point) image.Point {
-		x, y := p.X, p.Y
-		switch transform {
-		case C.WL_OUTPUT_TRANSFORM_90:
-			p = image.Pt(y, h-1-x)
-		case C.WL_OUTPUT_TRANSFORM_180:
-			p = image.Pt(w-1-x, h-1-y)
-		case C.WL_OUTPUT_TRANSFORM_270:
-			p = image.Pt(w-1-y, x)
-		case C.WL_OUTPUT_TRANSFORM_FLIPPED:
-			p = image.Pt(w-1-x, y)
-		case C.WL_OUTPUT_TRANSFORM_FLIPPED_90:
-			p = image.Pt(w-1-y, h-1-x)
-		case C.WL_OUTPUT_TRANSFORM_FLIPPED_180:
-			p = image.Pt(x, h-1-y)
-		case C.WL_OUTPUT_TRANSFORM_FLIPPED_270:
-			p = image.Pt(y, x)
-		}
-		return p.Add(bounds.Min)
+		return outputPointToBuffer(p, image.Pt(w, h), transform).Add(bounds.Min)
 	}
 	first, last := toBuffer(at), toBuffer(at.Add(icon.Bounds().Size()).Sub(image.Pt(1, 1)))
 	box := image.Rect(min(first.X, last.X), min(first.Y, last.Y), max(first.X, last.X)+1, max(first.Y, last.Y)+1)
@@ -145,4 +128,26 @@ func drawTransformedPointer(dst draw.Image, icon *image.RGBA, at image.Point, tr
 		}
 	}
 	draw.Draw(dst, box, rotated, image.Point{}, draw.Over)
+}
+
+// Output buffers precede the output transform; layout points follow it.
+func outputPointToBuffer(p, imageSize image.Point, transform uint32) image.Point {
+	x, y, w, h := p.X, p.Y, imageSize.X, imageSize.Y
+	switch transform {
+	case C.WL_OUTPUT_TRANSFORM_90:
+		return image.Pt(y, h-1-x)
+	case C.WL_OUTPUT_TRANSFORM_180:
+		return image.Pt(w-1-x, h-1-y)
+	case C.WL_OUTPUT_TRANSFORM_270:
+		return image.Pt(w-1-y, x)
+	case C.WL_OUTPUT_TRANSFORM_FLIPPED:
+		return image.Pt(w-1-x, y)
+	case C.WL_OUTPUT_TRANSFORM_FLIPPED_90:
+		return image.Pt(w-1-y, h-1-x)
+	case C.WL_OUTPUT_TRANSFORM_FLIPPED_180:
+		return image.Pt(x, h-1-y)
+	case C.WL_OUTPUT_TRANSFORM_FLIPPED_270:
+		return image.Pt(y, x)
+	}
+	return p
 }

@@ -154,6 +154,8 @@ type Compositor struct {
 	screenshotPattern       *string
 	screenshotTaken         func(path *string)
 	shotUI                  *screenshotUI
+	pickColor               *colorPicker
+	serviceClients          map[unsafe.Pointer]uintptr
 	hotkeyOverlay           hotkeyOverlay
 	exitDialog              exitDialog
 	lastShotSelection       image.Rectangle
@@ -760,6 +762,7 @@ func (c *Compositor) Terminate() {
 // Destroy releases the compositor. Listeners added through AddListener are
 // removed first so no token outlives its wl_signal.
 func (c *Compositor) Destroy() {
+	c.finishColorPick([3]float64{}, ErrClosed)
 	c.destroyCaptureSources()
 	c.destroyCapturePrivacy()
 	c.destroyVirtualInputGuard()

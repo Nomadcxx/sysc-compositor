@@ -166,7 +166,7 @@ Acceptance file: `/home/nomadx/.config/niri/config.kdl` + `sysc-shell.kdl`. Pars
 
 | Command | Status | Milestone |
 |---|---|---|
-| `niri` / `sysc-compositor` no args / `--session` | [x] | M0 binary; M9 publishes session sockets and starts and clears `graphical-session.target` only with `--session` |
+| `niri` / `sysc-compositor` no args / `--session` | [x] | M0 binary; M9 publishes session sockets with `--session`; the session script runs the notify service bound to `graphical-session.target` and clears activation state on shutdown |
 | `-c` / `--config` | [x] | M2 (+ `$NIRI_CONFIG`, XDG, `/etc/niri`) |
 | `niri msg` / `sysc-compositor msg` | [~] | M2/M4 actions; M9 adds all 16 request forms, output actions, `SwitchLayout`, and `LoadConfigFile`; later action subcommands remain open |
 | `niri validate` | [x] | M3 command and parser accept the laptop config; unapplied sections warn |
@@ -190,7 +190,7 @@ global is ticked only with its handler and a test (Q7). Versions follow the wlro
 | zwp_relative_pointer_manager_v1 | [x] | M10 | `TestLockedPointerStaysAndReportsRelativeMotion` |
 | zwp_pointer_constraints_v1 | [~] | M10 | lock tested; confine implemented, untested |
 | zwp_text_input_manager_v3 | [x] | M10 | `TestTextInputRelaysToTheInputMethod` |
-| zwp_input_method_manager_v2 | [~] | M10/M12 | relay, popups and grab passthrough tested (`TestInputMethodGrabReturnsKeysThroughVirtualKeyboard`); real IME acceptance remains with Task 8 and `sysc-1639` |
+| zwp_input_method_manager_v2 | [x] | M10/M12 | relay/popups and protocol grab regressions; baremetal `TestNativeIBusComposesInGTK` proves packaged IBus/GTK preedit, composed text and one returned Backspace press/release |
 | zwlr_output_power_manager_v1 | [ ] | M10 | handler written, unwired: no packaged client to test it (`wlopm` is AUR-only) |
 | ext_data_control_manager_v1, zwlr_data_control_manager_v1 | [x] | M11 | `TestDataControlServesTheSelectionWithoutFocus` (wl-copy → wl-paste, no focus); sysc-clipboard records selections through it (M11 laptop gate) |
 | zwlr_screencopy_manager_v1 | [x] | M11/M12 | filtered SHM capture; `TestLegacyScreencopyPrivacyRegionAndDamage` and `TestLegacyScreencopyFractionalRegionPreservesPhysicalEdges` drive the legacy wire protocol, including privacy, damage, clipping, malformed buffers and fractional edge pixels |
@@ -212,10 +212,11 @@ global is ticked only with its handler and a test (Q7). Versions follow the wlro
 
 | Name | Status | Milestone |
 |---|---|---|
-| org.gnome.Mutter.DisplayConfig | [ ] | M12 |
+| org.gnome.Mutter.DisplayConfig | [~] | M12 — current immutable monitors/modes/logical state, serials, properties and changes; wire/lifetime regressions. `ApplyMonitorsConfigAllowed=false`, mutation returns NotSupported until M15 |
+| org.gnome.Mutter.ServiceChannel | [x] | M12 — native privileged Wayland clients with unknown peer PID; descriptor ownership, caller/connection cancellation, independent callers and malformed-wire checks |
 | org.gnome.Mutter.ScreenCast | [ ] | M12 |
-| org.gnome.Shell.Screenshot | [ ] | M12 |
-| org.gnome.Shell.Introspect | [ ] | M12 |
+| org.gnome.Shell.Screenshot | [x] | M12 — correlated screenshot and PickColor replies, capture privacy, cancellation and write failures; unique private temporary PNGs preserve the clipboard; one-output screenshot limit matches Niri |
+| org.gnome.Shell.Introspect | [x] | M12 — mapped IPC IDs, title and desktop app ID, immutable snapshots and WindowsChanged |
 | org.freedesktop.ScreenSaver | [x] | M10 — Inhibit/UnInhibit at both of Niri's paths, cookies per caller, dropped when the caller leaves; started in `--session`, feeds idle inhibition (`TestScreenSaverInhibitsPerSenderAndDropsDepartedCallers`) |
 | org.freedesktop.a11y.KeyboardMonitor | [ ] | M14 |
 | locale1 client | [x] | M9 — XKB defaults and property changes, overridden by explicit KDL settings |

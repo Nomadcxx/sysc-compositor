@@ -30,6 +30,7 @@ type Server struct {
 	configWatcher *config.Watcher
 	sessionDBus   *session.DBus
 	screenSaver   *session.ScreenSaver
+	portal        *session.Portal
 	localeXKB     *config.Keyboard
 	watchStop     chan struct{}
 	watchStart    sync.Once
@@ -146,6 +147,9 @@ func (s *Server) refreshNiriState() {
 		overviewOpen: model.OverviewOpen,
 	})
 	s.events.publish(eventStreamChanges(before, s.state.snapshot()))
+	if s.portal != nil {
+		s.portal.Update(outputs, windows)
+	}
 }
 
 // niriWindowOutputName keeps mapped windows in IPC when their center moves
@@ -448,6 +452,10 @@ func (s *Server) Terminate() { s.c.Terminate() }
 // Destroy releases the compositor and every listener it owns.
 func (s *Server) Destroy() {
 	s.stopConfigWatcher()
+	if s.portal != nil {
+		s.portal.Close()
+		s.portal = nil
+	}
 	if s.screenSaver != nil {
 		s.screenSaver.Close()
 		s.screenSaver = nil
