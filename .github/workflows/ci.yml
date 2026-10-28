@@ -15,6 +15,7 @@ permissions:
 
 env:
   GOMAXPROCS: "2"
+  CGO_CFLAGS_ALLOW: "-fno-strict-overflow"
 
 jobs:
   # Lane 1 needs no display: static checks, both builds, and the tests of every
@@ -24,7 +25,7 @@ jobs:
     container: archlinux:latest
     steps:
       - name: install build dependencies
-        run: pacman -Syu --noconfirm --needed git gcc pkgconf go wlroots0.20 scenefx wayland wayland-protocols libxkbcommon xkeyboard-config ttf-dejavu
+        run: pacman -Syu --noconfirm --needed git gcc pkgconf go wlroots0.20 scenefx wayland wayland-protocols libxkbcommon xkeyboard-config ttf-dejavu libpipewire
       - uses: actions/checkout@v4
       - name: trust the checkout
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
@@ -64,7 +65,7 @@ jobs:
       - name: test internal/wlr and internal/server
         run: >-
           docker run --rm --device /dev/dri -v "$PWD:/src" -w /src
-          -e GOMAXPROCS=2 -e SYSC_NESTED_TESTS=1 -e WLR_BACKENDS=drm
+          -e GOMAXPROCS=2 -e CGO_CFLAGS_ALLOW=-fno-strict-overflow -e SYSC_NESTED_TESTS=1 -e WLR_BACKENDS=drm
           -e LIBSEAT_BACKEND=noop
           -e WLR_RENDERER=gles2 -e WLR_RENDERER_ALLOW_SOFTWARE=1
           -e XDG_RUNTIME_DIR=/tmp/xdg-runtime

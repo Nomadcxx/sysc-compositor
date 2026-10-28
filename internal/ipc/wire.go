@@ -145,6 +145,81 @@ type OverviewState struct {
 	IsOpen bool `json:"is_open"`
 }
 
+type CastKind string
+
+const (
+	CastKindPipeWire      CastKind = "PipeWire"
+	CastKindWlrScreencopy CastKind = "WlrScreencopy"
+)
+
+type Cast struct {
+	StreamID        uint64     `json:"stream_id"`
+	SessionID       uint64     `json:"session_id"`
+	Kind            CastKind   `json:"kind"`
+	Target          CastTarget `json:"target"`
+	IsDynamicTarget bool       `json:"is_dynamic_target"`
+	IsActive        bool       `json:"is_active"`
+	PID             *int32     `json:"pid"`
+	PWNodeID        *uint32    `json:"pw_node_id"`
+}
+
+// The zero target is Niri's Nothing. Output and WindowID are exclusive.
+type CastTarget struct {
+	Output   *string
+	WindowID *uint64
+}
+
+func (t CastTarget) MarshalJSON() ([]byte, error) {
+	if t.Output != nil && t.WindowID != nil {
+		return nil, errors.New("ipc: multiple cast targets")
+	}
+	if t.Output != nil {
+		return json.Marshal(map[string]any{"Output": struct {
+			Name string `json:"name"`
+		}{*t.Output}})
+	}
+	if t.WindowID != nil {
+		return json.Marshal(map[string]any{"Window": struct {
+			ID uint64 `json:"id"`
+		}{*t.WindowID}})
+	}
+	return []byte(`{"Nothing":{}}`), nil
+}
+
+func (t *CastTarget) UnmarshalJSON(data []byte) error {
+	name, body, err := variant(data)
+	if err != nil {
+		return ErrParse
+	}
+	var target CastTarget
+	switch name {
+	case "Nothing":
+		if body == nil || strict(body, &struct{}{}) != nil {
+			return ErrParse
+		}
+	case "Output":
+		var fields struct {
+			Name *string `json:"name"`
+		}
+		if body == nil || strict(body, &fields) != nil || fields.Name == nil {
+			return ErrParse
+		}
+		target.Output = fields.Name
+	case "Window":
+		var fields struct {
+			ID *uint64 `json:"id"`
+		}
+		if body == nil || strict(body, &fields) != nil || fields.ID == nil {
+			return ErrParse
+		}
+		target.WindowID = fields.ID
+	default:
+		return ErrParse
+	}
+	*t = target
+	return nil
+}
+
 // WorkspaceReference is Niri's externally tagged workspace argument.
 type WorkspaceReference struct {
 	ID    *uint64
@@ -187,6 +262,8 @@ type Action struct {
 	WriteToDisk      bool    // ScreenshotScreen, ScreenshotWindow
 	ShowPointer      bool    // Screenshot, ScreenshotScreen, ScreenshotWindow
 	Path             *string // ScreenshotScreen, ScreenshotWindow
+	CastOutput       *string // SetDynamicCastMonitor: nil means focused output
+	SessionID        uint64  // StopCast
 }
 
 // DecodeRequest decodes one request line.
@@ -468,7 +545,7 @@ func decodeAction(raw json.RawMessage) (Action, error) {
 			return Action{}, ErrParse
 		}
 		a.WindowID = f.ID
-	case "CloseWindow":
+	case "CloseWindow", "SetDynamicCastWindow":
 		var f struct {
 			ID *uint64 `json:"id"`
 		}
@@ -523,7 +600,7 @@ func decodeAction(raw json.RawMessage) (Action, error) {
 	case "FocusFloating", "FocusTiling", "SwitchFocusBetweenFloatingAndTiling",
 		"ConsumeWindowIntoColumn", "ExpelWindowFromColumn", "ToggleColumnTabbedDisplay",
 		"ToggleOverview", "OpenOverview", "CloseOverview", "ToggleKeyboardShortcutsInhibit",
-		"PowerOffMonitors", "PowerOnMonitors":
+		"PowerOffMonitors", "PowerOnMonitors", "ClearDynamicCastTarget":
 		if err := strict(body, &struct{}{}); err != nil {
 			return Action{}, ErrParse
 		}
@@ -631,6 +708,22 @@ func decodeAction(raw json.RawMessage) (Action, error) {
 			return Action{}, ErrParse
 		}
 		a.Output = *f.Output
+	case "SetDynamicCastMonitor":
+		var f struct {
+			Output *string `json:"output"`
+		}
+		if err := strict(body, &f); err != nil {
+			return Action{}, ErrParse
+		}
+		a.CastOutput = f.Output
+	case "StopCast":
+		var f struct {
+			SessionID *uint64 `json:"session_id"`
+		}
+		if err := strict(body, &f); err != nil || f.SessionID == nil {
+			return Action{}, ErrParse
+		}
+		a.SessionID = *f.SessionID
 	case "MoveFloatingWindow":
 		var f struct {
 			ID *uint64          `json:"id"`
@@ -809,7 +902,7 @@ func EncodeRequest(r Request) []byte {
 		body = struct {
 			ID uint64 `json:"id"`
 		}{id}
-	case "CloseWindow":
+	case "CloseWindow", "SetDynamicCastWindow":
 		body = struct {
 			ID *uint64 `json:"id"`
 		}{a.WindowID}
@@ -893,6 +986,14 @@ func EncodeRequest(r Request) []byte {
 		body = struct {
 			Output string `json:"output"`
 		}{a.Output}
+	case "SetDynamicCastMonitor":
+		body = struct {
+			Output *string `json:"output"`
+		}{a.CastOutput}
+	case "StopCast":
+		body = struct {
+			SessionID uint64 `json:"session_id"`
+		}{a.SessionID}
 	case "MoveFloatingWindow":
 		body = struct {
 			ID *uint64 `json:"id"`

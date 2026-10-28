@@ -87,6 +87,74 @@ func TestWindowActionsRoundTripNiriWire(t *testing.T) {
 	}
 }
 
+func TestCastActionsPreserveTargetsAndSessionOnWire(t *testing.T) {
+	for _, line := range []string{
+		`{"Action":{"SetDynamicCastWindow":{"id":81}}}`,
+		`{"Action":{"SetDynamicCastWindow":{"id":null}}}`,
+		`{"Action":{"SetDynamicCastMonitor":{"output":"DP-1"}}}`,
+		`{"Action":{"SetDynamicCastMonitor":{"output":null}}}`,
+		`{"Action":{"ClearDynamicCastTarget":{}}}`,
+		`{"Action":{"StopCast":{"session_id":9}}}`,
+	} {
+		request, err := DecodeRequest([]byte(line))
+		if err != nil {
+			t.Fatalf("decode %s: %v", line, err)
+		}
+		if got := string(EncodeRequest(request)); got != line {
+			t.Errorf("round trip = %s, want %s", got, line)
+		}
+	}
+	for _, line := range []string{
+		`{"Action":{"SetDynamicCastWindow":{"id":"81"}}}`,
+		`{"Action":{"SetDynamicCastWindow":{"id":81,"extra":true}}}`,
+		`{"Action":{"SetDynamicCastMonitor":{"output":9}}}`,
+		`{"Action":{"SetDynamicCastMonitor":{"extra":true}}}`,
+		`{"Action":{"ClearDynamicCastTarget":{"extra":true}}}`,
+		`{"Action":{"StopCast":{}}}`,
+		`{"Action":{"StopCast":{"session_id":null}}}`,
+		`{"Action":{"StopCast":{"session_id":-1}}}`,
+	} {
+		if _, err := DecodeRequest([]byte(line)); err != ErrParse {
+			t.Errorf("accepted malformed cast action %s: %v", line, err)
+		}
+	}
+}
+
+func TestCastSnapshotsMatchNiriWire(t *testing.T) {
+	name, id, node := "DP-1", uint64(81), uint32(12)
+	for _, tc := range []struct {
+		target CastTarget
+		want   string
+	}{
+		{CastTarget{}, `{"Nothing":{}}`},
+		{CastTarget{Output: &name}, `{"Output":{"name":"DP-1"}}`},
+		{CastTarget{WindowID: &id}, `{"Window":{"id":81}}`},
+	} {
+		cast := Cast{StreamID: 7, SessionID: 3, Kind: CastKindPipeWire, Target: tc.target, IsDynamicTarget: true, IsActive: true, PWNodeID: &node}
+		data, err := json.Marshal(cast)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := `{"stream_id":7,"session_id":3,"kind":"PipeWire","target":` + tc.want + `,"is_dynamic_target":true,"is_active":true,"pid":null,"pw_node_id":12}`
+		if string(data) != want {
+			t.Errorf("cast = %s, want %s", data, want)
+		}
+		var decoded Cast
+		if err := json.Unmarshal(data, &decoded); err != nil || !reflect.DeepEqual(decoded, cast) {
+			t.Errorf("cast round trip = %+v, %v", decoded, err)
+		}
+	}
+	if _, err := json.Marshal(CastTarget{Output: &name, WindowID: &id}); err == nil {
+		t.Fatal("encoded two cast targets")
+	}
+	for _, data := range []string{`{"Nothing":{"extra":1}}`, `{"Window":{"id":null}}`, `{"Output":{}}`, `{"Other":{}}`, `{"Output":{"name":"DP-1"},"Nothing":{}}`} {
+		var target CastTarget
+		if err := json.Unmarshal([]byte(data), &target); err == nil {
+			t.Errorf("accepted malformed cast target %s", data)
+		}
+	}
+}
+
 func TestWindowActionsRejectMalformedFields(t *testing.T) {
 	for _, line := range []string{
 		`{"Action":{"FocusWindow":{}}}`,

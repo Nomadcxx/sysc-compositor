@@ -286,6 +286,38 @@ func TestParseMsgSupportsM9Actions(t *testing.T) {
 	}
 }
 
+func TestParseMsgSupportsCastActions(t *testing.T) {
+	for _, tc := range []struct {
+		args []string
+		wire string
+	}{
+		{[]string{"set-dynamic-cast-window"}, `{"Action":{"SetDynamicCastWindow":{"id":null}}}`},
+		{[]string{"set-dynamic-cast-window", "--id", "81"}, `{"Action":{"SetDynamicCastWindow":{"id":81}}}`},
+		{[]string{"set-dynamic-cast-monitor"}, `{"Action":{"SetDynamicCastMonitor":{"output":null}}}`},
+		{[]string{"set-dynamic-cast-monitor", "DP-1"}, `{"Action":{"SetDynamicCastMonitor":{"output":"DP-1"}}}`},
+		{[]string{"clear-dynamic-cast-target"}, `{"Action":{"ClearDynamicCastTarget":{}}}`},
+		{[]string{"stop-cast", "--session-id", "9"}, `{"Action":{"StopCast":{"session_id":9}}}`},
+	} {
+		request, err := parseMsg(append([]string{"action"}, tc.args...))
+		if err != nil {
+			t.Errorf("%v: %v", tc.args, err)
+			continue
+		}
+		if got := string(ipc.EncodeRequest(request)); got != tc.wire {
+			t.Errorf("wire=%s, want %s", got, tc.wire)
+		}
+	}
+	for _, args := range [][]string{
+		{"stop-cast"}, {"stop-cast", "--session-id", "-1"}, {"stop-cast", "--id", "9"},
+		{"set-dynamic-cast-monitor", "DP-1", "DP-2"}, {"set-dynamic-cast-window", "81"},
+		{"clear-dynamic-cast-target", "extra"},
+	} {
+		if _, err := parseMsg(append([]string{"action"}, args...)); err == nil {
+			t.Errorf("accepted %v", args)
+		}
+	}
+}
+
 func TestParseOutputMatchesNiriWire(t *testing.T) {
 	tests := []struct {
 		args []string

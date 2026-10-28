@@ -124,6 +124,7 @@ type Compositor struct {
 	layout               *C.struct_wlr_output_layout
 	scene                *C.struct_wlr_scene
 	capture              *captureProtocol
+	pipewire             *pipeWire
 	captureNodes         map[*C.struct_wlr_scene_node]*captureNodeOwner
 	xdgDecorationManager unsafe.Pointer
 	kdeDecorationManager unsafe.Pointer
@@ -760,6 +761,7 @@ func (c *Compositor) Terminate() {
 // Destroy releases the compositor. Listeners added through AddListener are
 // removed first so no token outlives its wl_signal.
 func (c *Compositor) Destroy() {
+	c.stopPipeWire()
 	c.destroyCaptureSources()
 	c.destroyCapturePrivacy()
 	c.destroyVirtualInputGuard()

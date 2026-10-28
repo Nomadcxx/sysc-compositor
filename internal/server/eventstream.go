@@ -187,8 +187,8 @@ func initialEventLines(state niriSnapshot) [][]byte {
 			Failed bool `json:"failed"`
 		}{Failed: state.configLoadFailed}),
 		eventLine("CastsChanged", struct {
-			Casts []any `json:"casts"`
-		}{Casts: []any{}}),
+			Casts []ipc.Cast `json:"casts"`
+		}{Casts: nonNilCasts(state.casts)}),
 	)
 	return lines
 }
@@ -209,6 +209,7 @@ func nonNilWindows(windows []ipc.Window) []ipc.Window {
 
 func eventStreamChanges(before, after niriSnapshot) [][]byte {
 	var lines [][]byte
+	lines = append(lines, eventStreamCastChanges(before.casts, after.casts)...)
 	if workspaceDetailsChanged(before.workspaces, after.workspaces) {
 		lines = append(lines, eventLine("WorkspacesChanged", struct {
 			Workspaces []ipc.Workspace `json:"workspaces"`
@@ -258,6 +259,40 @@ func eventStreamChanges(before, after niriSnapshot) [][]byte {
 		lines = append(lines, eventLine("OverviewOpenedOrClosed", struct {
 			IsOpen bool `json:"is_open"`
 		}{IsOpen: after.overviewOpen}))
+	}
+	return lines
+}
+
+func nonNilCasts(casts []ipc.Cast) []ipc.Cast {
+	if casts == nil {
+		return []ipc.Cast{}
+	}
+	return casts
+}
+
+func eventStreamCastChanges(before, after []ipc.Cast) [][]byte {
+	previous := make(map[uint64]ipc.Cast, len(before))
+	current := make(map[uint64]ipc.Cast, len(after))
+	for _, cast := range before {
+		previous[cast.StreamID] = cast
+	}
+	for _, cast := range after {
+		current[cast.StreamID] = cast
+	}
+	var lines [][]byte
+	for _, cast := range before {
+		if _, live := current[cast.StreamID]; !live {
+			lines = append(lines, eventLine("CastStopped", struct {
+				StreamID uint64 `json:"stream_id"`
+			}{cast.StreamID}))
+		}
+	}
+	for _, cast := range after {
+		if old, live := previous[cast.StreamID]; !live || !reflect.DeepEqual(old, cast) {
+			lines = append(lines, eventLine("CastStartedOrChanged", struct {
+				Cast ipc.Cast `json:"cast"`
+			}{cast}))
+		}
 	}
 	return lines
 }

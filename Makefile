@@ -1,5 +1,7 @@
 GO ?= go
 DESTDIR ?=
+# libspa's pkg-config metadata supplies this flag; cgo needs an exact allowance.
+export CGO_CFLAGS_ALLOW ?= -fno-strict-overflow
 
 .PHONY: build install
 
