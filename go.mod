@@ -10,3 +10,5 @@ require (
 )
 
 require golang.org/x/sys v0.49.0 // indirect
+
+replace github.com/godbus/dbus/v5 => ./third_party/godbus

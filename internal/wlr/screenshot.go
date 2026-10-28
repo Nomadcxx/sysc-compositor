@@ -186,6 +186,7 @@ import "C"
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"image"
@@ -358,6 +359,82 @@ func (c *Compositor) ScreenshotScreen(writeToDisk, showPointer bool, path string
 		c.drawOutputPointer(img, target)
 	}
 	c.saveScreenshot(img, writeToDisk, path)
+	return nil
+}
+
+// ScreenshotScreenResult is the GNOME portal screenshot operation. Niri 26.04
+// supports one output and ignores the requested filename. Rendering and PNG
+// encoding are shared with screenshots; clipboard and ScreenshotCaptured stay
+// untouched. Each request owns its result and any temporary fallback file.
+func (c *Compositor) ScreenshotScreenResult(ctx context.Context, showPointer bool, done func(string, error)) error {
+	if done == nil {
+		return errors.New("wlr: a portal screenshot needs a result handler")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if len(c.sceneOutputs) != 1 {
+		return errors.New("wlr: portal screenshot requires exactly one output")
+	}
+	var target unsafe.Pointer
+	for output := range c.sceneOutputs {
+		target = output
+	}
+	img, err := c.captureOutput(target)
+	if err != nil {
+		return err
+	}
+	if showPointer {
+		c.drawOutputPointer(img, target)
+	}
+	path := ""
+	if c.screenshotPattern != nil {
+		path, _ = expandScreenshotPath(*c.screenshotPattern)
+	}
+	go func() {
+		filename, err := func() (filename string, err error) {
+			if err = ctx.Err(); err != nil {
+				return "", err
+			}
+			data, err := encodePNG(img)
+			if err != nil {
+				return "", err
+			}
+			if err = ctx.Err(); err != nil {
+				return "", err
+			}
+			var file *os.File
+			temporary := path == ""
+			if temporary {
+				// Niri uses a shared screenshot.png fallback. A private file prevents
+				// symlink following and concurrent requests overwriting one another.
+				file, err = os.CreateTemp("", "sysc-screenshot-*.png")
+			} else {
+				file, err = os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+			}
+			if err != nil {
+				return "", err
+			}
+			defer func() {
+				err = errors.Join(err, file.Close())
+				if err != nil && temporary {
+					_ = os.Remove(file.Name())
+				}
+			}()
+			if err = ctx.Err(); err == nil {
+				_, err = file.Write(data)
+			}
+			if err == nil {
+				err = ctx.Err()
+			}
+			return file.Name(), err
+		}()
+		if err != nil {
+			done("", err)
+			return
+		}
+		done(filename, nil)
+	}()
 	return nil
 }
 

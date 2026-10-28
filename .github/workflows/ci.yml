@@ -24,7 +24,7 @@ jobs:
     container: archlinux:latest
     steps:
       - name: install build dependencies
-        run: pacman -Syu --noconfirm --needed git gcc pkgconf go wlroots0.20 scenefx wayland wayland-protocols libxkbcommon xkeyboard-config ttf-dejavu
+        run: pacman -Syu --noconfirm --needed git gcc pkgconf go wlroots0.20 scenefx wayland wayland-protocols libxkbcommon xkeyboard-config ttf-dejavu dbus
       - uses: actions/checkout@v4
       - name: trust the checkout
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
@@ -42,6 +42,8 @@ jobs:
         run: git diff --exit-code -- go.mod go.sum
       - name: test packages without a compositor
         run: go test -count=1 -p 2 $(go list ./... | grep -v -e '/internal/wlr$' -e '/internal/server$')
+      - name: test D-Bus descriptor backport
+        run: go test -count=1 github.com/godbus/dbus/v5 -run '^TestReceivedDescriptorContainersAndCleanup$'
 
   # Lane 2 builds real compositors on wlroots' DRM backend over vkms, a
   # virtual display with no GPU, and renders with GLES on llvmpipe as SceneFX

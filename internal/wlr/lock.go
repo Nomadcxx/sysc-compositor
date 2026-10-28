@@ -19,6 +19,7 @@ static struct wlr_scene_rect *sysc_lock_backdrop_create(struct wlr_scene_tree *p
 import "C"
 
 import (
+	"errors"
 	"unsafe"
 )
 
@@ -135,6 +136,7 @@ func (c *Compositor) sealSession() {
 	defer c.damageCaptureSources()
 	c.setSessionLocked(true)
 	c.closeScreenshotUI()
+	c.finishColorPick([3]float64{}, errors.New("session locked"))
 	c.closeSwitcher(false)
 	c.stopKeyboardRepeat()
 	c.cancelTiledWindowMove()

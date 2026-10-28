@@ -691,6 +691,11 @@ func (c *Compositor) handleCursorMotionAbsolute(data unsafe.Pointer) {
 }
 
 func (c *Compositor) processCursorMotion(time C.uint32_t) {
+	if c.pickColor != nil {
+		C.wlr_seat_pointer_notify_clear_focus(c.seat)
+		c.showCursorImage("crosshair")
+		return
+	}
 	if c.switcher.isOpen() {
 		C.wlr_seat_pointer_notify_clear_focus(c.seat)
 		c.showDefaultImage()
@@ -893,6 +898,9 @@ func (c *Compositor) deliverPointerButton(event *C.struct_wlr_pointer_button_eve
 		c.hideExitDialog()
 		c.consumedPointerButtons[button] = true
 		C.wlr_seat_pointer_notify_frame(c.seat)
+		return
+	}
+	if c.pickColorButton(button, pressed) {
 		return
 	}
 	if c.shotUIButton(button, pressed) {
