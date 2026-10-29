@@ -152,17 +152,24 @@ func TestTabletEmulatesPointerForPlainClients(t *testing.T) {
 	runTabletClients(t, c, []bool{false, true}, func(clients []*testclient.ToplevelClient, views []*toplevelView) {
 		plain, aware := clients[0], clients[1]
 		var pen *fakeTablet
+		onCompositor(t, c, func() { pen = c.addFakeTablet(0, 0) })
+		if pen == nil {
+			t.Fatal("fake tablet unavailable")
+		}
+		// With no other pointer device the tablet gives the seat its pointer:
+		// one roundtrip delivers the capability, the next binds wl_pointer.
+		for i := 0; i < 2; i++ {
+			if err := plain.SyncInput(); err != nil {
+				t.Fatal(err)
+			}
+		}
 		onCompositor(t, c, func() {
-			pen = c.addFakeTablet(0, 0)
 			x, y := viewCenter(views[0])
 			pen.proximity(x, y, true)
 			pen.tip(true)
 			pen.tip(false)
 			pen.proximity(x, y, false)
 		})
-		if pen == nil {
-			t.Fatal("fake tablet unavailable")
-		}
 		if err := plain.SyncInput(); err != nil {
 			t.Fatal(err)
 		}
