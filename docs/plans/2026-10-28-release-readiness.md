@@ -59,7 +59,7 @@ hardware or integration completeness.
 |---|---|---|
 | Portal services | Prove GNOME/GTK portal discovery in an isolated session. DisplayConfig reports current outputs; output mutation remains explicit unsupported behavior until M15. Task 5 services are merged. | M12 Task 5/8, `sysc-1277` |
 | Screen sharing | Prove actual GNOME portal, Firefox, Chromium and OBS consumers. Compositor/PipeWire frames and mixed legacy/PipeWire cast reporting have named bench evidence. | M12 Task 8 |
-| Remaining client protocols | Tablet tool/pad routing needs behavioral proof. Gamma control is proved on vkms; a physical panel still has to qualify it. Explicit sync is proved with Vulkan on Intel; NVIDIA is not qualified. Tearing control records hints and never tears, as Niri; game frame pacing against Niri is `sysc-2056`. | M12 Task 7 |
+| Client protocol hardware | Task 7's protocols have behavioral proof. Hardware qualification remains: gamma on a physical panel, explicit sync on NVIDIA, and a physical tablet and pad. Gamma control is proved on vkms. Explicit sync is proved with Vulkan on Intel; NVIDIA is not qualified. Tearing control records hints and never tears, as Niri; game frame pacing against Niri is `sysc-2056`. | M12 Task 7 |
 | X11 applications | xwayland-satellite lifecycle, DISPLAY publication, native/X11 focus, and Steam/Discord in nested and real sessions. | M13, `sysc-1278` |
 | Accessibility | KeyboardMonitor/announcements and a real Orca session. | M14, `sysc-1279` |
 | Output and action parity | Runtime/persistent output configuration, mixed DPI, VRR, GPU reset, missing IPC/actions/binds, easing, remaining rules and config effects; default and owner configs must use no unimplemented actions. | M15, `sysc-1280`; matrix |
@@ -98,7 +98,7 @@ complete merely because services advertise their names.
 The [approved capability design](2026-10-15-tier3-wm-scene-equivalent-design.md#owner-update-2026-10-20-selected-capabilities-under-the-niri-contract)
 keeps Niri's KDL/IPC contract while selecting implementations per subsystem. Mango supplies
 wlroots lifecycle, input and protocol patterns; each change must verify those against the
-installed wlroots API. This includes the remaining tablet work.
+installed wlroots API. Task 7's protocol work is complete.
 
 Pleamar-derived seat isolation, the local control socket, compositor-enforced Stop, lock/blank
 gating and private live window capture already have implementations and regression checks.
