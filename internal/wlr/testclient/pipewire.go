@@ -87,7 +87,9 @@ static void sysc_pw_receiver_format(void *data, uint32_t id, const struct spa_po
   sysc_pw_receiver_fail(r,"invalid negotiated video format"); return;
  }
  r->width=info.size.width; r->height=info.size.height;
- r->refresh=info.framerate.denom==0?0:(uint64_t)info.framerate.num*1000/info.framerate.denom;
+ // A variable rate (0/1) carries the producer's rate as its maximum.
+ struct spa_fraction rate=info.framerate.num==0?info.max_framerate:info.framerate;
+ r->refresh=rate.denom==0?0:(uint64_t)rate.num*1000/rate.denom;
  uint8_t storage[512];
  struct spa_pod_builder builder=SPA_POD_BUILDER_INIT(storage,sizeof(storage));
  const struct spa_pod *params[2];
@@ -166,7 +168,7 @@ static void sysc_pw_receiver_free(struct sysc_pw_receiver *r) {
  if(r->loop!=NULL)pw_thread_loop_destroy(r->loop);
  free(r->pixels);free(r->pointer);free(r);
 }
-static struct sysc_pw_receiver *sysc_pw_receiver_new(uint32_t target,uint32_t width,uint32_t height) {
+static struct sysc_pw_receiver *sysc_pw_receiver_new(uint32_t target,uint32_t width,uint32_t height,uint32_t video_format) {
  struct sysc_pw_receiver *r=calloc(1,sizeof(*r));
  if(r==NULL)return NULL;
  r->target=target;r->input_port=r->output_port=PW_ID_ANY;
@@ -185,10 +187,15 @@ static struct sysc_pw_receiver *sysc_pw_receiver_new(uint32_t target,uint32_t wi
  pw_stream_add_listener(r->stream,&r->stream_hook,&sysc_pw_receiver_stream_events,r);r->stream_listening=true;
  uint8_t storage[512];struct spa_pod_builder builder=SPA_POD_BUILDER_INIT(storage,sizeof(storage));
  struct spa_rectangle size={width,height},minimum={1,1},maximum={8192,8192};
+ // A frame-rate range capped below the output's refresh, as libwebrtc
+ // (Firefox, Chromium) asks for: a producer offering only its refresh rate
+ // fails to negotiate.
+ struct spa_fraction rate={30,1},slowest={0,1};
  const struct spa_pod *format=spa_pod_builder_add_object(&builder,SPA_TYPE_OBJECT_Format,SPA_PARAM_EnumFormat,
   SPA_FORMAT_mediaType,SPA_POD_Id(SPA_MEDIA_TYPE_video),SPA_FORMAT_mediaSubtype,SPA_POD_Id(SPA_MEDIA_SUBTYPE_raw),
-  SPA_FORMAT_VIDEO_format,SPA_POD_Id(SPA_VIDEO_FORMAT_RGBA),
-  SPA_FORMAT_VIDEO_size,SPA_POD_CHOICE_RANGE_Rectangle(&size,&minimum,&maximum));
+  SPA_FORMAT_VIDEO_format,SPA_POD_Id(video_format),
+  SPA_FORMAT_VIDEO_size,SPA_POD_CHOICE_RANGE_Rectangle(&size,&minimum,&maximum),
+  SPA_FORMAT_VIDEO_framerate,SPA_POD_CHOICE_RANGE_Fraction(&rate,&slowest,&rate));
  if(pw_stream_connect(r->stream,PW_DIRECTION_INPUT,PW_ID_ANY,PW_STREAM_FLAG_MAP_BUFFERS,&format,1)<0)goto failed;
  if(pw_thread_loop_start(r->loop)<0)goto failed;
  r->started=true;
@@ -244,7 +251,18 @@ func NewPipeWireReceiver(node uint32, width, height int) (*PipeWireReceiver, err
 		return nil, errors.New("invalid receiver size")
 	}
 	receiverInit.Do(func() { C.pw_init(nil, nil) })
-	r := C.sysc_pw_receiver_new(C.uint32_t(node), C.uint32_t(width), C.uint32_t(height))
+	return newPipeWireReceiver(node, width, height, C.SPA_VIDEO_FORMAT_RGBA)
+}
+
+// NewMismatchedPipeWireReceiver asks only for BGRx, which the compositor does
+// not offer, so its link fails to negotiate.
+func NewMismatchedPipeWireReceiver(node uint32) (*PipeWireReceiver, error) {
+	receiverInit.Do(func() { C.pw_init(nil, nil) })
+	return newPipeWireReceiver(node, 64, 32, C.SPA_VIDEO_FORMAT_BGRx)
+}
+
+func newPipeWireReceiver(node uint32, width, height int, format C.uint32_t) (*PipeWireReceiver, error) {
+	r := C.sysc_pw_receiver_new(C.uint32_t(node), C.uint32_t(width), C.uint32_t(height), format)
 	if r == nil {
 		return nil, errors.New("creating PipeWire receiver failed")
 	}

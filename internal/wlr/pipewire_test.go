@@ -12,50 +12,73 @@ import (
 	"github.com/Nomadcxx/sysc-compositor/internal/wlr/testclient"
 )
 
-func TestPipeWireProducesFramesAndSurvivesDaemonLoss(t *testing.T) {
+// privatePipeWireDir points this test's PipeWire clients at a private
+// daemon's runtime directory and writes its config there.
+func privatePipeWireDir(t *testing.T) (dir, config string) {
+	t.Helper()
 	requireTools(t, "pipewire")
-	c := newNested(t)
-	dir := t.TempDir()
+	dir = t.TempDir()
 	t.Setenv("PIPEWIRE_RUNTIME_DIR", dir)
 	t.Setenv("PIPEWIRE_REMOTE", "pipewire-0")
-	config := filepath.Join(dir, "pipewire.conf")
+	config = filepath.Join(dir, "pipewire.conf")
 	if err := os.WriteFile(config, []byte(privatePipeWireConfig), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	runTools(t, c, func(tool func(string, ...string) *exec.Cmd) {
-		daemon := tool("pipewire", "-c", config)
-		daemon.Stderr = os.Stderr
-		if err := daemon.Start(); err != nil {
+	return dir, config
+}
+
+// startPrivatePipeWire runs the private daemon and connects the compositor
+// to it. It returns the daemon, the channel reporting a lost connection,
+// and the live handle count from before the connection.
+func startPrivatePipeWire(t *testing.T, c *Compositor, tool func(string, ...string) *exec.Cmd,
+	dir, config string) (*exec.Cmd, chan error, int64, bool) {
+	t.Helper()
+	daemon := tool("pipewire", "-c", config)
+	daemon.Stderr = os.Stderr
+	if err := daemon.Start(); err != nil {
+		t.Error(err)
+		return nil, nil, 0, false
+	}
+	for deadline := time.Now().Add(3 * time.Second); ; {
+		if _, err := os.Stat(filepath.Join(dir, "pipewire-0")); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Error("private PipeWire daemon did not create its socket")
+			return daemon, nil, 0, false
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	ready, lost := make(chan error, 1), make(chan error, 1)
+	var before int64
+	onCompositor(t, c, func() {
+		before = LiveHandles()
+		if err := c.startPipeWire(func(err error) { ready <- err }, func(err error) { lost <- err }); err != nil {
 			t.Error(err)
-			return
 		}
-		defer func() { _ = daemon.Process.Kill(); _ = daemon.Wait() }()
-		for deadline := time.Now().Add(3 * time.Second); ; {
-			if _, err := os.Stat(filepath.Join(dir, "pipewire-0")); err == nil {
-				break
-			}
-			if time.Now().After(deadline) {
-				t.Error("private PipeWire daemon did not create its socket")
-				return
-			}
-			time.Sleep(10 * time.Millisecond)
+	})
+	select {
+	case err := <-ready:
+		if err != nil {
+			t.Error(err)
+			return daemon, nil, 0, false
 		}
-		ready, lost := make(chan error, 1), make(chan error, 1)
-		var before int64
-		onCompositor(t, c, func() {
-			before = LiveHandles()
-			if err := c.startPipeWire(func(err error) { ready <- err }, func(err error) { lost <- err }); err != nil {
-				t.Error(err)
-			}
-		})
-		select {
-		case err := <-ready:
-			if err != nil {
-				t.Error(err)
-				return
-			}
-		case <-time.After(3 * time.Second):
-			t.Error("PipeWire connection never completed")
+	case <-time.After(3 * time.Second):
+		t.Error("PipeWire connection never completed")
+		return daemon, nil, 0, false
+	}
+	return daemon, lost, before, true
+}
+
+func TestPipeWireProducesFramesAndSurvivesDaemonLoss(t *testing.T) {
+	dir, config := privatePipeWireDir(t)
+	c := newNested(t)
+	runTools(t, c, func(tool func(string, ...string) *exec.Cmd) {
+		daemon, lost, before, ok := startPrivatePipeWire(t, c, tool, dir, config)
+		if daemon != nil {
+			defer func() { _ = daemon.Process.Kill(); _ = daemon.Wait() }()
+		}
+		if !ok {
 			return
 		}
 		nodes := make(chan uint32, 1)
@@ -174,6 +197,106 @@ func TestPipeWireProducesFramesAndSurvivesDaemonLoss(t *testing.T) {
 				t.Errorf("PipeWire handles = %d, want %d", got, before)
 			}
 		})
+	})
+}
+
+// TestPipeWireErrorsEndOnlyTheirStream: only an error on the core itself
+// that breaks the connection ends screencasting, as in Niri. PipeWire
+// reported Firefox's failed negotiation as EPIPE on the link, and treating
+// that as fatal took the whole ScreenCast service down for the session.
+func TestPipeWireErrorsEndOnlyTheirStream(t *testing.T) {
+	const core, link = 0, 42
+	for _, tc := range []struct {
+		id    uint32
+		res   int
+		fatal bool
+	}{
+		{core, -32, true},  // EPIPE: the daemon went away
+		{core, -104, true}, // ECONNRESET
+		{link, -32, false}, // a link that failed to negotiate
+		{link, -104, false},
+		{core, -22, false}, // EINVAL: an invalid request, not a lost connection
+		{link, -22, false},
+	} {
+		if got := pipeWireErrorFatal(tc.id, tc.res); got != tc.fatal {
+			t.Errorf("error on %d with %d: fatal %v, want %v", tc.id, tc.res, got, tc.fatal)
+		}
+	}
+}
+
+// TestPipeWireSurvivesAFailedNegotiation: a consumer whose formats do not
+// match fails its own link, and a later consumer still gets frames. Here the
+// consumer owns the link, so only it hears the failure; the error rule
+// itself is TestPipeWireErrorsEndOnlyTheirStream.
+func TestPipeWireSurvivesAFailedNegotiation(t *testing.T) {
+	dir, config := privatePipeWireDir(t)
+	c := newNested(t)
+	runTools(t, c, func(tool func(string, ...string) *exec.Cmd) {
+		daemon, lost, _, ok := startPrivatePipeWire(t, c, tool, dir, config)
+		if daemon != nil {
+			defer func() { _ = daemon.Process.Kill(); _ = daemon.Wait() }()
+		}
+		if !ok {
+			return
+		}
+		frame := func() (*image.NRGBA, error) {
+			img := image.NewNRGBA(image.Rect(0, 0, 64, 32))
+			for i := range img.Pix {
+				img.Pix[i] = 0xff
+			}
+			return img, nil
+		}
+		newNode := func() (uint32, bool) {
+			nodes := make(chan uint32, 1)
+			onCompositor(t, c, func() {
+				_, err := c.pipewire.newStream(64, 32, 60000, frame, func(node uint32, _ bool, _ error) {
+					if node != ^uint32(0) {
+						select {
+						case nodes <- node:
+						default:
+						}
+					}
+				})
+				if err != nil {
+					t.Error(err)
+				}
+			})
+			select {
+			case node := <-nodes:
+				return node, true
+			case <-time.After(3 * time.Second):
+				t.Error("PipeWire stream did not publish a node")
+				return 0, false
+			}
+		}
+		node, ok := newNode()
+		if !ok {
+			return
+		}
+		mismatched, err := testclient.NewMismatchedPipeWireReceiver(node)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := mismatched.NextFrame(2 * time.Second); err == nil {
+			t.Error("a BGRx-only consumer received a frame from an RGBA stream")
+		}
+		mismatched.Close()
+		select {
+		case err := <-lost:
+			t.Fatalf("a failed negotiation ended PipeWire: %v", err)
+		case <-time.After(500 * time.Millisecond):
+		}
+		if node, ok = newNode(); !ok {
+			return
+		}
+		consumer, err := testclient.NewPipeWireReceiver(node, 64, 32)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer consumer.Close()
+		if _, err := consumer.NextFrame(3 * time.Second); err != nil {
+			t.Errorf("a later consumer got no frame: %v", err)
+		}
 	})
 }
 
