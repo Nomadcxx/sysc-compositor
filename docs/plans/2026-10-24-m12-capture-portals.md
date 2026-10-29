@@ -164,7 +164,7 @@ Keep these as separate focused changes; they share no new library dependency. Ea
 |---|---|---|
 | gamma-control | `internal/wlr/output.go`, `scene_fx.go`, new `gamma_control_test.go`; connect wlroots' manager to SceneFX's gamma-control integration, retaining its failure/restore behavior | `TestGammaControlAppliesAndRestoresOutputRamp`; cover invalid ramp and unsupported output; validate real hardware separately if vkms cannot apply it |
 | tearing-control | `internal/wlr/compositor.go`, new `tearing_test.go`; advertise the global and record per-surface hints; presentation stays vsynced (owner decision 2026-10-29, see the execution record) | `TestTearingHintKeepsVsyncPresentation`; cover hint recording, vsynced commits for a focused fullscreen async window and hint destruction |
-| linux-drm-syncobj | `internal/wlr/compositor.go`, `scene_fx.go`, new `syncobj_test.go`; create the manager only with a suitable DRM fd and renderer/backend timeline support | `TestExplicitSyncWaitsForAcquireBeforePresentation`; prove acquire/release ordering on a supporting renderer; use a separate capability-negative check on vkms if necessary |
+| linux-drm-syncobj | `internal/wlr/compositor.go`, `screenshot.go`, new `syncobj_test.go`; create the manager only with a suitable DRM fd and renderer/backend timeline support; window screenshots wait on acquire points | `TestExplicitSyncVulkanClientPresentsAndReleases` on a supporting renderer (laptop bench); `TestExplicitSyncAdvertisedOnlyWithTimelineSupport` for the capability gate, negative on nested and vkms |
 | tablet-v2 | new `internal/wlr/tablet.go`, `tablet_test.go`; use existing input/seat and surface hit-testing paths with wlroots tablet/tool/pad objects | `TestTabletToolFocusButtonsAndRemoval`; cover proximity, axes, tip/button, focus change, pad association and disconnect, plus lock and injected-seat isolation |
 
 Do not fake DRM capabilities to make a registry assertion pass. Record a missing hardware qualification as a limit and keep its tracker gate open. A registry-only test never completes these handlers.
@@ -387,3 +387,28 @@ Niri's reputation with games, Wine titles in particular, rests on frame pacing r
 tearing: per-cycle primary-output frame callbacks, an estimated-vblank timer, a fallback timer
 for hidden surfaces, direct scanout and on-demand VRR. Comparing sysc against those is
 `sysc-2056`. Explicit synchronization and tablets remain Task 7 work.
+
+## Execution record: explicit synchronization, 2026-10-29
+
+References: Niri 26.04 has no explicit sync at all. Mango creates the manager by default when the
+renderer has a DRM fd and the renderer and backend both report timeline support, and passes
+acquire/release points through its own off-scene switcher rendering. Hyprland enables it whenever
+the DRM device reports syncobj timelines. sysc follows Mango's gate, which is wlroots' documented
+condition; elsewhere the global is left out and clients keep implicit sync.
+
+The scene path needed no change. sysc builds surface nodes through wlroots' scene-surface helpers,
+which copy each surface's acquire point into SceneFX's buffer and add release points from
+SceneFX's `output_sample` event; SceneFX's renderer waits on acquire points and reports timeline
+support on a DRM device with syncobj timelines and EGL native fences. The one off-scene sampler,
+the window-screenshot surface-tree render (also used for private previews and pointer images),
+drew the texture without waiting; it now waits on the acquire point. Its readback finishes before
+the buffer can be released, so it adds no release point.
+
+On the laptop (Intel UHD 620, Mesa 26.2 ANV) a headless-backend compositor advertises the global.
+`TestExplicitSyncVulkanClientPresentsAndReleases` failed without the manager (vkcube fell back to
+implicit sync and sent no points) and passes with it: 100 presents with acquire and release
+points, which a three-to-four image swapchain reaches only if the compositor waits and releases,
+plus a window screenshot of the synced buffer. `TestExplicitSyncAdvertisedOnlyWithTimelineSupport`
+passes nested (the host Niri offers no syncobj, so the global is absent) and runs on vkms in CI,
+whose device has no syncobj. The Vulkan check is listed in CI's skips. NVIDIA, where explicit sync
+matters most, is not qualified. Tablets remain Task 7 work.
