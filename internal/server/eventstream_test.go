@@ -15,6 +15,47 @@ import (
 	"github.com/Nomadcxx/sysc-compositor/internal/unixsock"
 )
 
+func TestCastIPCStateAndEventsRetainIndependentSnapshots(t *testing.T) {
+	state := newNiriState(false)
+	name, id, node := "DP-1", uint64(81), uint32(12)
+	cast := ipc.Cast{StreamID: 7, SessionID: 3, Kind: ipc.CastKindPipeWire, Target: ipc.CastTarget{Output: &name}, PWNodeID: &node, IsDynamicTarget: true, IsActive: true}
+	state.replace(niriSnapshot{casts: []ipc.Cast{cast}})
+	name = "changed outside snapshot"
+	node = 99
+	before := state.snapshot()
+	if *before.casts[0].Target.Output != "DP-1" || *before.casts[0].PWNodeID != 12 {
+		t.Fatal("cast snapshot aliases publisher")
+	}
+	copy := state.snapshot()
+	*copy.casts[0].Target.Output = "changed by reader"
+	if *state.snapshot().casts[0].Target.Output != "DP-1" {
+		t.Fatal("reader mutated cast snapshot")
+	}
+	h := niriHandler{snapshot: state.snapshot}
+	reply, _ := h.handle(ipc.Request{Name: "Casts"})
+	if reply.Err != "" || !strings.Contains(string(reply.Ok), `"stream_id":7`) {
+		t.Fatalf("Casts reply=%s %s", reply.Ok, reply.Err)
+	}
+	lines := initialEventLines(before)
+	if !strings.Contains(string(lines[len(lines)-1]), `"CastsChanged":{"casts":[{"stream_id":7`) {
+		t.Fatalf("cast baseline=%s", lines[len(lines)-1])
+	}
+	after := state.snapshot()
+	after.casts[0].Target = ipc.CastTarget{WindowID: &id}
+	after.casts[0].IsActive = false
+	changes := eventStreamChanges(before, after)
+	if len(changes) != 1 || !strings.Contains(string(changes[0]), `"CastStartedOrChanged":{"cast":`) || !strings.Contains(string(changes[0]), `"Window":{"id":81}`) {
+		t.Fatalf("cast changes=%s", changes)
+	}
+	if changes := eventStreamChanges(after, after); len(changes) != 0 {
+		t.Fatalf("unchanged cast emitted %s", changes)
+	}
+	stopped := eventStreamChanges(after, emptyNiriSnapshot())
+	if len(stopped) != 1 || string(stopped[0]) != `{"CastStopped":{"stream_id":7}}`+"\n" {
+		t.Fatalf("cast stop=%s", stopped)
+	}
+}
+
 func TestEventStreamInitialStateOrderAndUpdates(t *testing.T) {
 	state := newNiriState(false)
 	dp := ipc.Output{Name: "DP-1"}

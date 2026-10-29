@@ -144,7 +144,7 @@ func (s *Server) refreshNiriState() {
 	s.state.replace(niriSnapshot{
 		outputs: outputs, windows: windows, layers: wireLayers,
 		workspaces: workspaces, keyboardLayouts: keyboardLayouts, focusedOutput: focused,
-		overviewOpen: model.OverviewOpen,
+		overviewOpen: model.OverviewOpen, casts: s.c.CastSnapshot(),
 	})
 	s.events.publish(eventStreamChanges(before, s.state.snapshot()))
 	if s.portal != nil {
@@ -264,6 +264,14 @@ func (s *Server) Run() error {
 						}
 					case "OpenOverview":
 						s.c.OpenOverview()
+					case "SetDynamicCastWindow":
+						s.c.SetDynamicCastWindow(action.WindowID)
+					case "SetDynamicCastMonitor":
+						s.c.SetDynamicCastMonitor(action.CastOutput)
+					case "ClearDynamicCastTarget":
+						s.c.ClearDynamicCastTarget()
+					case "StopCast":
+						s.c.StopCast(action.SessionID)
 					case "CloseOverview":
 						s.c.CloseOverview()
 					case "FocusWindow":

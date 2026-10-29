@@ -5,6 +5,36 @@ import (
 	"testing"
 )
 
+func TestDynamicCastBindingsMatchNiriArguments(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		args   []string
+		output string
+	}{
+		{"set-dynamic-cast-window", nil, ""},
+		{"clear-dynamic-cast-target", nil, ""},
+		{"set-dynamic-cast-monitor", nil, ""},
+		{"set-dynamic-cast-monitor", []string{"DP-1"}, "DP-1"},
+	} {
+		a, supported, err := ParseAction(tc.name, tc.args)
+		if err != nil || !supported || !IsSupportedAction(tc.name) || a.Output != tc.output {
+			t.Errorf("%s %v = %+v, %v, %v", tc.name, tc.args, a, supported, err)
+		}
+	}
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"set-dynamic-cast-window", []string{"81"}},
+		{"clear-dynamic-cast-target", []string{"extra"}},
+		{"set-dynamic-cast-monitor", []string{"DP-1", "DP-2"}},
+	} {
+		if _, supported, err := ParseAction(tc.name, tc.args); !supported || err == nil {
+			t.Errorf("accepted %s %v", tc.name, tc.args)
+		}
+	}
+}
+
 func TestParseChord(t *testing.T) {
 	got, err := ParseChord("Mod+Ctrl+Page_Down")
 	if err != nil {

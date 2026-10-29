@@ -217,6 +217,24 @@ func TestNiriKeyboardLayoutsQuery(t *testing.T) {
 	}
 }
 
+func TestCastActionsArePosted(t *testing.T) {
+	var posted []ipc.Action
+	h := niriHandler{postAction: func(action ipc.Action, _ uint64) error {
+		posted = append(posted, action)
+		return nil
+	}}
+	for _, name := range []string{"SetDynamicCastWindow", "SetDynamicCastMonitor", "ClearDynamicCastTarget", "StopCast"} {
+		reply, after := h.action(ipc.Action{Name: name, SessionID: 7})
+		if reply.Err != "" || after == nil {
+			t.Fatalf("%s was not accepted for compositor dispatch: %+v", name, reply)
+		}
+		after()
+		if len(posted) == 0 || posted[len(posted)-1].Name != name {
+			t.Fatalf("%s was not posted", name)
+		}
+	}
+}
+
 func TestNiriSwitchLayoutActionIsPosted(t *testing.T) {
 	index := uint8(2)
 	var posted ipc.Action

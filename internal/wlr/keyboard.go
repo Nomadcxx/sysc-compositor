@@ -734,6 +734,19 @@ func (c *Compositor) executeBindAction(action bind.Action) {
 		return
 	}
 	switch action.Name {
+	case bind.ActionSetDynamicCastWindow:
+		c.SetDynamicCastWindow(nil)
+		return
+	case bind.ActionSetDynamicCastMonitor:
+		var name *string
+		if len(action.Args) != 0 {
+			name = &action.Args[0]
+		}
+		c.SetDynamicCastMonitor(name)
+		return
+	case bind.ActionClearDynamicCastTarget:
+		c.ClearDynamicCastTarget()
+		return
 	case bind.ActionSetWorkspaceName:
 		if workspaceID, ok := c.focusedWorkspaceID(); ok {
 			c.SetWorkspaceName(workspaceID, action.WorkspaceName)

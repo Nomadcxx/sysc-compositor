@@ -109,6 +109,9 @@ const (
 	ActionScreenshot                     = "screenshot"
 	ActionQuit                           = "quit"
 	ActionShowHotkeyOverlay              = "show-hotkey-overlay"
+	ActionSetDynamicCastWindow           = "set-dynamic-cast-window"
+	ActionSetDynamicCastMonitor          = "set-dynamic-cast-monitor"
+	ActionClearDynamicCastTarget         = "clear-dynamic-cast-target"
 	ActionOpenOverview                   = "open-overview"
 	ActionCloseOverview                  = "close-overview"
 	ActionMoveWindowToFloating           = "move-window-to-floating"
@@ -300,7 +303,8 @@ func ParseAction(name string, args []string) (Action, bool, error) {
 		ActionFullscreenWindow, ActionToggleWindowedFullscreen,
 		ActionToggleOverview, ActionOpenOverview, ActionCloseOverview,
 		ActionToggleKeyboardShortcutsInhibit, ActionPowerOffMonitors, ActionPowerOnMonitors,
-		ActionScreenshotScreen, ActionScreenshotWindow, ActionScreenshot, ActionQuit, ActionShowHotkeyOverlay:
+		ActionScreenshotScreen, ActionScreenshotWindow, ActionScreenshot, ActionQuit, ActionShowHotkeyOverlay,
+		ActionSetDynamicCastWindow, ActionClearDynamicCastTarget:
 		if len(args) != 0 {
 			return Action{}, true, fmt.Errorf("%s takes no arguments", name)
 		}
@@ -308,6 +312,14 @@ func ParseAction(name string, args []string) (Action, bool, error) {
 	case ActionSpawn:
 		if len(args) == 0 {
 			return Action{}, true, fmt.Errorf("spawn needs a command")
+		}
+		return action, true, nil
+	case ActionSetDynamicCastMonitor:
+		if len(args) > 1 {
+			return Action{}, true, fmt.Errorf("%s takes at most one output name", name)
+		}
+		if len(args) == 1 {
+			action.Output = args[0]
 		}
 		return action, true, nil
 	case ActionSpawnSh:
@@ -422,6 +434,7 @@ func IsSupportedAction(name string) bool {
 		ActionToggleOverview, ActionOpenOverview, ActionCloseOverview,
 		ActionToggleKeyboardShortcutsInhibit, ActionPowerOffMonitors, ActionPowerOnMonitors,
 		ActionScreenshotScreen, ActionScreenshotWindow, ActionScreenshot, ActionQuit, ActionShowHotkeyOverlay,
+		ActionSetDynamicCastWindow, ActionSetDynamicCastMonitor, ActionClearDynamicCastTarget,
 		ActionSetWorkspaceName, ActionUnsetWorkspaceName,
 		ActionMoveWindowToWorkspace, ActionMoveWindowToWorkspaceDown, ActionMoveWindowToWorkspaceUp,
 		ActionMoveColumnToWorkspace, ActionMoveColumnToWorkspaceDown, ActionMoveColumnToWorkspaceUp,

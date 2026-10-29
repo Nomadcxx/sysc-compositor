@@ -52,7 +52,7 @@ func startScreenSaver(conn *dbus.Conn, onChange func(bool)) (*ScreenSaver, error
 		onChange: onChange, cookies: map[uint32]string{},
 	}
 	// Watch for callers leaving before taking any cookie, so none is missed.
-	if err := conn.AddMatchSignal(dbus.WithMatchInterface("org.freedesktop.DBus"),
+	if err := conn.AddMatchSignal(dbus.WithMatchSender("org.freedesktop.DBus"), dbus.WithMatchInterface("org.freedesktop.DBus"),
 		dbus.WithMatchMember("NameOwnerChanged")); err != nil {
 		return nil, err
 	}
@@ -141,7 +141,7 @@ func (s *ScreenSaver) watch() {
 			if !ok {
 				return
 			}
-			if signal.Name != "org.freedesktop.DBus.NameOwnerChanged" || len(signal.Body) != 3 {
+			if signal == nil || signal.Sender != "org.freedesktop.DBus" || signal.Name != "org.freedesktop.DBus.NameOwnerChanged" || len(signal.Body) != 3 {
 				continue
 			}
 			name, _ := signal.Body[0].(string)

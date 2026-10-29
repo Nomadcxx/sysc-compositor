@@ -477,6 +477,29 @@ func parseAction(args []string) (ipc.Action, error) {
 	case "close-window":
 		id, err := parseWindowID(args[1:], false)
 		return ipc.Action{Name: "CloseWindow", WindowID: id}, err
+	case "set-dynamic-cast-window":
+		id, err := parseWindowID(args[1:], false)
+		return ipc.Action{Name: "SetDynamicCastWindow", WindowID: id}, err
+	case "set-dynamic-cast-monitor":
+		if len(args) > 2 {
+			return ipc.Action{}, errors.New("set-dynamic-cast-monitor takes at most one output")
+		}
+		var output *string
+		if len(args) == 2 {
+			output = &args[1]
+		}
+		return ipc.Action{Name: "SetDynamicCastMonitor", CastOutput: output}, nil
+	case "clear-dynamic-cast-target":
+		return ipc.Action{Name: "ClearDynamicCastTarget"}, onlyArgs(args[1:])
+	case "stop-cast":
+		if len(args) != 3 || args[1] != "--session-id" {
+			return ipc.Action{}, errors.New("stop-cast needs --session-id ID")
+		}
+		id, err := strconv.ParseUint(args[2], 10, 64)
+		if err != nil {
+			return ipc.Action{}, fmt.Errorf("invalid cast session ID %q", args[2])
+		}
+		return ipc.Action{Name: "StopCast", SessionID: id}, nil
 	case "focus-workspace":
 		if len(args) != 2 {
 			return ipc.Action{}, errors.New("focus-workspace needs an index or name")

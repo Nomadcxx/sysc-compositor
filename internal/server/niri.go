@@ -58,6 +58,7 @@ type niriSnapshot struct {
 	workspaces       []ipc.Workspace
 	windows          []ipc.Window
 	layers           []ipc.LayerSurface
+	casts            []ipc.Cast
 	keyboardLayouts  *ipc.KeyboardLayouts
 	focusedOutput    *ipc.Output
 	overviewOpen     bool
@@ -83,6 +84,7 @@ func emptyNiriSnapshot() niriSnapshot {
 		workspaces: []ipc.Workspace{},
 		windows:    []ipc.Window{},
 		layers:     []ipc.LayerSurface{},
+		casts:      []ipc.Cast{},
 	}
 }
 
@@ -100,6 +102,9 @@ func (s *niriState) replace(next niriSnapshot) {
 	}
 	if next.layers == nil {
 		next.layers = []ipc.LayerSurface{}
+	}
+	if next.casts == nil {
+		next.casts = []ipc.Cast{}
 	}
 
 	s.mu.Lock()
@@ -145,6 +150,14 @@ func cloneNiriSnapshot(current niriSnapshot) niriSnapshot {
 		window.FocusTimestamp = clonePointer(window.FocusTimestamp)
 	}
 	state.layers = slices.Clone(current.layers)
+	state.casts = slices.Clone(current.casts)
+	for i := range state.casts {
+		cast := &state.casts[i]
+		cast.Target.Output = clonePointer(cast.Target.Output)
+		cast.Target.WindowID = clonePointer(cast.Target.WindowID)
+		cast.PID = clonePointer(cast.PID)
+		cast.PWNodeID = clonePointer(cast.PWNodeID)
+	}
 	if current.keyboardLayouts != nil {
 		layouts := *current.keyboardLayouts
 		layouts.Names = slices.Clone(current.keyboardLayouts.Names)
@@ -330,6 +343,12 @@ func (h niriHandler) handle(r ipc.Request) (ipc.Reply, func()) {
 			layers = []ipc.LayerSurface{}
 		}
 		return ipc.Reply{Ok: ipc.SuccessValue("Layers", layers)}, nil
+	case "Casts":
+		casts := h.currentState().casts
+		if casts == nil {
+			casts = []ipc.Cast{}
+		}
+		return ipc.Reply{Ok: ipc.SuccessValue("Casts", casts)}, nil
 	case "KeyboardLayouts":
 		layouts := h.currentState().keyboardLayouts
 		if layouts == nil {
@@ -379,7 +398,7 @@ func (h niriHandler) action(a ipc.Action) (ipc.Reply, func()) {
 		return h.windowAction(a, 0)
 	case "ToggleOverview", "OpenOverview", "CloseOverview", "ToggleKeyboardShortcutsInhibit", "ScreenshotScreen",
 		"ScreenshotWindow", "Screenshot", "ShowHotkeyOverlay",
-		"PowerOffMonitors", "PowerOnMonitors":
+		"PowerOffMonitors", "PowerOnMonitors", "SetDynamicCastWindow", "SetDynamicCastMonitor", "ClearDynamicCastTarget", "StopCast":
 		return h.windowAction(a, 0)
 	case "FocusWindow", "CloseWindow",
 		"FocusWindowInColumn", "FocusWindowDown", "FocusWindowUp", "FocusWindowPrevious",

@@ -124,6 +124,9 @@ type Compositor struct {
 	layout               *C.struct_wlr_output_layout
 	scene                *C.struct_wlr_scene
 	capture              *captureProtocol
+	pipewire             *pipeWire
+	casts                map[uint64]*screenCast
+	dynamicCastID        uint64
 	captureNodes         map[*C.struct_wlr_scene_node]*captureNodeOwner
 	xdgDecorationManager unsafe.Pointer
 	kdeDecorationManager unsafe.Pointer
@@ -709,6 +712,7 @@ func (c *Compositor) WorkspaceSnapshot() wm.Snapshot {
 }
 
 func (c *Compositor) notifyStateChanged() {
+	c.syncCasts()
 	c.syncCapturePrivacy()
 	c.syncCaptureSources()
 	c.damageCaptureSources()
@@ -762,6 +766,7 @@ func (c *Compositor) Terminate() {
 // Destroy releases the compositor. Listeners added through AddListener are
 // removed first so no token outlives its wl_signal.
 func (c *Compositor) Destroy() {
+	c.stopPipeWire()
 	c.finishColorPick([3]float64{}, ErrClosed)
 	c.destroyCaptureSources()
 	c.destroyCapturePrivacy()

@@ -243,6 +243,48 @@ geometry updates precede the next synthetic key. No compositor fix was required 
 CI records the optional packaged-client skip; the bench proves the behavior.
 
 The owner assigned runtime testing to the laptop bench; no desktop compositor test ran. Local
-spec, quality and descriptor-backport reviews pass. CI still gates the service change.
+spec, quality and descriptor-backport reviews passed. PR #61 merged as `3098b23` after CI run
+`40651489236` passed its static and compositor lanes.
 PipeWire streams, the remaining Task 7 protocols
 and portal-consumer/hardware acceptance keep M12 open.
+
+## Execution record: PipeWire casts, 2026-10-29
+
+The native producer integrates system libpipewire's non-realtime loop with the compositor loop.
+It renders on the locked owner thread, exports bounded RGBA MemFd buffers and publishes
+timestamps, sequences and pointer metadata. The build allows libspa's exact
+`-fno-strict-overflow` pkg-config flag. No Go dependency changed.
+
+The session service implements Mutter ScreenCast Version 4, caller-owned sessions, immutable
+stream parameters and node signals. It advertises only after native core initialization and
+ties publication to that core's cancellable lifetime. Caller departure, shutdown and daemon
+loss retire sessions. A forged NameOwnerChanged regression failed before the portal matched
+and checked the bus sender; the corrected cleanup accepts only the bus daemon's signals.
+The existing ScreenSaver watcher had the same trust-boundary defect. Its cookie-lifetime test
+also failed on a forged departure, then passed with the sender check.
+
+The compositor owns monitor/window targets, dynamic pending streams, privacy-aware frames and
+sorted immutable Cast snapshots. Dynamic target IDs share the mapping allocator but appear
+only in portal Introspect. New dynamic streams wait for a new selection. Stale mapping IDs
+leave targets alone; clearing keeps the negotiated stream, target retirement clears dynamic
+casts and stops normal sessions. IPC routes the four cast actions and publishes PipeWire
+baseline/change/stop events. KDL supports the three dynamic actions; StopCast stays IPC-only.
+
+Baremetal laptop tests passed individually: `TestPipeWireProducesFramesAndSurvivesDaemonLoss`,
+`TestCastIPCTracksDynamicTargetAndStop`, `TestWindowCastPointerFollowsHitAndGrabFocus` and
+`TestScreenCastProducesFramesAndSurvivesPipeWireLoss`. They cover independent consumer pixels,
+metadata/timing, dimensions/refresh renegotiation, window-to-monitor retargeting, privacy reload,
+lock sealing, target retirement, stop and active daemon loss. Pointer checks reproduced leaks
+through overlap/grabs/hidden trees before requiring matching hit and post-grab focus. An
+intermittent consumer teardown hang exposed an unpinned native mutex across separate cgo calls;
+the test consumer now pins its OS thread through lock/wait/read/unlock.
+
+Three private-bus ScreenCast regressions pass for wire behavior, ownership, cancellation,
+forged departure and initialization/loss ordering. Named wire, CLI/bind, snapshot/event and
+eight-transform checks pass. Independent ownership and D-Bus reviews found no remaining
+important issue after the fixes. Merge requires the static and compositor CI lanes.
+
+This change proves compositor/PipeWire integration. GNOME/browser/OBS consumer acceptance,
+legacy wlr-screencopy activity reporting in Casts/events (`sysc-2042`) and Task 7 protocols remain M12 work.
+The owner restricted runtime testing to the laptop bench; no desktop compositor test ran and
+no installed binary, host portal configuration or host service changed.

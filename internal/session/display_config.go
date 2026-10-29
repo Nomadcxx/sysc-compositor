@@ -47,6 +47,7 @@ type displayState struct {
 	Serial   uint32
 	Monitors []Monitor
 	Logical  []LogicalMonitor
+	Geometry map[string]ipc.LogicalOutput
 }
 
 type portalDisplayConfig struct{ p *Portal }
@@ -67,7 +68,7 @@ func (s portalDisplayConfig) ApplyMonitorsConfig(serial, method uint32, logical 
 // representation owns its maps/slices, so neither readers nor callers share a
 // mutable compositor object. Signals follow the new snapshot.
 func (p *Portal) Update(outputs map[string]ipc.Output, windows []ipc.Window) {
-	state := displayState{Monitors: []Monitor{}, Logical: []LogicalMonitor{}}
+	state := displayState{Monitors: []Monitor{}, Logical: []LogicalMonitor{}, Geometry: map[string]ipc.LogicalOutput{}}
 	names := make([]string, 0, len(outputs))
 	for name := range outputs {
 		names = append(names, name)
@@ -100,6 +101,7 @@ func (p *Portal) Update(outputs map[string]ipc.Output, windows []ipc.Window) {
 		}
 		state.Monitors = append(state.Monitors, monitor)
 		if logical := output.Logical; logical != nil {
+			state.Geometry[name] = *logical
 			transform := uint32(0)
 			for i, value := range []ipc.Transform{ipc.TransformNormal, ipc.Transform90, ipc.Transform180, ipc.Transform270, ipc.TransformFlipped, ipc.TransformFlipped90, ipc.TransformFlipped180, ipc.TransformFlipped270} {
 				if value == logical.Transform {
@@ -121,6 +123,9 @@ func (p *Portal) Update(outputs map[string]ipc.Output, windows []ipc.Window) {
 		introspected[window.ID] = map[string]dbus.Variant{"title": dbus.MakeVariant(title), "app-id": dbus.MakeVariant(app)}
 	}
 	p.mu.Lock()
+	if p.screenCast != nil {
+		introspected[p.screenCast.dynamicID] = dynamicCastWindow()
+	}
 	state.Serial = p.state.Serial
 	monitorsChanged := !reflect.DeepEqual(state, p.state)
 	if monitorsChanged {

@@ -16,6 +16,13 @@ sysc-compositor msg [--json] REQUEST  # talk to a running compositor over $NIRI_
 `niri` is a compatibility alias with the same arguments and JSON, so the greeter config and scripts
 written for niri keep working. Use `sysc-compositor` in new docs and scripts.
 
+## Build
+
+Build with Go 1.26.4 or newer, wlroots 0.20, SceneFX 0.5 and system libpipewire 1.4.8 or newer.
+`make build` allows the exact `-fno-strict-overflow` flag supplied by libspa's pkg-config file.
+For direct Go build/test/vet commands, set `CGO_CFLAGS_ALLOW=-fno-strict-overflow` too. No Go
+PipeWire binding dependency is required.
+
 ## Docs
 
 | Doc | What it is |
