@@ -84,6 +84,14 @@ type LoadResult struct {
 
 type Input struct {
 	ModKey, ModKeyNested string
+	Tablet               Tablet
+}
+
+// Tablet is input.tablet, Niri's niri-config/src/input.rs Tablet.
+type Tablet struct {
+	Off                bool
+	MapToOutput        string
+	MapToFocusedOutput bool
 }
 
 type SwitchEvents struct {
@@ -466,6 +474,12 @@ func (c *Config) input(n *document.Node) error {
 			}
 			continue
 		}
+		if nodeName(child) == "tablet" {
+			if err := c.tablet(child); err != nil {
+				return fmt.Errorf("tablet: %w", err)
+			}
+			continue
+		}
 		if nodeName(child) != "keyboard" {
 			continue
 		}
@@ -483,6 +497,51 @@ func (c *Config) input(n *document.Node) error {
 			if err != nil {
 				return fmt.Errorf("keyboard: %w", err)
 			}
+		}
+	}
+	return nil
+}
+
+// tablet decodes input.tablet. left-handed and calibration-matrix are
+// libinput device settings, which no device class applies yet; Niri ignores
+// a matrix that is not six numbers.
+func (c *Config) tablet(n *document.Node) error {
+	for _, child := range n.Children {
+		var err error
+		switch name := nodeName(child); name {
+		case "off", "map-to-focused-output", "left-handed":
+			if err = noValue(child); err != nil {
+				break
+			}
+			switch name {
+			case "off":
+				c.Input.Tablet.Off = true
+			case "map-to-focused-output":
+				c.Input.Tablet.MapToFocusedOutput = true
+			default:
+				c.addWarning("input.tablet." + name)
+			}
+		case "map-to-output":
+			var value []string
+			if value, err = stringArgs(child, 1, 1); err == nil {
+				c.Input.Tablet.MapToOutput = value[0]
+			}
+		case "calibration-matrix":
+			for _, arg := range child.Arguments {
+				switch arg.Value.(type) {
+				case int64, float64:
+				default:
+					err = fmt.Errorf("calibration-matrix: argument %v is not a number", arg.Value)
+				}
+			}
+			if err == nil {
+				c.addWarning("input.tablet." + name)
+			}
+		default:
+			err = fmt.Errorf("unknown node `%s`", name)
+		}
+		if err != nil {
+			return fmt.Errorf("%s: %w", nodeName(child), err)
 		}
 	}
 	return nil
