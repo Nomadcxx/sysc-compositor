@@ -12,6 +12,8 @@ package testclient
 #include <sys/mman.h>
 #include <unistd.h>
 #include <poll.h>
+#include <errno.h>
+#include <time.h>
 
 static const struct wl_interface cap_source, cap_session, cap_frame, cap_handle, cap_cursor;
 static const struct wl_interface *cap_handle_types[] = {&cap_handle};
@@ -377,7 +379,18 @@ static int cap_wait(struct cap_client *c, int ms)
 	if (wl_display_dispatch_pending(c->display) < 0)
 		return -1;
 	struct pollfd p = {wl_display_get_fd(c->display), POLLIN, 0};
-	int n = poll(&p, 1, ms);
+	struct timespec now, end;
+	clock_gettime(CLOCK_MONOTONIC, &end);
+	end.tv_sec += ms / 1000;
+	end.tv_nsec += (long)(ms % 1000) * 1000000;
+	int n;
+	// The Go runtime's preemption signal interrupts poll, which never restarts.
+	while ((n = poll(&p, 1, ms)) < 0 && errno == EINTR) {
+		clock_gettime(CLOCK_MONOTONIC, &now);
+		ms = (int)((end.tv_sec - now.tv_sec) * 1000 + (end.tv_nsec - now.tv_nsec) / 1000000);
+		if (ms <= 0)
+			return 0;
+	}
 	return n <= 0 ? n : wl_display_dispatch(c->display) < 0 ? -1 : 1;
 }
 static int cap_destroy_objects(struct cap_client *c)

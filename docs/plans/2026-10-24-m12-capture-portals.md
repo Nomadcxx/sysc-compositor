@@ -340,3 +340,28 @@ filesystem intermediates after the default temporary filesystem hit its storage 
 The release assessment now records the selected Mango/Pleamar work and its remaining owners.
 This closes the legacy reporting slice only; real portal consumers and the Task 7 protocols
 remain M12 gates.
+
+## Execution record: gamma control, 2026-10-29
+
+wlroots' gamma-control manager now feeds SceneFX's scene integration, as in Mango: ramps apply
+on the next output commit, a destroyed or failed control restores the default, a second control
+on the same output fails, and outputs without a LUT fail at creation. SceneFX 0.5 has no
+renderer fallback, so nested outputs report unsupported.
+
+An out-of-band capture builds an output state into its own swapchain and never commits it.
+Building consumes SceneFX's pending gamma change, so a ramp set just before a screenshot or cast
+frame never reached the output. `TestGammaCapturePreservesPendingRamp` failed on CI's vkms lane
+without the fix and passes with it; the capture now hides the pending change and restores it for
+the next real frame.
+
+wlroots drops a commit field that repeats the output's current colour transform, and the DRM
+backend keeps the CRTC's LUT blob while the output is off. A power cycle therefore re-commits no
+transform; the test checks the output still holds the ramp. An unreadable ramp on an output
+already at its default commits nothing; the test checks the failed control released ownership.
+
+CI also exposed a test-client flake: Go's preemption signal can interrupt the capture client's
+`poll`, which reported a dispatch failure. It now retries until its deadline.
+
+The four gamma tests run on CI's vkms DRM outputs; nested laptop runs pass the unsupported-output
+check and skip the LUT checks. Physical-panel calibration is not qualified and stays a hardware
+limit. Tearing, explicit synchronization and tablets remain Task 7 work.
