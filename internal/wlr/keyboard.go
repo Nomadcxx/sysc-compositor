@@ -518,6 +518,11 @@ func (c *Compositor) handleKeyboardKeyFrom(keyboard *C.struct_wlr_keyboard, supp
 			suppressed[keycode] = true
 			return
 		}
+		if c.pickColor != nil && c.keysymIs(keycode, "Escape") {
+			c.finishColorPick([3]float64{}, errors.New("no color picked"))
+			suppressed[keycode] = true
+			return
+		}
 		if c.shotUI != nil {
 			suppressed[keycode] = true
 			if binding, ok := c.shotUIKey(keycode); ok && binding.Repeat {

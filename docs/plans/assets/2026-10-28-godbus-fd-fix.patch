@@ -1,0 +1,282 @@
+--- a/decoder.go
++++ b/decoder.go
+@@ -8,10 +8,11 @@
+ )
+ 
+ type decoder struct {
+-	in    io.Reader
+-	order binary.ByteOrder
+-	pos   int
+-	fds   []int
++	in      io.Reader
++	order   binary.ByteOrder
++	pos     int
++	fds     []int
++	usedFDs []bool
+ 
+ 	// The following fields are used to reduce memory allocs.
+ 	conv *stringConverter
+@@ -27,6 +28,7 @@
+ 	dec.in = in
+ 	dec.order = order
+ 	dec.fds = fds
++	dec.usedFDs = make([]bool, len(fds))
+ 	dec.conv = newStringConverter(stringConverterBufferSize)
+ 	return dec
+ }
+@@ -37,6 +39,7 @@
+ 	dec.order = order
+ 	dec.pos = 0
+ 	dec.fds = fds
++	dec.usedFDs = make([]bool, len(fds))
+ 
+ 	if dec.conv == nil {
+ 		dec.conv = newStringConverter(stringConverterBufferSize)
+@@ -61,13 +64,18 @@
+ 
+ func (dec *decoder) Decode(sig Signature) (vs []any, err error) {
+ 	defer func() {
+-		var ok bool
+ 		v := recover()
+-		if err, ok = v.(error); ok {
+-			if err == io.EOF || err == io.ErrUnexpectedEOF {
+-				err = FormatError("unexpected EOF")
+-			}
+-		}
++		if v == nil {
++			return
++		}
++		e, ok := v.(error)
++		if !ok {
++			panic(v)
++		}
++		if e == io.EOF || e == io.ErrUnexpectedEOF {
++			e = FormatError("unexpected EOF")
++		}
++		err = e
+ 	}()
+ 	vs = make([]any, 0)
+ 	s := sig.str
+@@ -107,7 +115,7 @@
+ }
+ 
+ func (dec *decoder) decode(s string, depth int) any {
+-	dec.align(alignment(typeFor(s)))
++	dec.align(alignment(dec.valueType(s)))
+ 	switch s[0] {
+ 	case 'y':
+ 		if _, err := dec.in.Read(dec.y[:]); err != nil {
+@@ -191,7 +199,11 @@
+ 		return variant
+ 	case 'h':
+ 		idx := dec.decodeU()
+-		if int(idx) < len(dec.fds) {
++		if len(dec.fds) != 0 {
++			if uint64(idx) >= uint64(len(dec.fds)) {
++				panic(InvalidMessageError("invalid index for unix fd"))
++			}
++			dec.usedFDs[idx] = true
+ 			return UnixFD(dec.fds[idx])
+ 		}
+ 		return UnixFDIndex(idx)
+@@ -199,7 +211,7 @@
+ 		if len(s) > 1 && s[1] == '{' {
+ 			ksig := s[2:3]
+ 			vsig := s[3 : len(s)-1]
+-			v := reflect.MakeMap(reflect.MapOf(typeFor(ksig), typeFor(vsig)))
++			v := reflect.MakeMap(reflect.MapOf(dec.valueType(ksig), dec.valueType(vsig)))
+ 			if depth >= 63 {
+ 				panic(FormatError("input exceeds container depth limit"))
+ 			}
+@@ -214,7 +226,11 @@
+ 				}
+ 				kv := dec.decode(ksig, depth+2)
+ 				vv := dec.decode(vsig, depth+2)
+-				v.SetMapIndex(reflect.ValueOf(kv), reflect.ValueOf(vv))
++				key := reflect.ValueOf(kv)
++				if v.MapIndex(key).IsValid() {
++					panic(InvalidMessageError("duplicate dictionary key"))
++				}
++				v.SetMapIndex(key, reflect.ValueOf(vv))
+ 			}
+ 			return v.Interface()
+ 		}
+@@ -228,9 +244,9 @@
+ 		if s := sigByteSize(sig); s != 0 {
+ 			capacity = int(length) / s
+ 		}
+-		v := reflect.MakeSlice(reflect.SliceOf(typeFor(sig)), 0, capacity)
++		v := reflect.MakeSlice(reflect.SliceOf(dec.valueType(sig)), 0, capacity)
+ 		// Even for empty arrays, the correct padding must be included
+-		align := alignment(typeFor(s[1:]))
++		align := alignment(dec.valueType(s[1:]))
+ 		if len(s) > 1 && s[1] == '(' {
+ 			// Special case for arrays of structs
+ 			// structs decode as a slice of interface{} values
+@@ -263,6 +279,25 @@
+ 		return v
+ 	default:
+ 		panic(SignatureError{Sig: s})
++	}
++}
++
++// valueType matches decode: with attached rights, h decodes to UnixFD,
++// including values nested in arrays and dictionary keys or values.
++func (dec *decoder) valueType(sig string) reflect.Type {
++	if len(dec.fds) == 0 {
++		return typeFor(sig)
++	}
++	switch sig[0] {
++	case 'h':
++		return unixFDType
++	case 'a':
++		if sig[1] == '{' {
++			return reflect.MapOf(dec.valueType(sig[2:3]), dec.valueType(sig[3:len(sig)-1]))
++		}
++		return reflect.SliceOf(dec.valueType(sig[1:]))
++	default:
++		return typeFor(sig)
+ 	}
+ }
+ 
+--- a/transport_unix.go
++++ b/transport_unix.go
+@@ -205,6 +205,17 @@
+ 		fds, err := syscall.ParseUnixRights(&scms[0])
+ 		if err != nil {
+ 			return nil, err
++		}
++		transferred := false
++		defer func() {
++			for i, fd := range fds {
++				if !transferred || !dec.usedFDs[i] {
++					_ = syscall.Close(fd)
++				}
++			}
++		}()
++		if len(fds) != int(unixfds) {
++			return nil, InvalidMessageError("unix fd count does not match attached rights")
+ 		}
+ 		dec.Reset(r, order, fds)
+ 		if err = decodeMessageBody(msg, dec); err != nil {
+@@ -230,6 +241,7 @@
+ 				msg.Body[i] = fdArray
+ 			}
+ 		}
++		transferred = true
+ 		return msg, nil
+ 	}
+ 
+--- /dev/null
++++ b/fd_decode_regression_test.go
+@@ -0,0 +1,110 @@
++//go:build !windows && !solaris
++
++package dbus
++
++import (
++	"bytes"
++	"encoding/binary"
++	"net"
++	"os"
++	"syscall"
++	"testing"
++)
++
++func TestReceivedDescriptorContainersAndCleanup(t *testing.T) {
++	for _, tc := range []struct {
++		name      string
++		body      func(UnixFD) []any
++		signature string
++		count     uint32
++		wantError bool
++	}{
++		{"array", func(fd UnixFD) []any { return []any{[]UnixFD{fd, fd}} }, "ah", 2, false},
++		{"nested-array", func(fd UnixFD) []any { return []any{MakeVariant([][]UnixFD{{fd}})} }, "v", 1, false},
++		{"dictionary-key", func(fd UnixFD) []any { return []any{map[UnixFD]Variant{fd: MakeVariant(uint32(1))}} }, "a{hv}", 1, false},
++		{"unreferenced", func(fd UnixFD) []any { return []any{uint32(99)} }, "u", 1, false},
++		{"decode-error", func(fd UnixFD) []any { return nil }, "h", 1, true},
++		{"wrong-count", func(fd UnixFD) []any { return []any{fd} }, "h", 2, true},
++		{"invalid-index", func(fd UnixFD) []any { return []any{[]UnixFDIndex{3}} }, "ah", 1, true},
++		{"duplicate-key", func(fd UnixFD) []any { return []any{map[string]UnixFD{"x": fd, "y": fd}} }, "a{sh}", 2, true},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			connections, err := syscall.Socketpair(syscall.AF_UNIX, syscall.SOCK_STREAM|syscall.SOCK_CLOEXEC, 0)
++			if err != nil {
++				t.Fatal(err)
++			}
++			open := func(fd int) *net.UnixConn {
++				file := os.NewFile(uintptr(fd), "wire")
++				conn, err := net.FileConn(file)
++				file.Close()
++				if err != nil {
++					t.Fatal(err)
++				}
++				return conn.(*net.UnixConn)
++			}
++			sender, receiver := open(connections[0]), open(connections[1])
++			defer sender.Close()
++			defer receiver.Close()
++			pair, err := syscall.Socketpair(syscall.AF_UNIX, syscall.SOCK_STREAM|syscall.SOCK_CLOEXEC, 0)
++			if err != nil {
++				t.Fatal(err)
++			}
++			defer syscall.Close(pair[1])
++			message := &Message{Type: TypeMethodCall, serial: 1, Headers: map[HeaderField]Variant{
++				FieldPath: MakeVariant(ObjectPath("/test")), FieldInterface: MakeVariant("org.test.FDs"), FieldMember: MakeVariant("Call"),
++				FieldSignature: MakeVariant(ParseSignatureMust(tc.signature)), FieldUnixFDs: MakeVariant(tc.count),
++			}, Body: tc.body(UnixFD(pair[0]))}
++			var wire bytes.Buffer
++			rights, err := message.EncodeToWithFDs(&wire, binary.LittleEndian)
++			if err != nil {
++				t.Fatal(err)
++			}
++			if tc.name == "duplicate-key" {
++				payload := wire.Bytes()
++				i := bytes.LastIndex(payload, []byte{1, 0, 0, 0, 'y', 0})
++				if i < 0 {
++					t.Fatal("dictionary key missing in encoded payload")
++				}
++				payload[i+4] = 'x'
++			}
++			if len(rights) == 0 {
++				rights = []int{pair[0]}
++			}
++			if _, _, err = sender.WriteMsgUnix(wire.Bytes(), syscall.UnixRights(rights...), nil); err != nil {
++				t.Fatal(err)
++			}
++			syscall.Close(pair[0])
++			transport := newUnixTransportFromConn(receiver)
++			got, err := transport.ReadMessage()
++			if (err != nil) != tc.wantError {
++				t.Fatalf("ReadMessage error = %v", err)
++			}
++			if err == nil {
++				if len(got.Body) != 1 {
++					t.Fatalf("decoded body = %#v, want one complete argument", got.Body)
++				}
++				switch tc.name {
++				case "array":
++					for _, fd := range got.Body[0].([]UnixFD) {
++						syscall.Close(int(fd))
++					}
++				case "nested-array":
++					for _, fds := range got.Body[0].(Variant).Value().([][]UnixFD) {
++						for _, fd := range fds {
++							syscall.Close(int(fd))
++						}
++					}
++				case "dictionary-key":
++					for fd := range got.Body[0].(map[UnixFD]Variant) {
++						syscall.Close(int(fd))
++					}
++				}
++			}
++			syscall.SetNonblock(pair[1], true)
++			var byte [1]byte
++			if n, err := syscall.Read(pair[1], byte[:]); n != 0 || err != nil {
++				t.Fatalf("received descriptor leaked: read=%d err=%v", n, err)
++			}
++		})
++	}
++}

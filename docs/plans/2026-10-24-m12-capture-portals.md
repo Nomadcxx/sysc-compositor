@@ -28,6 +28,16 @@ The owner approved this scoped exception to rule 4 during session recovery on 20
 
 Tasks 1–5 and 7 do not need a new library. Leave `go.mod` and `go.sum` unchanged throughout unless the owner approves a separate dependency.
 
+### Godbus descriptor backport, 2026-10-28
+
+The owner commissioned continuation after the scoped backport proposal. Task 5 uses a local
+replacement for the existing godbus v5.2.2 module, with no new Go dependency. Its Unix decoder
+could lose attached descriptors while decoding arrays, before the portal handler could close
+them. The backport fixes descriptor container types, decode errors, unused rights, invalid
+indexes/counts and duplicate dictionary keys. Eight raw-transport cases fail against the
+original dependency and pass against the backport; the portal rejection/EOF regression passes.
+The reviewed patch and removal check live in [the dependency note](../../third_party/godbus/SYSC.md).
+
 ## Source map
 
 Use the pinned checkouts; do not build them or move their pins.
@@ -200,3 +210,39 @@ The first Task 4 CI run passed static checks and the full compositor package, th
 
 
 Task 4 merged as PR #59 (`a4312e7`) after its corrected static and compositor CI lanes passed. The combined capture/input branch then passed eight named bench integration checks: privacy reload, IME passthrough, seat/lock boundaries, live-window lifecycle, pointer image lifetime, socket window actions, compositor UI damage and delayed switcher damage. Conflict resolution retained the capture teardown and virtual-input guard cleanup, and preserved the two sets of test-client helpers. The combined tree passes vet, entry-point builds, formatting and whitespace checks. Capture still requires its own PR gates before merge.
+
+## Execution record: session services and native IME, 2026-10-28
+
+Tasks 3 and 4 are on main through PRs #59 and #60. Task 5 adds session-only DisplayConfig,
+ServiceChannel, Introspect and Screenshot interfaces. The output snapshot includes modes,
+logical geometry, serials and change signals. DisplayConfig advertises
+`ApplyMonitorsConfigAllowed=false` and returns NotSupported for mutation until M15; discovery
+does not pretend that output settings applied.
+
+ServiceChannel transfers a Unix socket to a native Wayland client on the compositor thread,
+with unknown process credentials. Each D-Bus operation owns its context and reply. Private-bus
+regressions cover independent callers with the same serial, omitted interfaces, malformed wire
+types, cancellation before dispatch, caller departure, bus loss and shutdown. Review caught and
+corrected descriptor-return and cancellation defects before merge.
+
+Portal screenshots reuse privacy-aware rendering and encoding while leaving clipboard and
+ScreenshotCaptured events alone. They reject multiple outputs, matching the pinned Niri route.
+Fallback files use unique `0600` temporary paths rather than Niri's predictable shared filename:
+request ownership and symlink safety take precedence over that filename detail. The bench
+regression captures distinct red/blue scenes concurrently and verifies each returned PNG,
+permissions and unchanged clipboard. Other named bench checks prove native service clients,
+known picker pixels/cancellation, screenshot errors, multi-output rejection and nested startup
+acquiring no session names.
+
+`TestNativeIBusComposesInGTK` passes on the baremetal bench with IBus 1.5.34 and GTK 4.24.1.
+The packaged Wayland IME establishes a keyboard grab; GTK receives Unicode preedit and an `é`
+commit, then an unconsumed Backspace through the IME's virtual keyboard exactly once down/up.
+The fixture waits for GTK's release and final text. It uses private bus/config/cache state,
+enables IBus Simple's Unicode option and checkpoints after GTK painting and Wayland sync so
+geometry updates precede the next synthetic key. No compositor fix was required for this gate.
+CI records the optional packaged-client skip; the bench proves the behavior.
+
+The owner assigned runtime testing to the laptop bench; no desktop compositor test ran. Local
+spec, quality and descriptor-backport reviews pass. CI still gates the service change.
+PipeWire streams, the remaining Task 7 protocols
+and portal-consumer/hardware acceptance keep M12 open.

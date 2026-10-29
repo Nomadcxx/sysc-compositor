@@ -84,9 +84,13 @@ func (c *Compositor) Windows() []WindowInfo {
 				}
 			}
 		}
+		pid := int(C.sysc_surface_pid(v.toplevel.base.surface))
+		if c.surfaceCredentialsUnknown(v.toplevel.base.surface) {
+			pid = 0
+		}
 		out = append(out, WindowInfo{
 			ID: v.id, AppID: cStringPointer(v.toplevel.app_id), Title: cStringPointer(v.toplevel.title),
-			PID: int(C.sysc_surface_pid(v.toplevel.base.surface)),
+			PID: pid,
 			X:   x, Y: y, Width: width, Height: height,
 			Output: c.outputNameForView(v), IsFocused: c.keyboardFocusedView() == v,
 			FocusTimestamp: v.focusTimestamp, HasFocusTimestamp: v.hasFocusTimestamp,
