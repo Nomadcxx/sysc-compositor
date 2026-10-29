@@ -1,11 +1,32 @@
 package wlr
 
 /*
-#cgo pkg-config: wlroots-0.20 wayland-server
+#cgo pkg-config: wlroots-0.20 scenefx-0.5 wayland-server
 #cgo CFLAGS: -DWLR_USE_UNSTABLE
 
 #include <wlr/backend/headless.h>
+#include <wlr/render/color.h>
+#include <wlr/types/wlr_gamma_control_v1.h>
+#include <wlr/types/wlr_output.h>
 #include <wlr/types/wlr_xdg_shell.h>
+#include <scenefx/types/wlr_scene.h>
+
+static bool sysc_test_gamma_commit(void *data, float rgb[3], bool *reset) {
+	struct wlr_output_event_commit *event = data;
+	if (!(event->state->committed & WLR_OUTPUT_STATE_COLOR_TRANSFORM)) return false;
+	*reset = event->state->color_transform == NULL;
+	if (!*reset) {
+		const float input[3] = {0.5f, 0.5f, 0.5f};
+		wlr_color_transform_eval(event->state->color_transform, rgb, input);
+	}
+	return true;
+}
+
+static struct wl_signal *sysc_test_gamma_requests(void *pointer) {
+	struct wlr_scene *scene = pointer;
+	return scene->gamma_control_manager_v1 == NULL ? NULL :
+		&scene->gamma_control_manager_v1->events.set_gamma;
+}
 
 static void sysc_fake_fullscreen_request(struct wlr_xdg_toplevel *toplevel,
 		struct wlr_output *output) {
@@ -30,6 +51,29 @@ type headlessTestBackend struct {
 	c         *Compositor
 	backend   *C.struct_wlr_backend
 	newOutput *Listener
+}
+
+func gammaSizeForTest(output unsafe.Pointer) int {
+	return int(C.wlr_output_get_gamma_size((*C.struct_wlr_output)(output)))
+}
+
+func observeGammaCommitsForTest(output unsafe.Pointer, notify func([3]float64, bool)) *Listener {
+	out := (*C.struct_wlr_output)(output)
+	return AddListener(unsafe.Pointer(&out.events.commit), func(data unsafe.Pointer) {
+		var rgb [3]C.float
+		var reset C.bool
+		if bool(C.sysc_test_gamma_commit(data, &rgb[0], &reset)) {
+			notify([3]float64{float64(rgb[0]), float64(rgb[1]), float64(rgb[2])}, bool(reset))
+		}
+	})
+}
+
+func observeGammaRequestsForTest(c *Compositor, notify func()) *Listener {
+	signal := C.sysc_test_gamma_requests(unsafe.Pointer(c.scene))
+	if signal == nil {
+		return nil
+	}
+	return AddListener(unsafe.Pointer(signal), func(unsafe.Pointer) { notify() })
 }
 
 func addHeadlessTestOutput(c *Compositor, width, height uint32) (*headlessTestBackend, error) {

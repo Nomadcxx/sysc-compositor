@@ -22,6 +22,7 @@ package wlr
 #include <wlr/types/wlr_cursor.h>
 #include <wlr/types/wlr_data_device.h>
 #include <wlr/types/wlr_fractional_scale_v1.h>
+#include <wlr/types/wlr_gamma_control_v1.h>
 #include <wlr/types/wlr_layer_shell_v1.h>
 #include <wlr/types/wlr_idle_inhibit_v1.h>
 #include <wlr/types/wlr_idle_notify_v1.h>
@@ -482,6 +483,11 @@ func NewWith(opts Options) (*Compositor, error) {
 	if c.scene = C.wlr_scene_create(); c.scene == nil {
 		return nil, errors.New("wlr_scene_create failed")
 	}
+	gamma := C.wlr_gamma_control_manager_v1_create(c.display)
+	if gamma == nil {
+		return nil, errors.New("wlr_gamma_control_manager_v1_create failed")
+	}
+	C.wlr_scene_set_gamma_control_manager_v1(c.scene, gamma)
 	c.applyBlurConfig()
 	if !c.createLayerTrees() {
 		return nil, errors.New("wlr_scene_tree_create failed")
