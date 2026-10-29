@@ -398,7 +398,7 @@ func (h niriHandler) action(a ipc.Action) (ipc.Reply, func()) {
 		return h.windowAction(a, 0)
 	case "ToggleOverview", "OpenOverview", "CloseOverview", "ToggleKeyboardShortcutsInhibit", "ScreenshotScreen",
 		"ScreenshotWindow", "Screenshot", "ShowHotkeyOverlay",
-		"PowerOffMonitors", "PowerOnMonitors":
+		"PowerOffMonitors", "PowerOnMonitors", "SetDynamicCastWindow", "SetDynamicCastMonitor", "ClearDynamicCastTarget", "StopCast":
 		return h.windowAction(a, 0)
 	case "FocusWindow", "CloseWindow",
 		"FocusWindowInColumn", "FocusWindowDown", "FocusWindowUp", "FocusWindowPrevious",

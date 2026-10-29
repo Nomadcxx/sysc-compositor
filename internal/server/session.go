@@ -26,6 +26,7 @@ func (s *Server) StartSessionDBus() {
 			s.portal = portal
 			snapshot := s.state.snapshot()
 			portal.Update(snapshot.outputs, snapshot.windows)
+			s.startPortalScreenCast(portal)
 		}
 	}
 	if s.screenSaver == nil {
@@ -51,6 +52,57 @@ func (s *Server) StartSessionDBus() {
 		return
 	}
 	s.sessionDBus = watcher
+}
+
+func (s *Server) startPortalScreenCast(portal *session.Portal) {
+	c := s.c
+	hooks := session.ScreenCastHooks{
+		Start: func(ctx context.Context, request session.CastRequest, node func(uint32), closed func()) error {
+			reply := make(chan error, 1)
+			if err := c.Post(func() {
+				if ctx.Err() != nil {
+					reply <- ctx.Err()
+					return
+				}
+				reply <- c.StartCast(wlr.CastOptions{
+					SessionID: request.SessionID, StreamID: request.StreamID,
+					Target: request.Target, CursorMode: request.CursorMode,
+					NodeAdded: func(id uint32) { go node(id) },
+					Closed:    func() { go closed() },
+				})
+			}); err != nil {
+				return err
+			}
+			select {
+			case err := <-reply:
+				return err
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		},
+		Stop: func(id uint64) { _ = c.Post(func() { c.StopCast(id) }) },
+	}
+	failed := func(err error) { fmt.Fprintf(os.Stderr, "sysc-compositor: ScreenCast unavailable: %v\n", err) }
+	lifetime, cancel := context.WithCancel(context.Background())
+	if err := c.StartScreenCast(func(err error) {
+		if err != nil {
+			cancel()
+			failed(err)
+			return
+		}
+		id := c.DynamicCastWindowID()
+		go func() {
+			if err := portal.EnableScreenCast(lifetime, hooks, id); err != nil && lifetime.Err() == nil {
+				failed(err)
+			}
+		}()
+	}, func(err error) {
+		cancel()
+		failed(err)
+	}); err != nil {
+		cancel()
+		failed(err)
+	}
 }
 
 func (s *Server) postSessionUpdate(update func()) {

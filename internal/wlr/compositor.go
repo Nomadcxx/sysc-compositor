@@ -125,6 +125,8 @@ type Compositor struct {
 	scene                *C.struct_wlr_scene
 	capture              *captureProtocol
 	pipewire             *pipeWire
+	casts                map[uint64]*screenCast
+	dynamicCastID        uint64
 	captureNodes         map[*C.struct_wlr_scene_node]*captureNodeOwner
 	xdgDecorationManager unsafe.Pointer
 	kdeDecorationManager unsafe.Pointer
@@ -710,6 +712,7 @@ func (c *Compositor) WorkspaceSnapshot() wm.Snapshot {
 }
 
 func (c *Compositor) notifyStateChanged() {
+	c.syncCasts()
 	c.syncCapturePrivacy()
 	c.syncCaptureSources()
 	c.damageCaptureSources()

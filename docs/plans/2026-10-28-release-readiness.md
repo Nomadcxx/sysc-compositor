@@ -1,6 +1,6 @@
 # sysc-compositor release readiness
 
-Assessment on 2026-10-28, starting from `8797cef` (PR #60). This is a gate assessment, not a plan
+Updated on 2026-10-29, starting from `3098b23` (PR #61), with the reviewed PipeWire change. This is a gate assessment, not a plan
 for M13–M15. The product contract and [parity matrix](niri-parity-matrix.md) define scope; bd in
 `/home/nomadx/sysc-shell` owns issue status.
 
@@ -17,12 +17,12 @@ input regressions, 12 capture runtime checks, five capture logic checks and eigh
 integration checks. These establish the capture/input foundation; portal consumers still need
 their own acceptance checks.
 
-The current change adds the session-only portal discovery/screenshot services. Nine named
+PR #61 merged the session-only portal discovery/screenshot services. Nine named
 private-bus regressions cover wire signatures, concurrent replies, socket ownership, malformed
 requests, caller departure and bus/shutdown cancellation. Baremetal bench checks cover native
 service clients, known color-picker pixels and cancellation, screenshot write errors, private
 concurrent fallback PNGs, clipboard preservation, multi-output rejection and nested startup
-leaving session service names alone. Local review and CI still gate its merge.
+leaving session service names alone. Local review and the static/compositor CI lanes passed.
 
 Descriptor rejection also exposed a bug in the pinned godbus decoder. The reviewed local
 backport retains v5.2.2 and adds no Go dependency; eight raw-transport cases and the portal
@@ -34,20 +34,29 @@ Backspace returned through the IME's virtual keyboard exactly once down/up. GTK 
 release and the final expected text. The test leaves a runnable acceptance check; CI records
 its optional-tool skip because the CI image does not include this packaged client stack.
 
+The PipeWire change adds compositor-owned casts and a session-only Mutter ScreenCast Version 4
+service. Baremetal checks prove known window and monitor pixels, live size/rate negotiation,
+dynamic retargeting and clearing, protected/locked black frames, pointer isolation, stop and
+daemon loss. The complete private-bus-to-IPC-to-PipeWire path passes on the laptop. Private-bus
+regressions cover caller ownership, property types, cancellation, stale readiness after loss
+and forged departure signals. Independent review passes; CI still gates this change's merge.
+Actual GNOME/browser/OBS acceptance remains. Cast IPC currently tracks PipeWire streams;
+Niri's legacy wlr-screencopy activity reporting is a remaining M12 follow-up.
+
 The project supports an experimental native session. A release that can replace Niri on this
 machine still needs the gates below. Counting merged milestones would hide their size: PipeWire,
 X11 applications, accessibility and output management remain substantial work.
 
-At the assessed baseline, the server dispatches 86 of the 141 Niri action names; 55 still return
-`unimplemented`. Four are the M12 cast actions. This counts routed actions, not configuration,
+With the PipeWire change, the server dispatches 90 of the 141 Niri action names; 51 still return
+`unimplemented`. This counts routed actions, not configuration,
 hardware or integration completeness.
 
 ## Remaining release gates
 
 | Gate | Work and acceptance evidence still needed | Owner |
 |---|---|---|
-| Portal services | Review/merge the tested session-only services, then prove GNOME/GTK portal discovery in an isolated session. DisplayConfig reports current outputs; output mutation remains explicit unsupported behavior until M15. | M12 Task 5, `sysc-1277` |
-| Screen sharing | PipeWire monitor/window frames, pointer modes, privacy, resize, daemon loss, dynamic targets and cast IPC/events; actual Firefox, Chromium and OBS consumers. | M12 Task 6/8 |
+| Portal services | Prove GNOME/GTK portal discovery in an isolated session. DisplayConfig reports current outputs; output mutation remains explicit unsupported behavior until M15. Task 5 services are merged. | M12 Task 5/8, `sysc-1277` |
+| Screen sharing | Merge the reviewed and bench-tested PipeWire change after CI, add legacy wlr-screencopy activity to Casts/events, then prove actual Firefox, Chromium and OBS consumers. | M12 Task 6/8 |
 | Remaining client protocols | Gamma apply/restore, tearing policy/fallback, explicit-sync acquire/release and tablet tool/pad routing. Each needs behavioral proof; supporting hardware must qualify capabilities that nested/vkms cannot exercise. | M12 Task 7 |
 | X11 applications | xwayland-satellite lifecycle, DISPLAY publication, native/X11 focus, and Steam/Discord in nested and real sessions. | M13, `sysc-1278` |
 | Accessibility | KeyboardMonitor/announcements and a real Orca session. | M14, `sysc-1279` |
@@ -77,7 +86,8 @@ of M12 and M13–M15, followed by suite and hardware acceptance. This is several
 stages, not just a packaging pass. A date or percentage would require estimating those stages
 after the portal/PipeWire consumer gate; current test counts cannot supply that estimate.
 
-The next stage is merging M12 Task 5, then implementing Task 6. Keep each protocol/lifecycle regression with
+The next stage is merging the reviewed PipeWire change, completing legacy cast activity reporting,
+and proving portal consumers. Keep each protocol/lifecycle regression with
 its implementation and require local review plus both CI lanes before merge. Do not mark M12
 complete merely because services advertise their names.
 

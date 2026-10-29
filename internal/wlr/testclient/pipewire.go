@@ -212,6 +212,7 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"runtime"
 	"sync"
 	"time"
 	"unsafe"
@@ -256,6 +257,10 @@ func (r *PipeWireReceiver) NextFrame(timeout time.Duration) (PipeWireFrame, erro
 		return PipeWireFrame{}, errors.New("receiver closed")
 	}
 	n := r.native
+	// PipeWire's recursive mutex belongs to an OS thread, including across
+	// the wait below. Go may otherwise migrate before the deferred unlock.
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
 	C.pw_thread_loop_lock(n.loop)
 	defer C.pw_thread_loop_unlock(n.loop)
 	if result := C.sysc_pw_receiver_wait(n, C.uint64_t(r.generation), C.int64_t(timeout)); result < 0 {

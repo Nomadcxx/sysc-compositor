@@ -51,19 +51,21 @@ type portalRequest struct {
 // Portal owns the session-only discovery and screenshot interfaces. Construction
 // is explicit: nested servers never call StartPortal and never acquire names.
 type Portal struct {
-	conn          *dbus.Conn
-	hooks         PortalHooks
-	ctx           context.Context
-	cancel        context.CancelFunc
-	close         sync.Once
-	wg            sync.WaitGroup
-	signals       chan *dbus.Signal
-	manualReplies *sync.Map
-	mu            sync.Mutex
-	requests      map[*portalRequest]struct{}
-	names         []string
-	state         displayState
-	windows       map[uint64]map[string]dbus.Variant
+	conn                            *dbus.Conn
+	hooks                           PortalHooks
+	ctx                             context.Context
+	cancel                          context.CancelFunc
+	close                           sync.Once
+	wg                              sync.WaitGroup
+	signals                         chan *dbus.Signal
+	manualReplies                   *sync.Map
+	mu                              sync.Mutex
+	requests                        map[*portalRequest]struct{}
+	names                           []string
+	state                           displayState
+	windows                         map[uint64]map[string]dbus.Variant
+	screenCast                      *screenCastService
+	nextCastSession, nextCastStream uint64
 }
 
 func StartPortal(hooks PortalHooks) (*Portal, error) { return connectPortal("", hooks) }
@@ -117,7 +119,7 @@ func connectPortal(address string, hooks PortalHooks) (*Portal, error) {
 	ctx, cancel := context.WithCancel(conn.Context())
 	p := &Portal{conn: conn, hooks: hooks, ctx: ctx, cancel: cancel, signals: make(chan *dbus.Signal, 64), manualReplies: replies, requests: map[*portalRequest]struct{}{}, state: displayState{Serial: 1}, windows: map[uint64]map[string]dbus.Variant{}}
 	fail := func(err error) (*Portal, error) { p.Close(); return nil, err }
-	if err := conn.AddMatchSignal(dbus.WithMatchInterface("org.freedesktop.DBus"), dbus.WithMatchMember("NameOwnerChanged")); err != nil {
+	if err := conn.AddMatchSignal(dbus.WithMatchSender("org.freedesktop.DBus"), dbus.WithMatchInterface("org.freedesktop.DBus"), dbus.WithMatchMember("NameOwnerChanged")); err != nil {
 		return fail(err)
 	}
 	conn.Signal(p.signals)
@@ -203,13 +205,15 @@ func (p *Portal) watch() {
 	for {
 		select {
 		case <-p.ctx.Done():
+			p.DisableScreenCast()
 			return
 		case signal, ok := <-p.signals:
 			if !ok {
 				p.cancel()
+				p.DisableScreenCast()
 				return
 			}
-			if signal == nil || signal.Name != "org.freedesktop.DBus.NameOwnerChanged" || len(signal.Body) != 3 {
+			if signal == nil || signal.Sender != "org.freedesktop.DBus" || signal.Name != "org.freedesktop.DBus.NameOwnerChanged" || len(signal.Body) != 3 {
 				continue
 			}
 			name, _ := signal.Body[0].(string)
@@ -225,6 +229,7 @@ func (p *Portal) watch() {
 				}
 			}
 			p.mu.Unlock()
+			p.closeCallerCasts(name)
 		}
 	}
 }
@@ -237,6 +242,7 @@ func (p *Portal) Close() {
 		p.mu.Lock()
 		p.cancel()
 		p.mu.Unlock()
+		p.DisableScreenCast()
 		p.wg.Wait()
 		for _, name := range p.names {
 			_, _ = p.conn.ReleaseName(name)

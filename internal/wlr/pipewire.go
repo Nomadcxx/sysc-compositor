@@ -313,6 +313,7 @@ func (c *Compositor) startPipeWire(ready, lost func(error)) error {
 	p.token = Register(func(data unsafe.Pointer) { p.event((*C.struct_sysc_pw_event)(data)) })
 	p.native = C.sysc_pw_new(c.loop, C.uintptr_t(p.token))
 	if p.native == nil {
+		p.closed = true
 		Unregister(p.token)
 		return errors.New("wlr: connecting to PipeWire failed")
 	}
@@ -359,6 +360,10 @@ func (c *Compositor) stopPipeWire() {
 	if p == nil {
 		return
 	}
+	for _, cast := range c.casts {
+		c.StopCast(cast.state.SessionID)
+	}
+	c.dynamicCastID = 0
 	p.closed = true
 	for stream := range p.streams {
 		stream.close()
@@ -386,6 +391,7 @@ func (p *pipeWire) newStream(width, height int, refreshMilliHz uint32, frame fun
 	s.token = Register(func(data unsafe.Pointer) { s.event((*C.struct_sysc_pw_event)(data)) })
 	s.native = C.sysc_pw_stream_new(p.native, C.uintptr_t(s.token), C.uint32_t(width), C.uint32_t(height), C.uint32_t(refreshMilliHz))
 	if s.native == nil {
+		s.closed = true
 		Unregister(s.token)
 		return nil, errors.New("wlr: creating PipeWire stream failed")
 	}

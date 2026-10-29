@@ -25,7 +25,7 @@ Legend: `[ ]` missing · `[~]` partial · `[x]` done.
 | EventStream | [~] | M3/M9 — initial baseline, workspace and keyboard updates, plus config reload results; remaining events land with their owning milestones |
 | ReturnError | [x] | M2 |
 | OverviewState | [x] | M7 — Niri 26.04 query returns open state |
-| Casts | [ ] | M12 |
+| Casts | [~] | M12 — immutable PipeWire stream/session/target/node/activity snapshots, including pending dynamic streams; legacy wlr-screencopy activity tracking remains |
 
 ## Events (19)
 
@@ -47,9 +47,9 @@ Legend: `[ ]` missing · `[~]` partial · `[x]` done.
 | OverviewOpenedOrClosed | [x] | M7 — initial state and open/close transitions |
 | ConfigLoaded | [x] | M3/M9 — initial config result and successful or failed reloads |
 | ScreenshotCaptured | [x] | M11 — path written or null (`TestScreenshotScreenWritesThePNGAndReportsIt`) |
-| CastsChanged | [~] | M3 — initial empty baseline; casts in M12 |
-| CastStartedOrChanged | [ ] | M12 |
-| CastStopped | [ ] | M12 |
+| CastsChanged | [~] | M12 — current PipeWire baseline; legacy wlr-screencopy activity remains |
+| CastStartedOrChanged | [~] | M12 — PipeWire target, node and activity changes; legacy wlr-screencopy activity remains |
+| CastStopped | [~] | M12 — PipeWire session stop, target retirement and daemon loss; legacy wlr-screencopy activity remains |
 
 ## Actions (141)
 
@@ -119,7 +119,7 @@ Track the rest against niri-ipc 26.4.0 `Action` as they are implemented in M4–
 - Columns + workspaces + core binds: M5
 - Consume/expel, tabs, floating, fullscreen, named workspaces, monitor moves: M6
 - Overview: M7
-- Cast: M12
+- Cast: M12 — `SetDynamicCastWindow`, `SetDynamicCastMonitor`, `ClearDynamicCastTarget` and `StopCast`; three dynamic KDL actions, with StopCast IPC-only as Niri
 - Debug tint / opaque / damage: M15
 
 M5 applies `Spawn`, `SpawnSh`, `CloseWindow`, `FocusColumnLeft/Right/First/Last`,
@@ -214,7 +214,7 @@ global is ticked only with its handler and a test (Q7). Versions follow the wlro
 |---|---|---|
 | org.gnome.Mutter.DisplayConfig | [~] | M12 — current immutable monitors/modes/logical state, serials, properties and changes; wire/lifetime regressions. `ApplyMonitorsConfigAllowed=false`, mutation returns NotSupported until M15 |
 | org.gnome.Mutter.ServiceChannel | [x] | M12 — native privileged Wayland clients with unknown peer PID; descriptor ownership, caller/connection cancellation, independent callers and malformed-wire checks |
-| org.gnome.Mutter.ScreenCast | [ ] | M12 |
+| org.gnome.Mutter.ScreenCast | [~] | M12 — Version 4 sessions/streams, monitor/window frames, pointer modes, dynamic target, privacy/lock/resize/loss and caller-owned cleanup; private-bus and baremetal PipeWire checks pass. GNOME/browser/OBS consumer acceptance remains |
 | org.gnome.Shell.Screenshot | [x] | M12 — correlated screenshot and PickColor replies, capture privacy, cancellation and write failures; unique private temporary PNGs preserve the clipboard; one-output screenshot limit matches Niri |
 | org.gnome.Shell.Introspect | [x] | M12 — mapped IPC IDs, title and desktop app ID, immutable snapshots and WindowsChanged |
 | org.freedesktop.ScreenSaver | [x] | M10 — Inhibit/UnInhibit at both of Niri's paths, cookies per caller, dropped when the caller leaves; started in `--session`, feeds idle inhibition (`TestScreenSaverInhibitsPerSenderAndDropsDepartedCallers`) |
