@@ -27,7 +27,10 @@ package wlr
 // buffers and damage tracking are untouched, and returns the buffer locked;
 // the caller unlocks it. A fresh buffer has no age, so the scene draws all of
 // it. (Only wlr_scene_output_commit skips an output that needs no frame.)
-static struct wlr_buffer *sysc_render_output(void *scene_output, struct wlr_output *output) {
+// Building a state consumes a pending gamma change, and this state is never
+// committed, so the change is held back for the output's next real frame.
+static struct wlr_buffer *sysc_render_output(void *pointer, struct wlr_output *output) {
+	struct wlr_scene_output *scene_output = pointer;
 	struct wlr_swapchain *swapchain = NULL;
 	if (!wlr_output_configure_primary_swapchain(output, NULL, &swapchain)) {
 		return NULL;
@@ -36,11 +39,14 @@ static struct wlr_buffer *sysc_render_output(void *scene_output, struct wlr_outp
 	struct wlr_scene_output_state_options options = { .swapchain = swapchain };
 	struct wlr_output_state state;
 	wlr_output_state_init(&state);
+	bool gamma_changed = scene_output->WLR_PRIVATE.gamma_lut_changed;
+	scene_output->WLR_PRIVATE.gamma_lut_changed = false;
 	struct wlr_buffer *buffer = NULL;
 	if (wlr_scene_output_build_state(scene_output, &state, &options) &&
 			(state.committed & WLR_OUTPUT_STATE_BUFFER) && state.buffer != NULL) {
 		buffer = wlr_buffer_lock(state.buffer);
 	}
+	scene_output->WLR_PRIVATE.gamma_lut_changed = gamma_changed;
 	wlr_output_state_finish(&state);
 	wlr_swapchain_destroy(swapchain);
 	return buffer;
