@@ -11,15 +11,23 @@ package wlr
 #include <wlr/types/wlr_xdg_shell.h>
 #include <scenefx/types/wlr_scene.h>
 
+// Evaluates a transform at mid-grey; a NULL transform is the default ramp.
+static bool sysc_test_gamma_eval(struct wlr_color_transform *transform, float rgb[3]) {
+	if (transform == NULL) return true;
+	const float input[3] = {0.5f, 0.5f, 0.5f};
+	wlr_color_transform_eval(transform, rgb, input);
+	return false;
+}
+
 static bool sysc_test_gamma_commit(void *data, float rgb[3], bool *reset) {
 	struct wlr_output_event_commit *event = data;
 	if (!(event->state->committed & WLR_OUTPUT_STATE_COLOR_TRANSFORM)) return false;
-	*reset = event->state->color_transform == NULL;
-	if (!*reset) {
-		const float input[3] = {0.5f, 0.5f, 0.5f};
-		wlr_color_transform_eval(event->state->color_transform, rgb, input);
-	}
+	*reset = sysc_test_gamma_eval(event->state->color_transform, rgb);
 	return true;
+}
+
+static bool sysc_test_gamma_current(struct wlr_output *output, float rgb[3]) {
+	return sysc_test_gamma_eval(output->WLR_PRIVATE.color_transform, rgb);
 }
 
 static struct wl_signal *sysc_test_gamma_requests(void *pointer) {
@@ -55,6 +63,14 @@ type headlessTestBackend struct {
 
 func gammaSizeForTest(output unsafe.Pointer) int {
 	return int(C.wlr_output_get_gamma_size((*C.struct_wlr_output)(output)))
+}
+
+// gammaCurrentForTest reports the ramp the output holds now, as the commit
+// observer does; wlroots drops a commit field that repeats it.
+func gammaCurrentForTest(output unsafe.Pointer) ([3]float64, bool) {
+	var rgb [3]C.float
+	reset := C.sysc_test_gamma_current((*C.struct_wlr_output)(output), &rgb[0])
+	return [3]float64{float64(rgb[0]), float64(rgb[1]), float64(rgb[2])}, bool(reset)
 }
 
 func observeGammaCommitsForTest(output unsafe.Pointer, notify func([3]float64, bool)) *Listener {

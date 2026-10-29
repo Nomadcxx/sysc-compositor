@@ -83,14 +83,20 @@ func expectGammaCommit(t *testing.T, commits <-chan gammaCommit, reset bool) {
 			t.Fatalf("gamma reset=%v, want %v", commit.reset, reset)
 		}
 		if !reset {
-			for i, want := range [3]float64{.375, .25, .125} {
-				if math.Abs(commit.rgb[i]-want) > 2.0/65535 {
-					t.Fatalf("committed ramp evaluates to %v", commit.rgb)
-				}
-			}
+			checkGammaRamp(t, commit.rgb)
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("output did not commit the requested gamma state")
+	}
+}
+
+// checkGammaRamp checks mid-grey through gammaRampFile's ramp.
+func checkGammaRamp(t *testing.T, rgb [3]float64) {
+	t.Helper()
+	for i, want := range [3]float64{.375, .25, .125} {
+		if math.Abs(rgb[i]-want) > 2.0/65535 {
+			t.Fatalf("ramp evaluates to %v", rgb)
+		}
 	}
 }
 
@@ -148,7 +154,14 @@ func TestGammaControlAppliesAndRestoresOutputRamp(t *testing.T) {
 				t.Error(err)
 			}
 		})
-		expectGammaCommit(t, commits, false)
+		// The CRTC keeps its LUT while off, so power-on re-commits nothing.
+		var rgb [3]float64
+		reset := true
+		onCompositor(t, c, func() { rgb, reset = gammaCurrentForTest(output) })
+		if reset {
+			t.Fatal("power cycle dropped the client's ramp")
+		}
+		checkGammaRamp(t, rgb)
 		if err := client.DestroyControl(); err != nil {
 			t.Fatal(err)
 		}
@@ -259,6 +272,14 @@ func TestGammaControlRejectsInvalidRampsAndReleasesOwnership(t *testing.T) {
 		if !client.Failed() {
 			t.Fatal("non-seekable gamma descriptor accepted")
 		}
-		expectGammaCommit(t, commits, true)
+		client.Close()
+		client, err = testclient.StartGammaControl(c.SocketName(), 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer client.Close()
+		if client.Failed() {
+			t.Fatal("unreadable ramp retained exclusive ownership")
+		}
 	})
 }
