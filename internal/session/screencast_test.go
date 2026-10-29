@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -214,7 +215,7 @@ func TestScreenCastDepartureCancelsPendingStart(t *testing.T) {
 	}
 	select {
 	case id := <-stopped:
-		if id != 1 {
+		if fmt.Sprintf("%s/Session/u%d", screenCastPath, id) != string(path) {
 			t.Fatalf("stopped wrong caller: %d", id)
 		}
 	case <-time.After(time.Second):
@@ -227,7 +228,7 @@ func TestScreenCastDepartureCancelsPendingStart(t *testing.T) {
 	p.DisableScreenCast()
 	select {
 	case id := <-stopped:
-		if id != 2 {
+		if fmt.Sprintf("%s/Session/u%d", screenCastPath, id) != string(otherPath) {
 			t.Fatalf("disabled wrong session: %d", id)
 		}
 	case <-time.After(time.Second):

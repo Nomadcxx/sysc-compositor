@@ -1,6 +1,6 @@
 # sysc-compositor release readiness
 
-Updated on 2026-10-29, starting from `3098b23` (PR #61), with the reviewed PipeWire change. This is a gate assessment, not a plan
+Updated on 2026-10-29, starting from `cf04055` (PR #62), with legacy cast reporting. This is a gate assessment, not a plan
 for M13–M15. The product contract and [parity matrix](niri-parity-matrix.md) define scope; bd in
 `/home/nomadx/sysc-shell` owns issue status.
 
@@ -40,12 +40,14 @@ dynamic retargeting and clearing, protected/locked black frames, pointer isolati
 daemon loss. The complete private-bus-to-IPC-to-PipeWire path passes on the laptop. Private-bus
 regressions cover caller ownership, property types, cancellation, stale readiness after loss
 and forged departure signals. Independent review passes; merges require static and compositor CI.
-Actual GNOME/browser/OBS acceptance remains. Cast IPC currently tracks PipeWire streams;
-Niri's legacy wlr-screencopy activity reporting is a remaining M12 follow-up.
+Actual GNOME/browser/OBS acceptance remains. Cast IPC also tracks legacy damage-copy managers,
+with shared process-lifetime IDs, peer PID, queued output selection and ten-second inactivity
+expiry. A mixed-producer bench check proves the IPC baseline and stop events, and confirms
+PipeWire daemon loss preserves legacy activity. Ordinary screenshots create no cast record.
 
 The project supports an experimental native session. A release that can replace Niri on this
-machine still needs the gates below. Counting merged milestones would hide their size: PipeWire,
-X11 applications, accessibility and output management remain substantial work.
+machine still needs the gates below. Counting merged milestones would hide their size: portal
+consumer acceptance, X11 applications, accessibility and output management remain substantial work.
 
 With the PipeWire change, the server dispatches 90 of the 141 Niri action names; 51 still return
 `unimplemented`. This counts routed actions, not configuration,
@@ -56,7 +58,7 @@ hardware or integration completeness.
 | Gate | Work and acceptance evidence still needed | Owner |
 |---|---|---|
 | Portal services | Prove GNOME/GTK portal discovery in an isolated session. DisplayConfig reports current outputs; output mutation remains explicit unsupported behavior until M15. Task 5 services are merged. | M12 Task 5/8, `sysc-1277` |
-| Screen sharing | Add legacy wlr-screencopy activity to Casts/events (`sysc-2042`), then prove actual Firefox, Chromium and OBS consumers. The compositor/PipeWire path has reviewed bench evidence. | M12 Task 6/8 |
+| Screen sharing | Prove actual GNOME portal, Firefox, Chromium and OBS consumers. Compositor/PipeWire frames and mixed legacy/PipeWire cast reporting have named bench evidence. | M12 Task 8 |
 | Remaining client protocols | Gamma apply/restore, tearing policy/fallback, explicit-sync acquire/release and tablet tool/pad routing. Each needs behavioral proof; supporting hardware must qualify capabilities that nested/vkms cannot exercise. | M12 Task 7 |
 | X11 applications | xwayland-satellite lifecycle, DISPLAY publication, native/X11 focus, and Steam/Discord in nested and real sessions. | M13, `sysc-1278` |
 | Accessibility | KeyboardMonitor/announcements and a real Orca session. | M14, `sysc-1279` |
@@ -86,10 +88,26 @@ of M12 and M13–M15, followed by suite and hardware acceptance. This is several
 stages, not just a packaging pass. A date or percentage would require estimating those stages
 after the portal/PipeWire consumer gate; current test counts cannot supply that estimate.
 
-The next stage is completing legacy cast activity reporting and proving portal consumers.
+The next stage is proving portal consumers and implementing the four remaining M12 protocols.
 Keep each protocol/lifecycle regression with
 its implementation and require local review plus both CI lanes before merge. Do not mark M12
 complete merely because services advertise their names.
+
+## Mango and Pleamar capability work
+
+The [approved capability design](2026-10-15-tier3-wm-scene-equivalent-design.md#owner-update-2026-10-20-selected-capabilities-under-the-niri-contract)
+keeps Niri's KDL/IPC contract while selecting implementations per subsystem. Mango supplies
+wlroots lifecycle, input and protocol patterns; each change must verify those against the
+installed wlroots API. This includes the remaining gamma/tearing/synchronization/tablet work.
+
+Pleamar-derived seat isolation, the local control socket, compositor-enforced Stop, lock/blank
+gating and private live window capture already have implementations and regression checks.
+The remaining selected work is physical-user-only re-arm (`sysc-1261`) and shell presence
+(`sysc-1193`, owned by sysc-shell under suite integration). Worker containment (`sysc-1255`)
+still gates the assistant consumer. Browser remote access (`sysc-1213`) needs its separate
+authentication/consent/revocation design after capture; the capture implementation does not
+authorize remote input. Further layout or authoring changes need a named workflow under the
+existing Go+cgo compatibility boundary.
 
 ## Test environment
 

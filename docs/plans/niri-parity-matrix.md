@@ -22,10 +22,10 @@ Legend: `[ ]` missing · `[~]` partial · `[x]` done.
 | PickColor | [ ] | M15 |
 | Action | [~] | M2: all 141 decode; per-action below |
 | Output | [ ] | M15 |
-| EventStream | [~] | M3/M9 — initial baseline, workspace and keyboard updates, plus config reload results; remaining events land with their owning milestones |
+| EventStream | [x] | M3–M12 — bounded subscribers, current baseline and all 19 event variants, including mixed PipeWire/legacy cast activity |
 | ReturnError | [x] | M2 |
 | OverviewState | [x] | M7 — Niri 26.04 query returns open state |
-| Casts | [~] | M12 — immutable PipeWire stream/session/target/node/activity snapshots, including pending dynamic streams; legacy wlr-screencopy activity tracking remains (`sysc-2042`) |
+| Casts | [x] | M12 — immutable PipeWire and legacy damage-copy activity, shared unique IDs, pending dynamic targets, peer PID, queue-head output and inactivity expiry (`sysc-2042`) |
 
 ## Events (19)
 
@@ -47,9 +47,9 @@ Legend: `[ ]` missing · `[~]` partial · `[x]` done.
 | OverviewOpenedOrClosed | [x] | M7 — initial state and open/close transitions |
 | ConfigLoaded | [x] | M3/M9 — initial config result and successful or failed reloads |
 | ScreenshotCaptured | [x] | M11 — path written or null (`TestScreenshotScreenWritesThePNGAndReportsIt`) |
-| CastsChanged | [~] | M12 — current PipeWire baseline; legacy wlr-screencopy activity remains |
-| CastStartedOrChanged | [~] | M12 — PipeWire target, node and activity changes; legacy wlr-screencopy activity remains |
-| CastStopped | [~] | M12 — PipeWire session stop, target retirement and daemon loss; legacy wlr-screencopy activity remains |
+| CastsChanged | [x] | M12 — mixed PipeWire and legacy activity in the current baseline |
+| CastStartedOrChanged | [x] | M12 — PipeWire target/node/activity and legacy damage-copy start/output changes |
+| CastStopped | [x] | M12 — PipeWire session/target/daemon retirement and legacy timeout/caller/frame cleanup; mixed-producer isolation tested |
 
 ## Actions (141)
 

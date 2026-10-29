@@ -88,6 +88,7 @@ struct cap_client {
 	struct wl_display *display;
 	struct wl_shm *shm;
 	struct wl_output *output;
+	struct wl_output *other_output;
 	struct wl_seat *seat;
 	struct wl_pointer *pointer;
 	struct wl_proxy *cursor;
@@ -164,6 +165,9 @@ static void cap_global(void *d, struct wl_registry *r, uint32_t n, const char *s
 	if (!strcmp(s, "wl_output") && !c->output) {
 		c->output = wl_registry_bind(r, n, &wl_output_interface, 1);
 		wl_output_add_listener(c->output, &cap_output_listener, c);
+	} else if (!strcmp(s, "wl_output") && !c->other_output) {
+		c->other_output = wl_registry_bind(r, n, &wl_output_interface, 1);
+		wl_output_add_listener(c->other_output, &cap_output_listener, c);
 	}
 	if (!strcmp(s, cap_list.name)) {
 		c->list = wl_registry_bind(r, n, &cap_list, 1);
@@ -279,6 +283,16 @@ static struct cap_client *cap_start_legacy(const char*socket,int region,int32_t 
  if(!c->legacy||!c->output){wl_display_disconnect(c->display);free(c);return NULL;}
  c->legacy_mode=true;c->legacy_region=region;c->legacy_box[0]=x;c->legacy_box[1]=y;c->legacy_box[2]=w;c->legacy_box[3]=h;
  if(cap_legacy_next(c)<0){wl_display_disconnect(c->display);free(c);return NULL;}return c;
+}
+static int cap_legacy_other_output(struct cap_client*c){
+ if(!c->legacy_mode||!c->legacy||!c->other_output)return -1;
+ struct wl_output*output=c->output;c->output=c->other_output;c->other_output=output;
+ return cap_legacy_next(c);
+}
+static int cap_legacy_drop_manager(struct cap_client*c){
+ if(!c->legacy)return -1;
+ wl_proxy_marshal_flags(c->legacy,2,NULL,3,WL_MARSHAL_FLAG_DESTROY);c->legacy=NULL;
+ return wl_display_roundtrip(c->display);
 }
 static void cap_cursor_enter(void*d,struct wl_proxy*p){struct cap_client*c=d;c->cursor_entered=true;c->enters++;}
 static void cap_cursor_leave(void*d,struct wl_proxy*p){struct cap_client*c=d;c->cursor_entered=false;c->leaves++;}
@@ -451,6 +465,20 @@ func (c *CaptureClient) ArmLegacy(withDamage, invalidStride bool) error {
 	}
 	if C.cap_arm_legacy(c.state, damage, invalid) < 0 {
 		return errors.New("cannot allocate or arm legacy capture frame")
+	}
+	return nil
+}
+
+func (c *CaptureClient) SelectOtherLegacyOutput() error {
+	if C.cap_legacy_other_output(c.state) < 0 {
+		return errors.New("second legacy output unavailable")
+	}
+	return nil
+}
+
+func (c *CaptureClient) DropLegacyManager() error {
+	if C.cap_legacy_drop_manager(c.state) < 0 {
+		return errors.New("cannot destroy legacy manager")
 	}
 	return nil
 }

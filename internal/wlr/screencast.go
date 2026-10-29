@@ -254,13 +254,24 @@ func cloneCastTarget(target ipc.CastTarget) ipc.CastTarget {
 func (c *Compositor) CastSnapshot() []ipc.Cast {
 	casts := make([]ipc.Cast, 0, len(c.casts))
 	for _, s := range c.casts {
-		state := s.state
+		casts = append(casts, s.state)
+	}
+	if c.capture != nil {
+		for client := range c.capture.legacyCasts {
+			casts = append(casts, *client.cast)
+		}
+	}
+	for i := range casts {
+		state := &casts[i]
 		state.Target = cloneCastTarget(state.Target)
 		if state.PWNodeID != nil {
 			node := *state.PWNodeID
 			state.PWNodeID = &node
 		}
-		casts = append(casts, state)
+		if state.PID != nil {
+			pid := *state.PID
+			state.PID = &pid
+		}
 	}
 	slices.SortFunc(casts, func(a, b ipc.Cast) int { return cmp.Compare(a.StreamID, b.StreamID) })
 	return casts
