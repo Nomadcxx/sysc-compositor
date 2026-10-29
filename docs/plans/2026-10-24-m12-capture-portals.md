@@ -163,7 +163,7 @@ Keep these as separate focused changes; they share no new library dependency. Ea
 | Protocol | Owning files and implementation | Smallest proof |
 |---|---|---|
 | gamma-control | `internal/wlr/output.go`, `scene_fx.go`, new `gamma_control_test.go`; connect wlroots' manager to SceneFX's gamma-control integration, retaining its failure/restore behavior | `TestGammaControlAppliesAndRestoresOutputRamp`; cover invalid ramp and unsupported output; validate real hardware separately if vkms cannot apply it |
-| tearing-control | `internal/wlr/output.go`, `input.go`, new `tearing.go`, `tearing_test.go`; retain per-surface hint, use output async-commit capability and Niri's policy | `TestTearingHintRequiresSupportedPresentation`; cover hint destruction, unsupported backend and failed commit falling back to ordinary presentation |
+| tearing-control | `internal/wlr/compositor.go`, new `tearing_test.go`; advertise the global and record per-surface hints; presentation stays vsynced (owner decision 2026-10-29, see the execution record) | `TestTearingHintKeepsVsyncPresentation`; cover hint recording, vsynced commits for a focused fullscreen async window and hint destruction |
 | linux-drm-syncobj | `internal/wlr/compositor.go`, `scene_fx.go`, new `syncobj_test.go`; create the manager only with a suitable DRM fd and renderer/backend timeline support | `TestExplicitSyncWaitsForAcquireBeforePresentation`; prove acquire/release ordering on a supporting renderer; use a separate capability-negative check on vkms if necessary |
 | tablet-v2 | new `internal/wlr/tablet.go`, `tablet_test.go`; use existing input/seat and surface hit-testing paths with wlroots tablet/tool/pad objects | `TestTabletToolFocusButtonsAndRemoval`; cover proximity, axes, tip/button, focus change, pad association and disconnect, plus lock and injected-seat isolation |
 
@@ -365,3 +365,25 @@ CI also exposed a test-client flake: Go's preemption signal can interrupt the ca
 The four gamma tests run on CI's vkms DRM outputs; nested laptop runs pass the unsupported-output
 check and skip the LUT checks. Physical-panel calibration is not qualified and stays a hardware
 limit. Tearing, explicit synchronization and tablets remain Task 7 work.
+
+## Execution record: tearing control, 2026-10-29
+
+The plan assumed honouring the async hint where the output can flip asynchronously. The owner
+reviewed the references first. Niri 26.04 has no tearing-control and never tears. Mango keeps
+the hint but tears only with `allow_tearing` enabled (default disabled), for the selected client
+on its output, falling back when DRM rejects the test commit. Hyprland needs both
+`general:allow_tearing` (default off) and the hint or an `immediate` rule, for the output's
+solitary fullscreen client on DRM, blocked by zoom and a visible hardware pointer. All three
+therefore present with vsync by default. Niri's KDL has no node for an opt-in, and unknown nodes
+are errors, so sysc keeps Niri's behaviour: it advertises `wp_tearing_control_manager_v1` (design
+§7), wlroots records each surface's hint, and frames are never committed with a tearing flip.
+
+`TestTearingHintKeepsVsyncPresentation` failed without the global (the client could not create a
+control) and passes with it on the laptop: a focused fullscreen window's async hint is recorded,
+each frame it paints commits without a tearing flip, and destroying the control returns the hint
+to vsync. The shared toplevel test client gained the protocol; the blur-region test still passes.
+
+Niri's reputation with games, Wine titles in particular, rests on frame pacing rather than
+tearing: per-cycle primary-output frame callbacks, an estimated-vblank timer, a fallback timer
+for hidden surfaces, direct scanout and on-demand VRR. Comparing sysc against those is
+`sysc-2056`. Explicit synchronization and tablets remain Task 7 work.

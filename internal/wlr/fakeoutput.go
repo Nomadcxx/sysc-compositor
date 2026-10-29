@@ -8,6 +8,7 @@ package wlr
 #include <wlr/render/color.h>
 #include <wlr/types/wlr_gamma_control_v1.h>
 #include <wlr/types/wlr_output.h>
+#include <wlr/types/wlr_tearing_control_v1.h>
 #include <wlr/types/wlr_xdg_shell.h>
 #include <scenefx/types/wlr_scene.h>
 
@@ -28,6 +29,10 @@ static bool sysc_test_gamma_commit(void *data, float rgb[3], bool *reset) {
 
 static bool sysc_test_gamma_current(struct wlr_output *output, float rgb[3]) {
 	return sysc_test_gamma_eval(output->WLR_PRIVATE.color_transform, rgb);
+}
+
+static bool sysc_test_commit_tore(void *data) {
+	return ((struct wlr_output_event_commit *)data)->state->tearing_page_flip;
 }
 
 static struct wl_signal *sysc_test_gamma_requests(void *pointer) {
@@ -71,6 +76,20 @@ func gammaCurrentForTest(output unsafe.Pointer) ([3]float64, bool) {
 	var rgb [3]C.float
 	reset := C.sysc_test_gamma_current((*C.struct_wlr_output)(output), &rgb[0])
 	return [3]float64{float64(rgb[0]), float64(rgb[1]), float64(rgb[2])}, bool(reset)
+}
+
+// tearingHintForTest is the presentation hint recorded for a view's surface.
+func tearingHintForTest(c *Compositor, view *toplevelView) uint32 {
+	return uint32(C.wlr_tearing_control_manager_v1_surface_hint_from_surface(
+		c.tearingControl, view.toplevel.base.surface))
+}
+
+// observeTearingCommitsForTest reports whether each output commit tore.
+func observeTearingCommitsForTest(output unsafe.Pointer, notify func(tore bool)) *Listener {
+	out := (*C.struct_wlr_output)(output)
+	return AddListener(unsafe.Pointer(&out.events.commit), func(data unsafe.Pointer) {
+		notify(bool(C.sysc_test_commit_tore(data)))
+	})
 }
 
 func observeGammaCommitsForTest(output unsafe.Pointer, notify func([3]float64, bool)) *Listener {
