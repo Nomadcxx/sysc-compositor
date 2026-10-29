@@ -38,6 +38,7 @@ package wlr
 #include <wlr/types/wlr_seat.h>
 #include <wlr/types/wlr_shm.h>
 #include <wlr/types/wlr_subcompositor.h>
+#include <wlr/types/wlr_tablet_v2.h>
 #include <wlr/types/wlr_tearing_control_v1.h>
 #include <wlr/types/wlr_viewporter.h>
 #include <wlr/types/wlr_xdg_output_v1.h>
@@ -165,6 +166,12 @@ type Compositor struct {
 	// vsynced whatever the hint: Niri never tears, and Mango and Hyprland
 	// tear only after a config opt-in that Niri's KDL has no node for.
 	tearingControl *C.struct_wlr_tearing_control_manager_v1
+	tabletManager  *C.struct_wlr_tablet_manager_v2
+	tablets        map[unsafe.Pointer]*tablet
+	tabletTools    map[*C.struct_wlr_tablet_tool]*tabletTool
+	tabletPads     map[unsafe.Pointer]*tabletPad
+	activeTablet   *tablet
+	tabletConfig   config.Tablet
 	// syncobj is nil where the renderer or backend cannot take timelines.
 	syncobj *C.struct_wlr_linux_drm_syncobj_manager_v1
 
@@ -225,7 +232,7 @@ type Compositor struct {
 	virtualInputGated       bool
 	virtualPointerGuard     unsafe.Pointer
 	keyboardRoutes          map[*C.struct_wlr_keyboard]map[uint32]keyboardRoute
-	pointerButtons          map[*C.struct_wlr_pointer]map[uint32]bool
+	pointerButtons          map[unsafe.Pointer]map[uint32]bool
 	keyboardConfig          Keyboard
 	keyboardRepeatSource    *C.struct_wl_event_source
 	keyboardRepeatKeyboard  *C.struct_wlr_keyboard
@@ -356,6 +363,7 @@ type Options struct {
 	Gestures     config.Gestures
 	Animations   config.Animations
 	Blur         config.Blur
+	Tablet       config.Tablet
 	PreferNoCSD  bool
 	// ScreenshotPath is the screenshot-path pattern, nil for clipboard only.
 	ScreenshotPath *string
@@ -404,6 +412,7 @@ func NewWith(opts Options) (*Compositor, error) {
 		}
 	}()
 	c.overviewConfig = opts.Overview
+	c.tabletConfig = opts.Tablet
 	c.animationConfig = opts.Animations
 	c.blurConfig = opts.Blur
 	c.screenshotPattern = opts.ScreenshotPath
@@ -452,6 +461,9 @@ func NewWith(opts Options) (*Compositor, error) {
 	c.inputDestroyListeners = map[unsafe.Pointer]*Listener{}
 	c.pressedPointerButtons = map[uint32]bool{}
 	c.pointerSerialButtons = map[uint32]uint32{}
+	c.tablets = map[unsafe.Pointer]*tablet{}
+	c.tabletTools = map[*C.struct_wlr_tablet_tool]*tabletTool{}
+	c.tabletPads = map[unsafe.Pointer]*tabletPad{}
 	c.consumedPointerButtons = map[uint32]bool{}
 
 	c.backend = C.wlr_backend_autocreate(c.loop, &c.session)
@@ -571,6 +583,9 @@ func NewWith(opts Options) (*Compositor, error) {
 	if c.seat = C.wlr_seat_create(c.display, cCString("seat0")); c.seat == nil {
 		return nil, errors.New("wlr_seat_create failed")
 	}
+	if err := c.createTabletManager(); err != nil {
+		return nil, err
+	}
 	c.watchSelectionRequests()
 	if err := c.startKeyboardGroup(opts.Keyboard); err != nil {
 		return nil, err
@@ -676,6 +691,7 @@ func (c *Compositor) Reconfigure(opts Options) error {
 	}
 	c.layoutOptions = *opts.Layout
 	c.overviewConfig = opts.Overview
+	c.setTabletConfig(opts.Tablet)
 	c.animationConfig = opts.Animations
 	c.screenshotPattern = opts.ScreenshotPath
 	c.configureSwitcher(*opts.RecentWindows)

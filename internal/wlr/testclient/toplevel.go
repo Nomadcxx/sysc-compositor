@@ -33,6 +33,9 @@ static const struct wl_interface sysc_idle_xdg_toplevel_interface;
 static const struct wl_interface sysc_idle_notification_interface;
 static const struct wl_interface sysc_idle_inhibitor_interface;
 static const struct wl_interface sysc_tearing_control_interface;
+static const struct wl_interface sysc_tablet_seat_interface, sysc_tablet_interface,
+	sysc_tablet_tool_interface, sysc_tablet_pad_interface, sysc_tablet_pad_group_interface,
+	sysc_tablet_pad_ring_interface, sysc_tablet_pad_strip_interface;
 
 static const struct wl_interface *sysc_idle_types[] = {
 	&sysc_idle_xdg_surface_interface, &wl_surface_interface,
@@ -51,6 +54,13 @@ static const struct wl_interface *sysc_idle_types[] = {
 	&sysc_input_popup_interface, &wl_surface_interface,
 	&wl_surface_interface,
 	&sysc_tearing_control_interface, &wl_surface_interface,
+	&sysc_tablet_seat_interface, &wl_seat_interface,
+	&sysc_tablet_interface, &sysc_tablet_tool_interface, &sysc_tablet_pad_interface,
+	NULL, &wl_surface_interface, NULL, NULL,
+	NULL, &sysc_tablet_interface, &wl_surface_interface,
+	&sysc_tablet_pad_group_interface,
+	NULL, &wl_surface_interface,
+	&sysc_tablet_pad_ring_interface, &sysc_tablet_pad_strip_interface,
 };
 static const struct wl_message sysc_idle_wm_base_requests[] = {
 	{"destroy", "", NULL},
@@ -157,6 +167,82 @@ static const struct wl_message sysc_tearing_control_requests[] = {
 };
 static const struct wl_interface sysc_tearing_control_interface = {
 	"wp_tearing_control_v1", 1, 2, sysc_tearing_control_requests, 0, NULL,
+};
+
+// tablet-v2 at version 1: zwp_tablet_manager_v2 down to its pad rings and
+// strips, enough to watch tools and pads reach the toplevel.
+static const struct wl_message sysc_tablet_manager_requests[] = {
+	{"get_tablet_seat", "no", sysc_idle_types + 32},
+	{"destroy", "", NULL},
+};
+static const struct wl_interface sysc_tablet_manager_interface = {
+	"zwp_tablet_manager_v2", 1, 2, sysc_tablet_manager_requests, 0, NULL,
+};
+static const struct wl_message sysc_tablet_destroy_request[] = {{"destroy", "", NULL}};
+static const struct wl_message sysc_tablet_seat_events[] = {
+	{"tablet_added", "n", sysc_idle_types + 34},
+	{"tool_added", "n", sysc_idle_types + 35},
+	{"pad_added", "n", sysc_idle_types + 36},
+};
+static const struct wl_interface sysc_tablet_seat_interface = {
+	"zwp_tablet_seat_v2", 1, 1, sysc_tablet_destroy_request, 3, sysc_tablet_seat_events,
+};
+static const struct wl_message sysc_tablet_events[] = {
+	{"name", "s", NULL}, {"id", "uu", NULL}, {"path", "s", NULL}, {"done", "", NULL},
+	{"removed", "", NULL},
+};
+static const struct wl_interface sysc_tablet_interface = {
+	"zwp_tablet_v2", 1, 1, sysc_tablet_destroy_request, 5, sysc_tablet_events,
+};
+static const struct wl_message sysc_tablet_tool_requests[] = {
+	{"set_cursor", "u?oii", sysc_idle_types + 37},
+	{"destroy", "", NULL},
+};
+static const struct wl_message sysc_tablet_tool_events[] = {
+	{"type", "u", NULL}, {"hardware_serial", "uu", NULL}, {"hardware_id_wacom", "uu", NULL},
+	{"capability", "u", NULL}, {"done", "", NULL}, {"removed", "", NULL},
+	{"proximity_in", "uoo", sysc_idle_types + 41}, {"proximity_out", "", NULL},
+	{"down", "u", NULL}, {"up", "", NULL}, {"motion", "ff", NULL}, {"pressure", "u", NULL},
+	{"distance", "u", NULL}, {"tilt", "ff", NULL}, {"rotation", "f", NULL},
+	{"slider", "i", NULL}, {"wheel", "fi", NULL}, {"button", "uuu", NULL},
+	{"frame", "u", NULL},
+};
+static const struct wl_interface sysc_tablet_tool_interface = {
+	"zwp_tablet_tool_v2", 1, 2, sysc_tablet_tool_requests, 19, sysc_tablet_tool_events,
+};
+static const struct wl_message sysc_tablet_pad_requests[] = {
+	{"set_feedback", "usu", NULL}, {"destroy", "", NULL},
+};
+static const struct wl_message sysc_tablet_pad_events[] = {
+	{"group", "n", sysc_idle_types + 44}, {"path", "s", NULL}, {"buttons", "u", NULL},
+	{"done", "", NULL}, {"button", "uuu", NULL}, {"enter", "uoo", sysc_idle_types + 41},
+	{"leave", "uo", sysc_idle_types + 45}, {"removed", "", NULL},
+};
+static const struct wl_interface sysc_tablet_pad_interface = {
+	"zwp_tablet_pad_v2", 1, 2, sysc_tablet_pad_requests, 8, sysc_tablet_pad_events,
+};
+static const struct wl_message sysc_tablet_pad_group_events[] = {
+	{"buttons", "a", NULL}, {"ring", "n", sysc_idle_types + 47},
+	{"strip", "n", sysc_idle_types + 48}, {"modes", "u", NULL}, {"done", "", NULL},
+	{"mode_switch", "uuu", NULL},
+};
+static const struct wl_interface sysc_tablet_pad_group_interface = {
+	"zwp_tablet_pad_group_v2", 1, 1, sysc_tablet_destroy_request, 6, sysc_tablet_pad_group_events,
+};
+static const struct wl_message sysc_tablet_feedback_requests[] = {
+	{"set_feedback", "su", NULL}, {"destroy", "", NULL},
+};
+static const struct wl_message sysc_tablet_ring_events[] = {
+	{"source", "u", NULL}, {"angle", "f", NULL}, {"stop", "", NULL}, {"frame", "u", NULL},
+};
+static const struct wl_interface sysc_tablet_pad_ring_interface = {
+	"zwp_tablet_pad_ring_v2", 1, 2, sysc_tablet_feedback_requests, 4, sysc_tablet_ring_events,
+};
+static const struct wl_message sysc_tablet_strip_events[] = {
+	{"source", "u", NULL}, {"position", "u", NULL}, {"stop", "", NULL}, {"frame", "u", NULL},
+};
+static const struct wl_interface sysc_tablet_pad_strip_interface = {
+	"zwp_tablet_pad_strip_v2", 1, 2, sysc_tablet_feedback_requests, 4, sysc_tablet_strip_events,
 };
 
 static const struct wl_message sysc_shortcuts_inhibit_manager_requests[] = {
@@ -345,6 +431,12 @@ struct sysc_idle_client {
 	struct wl_proxy *wm_base, *notifier, *inhibit_manager, *cursor_shape_manager;
 	struct wl_proxy *effect_manager, *effect;
 	struct wl_proxy *tearing_manager, *tearing;
+	struct wl_proxy *tablet_manager, *tablet_seat, *other_tablet_seat;
+	int other_seat_tablet_objects;
+	int tablets_added, tablets_removed, tools_added, pads_added, pads_removed;
+	int tool_proximity_ins, tool_proximity_outs, tool_downs, tool_ups, tool_motions;
+	int tool_buttons, tool_pressures, pad_enters, pad_leaves, pad_buttons;
+	bool tool_on_toplevel, pad_on_toplevel;
 	struct wl_proxy *shortcuts_manager, *shortcuts_inhibitor;
 	struct wl_proxy *relative_manager, *relative_pointer, *constraints, *locked_pointer;
 	bool pointer_locked;
@@ -424,6 +516,8 @@ static void sysc_idle_global(void *data, struct wl_registry *registry,
 				&sysc_shortcuts_inhibit_manager_interface, 1);
 	} else if (strcmp(interface, "ext_background_effect_manager_v1") == 0) {
 		c->effect_manager = wl_registry_bind(registry, name, &sysc_effect_manager_interface, 1);
+	} else if (strcmp(interface, "zwp_tablet_manager_v2") == 0) {
+		c->tablet_manager = wl_registry_bind(registry, name, &sysc_tablet_manager_interface, 1);
 	} else if (strcmp(interface, "wp_tearing_control_manager_v1") == 0) {
 		c->tearing_manager = wl_registry_bind(registry, name, &sysc_tearing_manager_interface, 1);
 	} else if (strcmp(interface, "wp_cursor_shape_manager_v1") == 0) {
@@ -780,6 +874,128 @@ static int sysc_client_set_tearing_hint(struct sysc_idle_client *c, uint32_t hin
 	}
 	wl_proxy_marshal_flags(c->tearing, 0, NULL, 1, 0, hint);
 	wl_surface_commit(c->surface);
+	return wl_display_roundtrip(c->display) < 0 ? 3 : 0;
+}
+
+// Tablet-v2 listeners. Each handler takes exactly its event's arguments;
+// fixed-point arguments are 32-bit like the integers they are passed as.
+static void sysc_tablet_none(void *data, struct wl_proxy *proxy) {}
+static void sysc_tablet_u(void *data, struct wl_proxy *proxy, uint32_t a) {}
+static void sysc_tablet_uu(void *data, struct wl_proxy *proxy, uint32_t a, uint32_t b) {}
+static void sysc_tablet_s(void *data, struct wl_proxy *proxy, const char *s) {}
+static void sysc_tablet_removed(void *data, struct wl_proxy *proxy) {
+	((struct sysc_idle_client *)data)->tablets_removed++;
+}
+static void (*sysc_tablet_listener[])(void) = {
+	(void (*)(void))sysc_tablet_s, (void (*)(void))sysc_tablet_uu, (void (*)(void))sysc_tablet_s,
+	(void (*)(void))sysc_tablet_none, (void (*)(void))sysc_tablet_removed,
+};
+static void sysc_tool_proximity_in(void *data, struct wl_proxy *proxy, uint32_t serial,
+		struct wl_proxy *tablet, struct wl_surface *surface) {
+	struct sysc_idle_client *c = data;
+	c->tool_proximity_ins++;
+	c->tool_on_toplevel = surface == c->surface;
+}
+static void sysc_tool_proximity_out(void *data, struct wl_proxy *proxy) {
+	struct sysc_idle_client *c = data;
+	c->tool_proximity_outs++;
+	c->tool_on_toplevel = false;
+}
+static void sysc_tool_down(void *data, struct wl_proxy *proxy, uint32_t serial) {
+	((struct sysc_idle_client *)data)->tool_downs++;
+}
+static void sysc_tool_up(void *data, struct wl_proxy *proxy) {
+	((struct sysc_idle_client *)data)->tool_ups++;
+}
+static void sysc_tool_motion(void *data, struct wl_proxy *proxy, int32_t x, int32_t y) {
+	((struct sysc_idle_client *)data)->tool_motions++;
+}
+static void sysc_tool_pressure(void *data, struct wl_proxy *proxy, uint32_t pressure) {
+	((struct sysc_idle_client *)data)->tool_pressures++;
+}
+static void sysc_tool_button(void *data, struct wl_proxy *proxy, uint32_t serial,
+		uint32_t button, uint32_t state) {
+	((struct sysc_idle_client *)data)->tool_buttons++;
+}
+static void sysc_tool_uuu(void *data, struct wl_proxy *proxy, uint32_t a, uint32_t b, uint32_t c) {}
+static void sysc_tool_removed(void *data, struct wl_proxy *proxy) {}
+static void (*sysc_tool_listener[])(void) = {
+	(void (*)(void))sysc_tablet_u, (void (*)(void))sysc_tablet_uu, (void (*)(void))sysc_tablet_uu,
+	(void (*)(void))sysc_tablet_u, (void (*)(void))sysc_tablet_none, (void (*)(void))sysc_tool_removed,
+	(void (*)(void))sysc_tool_proximity_in, (void (*)(void))sysc_tool_proximity_out,
+	(void (*)(void))sysc_tool_down, (void (*)(void))sysc_tool_up, (void (*)(void))sysc_tool_motion,
+	(void (*)(void))sysc_tool_pressure, (void (*)(void))sysc_tablet_u, (void (*)(void))sysc_tablet_uu,
+	(void (*)(void))sysc_tablet_u, (void (*)(void))sysc_tablet_u, (void (*)(void))sysc_tablet_uu,
+	(void (*)(void))sysc_tool_button, (void (*)(void))sysc_tablet_u,
+};
+static void sysc_pad_group(void *data, struct wl_proxy *proxy, struct wl_proxy *group) {}
+static void sysc_pad_button(void *data, struct wl_proxy *proxy, uint32_t time,
+		uint32_t button, uint32_t state) {
+	((struct sysc_idle_client *)data)->pad_buttons++;
+}
+static void sysc_pad_enter(void *data, struct wl_proxy *proxy, uint32_t serial,
+		struct wl_proxy *tablet, struct wl_surface *surface) {
+	struct sysc_idle_client *c = data;
+	c->pad_enters++;
+	c->pad_on_toplevel = surface == c->surface;
+}
+static void sysc_pad_leave(void *data, struct wl_proxy *proxy, uint32_t serial,
+		struct wl_surface *surface) {
+	struct sysc_idle_client *c = data;
+	c->pad_leaves++;
+	c->pad_on_toplevel = false;
+}
+static void sysc_pad_removed(void *data, struct wl_proxy *proxy) {
+	((struct sysc_idle_client *)data)->pads_removed++;
+}
+static void (*sysc_pad_listener[])(void) = {
+	(void (*)(void))sysc_pad_group, (void (*)(void))sysc_tablet_s, (void (*)(void))sysc_tablet_u,
+	(void (*)(void))sysc_tablet_none, (void (*)(void))sysc_pad_button, (void (*)(void))sysc_pad_enter,
+	(void (*)(void))sysc_pad_leave, (void (*)(void))sysc_pad_removed,
+};
+static void sysc_tablet_added(void *data, struct wl_proxy *seat, struct wl_proxy *tablet) {
+	((struct sysc_idle_client *)data)->tablets_added++;
+	wl_proxy_add_listener(tablet, sysc_tablet_listener, data);
+}
+static void sysc_tool_added(void *data, struct wl_proxy *seat, struct wl_proxy *tool) {
+	((struct sysc_idle_client *)data)->tools_added++;
+	wl_proxy_add_listener(tool, sysc_tool_listener, data);
+}
+static void sysc_pad_added(void *data, struct wl_proxy *seat, struct wl_proxy *pad) {
+	((struct sysc_idle_client *)data)->pads_added++;
+	wl_proxy_add_listener(pad, sysc_pad_listener, data);
+}
+static void (*sysc_tablet_seat_listener[])(void) = {
+	(void (*)(void))sysc_tablet_added, (void (*)(void))sysc_tool_added,
+	(void (*)(void))sysc_pad_added,
+};
+
+// Counts any tablet, tool or pad another seat announces.
+static void sysc_other_seat_tablet_object(void *data, struct wl_proxy *seat, struct wl_proxy *object) {
+	((struct sysc_idle_client *)data)->other_seat_tablet_objects++;
+}
+static void (*sysc_other_tablet_seat_listener[])(void) = {
+	(void (*)(void))sysc_other_seat_tablet_object, (void (*)(void))sysc_other_seat_tablet_object,
+	(void (*)(void))sysc_other_seat_tablet_object,
+};
+
+// Binds the user seat's tablets, which makes the toplevel accept tablet
+// input, or, with other, the second seat's, to watch what it announces.
+static int sysc_client_bind_tablet(struct sysc_idle_client *c, bool other) {
+	struct wl_seat *seat = other ? c->other_seat : c->seat;
+	struct wl_proxy **tablet_seat = other ? &c->other_tablet_seat : &c->tablet_seat;
+	if (c->tablet_manager == NULL || seat == NULL) {
+		return 1;
+	}
+	if (*tablet_seat == NULL) {
+		*tablet_seat = wl_proxy_marshal_flags(c->tablet_manager, 0, &sysc_tablet_seat_interface,
+				1, 0, NULL, seat);
+		if (*tablet_seat == NULL) {
+			return 2;
+		}
+		wl_proxy_add_listener(*tablet_seat,
+				other ? sysc_other_tablet_seat_listener : sysc_tablet_seat_listener, c);
+	}
 	return wl_display_roundtrip(c->display) < 0 ? 3 : 0;
 }
 
@@ -1396,6 +1612,46 @@ func (c *ToplevelClient) DestroyTearingControl() error {
 		return fmt.Errorf("Wayland tearing control destroy failed at step %d", code)
 	}
 	return nil
+}
+
+// BindTablet binds the user seat's tablets, so the toplevel accepts tablet
+// input.
+func (c *ToplevelClient) BindTablet() error { return c.bindTablet(false) }
+
+// BindOtherSeatTablet binds the second advertised seat's tablets; their
+// count is in TabletEvents.OtherSeatObjects.
+func (c *ToplevelClient) BindOtherSeatTablet() error { return c.bindTablet(true) }
+
+func (c *ToplevelClient) bindTablet(other bool) error {
+	if code := int(C.sysc_client_bind_tablet(c.state, C.bool(other))); code != 0 {
+		return fmt.Errorf("Wayland tablet seat request failed at step %d", code)
+	}
+	return nil
+}
+
+// TabletEvents counts the tablet-v2 objects and events the client received.
+type TabletEvents struct {
+	TabletsAdded, TabletsRemoved, ToolsAdded, PadsAdded, PadsRemoved     int
+	ProximityIns, ProximityOuts, Downs, Ups, Motions, Buttons, Pressures int
+	PadEnters, PadLeaves, PadButtons                                     int
+	// OtherSeatObjects counts tablets, tools and pads the second seat announced.
+	OtherSeatObjects int
+	// ToolOnToplevel and PadOnToplevel: the last enter named the toplevel.
+	ToolOnToplevel, PadOnToplevel bool
+}
+
+func (c *ToplevelClient) TabletEvents() TabletEvents {
+	s := c.state
+	return TabletEvents{
+		TabletsAdded: int(s.tablets_added), TabletsRemoved: int(s.tablets_removed),
+		ToolsAdded: int(s.tools_added), PadsAdded: int(s.pads_added), PadsRemoved: int(s.pads_removed),
+		ProximityIns: int(s.tool_proximity_ins), ProximityOuts: int(s.tool_proximity_outs),
+		Downs: int(s.tool_downs), Ups: int(s.tool_ups), Motions: int(s.tool_motions),
+		Buttons: int(s.tool_buttons), Pressures: int(s.tool_pressures),
+		PadEnters: int(s.pad_enters), PadLeaves: int(s.pad_leaves), PadButtons: int(s.pad_buttons),
+		OtherSeatObjects: int(s.other_seat_tablet_objects),
+		ToolOnToplevel:   bool(s.tool_on_toplevel), PadOnToplevel: bool(s.pad_on_toplevel),
+	}
 }
 
 // SetBlurRegion sets the toplevel's ext-background-effect blur region, as
