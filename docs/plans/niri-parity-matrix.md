@@ -22,7 +22,7 @@ Legend: `[ ]` missing · `[~]` partial · `[x]` done.
 | PickColor | [ ] | M15 |
 | Action | [~] | M2: all 141 decode; per-action below |
 | Output | [ ] | M15 |
-| EventStream | [~] | M3/M9 — initial baseline, workspace and keyboard updates, plus config reload results; remaining events land with their owning milestones |
+| EventStream | [x] | M3–M12 — bounded subscribers, current baseline and all 19 event variants, including mixed PipeWire/legacy cast activity |
 | ReturnError | [x] | M2 |
 | OverviewState | [x] | M7 — Niri 26.04 query returns open state |
 | Casts | [x] | M12 — immutable PipeWire and legacy damage-copy activity, shared unique IDs, pending dynamic targets, peer PID, queue-head output and inactivity expiry (`sysc-2042`) |
