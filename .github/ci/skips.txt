@@ -6,3 +6,4 @@
 TestNestedSessionEndsWhenLastOutputCloses needs the nested backend: it closes the host window
 TestOutputFollowsHostResize needs the nested backend: the host resizes its window
 TestNativeIBusComposesInGTK requires packaged IBus and Python GTK introspection; exercised on the baremetal bench
+TestExplicitSyncVulkanClientPresentsAndReleases needs a render node with DRM syncobj timelines and vkcube; exercised on the laptop bench
