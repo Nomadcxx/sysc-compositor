@@ -22,14 +22,21 @@ type spawner struct {
 
 type spawnEnvironment struct {
 	mu  sync.RWMutex
-	env []string
+	set map[string]*string
 }
 
-// newSpawner builds the child environment once: ours, with the nested Wayland
-// socket and the niri socket set, NOTIFY_SOCKET and DISPLAY removed (no
-// Xwayland yet), and the config's environment applied last. A nil value
-// removes a variable, as `NAME null` does in Niri's `environment {}`.
+// newSpawner records what children get on top of this process's
+// environment: the nested Wayland socket and the niri socket, NOTIFY_SOCKET
+// and DISPLAY removed (no Xwayland yet), and the config's environment last.
+// A nil value removes a variable, as `NAME null` does in Niri's
+// `environment {}`. The process environment itself is read at each spawn,
+// so children see what --session sets after the spawner exists, as Niri's
+// children inherit its environment.
 func newSpawner(waylandDisplay, niriSocket string, configured map[string]*string, cursor config.Cursor) spawner {
+	return spawner{environment: &spawnEnvironment{set: spawnOverlay(waylandDisplay, niriSocket, configured, cursor)}}
+}
+
+func spawnOverlay(waylandDisplay, niriSocket string, configured map[string]*string, cursor config.Cursor) map[string]*string {
 	set := map[string]*string{}
 	str := func(v string) *string { return &v }
 	set["WAYLAND_DISPLAY"] = str(waylandDisplay)
@@ -42,32 +49,32 @@ func newSpawner(waylandDisplay, niriSocket string, configured map[string]*string
 	for k, v := range configured {
 		set[k] = v
 	}
-	var env []string
-	for _, kv := range os.Environ() {
-		name, _, _ := strings.Cut(kv, "=")
-		if _, ok := set[name]; !ok {
-			env = append(env, kv)
-		}
-	}
-	for k, v := range set {
-		if v != nil {
-			env = append(env, k+"="+*v)
-		}
-	}
-	return spawner{environment: &spawnEnvironment{env: env}}
+	return set
 }
 
 func (s spawner) updateEnvironment(waylandDisplay, niriSocket string, configured map[string]*string, cursor config.Cursor) {
-	next := newSpawner(waylandDisplay, niriSocket, configured, cursor).environment.env
+	next := spawnOverlay(waylandDisplay, niriSocket, configured, cursor)
 	s.environment.mu.Lock()
-	s.environment.env = next
+	s.environment.set = next
 	s.environment.mu.Unlock()
 }
 
 func (s spawner) childEnvironment() []string {
 	s.environment.mu.RLock()
 	defer s.environment.mu.RUnlock()
-	return append([]string(nil), s.environment.env...)
+	var env []string
+	for _, kv := range os.Environ() {
+		name, _, _ := strings.Cut(kv, "=")
+		if _, ok := s.environment.set[name]; !ok {
+			env = append(env, kv)
+		}
+	}
+	for k, v := range s.environment.set {
+		if v != nil {
+			env = append(env, k+"="+*v)
+		}
+	}
+	return env
 }
 
 // spawn starts argv and returns once it is running or has failed to start.
