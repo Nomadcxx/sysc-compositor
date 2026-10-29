@@ -46,9 +46,16 @@ static void sysc_pw_core_done(void *data, uint32_t id, int seq) {
   sysc_listener_fire(p->token, &event);
  }
 }
+// Only a broken connection to the daemon ends screencasting, as in Niri
+// (pw_utils.rs): an error on the core itself. PipeWire reports a link that
+// failed to negotiate as EPIPE on that link or node, and that ends only the
+// stream concerned.
+static bool sysc_pw_error_fatal(uint32_t id, int res) {
+ return id == PW_ID_CORE && (res == -EPIPE || res == -ECONNRESET);
+}
 static void sysc_pw_core_error(void *data, uint32_t id, int seq, int res, const char *message) {
  struct sysc_pw *p = data;
- if (id != PW_ID_CORE && res != -EPIPE && res != -ECONNRESET) return;
+ if (!sysc_pw_error_fatal(id, res)) return;
  struct sysc_pw_event event = { .kind = 2, .error = message };
  sysc_listener_fire(p->token, &event);
 }
@@ -99,15 +106,19 @@ failed:
  return NULL;
 }
 
+// A variable frame rate up to the output's refresh, as Niri offers
+// (pw_utils.rs make_video_params). A fixed refresh rate leaves no
+// intersection with consumers such as libwebrtc that cap the rate below it.
 static const struct spa_pod *sysc_pw_format(struct sysc_pw_stream *s, struct spa_pod_builder *b) {
  struct spa_rectangle size = {s->width, s->height};
- struct spa_fraction fps = {s->rate, 1000};
+ struct spa_fraction variable = {0, 1}, slowest = {1, 1}, fastest = {s->rate, 1000};
  return spa_pod_builder_add_object(b, SPA_TYPE_OBJECT_Format, SPA_PARAM_EnumFormat,
   SPA_FORMAT_mediaType, SPA_POD_Id(SPA_MEDIA_TYPE_video),
   SPA_FORMAT_mediaSubtype, SPA_POD_Id(SPA_MEDIA_SUBTYPE_raw),
   SPA_FORMAT_VIDEO_format, SPA_POD_Id(SPA_VIDEO_FORMAT_RGBA),
   SPA_FORMAT_VIDEO_size, SPA_POD_Rectangle(&size),
-  SPA_FORMAT_VIDEO_framerate, SPA_POD_Fraction(&fps));
+  SPA_FORMAT_VIDEO_framerate, SPA_POD_Fraction(&variable),
+  SPA_FORMAT_VIDEO_maxFramerate, SPA_POD_CHOICE_RANGE_Fraction(&fastest, &slowest, &fastest));
 }
 static void sysc_pw_stream_tick(void *data, uint64_t expirations) {
  struct sysc_pw_stream *s = data;
@@ -319,6 +330,11 @@ func (c *Compositor) startPipeWire(ready, lost func(error)) error {
 	}
 	c.pipewire = p
 	return nil
+}
+
+// pipeWireErrorFatal reports whether a core error event ends screencasting.
+func pipeWireErrorFatal(id uint32, res int) bool {
+	return bool(C.sysc_pw_error_fatal(C.uint32_t(id), C.int(res)))
 }
 
 func (p *pipeWire) event(event *C.struct_sysc_pw_event) {
