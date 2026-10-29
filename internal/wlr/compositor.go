@@ -37,6 +37,7 @@ package wlr
 #include <wlr/types/wlr_seat.h>
 #include <wlr/types/wlr_shm.h>
 #include <wlr/types/wlr_subcompositor.h>
+#include <wlr/types/wlr_tearing_control_v1.h>
 #include <wlr/types/wlr_viewporter.h>
 #include <wlr/types/wlr_xdg_output_v1.h>
 #include <wlr/types/wlr_xdg_activation_v1.h>
@@ -144,6 +145,10 @@ type Compositor struct {
 	layerShell           *C.struct_wlr_layer_shell_v1
 	socketName           string
 	listeners            map[*Listener]struct{}
+	// tearingControl records each surface's presentation hint. Frames stay
+	// vsynced whatever the hint: Niri never tears, and Mango and Hyprland
+	// tear only after a config opt-in that Niri's KDL has no node for.
+	tearingControl *C.struct_wlr_tearing_control_manager_v1
 
 	loop                    *C.struct_wl_event_loop
 	cursor                  *C.struct_wlr_cursor
@@ -488,6 +493,9 @@ func NewWith(opts Options) (*Compositor, error) {
 		return nil, errors.New("wlr_gamma_control_manager_v1_create failed")
 	}
 	C.wlr_scene_set_gamma_control_manager_v1(c.scene, gamma)
+	if c.tearingControl = C.wlr_tearing_control_manager_v1_create(c.display, 1); c.tearingControl == nil {
+		return nil, errors.New("wlr_tearing_control_manager_v1_create failed")
+	}
 	c.applyBlurConfig()
 	if !c.createLayerTrees() {
 		return nil, errors.New("wlr_scene_tree_create failed")

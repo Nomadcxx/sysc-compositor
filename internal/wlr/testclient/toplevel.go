@@ -32,6 +32,7 @@ static const struct wl_interface sysc_virtual_keyboard_interface, sysc_virtual_p
 static const struct wl_interface sysc_idle_xdg_toplevel_interface;
 static const struct wl_interface sysc_idle_notification_interface;
 static const struct wl_interface sysc_idle_inhibitor_interface;
+static const struct wl_interface sysc_tearing_control_interface;
 
 static const struct wl_interface *sysc_idle_types[] = {
 	&sysc_idle_xdg_surface_interface, &wl_surface_interface,
@@ -49,6 +50,7 @@ static const struct wl_interface *sysc_idle_types[] = {
 	&wl_seat_interface, &sysc_input_method_interface,
 	&sysc_input_popup_interface, &wl_surface_interface,
 	&wl_surface_interface,
+	&sysc_tearing_control_interface, &wl_surface_interface,
 };
 static const struct wl_message sysc_idle_wm_base_requests[] = {
 	{"destroy", "", NULL},
@@ -140,6 +142,21 @@ static const struct wl_message sysc_effect_surface_requests[] = {
 };
 static const struct wl_interface sysc_effect_surface_interface = {
 	"ext_background_effect_surface_v1", 1, 2, sysc_effect_surface_requests, 0, NULL,
+};
+
+static const struct wl_message sysc_tearing_manager_requests[] = {
+	{"destroy", "", NULL},
+	{"get_tearing_control", "no", sysc_idle_types + 30},
+};
+static const struct wl_interface sysc_tearing_manager_interface = {
+	"wp_tearing_control_manager_v1", 1, 2, sysc_tearing_manager_requests, 0, NULL,
+};
+static const struct wl_message sysc_tearing_control_requests[] = {
+	{"set_presentation_hint", "u", NULL},
+	{"destroy", "", NULL},
+};
+static const struct wl_interface sysc_tearing_control_interface = {
+	"wp_tearing_control_v1", 1, 2, sysc_tearing_control_requests, 0, NULL,
 };
 
 static const struct wl_message sysc_shortcuts_inhibit_manager_requests[] = {
@@ -327,6 +344,7 @@ struct sysc_idle_client {
 	int pointer_buttons, pointer_axes;
 	struct wl_proxy *wm_base, *notifier, *inhibit_manager, *cursor_shape_manager;
 	struct wl_proxy *effect_manager, *effect;
+	struct wl_proxy *tearing_manager, *tearing;
 	struct wl_proxy *shortcuts_manager, *shortcuts_inhibitor;
 	struct wl_proxy *relative_manager, *relative_pointer, *constraints, *locked_pointer;
 	bool pointer_locked;
@@ -406,6 +424,8 @@ static void sysc_idle_global(void *data, struct wl_registry *registry,
 				&sysc_shortcuts_inhibit_manager_interface, 1);
 	} else if (strcmp(interface, "ext_background_effect_manager_v1") == 0) {
 		c->effect_manager = wl_registry_bind(registry, name, &sysc_effect_manager_interface, 1);
+	} else if (strcmp(interface, "wp_tearing_control_manager_v1") == 0) {
+		c->tearing_manager = wl_registry_bind(registry, name, &sysc_tearing_manager_interface, 1);
 	} else if (strcmp(interface, "wp_cursor_shape_manager_v1") == 0) {
 		c->cursor_shape_manager = wl_registry_bind(registry, name, &sysc_cursor_shape_manager_interface, 1);
 	}
@@ -743,6 +763,34 @@ static int sysc_client_set_blur_region(struct sysc_idle_client *c, const int32_t
 	wl_region_destroy(region);
 	wl_surface_commit(c->surface);
 	return wl_display_roundtrip(c->display) < 0 ? 4 : 0;
+}
+
+// Sets the toplevel surface's presentation hint (0 vsync, 1 async), creating
+// its tearing control first, and commits the surface.
+static int sysc_client_set_tearing_hint(struct sysc_idle_client *c, uint32_t hint) {
+	if (c->tearing_manager == NULL) {
+		return 1;
+	}
+	if (c->tearing == NULL) {
+		c->tearing = wl_proxy_marshal_flags(c->tearing_manager, 1, &sysc_tearing_control_interface,
+				1, 0, NULL, c->surface);
+		if (c->tearing == NULL) {
+			return 2;
+		}
+	}
+	wl_proxy_marshal_flags(c->tearing, 0, NULL, 1, 0, hint);
+	wl_surface_commit(c->surface);
+	return wl_display_roundtrip(c->display) < 0 ? 3 : 0;
+}
+
+// Destroys the surface's tearing control, which drops its hint.
+static int sysc_client_destroy_tearing_control(struct sysc_idle_client *c) {
+	if (c->tearing == NULL) {
+		return 1;
+	}
+	wl_proxy_marshal_flags(c->tearing, 1, NULL, 1, WL_MARSHAL_FLAG_DESTROY);
+	c->tearing = NULL;
+	return wl_display_roundtrip(c->display) < 0 ? 2 : 0;
 }
 
 static void sysc_relative_motion(void *data, struct wl_proxy *proxy, uint32_t hi, uint32_t lo,
@@ -1329,6 +1377,23 @@ func (c *ToplevelClient) WaitPointerEnter(timeout time.Duration) bool {
 func (c *ToplevelClient) SetCursorShape(shape uint32) error {
 	if code := int(C.sysc_client_set_cursor_shape(c.state, C.uint32_t(shape))); code != 0 {
 		return fmt.Errorf("Wayland cursor-shape request failed at step %d", code)
+	}
+	return nil
+}
+
+// SetTearingHint sets the toplevel surface's tearing-control presentation
+// hint (0 vsync, 1 async) and commits it.
+func (c *ToplevelClient) SetTearingHint(hint uint32) error {
+	if code := int(C.sysc_client_set_tearing_hint(c.state, C.uint32_t(hint))); code != 0 {
+		return fmt.Errorf("Wayland tearing hint request failed at step %d", code)
+	}
+	return nil
+}
+
+// DestroyTearingControl destroys the surface's tearing control.
+func (c *ToplevelClient) DestroyTearingControl() error {
+	if code := int(C.sysc_client_destroy_tearing_control(c.state)); code != 0 {
+		return fmt.Errorf("Wayland tearing control destroy failed at step %d", code)
 	}
 	return nil
 }
