@@ -80,6 +80,27 @@ func TestSpawnerEnvironmentUpdateAffectsExistingHandlers(t *testing.T) {
 	}
 }
 
+// TestSpawnerFollowsTheSessionEnvironment: --session sets XDG_CURRENT_DESKTOP,
+// XDG_SESSION_TYPE and SYSC_SOCKET after the spawner exists, and children
+// must see them, as Niri's do. Without XDG_SESSION_TYPE, Firefox's WebRTC
+// assumes X11 and finds nothing to share through the portal.
+func TestSpawnerFollowsTheSessionEnvironment(t *testing.T) {
+	t.Setenv("XDG_SESSION_TYPE", "")
+	s := newSpawner("wayland-9", "", nil, config.Default().Cursor)
+	t.Setenv("XDG_SESSION_TYPE", "wayland")
+	t.Setenv("XDG_CURRENT_DESKTOP", "niri:sysc")
+	got := make(map[string]string)
+	for _, item := range s.childEnvironment() {
+		if name, value, ok := strings.Cut(item, "="); ok {
+			got[name] = value
+		}
+	}
+	if got["XDG_SESSION_TYPE"] != "wayland" || got["XDG_CURRENT_DESKTOP"] != "niri:sysc" {
+		t.Fatalf("child environment missed the session variables: XDG_SESSION_TYPE=%q XDG_CURRENT_DESKTOP=%q",
+			got["XDG_SESSION_TYPE"], got["XDG_CURRENT_DESKTOP"])
+	}
+}
+
 func TestExpandHome(t *testing.T) {
 	t.Setenv("HOME", "/home/test")
 	for in, want := range map[string]string{"~": "/home/test", "~/bin/x": "/home/test/bin/x", "kitty": "kitty", "~x": "~x"} {
