@@ -25,7 +25,7 @@ Legend: `[ ]` missing · `[~]` partial · `[x]` done.
 | EventStream | [~] | M3/M9 — initial baseline, workspace and keyboard updates, plus config reload results; remaining events land with their owning milestones |
 | ReturnError | [x] | M2 |
 | OverviewState | [x] | M7 — Niri 26.04 query returns open state |
-| Casts | [~] | M12 — immutable PipeWire stream/session/target/node/activity snapshots, including pending dynamic streams; legacy wlr-screencopy activity tracking remains |
+| Casts | [~] | M12 — immutable PipeWire stream/session/target/node/activity snapshots, including pending dynamic streams; legacy wlr-screencopy activity tracking remains (`sysc-2042`) |
 
 ## Events (19)
 

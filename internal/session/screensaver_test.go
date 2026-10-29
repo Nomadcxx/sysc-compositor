@@ -62,6 +62,10 @@ func TestScreenSaverInhibitsPerSenderAndDropsDepartedCallers(t *testing.T) {
 	if !receive(t, changes) {
 		t.Fatal("first inhibitor did not inhibit")
 	}
+	if err := second.Emit("/org/freedesktop/DBus", "org.freedesktop.DBus.NameOwnerChanged", first.Names()[0], first.Names()[0], ""); err != nil {
+		t.Fatal(err)
+	}
+	expectNoChange(t, changes)
 	b := inhibit(t, second, "/ScreenSaver")
 	if a == b {
 		t.Fatalf("two inhibitors share cookie %d", a)

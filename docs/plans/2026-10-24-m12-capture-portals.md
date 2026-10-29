@@ -260,6 +260,8 @@ stream parameters and node signals. It advertises only after native core initial
 ties publication to that core's cancellable lifetime. Caller departure, shutdown and daemon
 loss retire sessions. A forged NameOwnerChanged regression failed before the portal matched
 and checked the bus sender; the corrected cleanup accepts only the bus daemon's signals.
+The existing ScreenSaver watcher had the same trust-boundary defect. Its cookie-lifetime test
+also failed on a forged departure, then passed with the sender check.
 
 The compositor owns monitor/window targets, dynamic pending streams, privacy-aware frames and
 sorted immutable Cast snapshots. Dynamic target IDs share the mapping allocator but appear
@@ -283,6 +285,6 @@ eight-transform checks pass. Independent ownership and D-Bus reviews found no re
 important issue after the fixes. CI still gates merge.
 
 This change proves compositor/PipeWire integration. GNOME/browser/OBS consumer acceptance,
-legacy wlr-screencopy activity reporting in Casts/events and Task 7 protocols remain M12 work.
+legacy wlr-screencopy activity reporting in Casts/events (`sysc-2042`) and Task 7 protocols remain M12 work.
 The owner restricted runtime testing to the laptop bench; no desktop compositor test ran and
 no installed binary, host portal configuration or host service changed.
