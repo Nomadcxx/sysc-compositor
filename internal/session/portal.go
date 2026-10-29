@@ -51,21 +51,20 @@ type portalRequest struct {
 // Portal owns the session-only discovery and screenshot interfaces. Construction
 // is explicit: nested servers never call StartPortal and never acquire names.
 type Portal struct {
-	conn                            *dbus.Conn
-	hooks                           PortalHooks
-	ctx                             context.Context
-	cancel                          context.CancelFunc
-	close                           sync.Once
-	wg                              sync.WaitGroup
-	signals                         chan *dbus.Signal
-	manualReplies                   *sync.Map
-	mu                              sync.Mutex
-	requests                        map[*portalRequest]struct{}
-	names                           []string
-	state                           displayState
-	windows                         map[uint64]map[string]dbus.Variant
-	screenCast                      *screenCastService
-	nextCastSession, nextCastStream uint64
+	conn          *dbus.Conn
+	hooks         PortalHooks
+	ctx           context.Context
+	cancel        context.CancelFunc
+	close         sync.Once
+	wg            sync.WaitGroup
+	signals       chan *dbus.Signal
+	manualReplies *sync.Map
+	mu            sync.Mutex
+	requests      map[*portalRequest]struct{}
+	names         []string
+	state         displayState
+	windows       map[uint64]map[string]dbus.Variant
+	screenCast    *screenCastService
 }
 
 func StartPortal(hooks PortalHooks) (*Portal, error) { return connectPortal("", hooks) }

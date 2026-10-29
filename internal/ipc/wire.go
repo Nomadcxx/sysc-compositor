@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"math"
 	"slices"
+	"sync/atomic"
 )
 
 // ErrParse is Niri's reply to a request it cannot decode. Niri sends only this
@@ -146,6 +147,13 @@ type OverviewState struct {
 }
 
 type CastKind string
+
+// Session services and Wayland capture share process-lifetime IDs, as Niri's
+// CastSessionId/CastStreamId counters do. Allocation crosses owner threads.
+var castSessionID, castStreamID atomic.Uint64
+
+func NextCastSessionID() uint64 { return castSessionID.Add(1) }
+func NextCastStreamID() uint64  { return castStreamID.Add(1) }
 
 const (
 	CastKindPipeWire      CastKind = "PipeWire"

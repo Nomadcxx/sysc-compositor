@@ -167,8 +167,7 @@ func (s *screenCastService) CreateSession(sender dbus.Sender, properties map[str
 	if ctx.Err() != nil || s.p.screenCast != s {
 		return "", dbus.MakeFailedError(errors.New("ScreenCast unavailable"))
 	}
-	s.p.nextCastSession++
-	id := s.p.nextCastSession
+	id := ipc.NextCastSessionID()
 	path := dbus.ObjectPath(fmt.Sprintf("%s/Session/u%d", screenCastPath, id))
 	sessionCtx, cancel := context.WithCancel(s.p.ctx)
 	session := &castSession{service: s, id: id, path: path, owner: sender, ctx: sessionCtx, cancel: cancel}
@@ -240,8 +239,7 @@ func (s *castSession) record(target ipc.CastTarget, properties map[string]dbus.V
 	if err != nil {
 		return "", err
 	}
-	s.service.p.nextCastStream++
-	id := s.service.p.nextCastStream
+	id := ipc.NextCastStreamID()
 	path := dbus.ObjectPath(fmt.Sprintf("%s/Stream/u%d", screenCastPath, id))
 	stream := &castStream{path: path, request: CastRequest{SessionID: s.id, StreamID: id, Target: target, CursorMode: mode}}
 	params := map[string]dbus.Variant{"position": dbus.MakeVariant(struct{ X, Y int32 }{x, y}), "size": dbus.MakeVariant(struct{ W, H int32 }{width, height})}

@@ -2,12 +2,14 @@ package server
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -217,8 +219,100 @@ context.modules = [
 	if frame.Width != 64 || frame.Height != 32 || [4]byte(frame.Pixels[:4]) != [4]byte{0x34, 0x98, 0xdb, 255} {
 		t.Fatalf("wrong frame: %dx%d", frame.Width, frame.Height)
 	}
+	legacy, err := testclient.StartLegacyCapture(s.c.SocketName(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if legacy != nil {
+			legacy.Close()
+		}
+	}()
+	if err := legacy.ArmLegacy(true, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := legacy.Sync(); err != nil {
+		t.Fatal(err)
+	}
+	wait(func() bool { return len(s.state.snapshot().casts) == 2 }, "legacy cast not published alongside PipeWire")
+	mixed := s.state.snapshot().casts
+	if mixed[0].StreamID == mixed[1].StreamID || mixed[0].SessionID == mixed[1].SessionID {
+		t.Fatal("cast producers share identity")
+	}
+	var pwID, legacyID uint64
+	for _, cast := range mixed {
+		if cast.Kind == ipc.CastKindPipeWire {
+			pwID = cast.StreamID
+		}
+		if cast.Kind == ipc.CastKindWlrScreencopy && cast.PID != nil && *cast.PID == int32(os.Getpid()) {
+			legacyID = cast.StreamID
+		}
+	}
+	if pwID == 0 || legacyID == 0 {
+		t.Fatalf("mixed cast state=%+v", mixed)
+	}
+	events, err := net.DialTimeout("unix", s.NiriSocket(), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer events.Close()
+	_ = events.SetDeadline(time.Now().Add(3 * time.Second))
+	if _, err := fmt.Fprintln(events, `"EventStream"`); err != nil {
+		t.Fatal(err)
+	}
+	reader := bufio.NewReader(events)
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(line, `"CastsChanged"`) {
+			var baseline struct {
+				CastsChanged struct {
+					Casts []ipc.Cast `json:"casts"`
+				}
+			}
+			if err := json.Unmarshal([]byte(line), &baseline); err != nil {
+				t.Fatal(err)
+			}
+			if len(baseline.CastsChanged.Casts) != 2 {
+				t.Fatalf("mixed baseline=%s", line)
+			}
+			break
+		}
+	}
 	_ = daemon.Process.Kill()
-	wait(func() bool { return !ownsName(name) && len(s.state.snapshot().casts) == 0 }, "PipeWire loss retained service or casts")
+	wait(func() bool { return !ownsName(name) && len(s.state.snapshot().casts) == 1 }, "PipeWire loss did not isolate legacy activity")
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(line, `"CastStopped"`) {
+			var event struct {
+				CastStopped struct {
+					StreamID uint64 `json:"stream_id"`
+				}
+			}
+			if err := json.Unmarshal([]byte(line), &event); err != nil {
+				t.Fatal(err)
+			}
+			if event.CastStopped.StreamID != pwID {
+				t.Fatalf("daemon loss stopped wrong stream: %s", line)
+			}
+			break
+		}
+	}
+	if remaining := s.state.snapshot().casts; remaining[0].StreamID != legacyID {
+		t.Fatal("PipeWire loss removed legacy cast")
+	}
+	legacy.Close()
+	legacy = nil
+	wait(func() bool { return len(s.state.snapshot().casts) == 0 }, "legacy departure retained cast")
+	line, err := reader.ReadString('\n')
+	if err != nil || !strings.Contains(line, fmt.Sprintf(`"CastStopped":{"stream_id":%d}`, legacyID)) {
+		t.Fatalf("legacy stop event=%s: %v", line, err)
+	}
 	if !ownsName("org.gnome.Shell.Screenshot") {
 		t.Fatal("PipeWire loss removed other session services")
 	}

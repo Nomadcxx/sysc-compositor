@@ -131,6 +131,31 @@ Before merging each change: `gofmt -l .`, `git diff --check`, `env GOMAXPROCS=2 
 5. Add niri-ipc 26.4.0 `Cast` wire types, Casts responses, `CastsChanged`, `CastStartedOrChanged`, `CastStopped`, and SetDynamicCastWindow/Monitor, ClearDynamicCastTarget and StopCast actions. Replace the empty EventStream baseline with the current cast snapshot. Keep casts compositor-owned and expose immutable state to the server.
 6. Add `TestCastIPCTracksDynamicTargetAndStop`, plus `TestScreenCastProducesFramesAndSurvivesPipeWireLoss` in the VM: verify a known pixel, dimensions, cursor mode, protected-window pixels, dynamic retargeting, resize, stop and loss of PipeWire. Log and disable ScreenCast when PipeWire cannot initialize, preserving the running desktop and other services. A missing-PipeWire run alone is not milestone proof.
 
+### Task 6 close-out: legacy cast activity (`sysc-2042`)
+
+Niri's `src/protocols/screencopy.rs` tracks one activity record per screencopy manager, beginning
+with a valid damage-copy request. Its front pending frame chooses the reported output; an empty
+queue retains the last output for ten seconds. Outstanding frames prevent inactivity expiry.
+Manager destruction keeps unfinished frames alive, then retires activity when its last frame
+finishes. Ordinary screenshots create no activity record. Read this alongside the Casts
+publisher in `src/ipc/server.rs`.
+
+Use Mango's resource-bound capture-session cleanup pattern (`src/manage/misc.c`,
+`handle_ext_image_copy_capture_new_session` / `handle_session_destroy`) at the existing Go legacy
+capture owner. Keep sysc's preview/cast privacy policy and Pleamar-derived seat/Stop isolation
+from the approved capability design; a global capture count is insufficient for per-caller IPC.
+
+1. Prove missing activity with a named legacy wire regression, then share process-lifetime
+   session/stream ID allocation between D-Bus and legacy capture with standard atomic counters.
+2. Extend the legacy owner with queue/output/PID/lifetime state and a ten-second inactivity
+   timer posted to the compositor thread. Publish through the existing immutable Cast snapshot
+   and event path; never call wlroots from the timer goroutine.
+3. Prove ordinary-copy exclusion, independent managers, queue-head selection, idle expiry,
+   pending-frame lifetime, output removal, caller departure and shutdown. Extend the real
+   private-bus/PipeWire integration test to prove mixed cast IDs/events and loss isolation.
+4. Run named baremetal checks, local review and both CI lanes before merge. This closes legacy
+   cast reporting only; portal-consumer acceptance and the Task 7 globals remain separate.
+
 ## Task 7: gamma, tearing, explicit synchronization and tablets
 
 Keep these as separate focused changes; they share no new library dependency. Each must have a handler and behavioral proof before its matrix row changes to complete.
@@ -288,3 +313,30 @@ This change proves compositor/PipeWire integration. GNOME/browser/OBS consumer a
 legacy wlr-screencopy activity reporting in Casts/events (`sysc-2042`) and Task 7 protocols remain M12 work.
 The owner restricted runtime testing to the laptop bench; no desktop compositor test ran and
 no installed binary, host portal configuration or host service changed.
+
+## Execution record: legacy cast activity, 2026-10-29
+
+`TestLegacyScreencopyReportsCastLifecycle` failed with no cast for a valid damage-copy request,
+then passed after the existing legacy owner gained activity tracking. Ordinary copies remain
+screenshots. Each manager owns its peer PID, outstanding frames, queue-front output and a
+ten-second idle deadline. A destroyed manager retains pending frames; the last frame retires
+its activity. Completed frames leave an otherwise live manager visible until inactivity expiry.
+Snapshots deep-copy output names and PIDs. Standard atomic counters allocate session/stream
+IDs across D-Bus and Wayland producers, matching Niri's process-lifetime identity.
+
+The pinned Niri screencopy queue supplies timing/output semantics. Mango's resource-bound
+capture-session cleanup supplies the native lifecycle pattern. Existing sysc/Pleamar-derived
+capture privacy, injected-seat isolation and Stop ownership stay with their current owners.
+
+Named baremetal checks pass for lifecycle/PID/snapshot isolation, the real ten-second timeout
+and renewed identity, output switching and pending frames after manager destruction. The
+private-bus/PipeWire integration check now proves a mixed CastsChanged baseline, distinct IDs,
+and CastStopped events for independent producer retirement. PipeWire loss leaves legacy capture
+active. The pure queue/deadline check, private-bus service checks and legacy capture privacy/damage
+regression pass. Independent review found no critical or important issue. Vet, entry-point builds,
+formatting and whitespace checks pass; merges require both CI lanes. Local linking used project
+filesystem intermediates after the default temporary filesystem hit its storage quota.
+
+The release assessment now records the selected Mango/Pleamar work and its remaining owners.
+This closes the legacy reporting slice only; real portal consumers and the Task 7 protocols
+remain M12 gates.

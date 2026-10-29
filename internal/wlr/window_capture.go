@@ -4,6 +4,7 @@ package wlr
 #cgo pkg-config: wlroots-0.20 wayland-server libdrm
 #cgo CFLAGS: -DWLR_USE_UNSTABLE
 #include <stdint.h>
+#include <sys/types.h>
 #include <wlr/types/wlr_buffer.h>
 #include <wlr/types/wlr_compositor.h>
 #include <wlr/types/wlr_ext_image_capture_source_v1.h>
@@ -38,9 +39,12 @@ import (
 	"image/draw"
 	"math"
 	"runtime/cgo"
+	"slices"
+	"time"
 	"unsafe"
 
 	"github.com/Nomadcxx/sysc-compositor/internal/config"
+	"github.com/Nomadcxx/sysc-compositor/internal/ipc"
 )
 
 type captureProtocol struct {
@@ -50,6 +54,8 @@ type captureProtocol struct {
 	sessions            map[*C.struct_wlr_ext_image_copy_capture_session_v1]*captureSession
 	frames              map[*C.struct_wl_resource]*legacyCapture
 	clients             map[*C.struct_wl_resource]*legacyCaptureClient
+	legacyCasts         map[*legacyCaptureClient]struct{}
+	stopping            bool
 	generation          uint64
 	sessionNew          *Listener
 	surfaceDamageQueued bool
@@ -76,12 +82,23 @@ type captureSession struct {
 	paint     bool
 	destroyed *Listener
 }
-type legacyCaptureClient struct{ generation map[unsafe.Pointer]uint64 }
+type legacyCaptureClient struct {
+	c            *Compositor
+	generation   map[unsafe.Pointer]uint64
+	managerAlive bool
+	pending      int
+	pid          *int32
+	cast         *ipc.Cast
+	queue        []*legacyCapture
+	deadline     time.Time
+	timer        *time.Timer
+}
 type legacyCapture struct {
 	c                                       *Compositor
 	resource                                *C.struct_wl_resource
 	client                                  *legacyCaptureClient
 	output                                  unsafe.Pointer
+	outputName                              string
 	box                                     image.Rectangle
 	buffer                                  *C.struct_wlr_buffer
 	pointer, damage, used, finished, queued bool
@@ -429,6 +446,10 @@ func (c *Compositor) destroyCaptureSources() {
 		return
 	}
 	p := c.capture
+	p.stopping = true
+	for client := range p.legacyCasts {
+		client.stopCast()
+	}
 	for _, s := range p.sources {
 		s.close()
 	}
@@ -585,9 +606,19 @@ func sysc_legacy_create(handle C.uintptr_t, manager, resource, outputResource *C
 	p := c.capture
 	client := p.clients[manager]
 	if client == nil {
-		client = &legacyCaptureClient{generation: map[unsafe.Pointer]uint64{}}
+		client = &legacyCaptureClient{c: c, generation: map[unsafe.Pointer]uint64{}, managerAlive: true}
+		native := C.wl_resource_get_client(manager)
+		if _, unknown := c.serviceClients[unsafe.Pointer(native)]; !unknown {
+			var pid C.pid_t
+			C.wl_client_get_credentials(native, &pid, nil, nil)
+			if pid > 0 {
+				value := int32(pid)
+				client.pid = &value
+			}
+		}
 		p.clients[manager] = client
 	}
+	client.pending++
 	frame := &legacyCapture{c: c, resource: resource, client: client, output: unsafe.Pointer(C.wlr_output_from_resource(outputResource)), pointer: pointer != 0}
 	p.frames[resource] = frame
 	if _, ok := c.sceneOutputs[frame.output]; !ok {
@@ -595,6 +626,7 @@ func sysc_legacy_create(handle C.uintptr_t, manager, resource, outputResource *C
 		return
 	}
 	out := (*C.struct_wlr_output)(frame.output)
+	frame.outputName = C.GoString(out.name)
 	frame.box = image.Rect(0, 0, int(out.width), int(out.height))
 	if !bool(out.enabled) {
 		frame.fail()
@@ -645,13 +677,16 @@ func sysc_legacy_copy(handle C.uintptr_t, resource, bufferResource *C.struct_wl_
 	}
 	frame.buffer = buffer
 	frame.damage = damage != 0
+	if frame.damage {
+		frame.client.startCastFrame(frame)
+	}
 	frame.deliver()
 }
 func (f *legacyCapture) fail() {
 	if f.finished {
 		return
 	}
-	f.finished = true
+	f.finish()
 	if f.buffer != nil {
 		C.wlr_buffer_unlock(f.buffer)
 		f.buffer = nil
@@ -700,7 +735,7 @@ func (f *legacyCapture) deliver() {
 	}
 	C.wlr_buffer_unlock(f.buffer)
 	f.buffer = nil
-	f.finished = true
+	f.finish()
 	f.client.generation[f.output] = f.c.capture.generation
 	C.sysc_legacy_ready(f.resource, C.int(f.box.Dx()), C.int(f.box.Dy()), C.bool(f.damage))
 }
@@ -709,6 +744,12 @@ func (f *legacyCapture) deliver() {
 func sysc_legacy_destroyed(handle C.uintptr_t, resource *C.struct_wl_resource, manager C.int) {
 	c := cgo.Handle(handle).Value().(*Compositor)
 	if manager != 0 {
+		if client := c.capture.clients[resource]; client != nil {
+			client.managerAlive = false
+			if client.pending == 0 {
+				client.stopCast()
+			}
+		}
 		delete(c.capture.clients, resource)
 		return
 	}
@@ -716,5 +757,87 @@ func sysc_legacy_destroyed(handle C.uintptr_t, resource *C.struct_wl_resource, m
 	if frame != nil && frame.buffer != nil {
 		C.wlr_buffer_unlock(frame.buffer)
 	}
+	if frame != nil {
+		frame.finish()
+	}
 	delete(c.capture.frames, resource)
+}
+
+const legacyCastTimeout = 10 * time.Second // Niri's CAST_TIMEOUT.
+
+func (client *legacyCaptureClient) startCastFrame(frame *legacyCapture) {
+	client.queue = append(client.queue, frame)
+	if client.timer != nil {
+		client.timer.Stop()
+		client.timer = nil
+	}
+	if client.cast == nil {
+		client.cast = &ipc.Cast{SessionID: ipc.NextCastSessionID(), StreamID: ipc.NextCastStreamID(), Kind: ipc.CastKindWlrScreencopy, IsActive: true, PID: client.pid}
+		if client.c.capture.legacyCasts == nil {
+			client.c.capture.legacyCasts = make(map[*legacyCaptureClient]struct{})
+		}
+		client.c.capture.legacyCasts[client] = struct{}{}
+	}
+	client.updateCastOutput()
+}
+
+func (client *legacyCaptureClient) updateCastOutput() {
+	name := client.queue[0].outputName
+	if client.cast.Target.Output == nil || *client.cast.Target.Output != name {
+		client.cast.Target = ipc.CastTarget{Output: &name}
+		client.c.castStateChanged()
+	}
+}
+
+// finish retires bookkeeping once, including rejected, destroyed and failed
+// frames. A manager resource may disappear before its unfinished frames do.
+func (f *legacyCapture) finish() {
+	if f.finished {
+		return
+	}
+	f.finished = true
+	client := f.client
+	client.pending--
+	// ponytail: a slice gives linear removal, as Niri's queue does. Index
+	// frames if capture profiling finds large concurrent queues per manager.
+	i := slices.Index(client.queue, f)
+	if i >= 0 {
+		client.queue = slices.Delete(client.queue, i, i+1)
+	}
+	if client.cast == nil || client.c.capture.stopping {
+		return
+	}
+	if !client.managerAlive && client.pending == 0 {
+		client.stopCast()
+		return
+	}
+	if len(client.queue) > 0 {
+		client.updateCastOutput()
+		return
+	}
+	if i >= 0 {
+		client.deadline = time.Now().Add(legacyCastTimeout)
+		client.timer = time.AfterFunc(legacyCastTimeout, func() {
+			_ = client.c.Post(func() { client.expireCast(time.Now()) })
+		})
+	}
+}
+
+func (client *legacyCaptureClient) expireCast(now time.Time) {
+	if client.cast != nil && len(client.queue) == 0 && !now.Before(client.deadline) {
+		client.stopCast()
+	}
+}
+
+func (client *legacyCaptureClient) stopCast() {
+	if client.timer != nil {
+		client.timer.Stop()
+		client.timer = nil
+	}
+	if client.cast == nil {
+		return
+	}
+	delete(client.c.capture.legacyCasts, client)
+	client.cast = nil
+	client.c.castStateChanged()
 }
