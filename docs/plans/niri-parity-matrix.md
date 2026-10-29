@@ -202,7 +202,7 @@ global is ticked only with its handler and a test (Q7). Versions follow the wlro
 | zwlr_foreign_toplevel_manager_v1 | [~] | M12 | `TestForeignToplevelRequestsUseWindowPolicy`: metadata, focus/fullscreen/output state, activate/close/fullscreen, lock gating and inert handles; maximize/unmaximize await M15 column sizing |
 | foreign-toplevel image-capture source | [x] | M12 | `TestWindowCaptureTracksDamageResizeAndUnmap` and `TestCapturePointerMetadataAndImageLifetime`: decimal-ID join, initial/damaged frames, unchanged hold, child damage, resize, unmap/stale handles, pointer metadata and image lifetime |
 | zwp_virtual_keyboard_manager_v1, zwlr_virtual_pointer_manager_v1 | [x] | M12 | `TestVirtualInputPreservesSeatAndLockBoundaries`, held-key/focus/device-retirement regressions and `TestKeyboardFocusPreservesActiveSourceMetadata`; 15 named protocol tests passed on the laptop bench |
-| zwlr_gamma_control_manager_v1 | [ ] | M12 | |
+| zwlr_gamma_control_manager_v1 | [x] | M12 | SceneFX's gamma integration; `TestGammaControlAppliesAndRestoresOutputRamp`, `TestGammaControlRejectsInvalidRampsAndReleasesOwnership` and `TestGammaCapturePreservesPendingRamp` on CI's vkms DRM outputs (apply/restore, exclusivity, power cycle, malformed ramps, captures); `TestGammaControlRejectsUnsupportedOutput` for LUT-less outputs. A physical panel has not qualified it yet |
 | wp_tearing_control_manager_v1 | [ ] | M12 | |
 | wp_linux_drm_syncobj_manager_v1 | [ ] | M12 | |
 | zwp_tablet_manager_v2 | [ ] | M12 | |
