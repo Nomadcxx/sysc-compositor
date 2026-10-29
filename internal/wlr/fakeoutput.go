@@ -5,6 +5,7 @@ package wlr
 #cgo CFLAGS: -DWLR_USE_UNSTABLE
 
 #include <wlr/backend/headless.h>
+#include <wlr/render/wlr_renderer.h>
 #include <wlr/render/color.h>
 #include <wlr/types/wlr_gamma_control_v1.h>
 #include <wlr/types/wlr_output.h>
@@ -33,6 +34,11 @@ static bool sysc_test_gamma_current(struct wlr_output *output, float rgb[3]) {
 
 static bool sysc_test_commit_tore(void *data) {
 	return ((struct wlr_output_event_commit *)data)->state->tearing_page_flip;
+}
+
+static bool sysc_test_timeline_support(struct wlr_renderer *renderer, struct wlr_backend *backend) {
+	return wlr_renderer_get_drm_fd(renderer) >= 0 && renderer->features.timeline &&
+		backend->features.timeline;
 }
 
 static struct wl_signal *sysc_test_gamma_requests(void *pointer) {
@@ -76,6 +82,12 @@ func gammaCurrentForTest(output unsafe.Pointer) ([3]float64, bool) {
 	var rgb [3]C.float
 	reset := C.sysc_test_gamma_current((*C.struct_wlr_output)(output), &rgb[0])
 	return [3]float64{float64(rgb[0]), float64(rgb[1]), float64(rgb[2])}, bool(reset)
+}
+
+// timelineSupportForTest reports, apart from the compositor's own check,
+// whether its renderer and backend can take DRM syncobj timelines.
+func timelineSupportForTest(c *Compositor) bool {
+	return bool(C.sysc_test_timeline_support(c.renderer, c.backend))
 }
 
 // tearingHintForTest is the presentation hint recorded for a view's surface.

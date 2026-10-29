@@ -29,6 +29,7 @@ package wlr
 #include <wlr/types/wlr_keyboard_shortcuts_inhibit_v1.h>
 #include <wlr/types/wlr_input_method_v2.h>
 #include <wlr/types/wlr_linux_dmabuf_v1.h>
+#include <wlr/types/wlr_linux_drm_syncobj_v1.h>
 #include <wlr/types/wlr_text_input_v3.h>
 #include <wlr/types/wlr_pointer_constraints_v1.h>
 #include <wlr/types/wlr_relative_pointer_v1.h>
@@ -96,6 +97,21 @@ static bool sysc_dmabuf_create(struct wl_display *display,
 	wlr_scene_set_linux_dmabuf_v1(scene, dmabuf);
 	return true;
 }
+
+// Explicit sync is offered only where it can be honoured, as wlroots and
+// Mango require: the renderer must wait on acquire points (SceneFX's does on a
+// DRM device with syncobj timelines) and the backend must take timelines.
+// Elsewhere the global is left out and clients keep implicit sync.
+static bool sysc_syncobj_create(struct wl_display *display, struct wlr_renderer *renderer,
+		struct wlr_backend *backend, struct wlr_linux_drm_syncobj_manager_v1 **manager) {
+	*manager = NULL;
+	int drm_fd = wlr_renderer_get_drm_fd(renderer);
+	if (drm_fd < 0 || !renderer->features.timeline || !backend->features.timeline) {
+		return true;
+	}
+	*manager = wlr_linux_drm_syncobj_manager_v1_create(display, 1, drm_fd);
+	return *manager != NULL;
+}
 */
 import "C"
 
@@ -149,6 +165,8 @@ type Compositor struct {
 	// vsynced whatever the hint: Niri never tears, and Mango and Hyprland
 	// tear only after a config opt-in that Niri's KDL has no node for.
 	tearingControl *C.struct_wlr_tearing_control_manager_v1
+	// syncobj is nil where the renderer or backend cannot take timelines.
+	syncobj *C.struct_wlr_linux_drm_syncobj_manager_v1
 
 	loop                    *C.struct_wl_event_loop
 	cursor                  *C.struct_wlr_cursor
@@ -543,6 +561,9 @@ func NewWith(opts Options) (*Compositor, error) {
 	}
 	if !bool(C.sysc_dmabuf_create(c.display, c.renderer, c.scene)) {
 		return nil, errors.New("wlr_linux_dmabuf_v1_create_with_renderer failed")
+	}
+	if !bool(C.sysc_syncobj_create(c.display, c.renderer, c.backend, &c.syncobj)) {
+		return nil, errors.New("wlr_linux_drm_syncobj_manager_v1_create failed")
 	}
 	if err := c.createBackgroundEffectProtocol(); err != nil {
 		return nil, err

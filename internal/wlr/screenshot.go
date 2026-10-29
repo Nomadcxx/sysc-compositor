@@ -18,6 +18,7 @@ package wlr
 #include <wlr/render/pass.h>
 #include <wlr/render/interface.h>
 #include <wlr/types/wlr_compositor.h>
+#include <wlr/types/wlr_linux_drm_syncobj_v1.h>
 #include <wlr/types/wlr_seat.h>
 #include <wlr/types/wlr_xdg_shell.h>
 #include <wlr/util/transform.h>
@@ -102,6 +103,15 @@ static void sysc_window_shot_surface(struct wlr_surface *surface, int sx, int sy
 		.transform = wlr_output_transform_invert(surface->current.transform),
 		.blend_mode = WLR_RENDER_BLEND_MODE_PREMULTIPLIED,
 	};
+	// An explicitly synced buffer may still be rendering: wait for its
+	// acquire point, as the scene does. The readback finishes before the
+	// buffer can be released, so no release point is needed.
+	struct wlr_linux_drm_syncobj_surface_v1_state *syncobj =
+		wlr_linux_drm_syncobj_v1_get_surface_state(surface);
+	if (syncobj != NULL) {
+		options.wait_timeline = syncobj->acquire_timeline;
+		options.wait_point = syncobj->acquire_point;
+	}
 	wlr_surface_get_buffer_source_box(surface, &options.src_box);
 	wlr_render_pass_add_texture(shot->pass, &options);
 }
