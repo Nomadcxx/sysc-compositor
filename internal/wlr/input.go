@@ -291,21 +291,19 @@ func (c *Compositor) handleNewInput(data unsafe.Pointer) {
 		}
 		c.keyboardDevices[deviceKey] = true
 	case C.WLR_INPUT_DEVICE_POINTER:
-		if c.xcursorManager == nil {
-			theme := C.CString(c.cursorTheme)
-			c.xcursorManager = C.sysc_xcursor_manager(theme, C.uint32_t(c.cursorSize))
-			C.free(unsafe.Pointer(theme))
-			if c.xcursorManager != nil {
-				// A cursor with no image is an invisible cursor, so the
-				// theme is loaded once, here.
-				if C.wlr_xcursor_manager_load(c.xcursorManager, 1.0) {
-					c.showDefaultImage()
-				}
-			}
-		}
+		c.loadCursorTheme()
 		C.wlr_cursor_attach_input_device(c.cursor, device)
 		c.attachPointerGestureListeners(deviceKey, C.wlr_pointer_from_input_device(device))
 		c.pointerDevices[deviceKey] = true
+	case C.WLR_INPUT_DEVICE_TABLET:
+		c.loadCursorTheme()
+		if !c.addTablet(device) {
+			return
+		}
+	case C.WLR_INPUT_DEVICE_TABLET_PAD:
+		if !c.addTabletPad(device) {
+			return
+		}
 	case C.WLR_INPUT_DEVICE_SWITCH:
 		switchDevice := C.wlr_switch_from_input_device(device)
 		listener := AddListener(unsafe.Pointer(&switchDevice.events.toggle), c.handleSwitchToggle)
@@ -322,6 +320,20 @@ func (c *Compositor) handleNewInput(data unsafe.Pointer) {
 	c.refreshCapabilities()
 }
 
+// loadCursorTheme loads the pointer theme the first time a device that
+// draws the cursor arrives. A cursor with no image is an invisible cursor.
+func (c *Compositor) loadCursorTheme() {
+	if c.xcursorManager != nil {
+		return
+	}
+	theme := C.CString(c.cursorTheme)
+	c.xcursorManager = C.sysc_xcursor_manager(theme, C.uint32_t(c.cursorSize))
+	C.free(unsafe.Pointer(theme))
+	if c.xcursorManager != nil && C.wlr_xcursor_manager_load(c.xcursorManager, 1.0) {
+		c.showDefaultImage()
+	}
+}
+
 func (c *Compositor) handleInputDestroy(device unsafe.Pointer) {
 	c.detachPointerGestureListeners(device)
 	if listener := c.switchToggleListeners[device]; listener != nil {
@@ -334,7 +346,7 @@ func (c *Compositor) handleInputDestroy(device unsafe.Pointer) {
 	}
 	if c.pointerDevices[device] {
 		pointer := C.wlr_pointer_from_input_device((*C.struct_wlr_input_device)(device))
-		c.releasePointerButtons(pointer)
+		c.releasePointerButtons(unsafe.Pointer(pointer))
 		if virtual := c.virtualPointers[pointer]; virtual != nil {
 			c.drop(virtual.outputGone)
 			delete(c.virtualPointers, pointer)
@@ -847,23 +859,26 @@ func (c *Compositor) handleCursorButton(data unsafe.Pointer) {
 	if !c.pointerInputAllowed(event.pointer) {
 		return
 	}
-	c.deliverPointerButton(event)
+	c.deliverPointerButton(unsafe.Pointer(event.pointer), event.time_msec, event.button, event.state)
 }
 
-func (c *Compositor) deliverPointerButton(event *C.struct_wlr_pointer_button_event) {
-	button := uint32(event.button)
-	pressed := event.state == C.WL_POINTER_BUTTON_STATE_PRESSED
-	owners := c.pointerButtons[event.pointer]
+// deliverPointerButton routes one button change from source, a pointer
+// device or a tablet emulating one.
+func (c *Compositor) deliverPointerButton(source unsafe.Pointer, timeMsec C.uint32_t,
+	rawButton C.uint32_t, state C.enum_wl_pointer_button_state) {
+	button := uint32(rawButton)
+	pressed := state == C.WL_POINTER_BUTTON_STATE_PRESSED
+	owners := c.pointerButtons[source]
 	if pressed {
 		if owners[button] {
 			return
 		}
 		if c.pointerButtons == nil {
-			c.pointerButtons = make(map[*C.struct_wlr_pointer]map[uint32]bool)
+			c.pointerButtons = make(map[unsafe.Pointer]map[uint32]bool)
 		}
 		if owners == nil {
 			owners = make(map[uint32]bool)
-			c.pointerButtons[event.pointer] = owners
+			c.pointerButtons[source] = owners
 		}
 		owners[button] = true
 	} else {
@@ -872,11 +887,11 @@ func (c *Compositor) deliverPointerButton(event *C.struct_wlr_pointer_button_eve
 		}
 		delete(owners, button)
 		if len(owners) == 0 {
-			delete(c.pointerButtons, event.pointer)
+			delete(c.pointerButtons, source)
 		}
 	}
 	for pointer, held := range c.pointerButtons {
-		if pointer != event.pointer && held[button] {
+		if pointer != source && held[button] {
 			return
 		}
 	}
@@ -919,7 +934,7 @@ func (c *Compositor) deliverPointerButton(event *C.struct_wlr_pointer_button_eve
 				c.clearPointerGrab()
 			}
 			C.wlr_seat_pointer_notify_frame(c.seat)
-			c.refocusPointer(event.time_msec)
+			c.refocusPointer(timeMsec)
 			return
 		}
 		if c.pointerGrab != nil && (c.grabButton == 0 || c.grabButton == button) {
@@ -971,13 +986,13 @@ func (c *Compositor) deliverPointerButton(event *C.struct_wlr_pointer_button_eve
 		c.focusSurfaceAtCursor()
 	}
 	serial := C.wlr_seat_pointer_notify_button(c.seat,
-		event.time_msec, event.button, event.state)
+		timeMsec, rawButton, state)
 	if pressed && serial != 0 {
 		c.pointerSerialButtons[uint32(serial)] = button
 	}
 	C.wlr_seat_pointer_notify_frame(c.seat)
 	if !pressed {
-		c.refocusPointer(event.time_msec)
+		c.refocusPointer(timeMsec)
 	}
 }
 
@@ -1649,7 +1664,8 @@ func (c *Compositor) handleToplevelDestroy(view *toplevelView) {
 // deliver.
 func (c *Compositor) refreshCapabilities() {
 	var caps C.uint32_t
-	if len(c.pointerDevices) > 0 {
+	// A tablet emulates the pointer for clients without tablet-v2.
+	if len(c.pointerDevices)+len(c.tablets) > 0 {
 		caps |= C.WL_SEAT_CAPABILITY_POINTER
 	}
 	if len(c.keyboardDevices)+len(c.virtualKeyboards) > 0 {

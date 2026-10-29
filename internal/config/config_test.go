@@ -1182,3 +1182,48 @@ binds {
 		}
 	}
 }
+
+// TestParseTablet decodes Niri's input.tablet section. Output mapping and
+// off apply; left-handed and calibration-matrix are libinput device settings
+// that no device class applies yet, so they are reported unapplied.
+func TestParseTablet(t *testing.T) {
+	cfg, err := Parse("tablet.kdl", []byte(`
+input {
+    tablet {
+        off
+        map-to-output "eDP-1"
+        map-to-focused-output
+        left-handed
+        calibration-matrix 1.0 2.0 3.0 4.0 5.0 6.0
+    }
+}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (Tablet{Off: true, MapToOutput: "eDP-1", MapToFocusedOutput: true}); cfg.Input.Tablet != want {
+		t.Errorf("tablet = %+v, want %+v", cfg.Input.Tablet, want)
+	}
+	for _, warning := range []string{"input.tablet.left-handed", "input.tablet.calibration-matrix"} {
+		if !slices.Contains(cfg.Warnings, warning) {
+			t.Errorf("%s not reported unapplied: %v", warning, cfg.Warnings)
+		}
+	}
+	plain, err := Parse("plain.kdl", []byte("input { tablet { map-to-output \"HDMI-A-1\"; }; }\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plain.Input.Tablet != (Tablet{MapToOutput: "HDMI-A-1"}) || len(plain.Warnings) != 0 {
+		t.Errorf("tablet = %+v, warnings %v", plain.Input.Tablet, plain.Warnings)
+	}
+	for _, bad := range []string{
+		`input { tablet { map-to-output; }; }`,
+		`input { tablet { off 1; }; }`,
+		`input { tablet { calibration-matrix "x"; }; }`,
+		`input { tablet { pressure-curve 1; }; }`,
+	} {
+		if _, err := Parse("bad.kdl", []byte(bad)); err == nil {
+			t.Errorf("%s parsed", bad)
+		}
+	}
+}

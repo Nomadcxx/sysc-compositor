@@ -412,3 +412,34 @@ plus a window screenshot of the synced buffer. `TestExplicitSyncAdvertisedOnlyWi
 passes nested (the host Niri offers no syncobj, so the global is absent) and runs on vkms in CI,
 whose device has no syncobj. The Vulkan check is listed in CI's skips. NVIDIA, where explicit sync
 matters most, is not qualified. Tablets remain Task 7 work.
+
+## Execution record: tablets, 2026-10-29
+
+Design and owner decisions are in [the tablet plan](2026-10-29-m12-tablets.md): tools follow Niri,
+pads and pointer emulation for clients without tablet-v2 follow Mango and Hyprland. `input.tablet`
+decodes all five Niri settings; `off` and the two output mappings apply, `left-handed` and
+`calibration-matrix` warn until libinput device settings land for every device class.
+
+`tabletPoint` reproduces Niri's `compute_tablet_position`, including smithay's transform
+arithmetic at Niri's pinned revision; seven worked cases pass. The pen warps the shared cursor, so
+compositor UIs read it unchanged. A tablet-aware surface with no modal UI open gets the tool and
+the tip focuses it; otherwise motion is ordinary pointer motion (with its own frame, since a pen
+has none) and the tip is `BTN_LEFT` through the click path, which now keys held buttons by source
+rather than by `wlr_pointer`. A stroke stays with the surface it started on. Tablets count towards
+the seat's pointer capability, so a tablet-only seat still offers the pointer to emulate.
+
+Pads follow the most recently active tablet, because wlroots' libinput backend never emits
+`attach_tablet` and Sway and Mango pair through libinput device groups. wlroots indexes pad groups
+unchecked, so a button whose group the pad lacks is not reported as a mode. Review found that
+wlroots frees its v2 tablet, tool and pad objects from the same destroy signals sysc cleans up
+on; sysc's destroy listeners are now added before those objects are created, so cleanup runs
+while they are alive.
+
+On the laptop bench the three compositor tests pass, and mutations show they bite: without tip
+focus, the focus check fails; without the tablet-v2 acceptance check, the plain client gets no
+emulated click; without the modal check, a tablet-aware window under the colour picker receives
+the stroke and no colour is picked. The pointer regressions
+`TestVirtualInputPreservesSeatAndLockBoundaries`, `TestClickUpdatesActiveOutputOverEmptySpace`
+and `TestClickingEmptyOtherOutputClearsKeyboardFocusFromPreviousOutput` pass. No physical tablet
+is available; a real Wacom or Huion qualification remains a hardware limit. This completes Task 7's
+protocols; portal, browser and OBS acceptance keep M12 open.

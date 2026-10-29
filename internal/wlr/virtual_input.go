@@ -228,13 +228,14 @@ func (c *Compositor) handleVirtualPointer(data unsafe.Pointer) {
 	}
 }
 
-func (c *Compositor) releaseVirtualPointer(v *virtualPointer) { c.releasePointerButtons(v.pointer) }
+func (c *Compositor) releaseVirtualPointer(v *virtualPointer) {
+	c.releasePointerButtons(unsafe.Pointer(v.pointer))
+}
 
-func (c *Compositor) releasePointerButtons(pointer *C.struct_wlr_pointer) {
-	for button := range c.pointerButtons[pointer] {
-		event := C.struct_wlr_pointer_button_event{pointer: pointer,
-			time_msec: nowMsec(), button: C.uint32_t(button), state: C.WL_POINTER_BUTTON_STATE_RELEASED}
-		c.deliverPointerButton(&event)
+// releasePointerButtons releases every button source still holds.
+func (c *Compositor) releasePointerButtons(source unsafe.Pointer) {
+	for button := range c.pointerButtons[source] {
+		c.deliverPointerButton(source, nowMsec(), C.uint32_t(button), C.WL_POINTER_BUTTON_STATE_RELEASED)
 	}
 }
 
