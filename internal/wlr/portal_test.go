@@ -156,6 +156,33 @@ func TestPortalScreenshotReturnsWriteFailure(t *testing.T) {
 	})
 }
 
+// TestPortalScreenshotCreatesThePatternDirectory: a portal screenshot to
+// the default ~/Pictures/Screenshots pattern on a fresh account creates the
+// directory, as Niri's save_screenshot does for a configured pattern.
+func TestPortalScreenshotCreatesThePatternDirectory(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "Pictures", "Screenshots", "capture.png")
+	c := newNestedWith(t, Options{ScreenshotPath: &path})
+	done := make(chan error, 1)
+	runTools(t, c, func(func(string, ...string) *exec.Cmd) {
+		onCompositor(t, c, func() {
+			if err := c.ScreenshotScreenResult(context.Background(), false, func(_ string, err error) { done <- err }); err != nil {
+				t.Error(err)
+			}
+		})
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatalf("screenshot into a missing directory: %v", err)
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatal("screenshot result missing")
+		}
+		if _, err := os.Stat(path); err != nil {
+			t.Error(err)
+		}
+	})
+}
+
 func TestPortalScreenshotFallbackPreservesClipboard(t *testing.T) {
 	t.Setenv("TMPDIR", t.TempDir())
 	c := newNested(t)
