@@ -282,7 +282,7 @@ the test consumer now pins its OS thread through lock/wait/read/unlock.
 Three private-bus ScreenCast regressions pass for wire behavior, ownership, cancellation,
 forged departure and initialization/loss ordering. Named wire, CLI/bind, snapshot/event and
 eight-transform checks pass. Independent ownership and D-Bus reviews found no remaining
-important issue after the fixes. CI still gates merge.
+important issue after the fixes. Merge requires the static and compositor CI lanes.
 
 This change proves compositor/PipeWire integration. GNOME/browser/OBS consumer acceptance,
 legacy wlr-screencopy activity reporting in Casts/events (`sysc-2042`) and Task 7 protocols remain M12 work.

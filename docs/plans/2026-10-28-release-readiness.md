@@ -39,7 +39,7 @@ service. Baremetal checks prove known window and monitor pixels, live size/rate 
 dynamic retargeting and clearing, protected/locked black frames, pointer isolation, stop and
 daemon loss. The complete private-bus-to-IPC-to-PipeWire path passes on the laptop. Private-bus
 regressions cover caller ownership, property types, cancellation, stale readiness after loss
-and forged departure signals. Independent review passes; CI still gates this change's merge.
+and forged departure signals. Independent review passes; merges require static and compositor CI.
 Actual GNOME/browser/OBS acceptance remains. Cast IPC currently tracks PipeWire streams;
 Niri's legacy wlr-screencopy activity reporting is a remaining M12 follow-up.
 
@@ -56,7 +56,7 @@ hardware or integration completeness.
 | Gate | Work and acceptance evidence still needed | Owner |
 |---|---|---|
 | Portal services | Prove GNOME/GTK portal discovery in an isolated session. DisplayConfig reports current outputs; output mutation remains explicit unsupported behavior until M15. Task 5 services are merged. | M12 Task 5/8, `sysc-1277` |
-| Screen sharing | Merge the reviewed and bench-tested PipeWire change after CI, add legacy wlr-screencopy activity to Casts/events, then prove actual Firefox, Chromium and OBS consumers. | M12 Task 6/8 |
+| Screen sharing | Add legacy wlr-screencopy activity to Casts/events (`sysc-2042`), then prove actual Firefox, Chromium and OBS consumers. The compositor/PipeWire path has reviewed bench evidence. | M12 Task 6/8 |
 | Remaining client protocols | Gamma apply/restore, tearing policy/fallback, explicit-sync acquire/release and tablet tool/pad routing. Each needs behavioral proof; supporting hardware must qualify capabilities that nested/vkms cannot exercise. | M12 Task 7 |
 | X11 applications | xwayland-satellite lifecycle, DISPLAY publication, native/X11 focus, and Steam/Discord in nested and real sessions. | M13, `sysc-1278` |
 | Accessibility | KeyboardMonitor/announcements and a real Orca session. | M14, `sysc-1279` |
@@ -86,8 +86,8 @@ of M12 and M13–M15, followed by suite and hardware acceptance. This is several
 stages, not just a packaging pass. A date or percentage would require estimating those stages
 after the portal/PipeWire consumer gate; current test counts cannot supply that estimate.
 
-The next stage is merging the reviewed PipeWire change, completing legacy cast activity reporting,
-and proving portal consumers. Keep each protocol/lifecycle regression with
+The next stage is completing legacy cast activity reporting and proving portal consumers.
+Keep each protocol/lifecycle regression with
 its implementation and require local review plus both CI lanes before merge. Do not mark M12
 complete merely because services advertise their names.
 
