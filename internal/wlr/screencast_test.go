@@ -177,14 +177,30 @@ func TestCastIPCTracksDynamicTargetAndStop(t *testing.T) {
 		assertPixel(240, 180, [4]byte{0x34, 0x98, 0xdb, 255})
 		// A normal cast and a dynamic cast of the same mapping have different
 		// retirement rules: stop the normal session, clear the dynamic target.
+		unmapped := make(chan struct{}, 1)
 		onCompositor(t, c, func() {
 			if err := c.StartCast(CastOptions{SessionID: 3, StreamID: 3, Target: ipc.CastTarget{WindowID: &id}}); err != nil {
 				t.Error(err)
 			}
+			c.SetStateChanged(func() {
+				for _, window := range c.Windows() {
+					if window.ID == id {
+						return
+					}
+				}
+				select {
+				case unmapped <- struct{}{}:
+				default:
+				}
+			})
 		})
 		window.Close()
+		select {
+		case <-unmapped:
+		case <-time.After(5 * time.Second):
+			t.Fatal("closed window did not unmap")
+		}
 		onCompositor(t, c, func() {
-			c.syncCasts()
 			if _, exists := c.casts[3]; exists {
 				t.Error("normal cast retained retired mapping")
 			}

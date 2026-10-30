@@ -133,8 +133,12 @@ func TestLayerKeyboardFocusPriority(t *testing.T) {
 // pollThenStop runs check on the compositor thread every 20 ms until it
 // reports true or three seconds pass, then stops the compositor.
 func pollThenStop(c *Compositor, check func() bool) {
+	pollThenStopFor(c, 3*time.Second, check)
+}
+
+func pollThenStopFor(c *Compositor, timeout time.Duration, check func() bool) {
 	go func() {
-		deadline := time.Now().Add(3 * time.Second)
+		deadline := time.Now().Add(timeout)
 		for time.Now().Before(deadline) {
 			done := make(chan bool, 1)
 			if c.Post(func() { done <- check() }) != nil || <-done {
