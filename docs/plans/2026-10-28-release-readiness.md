@@ -71,7 +71,7 @@ hardware or integration completeness.
 | Accessibility | KeyboardMonitor/announcements and a real Orca session. | M14, `sysc-1279` |
 | Output and action parity | Runtime/persistent output configuration, mixed DPI, VRR, GPU reset, missing IPC/actions/binds, easing, remaining rules and config effects; default and owner configs must use no unimplemented actions. | M15, `sysc-1280`; matrix |
 | Session integration | Retest production sysc-lock lock/unlock after its compatibility fix; prove shell idle blank/resume and injection rejection. Complete suite install/start/stop integration without replacing a host session during testing. | `sysc-1643`, `sysc-1283`; sibling owners |
-| First-use behavior and release proof | Default config/binds (Niri writes its default config at first start; sysc does not), mouse/scroll binds, remaining protocol consumer checks, multi-output and physical-input qualification, installation/rollback and the final release CI/packaging checks. Track each change in its responsible milestone/repository. | Matrix, current handover, suite release standard |
+| First-use behavior and release proof | Owner decision 2026-10-30/31: keep in-memory defaults and do not write a first-use config. Default binds, mouse/scroll binds, remaining protocol consumer checks, multi-output and physical-input qualification, installation/rollback and final CI/packaging checks remain. Track each change in its responsible milestone/repository. | Matrix, current handover, suite release standard |
 
 M15 also owns the screenshot UI's easing and size binds, switcher preview fade-in and missing
 opened-switcher actions. Background/bottom layer projection and remaining layout/rule effects

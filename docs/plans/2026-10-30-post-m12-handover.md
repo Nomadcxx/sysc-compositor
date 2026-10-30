@@ -59,3 +59,29 @@ is kept at `~/blockout.kdl`). `~/sysc-compositor` in the VM is a pre-#74 tree: r
 `git archive` of main before lane 2. `./run.sh` boots virgl for session gates and
 `./run.sh lane2` boots vkms only for lane 2. Gate scripts, including `castrun.sh` for portal cast
 frames, are in [assets/2026-10-29-m12-vm-gate](assets/2026-10-29-m12-vm-gate/).
+
+## Execution record, 2026-10-30/31
+
+The owner assigned this session all handover work. Worktree:
+`~/.config/superpowers/worktrees/sysc-compositor/post-m12-20261030`, branch
+`work/post-m12-20261030`. The primary checkout remains untouched.
+
+Three foreground `./internal/wlr` lane-2 passes on merged #74 (`7d8e05b`)
+each passed 226 tests with the same four listed skips: 75.652 s, 75.980 s and
+75.925 s. The unexplained SIGKILL did not recur. During these runs the VM
+audited b64 `kill`, `tkill`, `pidfd_send_signal` with signal argument 9 and
+`tgkill` with its third argument 9. Audit lost zero events, recorded no matching
+signals, and `/proc/vmstat`'s `oom_kill` stayed zero. This does not identify the
+earlier sender or prove the kill cannot recur. The tracker already had
+`sysc-2078` closed when this session started; no further test change was made.
+Logs are under `~/.cache/sysc-post-m12/lane2-wlr-{1,2,3}.log` on the desktop.
+The original VM checkout was preserved as
+`~/sysc-compositor.pre-post-m12-20261030` before installing the #74 archive.
+
+The [frame-pacing source audit](2026-10-31-frame-pacing-audit.md) records the
+native mechanisms and remaining benchmark. M13's plan is
+[2026-10-30-m13-x11.md](2026-10-30-m13-x11.md).
+
+**Owner decisions:** keep in-memory defaults; do not write a first-use config.
+Borrow Niri's approach where it fits; this project is not a Go rewrite of Niri.
+Keep wlroots/SceneFX and satellite responsible for their existing machinery.

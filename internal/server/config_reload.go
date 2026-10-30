@@ -193,7 +193,8 @@ func (s *Server) applyConfigReload(sequence uint64, target reloadTarget, load co
 	}
 	s.configSources = slices.Clone(load.Sources)
 	s.retryRoot = ""
-	s.spawn.updateEnvironment(s.c.SocketName(), s.NiriSocket(), load.Config.Environment, load.Config.Cursor)
+	s.configureX11()
+	s.spawn.updateEnvironment(s.c.SocketName(), s.NiriSocket(), load.Config.Environment, load.Config.Cursor, s.Display())
 	watched := s.watchedConfigs(s.configSources)
 	s.reloadMu.Unlock()
 	s.updateConfigWatches(watched)
