@@ -1,7 +1,15 @@
 # Handover: M12 Task 8, the session VM gate (2026-10-30)
 
 Read this first, then the release assessment (`2026-10-28-release-readiness.md`) and the last
-execution records of `2026-10-24-m12-capture-portals.md`. Standing rules from the 2026-10-23
+execution records of `2026-10-24-m12-capture-portals.md`.
+
+**Update, later on 2026-10-30:** the remaining Task 8 work below is done. The unresolved
+`block-out-from` check was a config bug, fixed by #72 (a config created after startup never
+loaded). Protected content, pointer modes, the preview-contract decision and lane 2 are recorded
+in the M12 plan's "Execution record: VM gate, 2026-10-29/30", and the matrix and release
+assessment are updated. The VM was left powered off after lane 2, with #72's build installed and
+no `~/.config/niri/config.kdl`; the old binary is `/usr/local/bin/sysc-compositor.bak-20261029`.
+What remains is the owner's call on closing `sysc-1277` and the lane-2 flakes in `sysc-2078`. Standing rules from the 2026-10-23
 continuation handover still hold. Tracker: `sysc-1277` (bd in `/home/nomadx/sysc-shell`).
 
 ## Where things stand
@@ -105,7 +113,7 @@ Assets are in `assets/2026-10-29-m12-vm-gate/`. In the VM, `~/portal_probe.py`, 
 
 | Asset | Use |
 |---|---|
-| `portal_probe.py screenshot` / `pickcolor` / `screencast TYPES CURSOR FRAMES` | drives the portal as an app; screencast pulls frames through `gst-launch-1.0 pipewiresrc` and prints each caps change. Needs `python-gobject`, `gst-plugins-base`, `gst-plugin-pipewire` (installed). Its output is buffered: read it after it exits. |
+| `portal_probe.py screenshot` / `pickcolor` / `screencast TYPES CURSOR FRAMES [RAW]` | drives the portal as an app; screencast pulls frames through `gst-launch-1.0 pipewiresrc` and prints each caps change, writing them to RAW as RGB when given (`castrun.sh` wraps a monitor cast). Needs `python-gobject`, `gst-plugins-base`, `gst-plugin-pipewire` (installed). Its output is buffered: read it after it exits. |
 | `cast.html`, `server.py` | WebRTC probe page on 127.0.0.1:8765; the page POSTs frames, size and mean colour to `~/cast/results.jsonl` |
 | `qmpclick.py X Y` / `qmpsweep.py SECONDS` | click on, or sweep the pointer over, the 1280×800 console through QMP's virtio tablet |
 | `obs/` | OBS 33 profile with a `pipewire-screen-capture-source` and first-run flags |

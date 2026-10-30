@@ -25,7 +25,7 @@ Legend: `[ ]` missing · `[~]` partial · `[x]` done.
 | EventStream | [x] | M3–M12 — bounded subscribers, current baseline and all 19 event variants, including mixed PipeWire/legacy cast activity |
 | ReturnError | [x] | M2 |
 | OverviewState | [x] | M7 — Niri 26.04 query returns open state |
-| Casts | [x] | M12 — immutable PipeWire and legacy damage-copy activity, shared unique IDs, pending dynamic targets, peer PID, queue-head output and inactivity expiry (`sysc-2042`) |
+| Casts | [x] | M12 — immutable PipeWire and legacy damage-copy activity, shared unique IDs, pending dynamic targets, peer PID, queue-head output and inactivity expiry (`sysc-2042`); VM gate: OBS 33's portal cast and a dynamic target's Nothing-to-Output change |
 
 ## Events (19)
 
@@ -65,7 +65,7 @@ Until implemented, decode and reply `Err` with `unimplemented: <Name>`. Tick whe
 | Spawn | [~] | M2; no XDG_ACTIVATION_TOKEN until xdg-activation |
 | SpawnSh | [~] | M2; as Spawn |
 | DoScreenTransition | [ ] | M15 |
-| LoadConfigFile | [x] | M9 — reloads the active config or switches roots after a successful explicit load |
+| LoadConfigFile | [x] | M9 — reloads the active config or switches roots after a successful explicit load; M12 VM gate: without a named config every load searches the user then the system path again, and both are watched, so a config created after startup loads (`TestConfigCreatedAfterStartupLoads`) |
 | ToggleKeyboardShortcutsInhibit | [x] | M10 — IPC action and `toggle-keyboard-shortcuts-inhibit` bind (`TestShortcutsInhibitPassesBindsToTheFocusedClient`) |
 | SwitchLayout | [x] | M9 — next, previous, or indexed XKB layout |
 | ShowHotkeyOverlay | [x] | M11 — IPC and the `show-hotkey-overlay` bind; Niri's action list, bind preference, `hotkey-overlay-title` (string or null) and key names |
@@ -142,7 +142,7 @@ M6 adds the window, column, floating, fullscreen, urgency, named-workspace, and 
 | layout | [~] | M5 gaps, default column width, scrolling columns, client min/max size bounds, centered window offsets, and retained pointer-resized dimensions; M7 insert hints and tiled drag placement; M8 focus ring, window shadow, rounded outer subsurface corners, geometry clipping, and clipped snapshot bounds. SceneFX shadows use one radius, so nonuniform corner rules use the top-left radius; direct-session visual calibration remains unverified |
 | binds | [~] | M5 core key subset plus M6 window, workspace, urgency, and monitor actions; M7 overview actions; unsupported later actions and mouse/scroll triggers warn |
 | switch-events | [x] | M9 — lid and tablet switch spawn actions; login1 also updates lid state |
-| window-rule | [~] | M6 app-id/title match and exclude, ordered placement/fullscreen overrides, and default size fields; M8 ordered `geometry-corner-radius` and `clip-to-geometry`; remaining Niri rule effects are unimplemented |
+| window-rule | [~] | M6 app-id/title match and exclude, ordered placement/fullscreen overrides, and default size fields; M8 ordered `geometry-corner-radius` and `clip-to-geometry`; M12 `block-out-from` `"screencast"`/`"screen-capture"` for casts, screenshots and capture protocols (capture privacy tests; VM gate with portal casts, screenshots and OBS); remaining Niri rule effects are unimplemented |
 | layer-rule | [~] | M6 parses namespace matching and `place-within-backdrop`; M7 does not render qualifying background surfaces within the overview backdrop or project background/bottom surfaces into workspace thumbnails; other Niri layer-rule effects remain unimplemented |
 | blur | [x] | M10 — off, passes, offset, noise and saturation with Niri's defaults, applied to SceneFX blur at start and on reload (`TestBlurDefaultsMatchNiriAndUnnamedFieldsStay`) |
 | animations | [~] | M8 applies the seven laptop spring kinds and animates overview, workspace, window, movement, and resize transitions; M11 adds `exit-confirmation-open-close` (Niri's default spring 0.6/500/0.01). Easing, slowdown, custom shaders, and three other recognized animation kinds warn and remain unapplied |
@@ -212,9 +212,9 @@ global is ticked only with its handler and a test (Q7). Versions follow the wlro
 
 | Name | Status | Milestone |
 |---|---|---|
-| org.gnome.Mutter.DisplayConfig | [~] | M12 — current immutable monitors/modes/logical state, serials, properties and changes; wire/lifetime regressions. `ApplyMonitorsConfigAllowed=false`, mutation returns NotSupported until M15 |
+| org.gnome.Mutter.DisplayConfig | [~] | M12 — current immutable monitors/modes/logical state, serials, properties and changes; wire/lifetime regressions. `ApplyMonitorsConfigAllowed=false`, mutation returns NotSupported until M15; GNOME's chooser lists the monitor from it in the VM gate |
 | org.gnome.Mutter.ServiceChannel | [x] | M12 — native privileged Wayland clients with unknown peer PID; descriptor ownership, caller/connection cancellation, independent callers and malformed-wire checks |
-| org.gnome.Mutter.ScreenCast | [~] | M12 — Version 4 sessions/streams, monitor/window frames, pointer modes, dynamic target, privacy/lock/resize/loss and caller-owned cleanup; private-bus and baremetal PipeWire checks pass. GNOME/browser/OBS consumer acceptance remains |
+| org.gnome.Mutter.ScreenCast | [x] | M12 — Version 4 sessions/streams, monitor/window frames, pointer modes, dynamic target, privacy/lock/resize/loss and caller-owned cleanup; private-bus and baremetal PipeWire checks pass. VM gate through xdg-desktop-portal-gnome 51: monitor, window and dynamic casts, cursor modes 1/2/4, `block-out-from`, Firefox 159, Chromium 156 and OBS 33 ([record](2026-10-24-m12-capture-portals.md#execution-record-vm-gate-2026-10-2930)) |
 | org.gnome.Shell.Screenshot | [x] | M12 — correlated screenshot and PickColor replies, capture privacy, cancellation and write failures; unique private temporary PNGs preserve the clipboard; one-output screenshot limit matches Niri |
 | org.gnome.Shell.Introspect | [x] | M12 — mapped IPC IDs, title and desktop app ID, immutable snapshots and WindowsChanged |
 | org.freedesktop.ScreenSaver | [x] | M10 — Inhibit/UnInhibit at both of Niri's paths, cookies per caller, dropped when the caller leaves; started in `--session`, feeds idle inhibition (`TestScreenSaverInhibitsPerSenderAndDropsDepartedCallers`) |
