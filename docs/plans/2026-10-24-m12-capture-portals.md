@@ -443,3 +443,67 @@ the stroke and no colour is picked. The pointer regressions
 and `TestClickingEmptyOtherOutputClearsKeyboardFocusFromPreviousOutput` pass. No physical tablet
 is available; a real Wacom or Huion qualification remains a hardware limit. This completes Task 7's
 protocols; portal, browser and OBS acceptance keep M12 open.
+
+## Execution record: VM gate, 2026-10-29/30
+
+The session VM ([record](2026-10-24-session-vm.md)) was upgraded on 2026-10-29: wlroots 0.20.2,
+SceneFX 0.5, PipeWire 1.6.10, WirePlumber 0.5.18, xdg-desktop-portal 1.22.1,
+xdg-desktop-portal-gnome 51.0 and -gtk 1.15.3, Firefox 159.0, Chromium 156.0.8078.73, OBS 33.0.0,
+kernel 7.2.11. Every check ran in the real greetd login through sysc-greet with virgl:
+`sysc-compositor.service` and `graphical-session.target` active, `XDG_CURRENT_DESKTOP=niri:sysc`,
+so xdg-desktop-portal reads `niri-portals.conf` (GNOME, then GTK), as under Niri. The portal pair
+is installed in the VM only; no host portal configuration changed. Scripts, the OBS profile and
+evidence frames are in [assets/2026-10-29-m12-vm-gate](assets/2026-10-29-m12-vm-gate/).
+
+| Check | Result |
+|---|---|
+| Portal discovery | GNOME and GTK backends; `ScreenCast` v5 exposed; sysc owns `org.gnome.Mutter.DisplayConfig`, `.ScreenCast`, `.ServiceChannel`, `org.gnome.Shell.Introspect` and `.Screenshot` |
+| Screenshot portal | first use shows GNOME's "Allow Apps to Take Screenshots?"; after Allow, response 0 and a 1280×800 PNG of the desktop |
+| PickColor portal | response 0, `(0, 0.502, 1.0)`: the bar's #0080FF pill |
+| Monitor ScreenCast | GNOME's chooser lists "Red Hat, Inc. 15″" from DisplayConfig; 60 RGBA 1280×800 frames through `pipewiresrc` |
+| Window ScreenCast | chooser lists the window and "niri Dynamic Cast Target", as under Niri; 616×728 frames; the stream's `size` property is (1, 1), which Niri publishes too |
+| Dynamic target | Start answers once a target is set, as Niri's pending dynamic casts; one stream renegotiated 616×728 to 1280×800 through `set-dynamic-cast-window` / `-monitor`; `Casts` went from Nothing to Output |
+| Firefox 159 | `getDisplayMedia` through the chooser: 85 frames in 4 s, 1280×800, real content |
+| Chromium 156 (`--ozone-platform=wayland`) | its picker hands Entire Screen to the portal; live thumbnail; 96 frames, 1280×800, `displaySurface: monitor` |
+| OBS 33 | PipeWire screen capture: live preview; `Casts` shows the PipeWire cast with a null PID (the D-Bus caller is the portal); "Remember this selection" restores across an OBS restart with no chooser |
+| Pointer modes | Start succeeds and frames arrive in modes 1 (hidden), 2 (embedded) and 4 (metadata); the pointer is in the frame only in mode 2. `TestPipeWireProducesFramesAndSurvivesDaemonLoss` asserts the metadata's position, hotspot and bitmap |
+| Protected content | Chromium on a magenta page, sampled at one pixel of its content. No rule: cast magenta. `block-out-from "screencast"`: cast black, portal screenshot and display magenta. `"screen-capture"`: cast and screenshot black, display magenta. The focus ring stays drawn, as in Niri. OBS's preview matched |
+
+Frame counts come from `requestVideoFrameCallback` or gstreamer while the pointer was swept: casts
+are damage-driven, as Niri's, and a still screen sends no frames.
+
+The gate found four bugs, each fixed with a regression check and merged after both CI lanes:
+
+- #68: portal screenshots failed on a fresh account; the screenshot directory is now created.
+- #69: spawned programs lacked the session environment, so Firefox's WebRTC assumed X11.
+- #70: a fixed-framerate offer failed libwebrtc's negotiation, and an `EPIPE` on one link ended
+  ScreenCast for the session.
+- #72: a session started without a config file reloaded the built-in defaults forever, so a
+  `block-out-from` rule written after login was never read. As Niri's `ConfigPath::Regular`, the
+  user-then-system search now runs on every load and the searched paths are watched.
+  `TestConfigCreatedAfterStartupLoads` starts without a config, creates the directory and file,
+  and sees the reload. In the VM, creating `~/.config/niri/config.kdl` loaded through the watcher
+  alone. Niri also writes its default config at first start; sysc does not (first-use gate in the
+  [release assessment](2026-10-28-release-readiness.md)).
+
+Rules match the window's app-id: Chromium's `--app` windows are `chrome-<url>-Default`, not
+`chromium`.
+
+Item 3, the preview contract, rests on protocol-client tests rather than a separate VM client.
+`TestForeignToplevelIdentifierMatchesIPCFromFirstAnnouncement` joins the decimal identifier to
+Windows IPC from the first announcement. `TestWindowCaptureTracksDamageResizeAndUnmap` captures
+distinct pixels through resize and unmap. `TestCapturePrivacyChangesBeforeNextFrame` and
+`TestCapturePrivacyFollowsDetachedSnapshotBuffers` cover privacy reload, and remap is covered by
+the foreign-list test. All of them passed in the lane 2 run below. Item 4 passed on 2026-10-28
+(`TestNativeIBusComposesInGTK`; `sysc-1639` closed).
+
+Lane 2 ran in the VM's lane2 mode (vkms, no render node) on `f873792`, main `e4afdf8` plus #72.
+`./internal/server` passed (49 tests, no skips). The first `./internal/wlr` run failed
+`TestCastIPCTracksDynamicTargetAndStop` and `TestLayerKeyboardFocusKeepsWindowActionsAndSnapshot`.
+Each passed alone, and a second full run passed (226 tests, the four skips listed in
+`skips.txt`). Both look timing-dependent, not yet diagnosed: `sysc-2078`. CI run `41000345484` passed
+both lanes on #72.
+
+Task 8's checks have passed. M12's software scope meets the stop condition once #72 merges.
+Hardware qualification stays open: gamma on a physical panel, explicit sync on NVIDIA, and a
+physical tablet and pad. Whether that blocks closing `sysc-1277` is the owner's decision.

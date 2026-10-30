@@ -1,6 +1,6 @@
 # sysc-compositor release readiness
 
-Updated on 2026-10-29, starting from `cf04055` (PR #62), with legacy cast reporting. This is a gate assessment, not a plan
+Updated on 2026-10-30, after the M12 session VM gate (PRs #68–#70 and #72). This is a gate assessment, not a plan
 for M13–M15. The product contract and [parity matrix](niri-parity-matrix.md) define scope; bd in
 `/home/nomadx/sysc-shell` owns issue status.
 
@@ -40,14 +40,23 @@ dynamic retargeting and clearing, protected/locked black frames, pointer isolati
 daemon loss. The complete private-bus-to-IPC-to-PipeWire path passes on the laptop. Private-bus
 regressions cover caller ownership, property types, cancellation, stale readiness after loss
 and forged departure signals. Independent review passes; merges require static and compositor CI.
-Actual GNOME/browser/OBS acceptance remains. Cast IPC also tracks legacy damage-copy managers,
+Cast IPC also tracks legacy damage-copy managers,
 with shared process-lifetime IDs, peer PID, queued output selection and ten-second inactivity
 expiry. A mixed-producer bench check proves the IPC baseline and stop events, and confirms
 PipeWire daemon loss preserves legacy activity. Ordinary screenshots create no cast record.
 
+The M12 VM gate proved the consumers in a real greetd session with xdg-desktop-portal-gnome 51 and
+-gtk 1.15.3: portal discovery, Screenshot and PickColor; monitor, window and dynamic ScreenCast;
+cursor modes; `block-out-from` for casts and screenshots; Firefox 159, Chromium 156 and OBS 33
+with a restore token. It found four bugs, all fixed with regression checks: the portal screenshot
+directory (#68), the spawned programs' session environment (#69), WebRTC negotiation and link
+failure (#70), and a config created after startup never loading (#72). The
+[execution record](2026-10-24-m12-capture-portals.md#execution-record-vm-gate-2026-10-2930) lists
+versions and evidence.
+
 The project supports an experimental native session. A release that can replace Niri on this
-machine still needs the gates below. Counting merged milestones would hide their size: portal
-consumer acceptance, X11 applications, accessibility and output management remain substantial work.
+machine still needs the gates below. Counting merged milestones would hide their size: X11
+applications, accessibility and output management remain substantial work.
 
 With the PipeWire change, the server dispatches 90 of the 141 Niri action names; 51 still return
 `unimplemented`. This counts routed actions, not configuration,
@@ -57,14 +66,12 @@ hardware or integration completeness.
 
 | Gate | Work and acceptance evidence still needed | Owner |
 |---|---|---|
-| Portal services | Prove GNOME/GTK portal discovery in an isolated session. DisplayConfig reports current outputs; output mutation remains explicit unsupported behavior until M15. Task 5 services are merged. | M12 Task 5/8, `sysc-1277` |
-| Screen sharing | Prove actual GNOME portal, Firefox, Chromium and OBS consumers. Compositor/PipeWire frames and mixed legacy/PipeWire cast reporting have named bench evidence. | M12 Task 8 |
 | Client protocol hardware | Task 7's protocols have behavioral proof. Hardware qualification remains: gamma on a physical panel, explicit sync on NVIDIA, and a physical tablet and pad. Gamma control is proved on vkms. Explicit sync is proved with Vulkan on Intel; NVIDIA is not qualified. Tearing control records hints and never tears, as Niri; game frame pacing against Niri is `sysc-2056`. | M12 Task 7 |
 | X11 applications | xwayland-satellite lifecycle, DISPLAY publication, native/X11 focus, and Steam/Discord in nested and real sessions. | M13, `sysc-1278` |
 | Accessibility | KeyboardMonitor/announcements and a real Orca session. | M14, `sysc-1279` |
 | Output and action parity | Runtime/persistent output configuration, mixed DPI, VRR, GPU reset, missing IPC/actions/binds, easing, remaining rules and config effects; default and owner configs must use no unimplemented actions. | M15, `sysc-1280`; matrix |
 | Session integration | Retest production sysc-lock lock/unlock after its compatibility fix; prove shell idle blank/resume and injection rejection. Complete suite install/start/stop integration without replacing a host session during testing. | `sysc-1643`, `sysc-1283`; sibling owners |
-| First-use behavior and release proof | Default config/binds, mouse/scroll binds, remaining protocol consumer checks, multi-output and physical-input qualification, installation/rollback and the final release CI/packaging checks. Track each change in its responsible milestone/repository. | Matrix, current handover, suite release standard |
+| First-use behavior and release proof | Default config/binds (Niri writes its default config at first start; sysc does not), mouse/scroll binds, remaining protocol consumer checks, multi-output and physical-input qualification, installation/rollback and the final release CI/packaging checks. Track each change in its responsible milestone/repository. | Matrix, current handover, suite release standard |
 
 M15 also owns the screenshot UI's easing and size binds, switcher preview fade-in and missing
 opened-switcher actions. Background/bottom layer projection and remaining layout/rule effects
@@ -83,15 +90,14 @@ The lane-2 quarantine contains no tests; the old overview/remap quarantine is no
 
 ## Distance to release
 
-A runnable native preview exists today. A supported Niri replacement still needs the remainder
-of M12 and M13–M15, followed by suite and hardware acceptance. This is several feature/integration
-stages, not just a packaging pass. A date or percentage would require estimating those stages
-after the portal/PipeWire consumer gate; current test counts cannot supply that estimate.
+A runnable native preview exists today. A supported Niri replacement still needs M12's hardware
+qualification and M13–M15, followed by suite and hardware acceptance. This is several feature/integration
+stages, not just a packaging pass. A date or percentage would require estimating those stages;
+current test counts cannot supply that estimate.
 
-The next stage is proving portal consumers and implementing the four remaining M12 protocols.
-Keep each protocol/lifecycle regression with
-its implementation and require local review plus both CI lanes before merge. Do not mark M12
-complete merely because services advertise their names.
+M12's VM and CI gates have passed. Closing `sysc-1277` with hardware qualification still open is
+the owner's decision; M13 (X11 applications) follows. Keep each protocol/lifecycle regression
+with its implementation and require local review plus both CI lanes before merge.
 
 ## Mango and Pleamar capability work
 

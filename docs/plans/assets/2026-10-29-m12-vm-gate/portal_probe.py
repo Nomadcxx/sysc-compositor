@@ -69,7 +69,7 @@ def pickcolor():
     return code
 
 
-def screencast(types, cursor_mode, frames):
+def screencast(types, cursor_mode, frames, frame=None):
     session_token = f"syscsession{os.getpid()}"
     code, results = request("ScreenCast", "CreateSession", ("",),
                             {"session_handle_token": GLib.Variant("s", session_token)})
@@ -98,11 +98,14 @@ def screencast(types, cursor_mode, frames):
         Gio.DBusCallFlags.NONE, -1, fd_list, None)
     fd = out_fds.get(reply.unpack()[0])
     node = streams[0][0]
+    # With a path, the frames are written there as raw RGB instead of discarded.
+    sink = (["video/x-raw,format=RGB", "!", "filesink", f"location={frame}", "name=sink0"] if frame
+            else ["fakesink", "sync=false", "name=sink0"])
     gst = subprocess.run(
         ["gst-launch-1.0", "-v", "pipewiresrc", f"fd={fd}", f"path={node}", "do-timestamp=true",
-         f"num-buffers={frames}", "!", "videoconvert", "!", "fakesink", "sync=false"],
+         f"num-buffers={frames}", "!", "videoconvert", "!"] + sink,
         pass_fds=[fd], capture_output=True, text=True, timeout=60)
-    caps = [line for line in gst.stdout.splitlines() if "fakesink0.GstPad:sink: caps" in line]
+    caps = [line for line in gst.stdout.splitlines() if "sink0.GstPad:sink: caps" in line]
     print("gstreamer exit", gst.returncode, "frames requested", frames)
     seen = []
     for line in caps:
@@ -127,5 +130,6 @@ if __name__ == "__main__":
     if mode == "pickcolor":
         sys.exit(pickcolor())
     if mode == "screencast":
-        sys.exit(screencast(int(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4])))
+        sys.exit(screencast(int(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4]),
+                            sys.argv[5] if len(sys.argv) > 5 else None))
     sys.exit(f"unknown mode {mode}")
