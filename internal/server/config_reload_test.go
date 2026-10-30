@@ -3,9 +3,11 @@ package server
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/Nomadcxx/sysc-compositor/internal/config"
 )
@@ -25,7 +27,7 @@ func TestFailedConfigReloadPreservesActiveConfig(t *testing.T) {
 	if loadErr == nil {
 		t.Fatal("malformed candidate unexpectedly loaded")
 	}
-	s.applyConfigReload(s.reloadSeq, reloadTarget{root: path}, candidate, loadErr)
+	s.applyConfigReload(s.reloadSeq, reloadTarget{path: config.Path{Named: path}}, candidate, loadErr)
 
 	if s.cfg != active || s.configPath != filepath.Clean(path) {
 		t.Fatalf("failed reload changed active config: cfg=%p root=%q", s.cfg, s.configPath)
@@ -52,7 +54,7 @@ func TestSuccessfulConfigReloadAppliesSettingsAndSpawnEnvironment(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.applyConfigReload(s.reloadSeq, reloadTarget{root: path}, candidate, nil)
+	s.applyConfigReload(s.reloadSeq, reloadTarget{path: config.Path{Named: path}}, candidate, nil)
 
 	if s.cfg != candidate.Config || s.configPath != filepath.Clean(path) {
 		t.Fatalf("successful reload not applied: cfg=%p root=%q", s.cfg, s.configPath)
@@ -82,12 +84,58 @@ func TestExplicitConfigReloadChangesRootOnlyAfterSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.applyConfigReload(s.reloadSeq, reloadTarget{root: requestedPath, explicit: true}, requested, nil)
+	s.applyConfigReload(s.reloadSeq, reloadTarget{path: config.Path{Named: requestedPath}, explicit: true}, requested, nil)
 	if s.configPath != filepath.Clean(requestedPath) || s.cfg == activeConfig {
 		t.Fatalf("successful explicit reload kept old root/config: root=%q cfg=%p", s.configPath, s.cfg)
 	}
 	if !slices.Contains(s.configSources, filepath.Join(dir, "optional.kdl")) {
 		t.Fatalf("optional include was not tracked: %q", s.configSources)
+	}
+	if want := (config.Path{Named: filepath.Clean(requestedPath)}); !reflect.DeepEqual(s.configSearch, want) {
+		t.Fatalf("later reloads read %+v, want %+v", s.configSearch, want)
+	}
+}
+
+// TestConfigCreatedAfterStartupLoads: a session started with no config file
+// loads one created later, directory and all, as niri's watcher does; it does
+// not keep reloading the defaults.
+func TestConfigCreatedAfterStartupLoads(t *testing.T) {
+	user := filepath.Join(t.TempDir(), "niri", "config.kdl")
+	s := newConfigReloadTestServerAt(t, config.LoadResult{}, config.Path{Search: []string{user}})
+	if s.configWatcher == nil {
+		t.Fatal("a missing searched config is not watched")
+	}
+
+	gaps := make(chan int, 1)
+	go func() {
+		defer s.Terminate()
+		if err := os.MkdirAll(filepath.Dir(user), 0o700); err != nil {
+			t.Error(err)
+			return
+		}
+		writeConfigFile(t, user, "layout {\n    gaps 21\n}\n")
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			s.reloadMu.Lock()
+			got := s.cfg.Layout.Gaps
+			s.reloadMu.Unlock()
+			if got == 21 {
+				break
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		s.reloadMu.Lock()
+		gaps <- s.cfg.Layout.Gaps
+		s.reloadMu.Unlock()
+	}()
+	if err := s.Run(); err != nil {
+		t.Fatal(err)
+	}
+	if got := <-gaps; got != 21 {
+		t.Fatalf("gaps = %v after creating %s, want 21", got, user)
+	}
+	if s.configPath != user {
+		t.Fatalf("config root = %q, want %q", s.configPath, user)
 	}
 }
 
@@ -107,7 +155,7 @@ func TestFailedExplicitConfigReloadKeepsActiveRoot(t *testing.T) {
 		t.Fatal("explicit config with a missing required include unexpectedly loaded")
 	}
 
-	s.applyConfigReload(s.reloadSeq, reloadTarget{root: requestedPath, explicit: true}, requested, err)
+	s.applyConfigReload(s.reloadSeq, reloadTarget{path: config.Path{Named: requestedPath}, explicit: true}, requested, err)
 	if s.configPath != filepath.Clean(activePath) || s.retryRoot != filepath.Clean(requestedPath) {
 		t.Fatalf("failed explicit reload changed active root: root=%q retry=%q", s.configPath, s.retryRoot)
 	}
@@ -118,9 +166,14 @@ func TestFailedExplicitConfigReloadKeepsActiveRoot(t *testing.T) {
 
 func newConfigReloadTestServer(t *testing.T, loaded config.LoadResult) *Server {
 	t.Helper()
+	return newConfigReloadTestServerAt(t, loaded, config.Path{Named: loaded.Root})
+}
+
+func newConfigReloadTestServerAt(t *testing.T, loaded config.LoadResult, path config.Path) *Server {
+	t.Helper()
 	runtime.LockOSThread()
 	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
-	s, err := New(loaded, false)
+	s, err := New(loaded, path, false)
 	if err != nil {
 		runtime.UnlockOSThread()
 		t.Skipf("no nested wayland session available: %v", err)

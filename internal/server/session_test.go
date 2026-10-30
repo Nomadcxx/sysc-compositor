@@ -44,7 +44,7 @@ func TestNestedServerDoesNotAcquirePortalNames(t *testing.T) {
 	t.Setenv("DBUS_SESSION_BUS_ADDRESS", address)
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
-	server, err := New(config.LoadResult{}, false)
+	server, err := New(config.LoadResult{}, config.Path{}, false)
 	if err != nil {
 		t.Skipf("nested compositor unavailable: %v", err)
 	}

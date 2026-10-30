@@ -102,7 +102,7 @@ func validateConfig(name string, args []string, env Env) int {
 			return usage(name, env, "unknown validate argument "+args[i])
 		}
 	}
-	path := config.Locate(flag, env.Getenv)
+	path := config.Locate(flag, env.Getenv).Resolve()
 	if path == "" {
 		fmt.Fprintf(env.Stdout, "%s: built-in configuration is valid\n", name)
 		return 0
@@ -129,12 +129,12 @@ func run(name, configFlag string, sessionMode bool, env Env) int {
 	// wlroots objects belong to the thread that created them.
 	runtime.LockOSThread()
 	path := config.Locate(configFlag, env.Getenv)
-	loaded, err := config.LoadWithSources(path)
+	loaded, err := config.LoadWithSources(path.Resolve())
 	if err != nil {
 		fmt.Fprintf(env.Stderr, "%s: config: %v; using the defaults\n", name, err)
 		loaded.Config = config.Default()
 	}
-	s, err := server.New(loaded, err != nil)
+	s, err := server.New(loaded, path, err != nil)
 	if err != nil {
 		fmt.Fprintf(env.Stderr, "%s: %v\n", name, err)
 		return 1

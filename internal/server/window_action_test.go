@@ -31,7 +31,7 @@ func TestNiriWindowActionsOverSocket(t *testing.T) {
 	go func() {
 		runtime.LockOSThread()
 		defer runtime.UnlockOSThread()
-		s, err := New(config.LoadResult{}, false)
+		s, err := New(config.LoadResult{}, config.Path{}, false)
 		if err != nil {
 			ready <- started{err: err}
 			close(done)

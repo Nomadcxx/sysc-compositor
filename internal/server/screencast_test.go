@@ -82,7 +82,7 @@ context.modules = [
 		defer runtime.UnlockOSThread()
 		cfg := config.Default()
 		cfg.Animations.Off = true
-		s, err := New(config.LoadResult{Config: cfg}, false)
+		s, err := New(config.LoadResult{Config: cfg}, config.Path{}, false)
 		if err != nil {
 			ready <- startup{err: err}
 			return
