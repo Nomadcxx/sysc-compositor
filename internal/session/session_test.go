@@ -53,6 +53,29 @@ func TestSessionActivationRequiresBothSockets(t *testing.T) {
 	}
 }
 
+func TestSessionWithoutX11ClearsInheritedDisplay(t *testing.T) {
+	bin := t.TempDir()
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("DISPLAY", ":host")
+	for _, name := range []string{"systemctl", "dbus-update-activation-environment"} {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte("#!/bin/sh\nexit 0\n"), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	lifecycle, err := Activate(Environment{WaylandDisplay: "wayland-private", NiriSocket: "/niri", SyscSocket: "/sysc"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lifecycle.Close()
+	if got := os.Getenv("DISPLAY"); got != "" {
+		t.Fatalf("session kept host DISPLAY=%q without its own X11 server", got)
+	}
+	lifecycle.Close()
+	if os.Getenv("DISPLAY") != ":host" {
+		t.Fatal("session shutdown lost the previous process environment")
+	}
+}
+
 func TestNotifyReadySendsReadyToNotifySocket(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "notify")
 	conn, err := net.ListenUnixgram("unixgram", &net.UnixAddr{Name: path, Net: "unixgram"})

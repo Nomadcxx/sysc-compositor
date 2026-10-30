@@ -60,7 +60,9 @@ executed until the owner schedules the milestone they belong to.
 | [plans/2026-10-24-session-vm.md](plans/2026-10-24-session-vm.md) | record | The session VM on the laptop (`~/vm/sysc-session`, scripts in `plans/assets/2026-10-24-session-vm/`): lane 2 under vkms with no window anywhere, and the `--session` gate (`sysc-1631`) through greetd, which found that `graphical-session.target` refuses a manual start; the session now runs Niri's way (`sysc-compositor-session`, `sysc-compositor.service`); then the same gate with sysc-greet as the greeter. |
 | [plans/2026-10-24-sysc-compositor-continuation-handover.md](plans/2026-10-24-sysc-compositor-continuation-handover.md) | handover | Superseded for planning by the 2026-10-30 post-M12 handover. State after #50–#52 (Niri-style session, sysc-greet gate, lane 2 quarantine down to two); the session VM's use; next: the M10 gate in the VM, `sysc-1642`/`sysc-1640`, M12, small items, M13–M15. |
 | [plans/2026-10-30-m12-vm-gate-handover.md](plans/2026-10-30-m12-vm-gate-handover.md) | handover | Superseded (history). M12 Task 8 VM gate evidence, the fixes #68–#70, VM driving lessons and gate assets. |
-| [plans/2026-10-30-post-m12-handover.md](plans/2026-10-30-post-m12-handover.md) | handover | **Current planning handover.** M12 closed (#71–#74); open: the unexplained lane-2 kill (`sysc-2078`), `sysc-2056`, M13, first-use config; a warning about concurrent agents. |
+| [plans/2026-10-30-post-m12-handover.md](plans/2026-10-30-post-m12-handover.md) | handover | **Current planning handover.** M12 closed (#71–#74); lane-2 follow-up, frame-pacing audit, M13 and first-use decision; includes the execution record. |
+| [plans/2026-10-30-m13-x11.md](plans/2026-10-30-m13-x11.md) | plan | M13: on-demand satellite sockets and lifecycle, config, DISPLAY publication, and native/X11 application gates. |
+| [plans/2026-10-31-frame-pacing-audit.md](plans/2026-10-31-frame-pacing-audit.md) | report | sysc-2056 source audit: native callback scheduling and scanout, hidden-surface fallback gap, and the remaining physical game benchmark. |
 
 ## Reference sources (pinned)
 

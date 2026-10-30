@@ -19,6 +19,7 @@ import (
 	"github.com/Nomadcxx/sysc-compositor/internal/session"
 	"github.com/Nomadcxx/sysc-compositor/internal/unixsock"
 	"github.com/Nomadcxx/sysc-compositor/internal/wlr"
+	"github.com/Nomadcxx/sysc-compositor/internal/x11"
 )
 
 // Server wraps the wlroots object graph behind the lifetime the binary needs.
@@ -32,6 +33,7 @@ type Server struct {
 	sessionDBus   *session.DBus
 	screenSaver   *session.ScreenSaver
 	portal        *session.Portal
+	satellite     *x11.Satellite
 	localeXKB     *config.Keyboard
 	watchStop     chan struct{}
 	watchStart    sync.Once
@@ -88,11 +90,37 @@ func New(load config.LoadResult, path config.Path, configLoadFailed bool) (*Serv
 			s.configWatcher = watcher
 		}
 	}
-	s.spawn = newSpawner(c.SocketName(), s.NiriSocket(), cfg.Environment, cfg.Cursor)
+	s.configureX11()
+	s.spawn = newSpawner(c.SocketName(), s.NiriSocket(), cfg.Environment, cfg.Cursor, s.Display())
 	c.SetSpawnHandlers(s.spawn.spawn, s.spawn.spawnSh)
 	c.SetScreenshotHandler(func(path *string) { s.state.publishScreenshotCaptured(s.events, path) })
 	c.SetSwitchToggleHandler(s.handleSwitchToggle)
 	return s, nil
+}
+
+func (s *Server) configureX11() {
+	if s.satellite != nil {
+		s.satellite.SetPath(s.cfg.XwaylandSatellite.Path)
+		return
+	}
+	if s.cfg.XwaylandSatellite.Off {
+		return
+	}
+	var err error
+	// ponytail: the first support probe blocks for at most 3s. If reload
+	// stutter is observed, move the probe into the existing reload worker.
+	s.satellite, err = x11.Open(s.cfg.XwaylandSatellite.Path, s.c.SocketName())
+	if err != nil {
+		os.Stderr.WriteString("sysc-compositor: " + err.Error() + "; X11 unavailable\n")
+	}
+}
+
+// Display is this server's X11 display, never the surrounding session's.
+func (s *Server) Display() string {
+	if s.satellite == nil || s.cfg.XwaylandSatellite.Off {
+		return ""
+	}
+	return s.satellite.Display()
 }
 
 // refreshNiriState copies wlroots state on its owner thread before publishing
@@ -461,6 +489,10 @@ func (s *Server) Terminate() { s.c.Terminate() }
 // Destroy releases the compositor and every listener it owns.
 func (s *Server) Destroy() {
 	s.stopConfigWatcher()
+	if s.satellite != nil {
+		s.satellite.Close()
+		s.satellite = nil
+	}
 	if s.portal != nil {
 		s.portal.Close()
 		s.portal = nil

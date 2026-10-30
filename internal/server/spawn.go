@@ -27,33 +27,37 @@ type spawnEnvironment struct {
 
 // newSpawner records what children get on top of this process's
 // environment: the nested Wayland socket and the niri socket, NOTIFY_SOCKET
-// and DISPLAY removed (no Xwayland yet), and the config's environment last.
+// removed, the reserved X11 display when available, and config environment last.
 // A nil value removes a variable, as `NAME null` does in Niri's
 // `environment {}`. The process environment itself is read at each spawn,
 // so children see what --session sets after the spawner exists, as Niri's
 // children inherit its environment.
-func newSpawner(waylandDisplay, niriSocket string, configured map[string]*string, cursor config.Cursor) spawner {
-	return spawner{environment: &spawnEnvironment{set: spawnOverlay(waylandDisplay, niriSocket, configured, cursor)}}
+func newSpawner(waylandDisplay, niriSocket string, configured map[string]*string, cursor config.Cursor, display string) spawner {
+	return spawner{environment: &spawnEnvironment{set: spawnOverlay(waylandDisplay, niriSocket, configured, cursor, display)}}
 }
 
-func spawnOverlay(waylandDisplay, niriSocket string, configured map[string]*string, cursor config.Cursor) map[string]*string {
+func spawnOverlay(waylandDisplay, niriSocket string, configured map[string]*string, cursor config.Cursor, display string) map[string]*string {
 	set := map[string]*string{}
 	str := func(v string) *string { return &v }
 	set["WAYLAND_DISPLAY"] = str(waylandDisplay)
+	set["WAYLAND_SOCKET"] = nil
 	set["XCURSOR_THEME"] = str(cursor.Theme)
 	set["XCURSOR_SIZE"] = str(strconv.Itoa(cursor.Size))
 	if niriSocket != "" {
 		set["NIRI_SOCKET"] = str(niriSocket)
 	}
 	set["NOTIFY_SOCKET"], set["DISPLAY"] = nil, nil
+	if display != "" {
+		set["DISPLAY"] = str(display)
+	}
 	for k, v := range configured {
 		set[k] = v
 	}
 	return set
 }
 
-func (s spawner) updateEnvironment(waylandDisplay, niriSocket string, configured map[string]*string, cursor config.Cursor) {
-	next := spawnOverlay(waylandDisplay, niriSocket, configured, cursor)
+func (s spawner) updateEnvironment(waylandDisplay, niriSocket string, configured map[string]*string, cursor config.Cursor, display string) {
+	next := spawnOverlay(waylandDisplay, niriSocket, configured, cursor, display)
 	s.environment.mu.Lock()
 	s.environment.set = next
 	s.environment.mu.Unlock()

@@ -9,6 +9,44 @@ import (
 	"testing"
 )
 
+func TestXwaylandSatelliteConfig(t *testing.T) {
+	for _, tc := range []struct {
+		src, path string
+		off       bool
+	}{
+		{``, "xwayland-satellite", false},
+		{`xwayland-satellite { off; }`, "xwayland-satellite", true},
+		{`xwayland-satellite { on; off; path "~/bin/satellite"; }`, "~/bin/satellite", false},
+	} {
+		cfg, err := Parse("satellite", []byte(tc.src))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(cfg.Warnings) != 0 {
+			t.Fatalf("satellite config is still unapplied: %v", cfg.Warnings)
+		}
+		if cfg.XwaylandSatellite.Path != tc.path || cfg.XwaylandSatellite.Off != tc.off {
+			t.Fatalf("satellite config = %+v", cfg.XwaylandSatellite)
+		}
+	}
+	for _, src := range []string{`xwayland-satellite { path ""; }`, `xwayland-satellite { off true; }`, `xwayland-satellite { typo; }`, `xwayland-satellite "bad"`} {
+		if _, err := Parse("satellite", []byte(src)); err == nil {
+			t.Errorf("accepted malformed satellite config: %s", src)
+		}
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "included.kdl"), []byte(`xwayland-satellite { off; path "/old"; }`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Parse(filepath.Join(dir, "config.kdl"), []byte("include \"included.kdl\"\nxwayland-satellite { on; }\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.XwaylandSatellite.Off || cfg.XwaylandSatellite.Path != "/old" {
+		t.Fatalf("positional satellite merge = %+v", cfg.XwaylandSatellite)
+	}
+}
+
 // TestGreeterConfig is design §12: sysc-greet's greeter config, copied
 // unmodified from sysc-greet ccfcdde (config/niri-greeter-config.kdl), must
 // parse, and its startup commands and keyboard must come out as written.

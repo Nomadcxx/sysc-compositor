@@ -133,7 +133,7 @@ func TestNiriWorkspaceSnapshotConversion(t *testing.T) {
 
 func TestNiriHandler(t *testing.T) {
 	var quits []bool
-	h := niriHandler{quit: func(skip bool) { quits = append(quits, skip) }, spawn: newSpawner("w", "", nil, config.Default().Cursor)}
+	h := niriHandler{quit: func(skip bool) { quits = append(quits, skip) }, spawn: newSpawner("w", "", nil, config.Default().Cursor, "")}
 	for _, tc := range []struct {
 		line, want string
 		after      bool

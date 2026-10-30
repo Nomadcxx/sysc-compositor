@@ -37,15 +37,16 @@ type Config struct {
 	Binds        []Binding
 	// OverlayBinds is every bind in order, applied here or not, as the
 	// hotkey overlay lists them; HotkeyOverlay is its section.
-	OverlayBinds  []OverlayBind
-	HotkeyOverlay HotkeyOverlay
-	RecentWindows RecentWindows
-	Workspaces    []WorkspaceConfig
-	WindowRules   []WindowRule
-	LayerRules    []LayerRule
-	Animations    Animations
-	Blur          Blur
-	PreferNoCSD   bool
+	OverlayBinds      []OverlayBind
+	HotkeyOverlay     HotkeyOverlay
+	RecentWindows     RecentWindows
+	Workspaces        []WorkspaceConfig
+	WindowRules       []WindowRule
+	LayerRules        []LayerRule
+	Animations        Animations
+	Blur              Blur
+	PreferNoCSD       bool
+	XwaylandSatellite XwaylandSatellite
 	// ScreenshotPath is the strftime pattern screenshots are written to; nil
 	// (`screenshot-path null`) keeps them in the clipboard only.
 	ScreenshotPath *string
@@ -200,6 +201,11 @@ type Cursor struct {
 	Size  int
 }
 
+type XwaylandSatellite struct {
+	Off  bool
+	Path string
+}
+
 type Binding = bind.Binding
 
 // Keyboard is input.keyboard: the xkb names and the repeat clients use.
@@ -216,13 +222,14 @@ func Default() *Config {
 			InsertHint: InsertHint{Color: Color{127.0 / 255, 200.0 / 255, 1, 128.0 / 255}},
 			FocusRing:  FocusRing{Width: 4, ActiveColor: Color{127.0 / 255, 200.0 / 255, 1, 1}, InactiveColor: Color{80.0 / 255, 80.0 / 255, 80.0 / 255, 1}},
 			Shadow:     Shadow{Softness: 30, Spread: 5, OffsetY: 5, Color: Color{0, 0, 0, 119.0 / 255}}},
-		Overview:       Overview{Zoom: 0.5, BackdropColor: Color{0.15, 0.15, 0.15, 1}},
-		Gestures:       Gestures{DNDEdgeViewScroll: DNDEdgeViewScroll{TriggerWidth: 30, DelayMS: 100, MaxSpeed: 1500}},
-		Cursor:         Cursor{Theme: "default", Size: 24},
-		Animations:     defaultAnimations(),
-		Blur:           defaultBlur(),
-		RecentWindows:  defaultRecentWindows(),
-		ScreenshotPath: func() *string { p := DefaultScreenshotPath; return &p }()}
+		Overview:          Overview{Zoom: 0.5, BackdropColor: Color{0.15, 0.15, 0.15, 1}},
+		Gestures:          Gestures{DNDEdgeViewScroll: DNDEdgeViewScroll{TriggerWidth: 30, DelayMS: 100, MaxSpeed: 1500}},
+		Cursor:            Cursor{Theme: "default", Size: 24},
+		Animations:        defaultAnimations(),
+		Blur:              defaultBlur(),
+		RecentWindows:     defaultRecentWindows(),
+		XwaylandSatellite: XwaylandSatellite{Path: "xwayland-satellite"},
+		ScreenshotPath:    func() *string { p := DefaultScreenshotPath; return &p }()}
 }
 
 // topLevel is every top-level node niri 26.04 decodes (niri-config/src/lib.rs).
@@ -306,6 +313,8 @@ func decode(name string, nodes []*document.Node) (*Config, error) {
 			err = c.animations(n)
 		case "blur":
 			err = c.blur(n)
+		case "xwayland-satellite":
+			err = c.xwaylandSatellite(n)
 		case "screenshot-path":
 			err = c.screenshotPath(n)
 		case "overview":
@@ -1064,6 +1073,47 @@ func (c *Config) insertHint(n *document.Node) error {
 func noValue(n *document.Node) error {
 	if len(n.Arguments) != 0 || len(n.Properties) != 0 || len(n.Children) != 0 {
 		return fmt.Errorf("`%s` takes no arguments or properties", nodeName(n))
+	}
+	return nil
+}
+
+func (c *Config) xwaylandSatellite(n *document.Node) error {
+	if len(n.Arguments) != 0 || len(n.Properties) != 0 {
+		return fmt.Errorf("takes children only")
+	}
+	on := false
+	seen := make(map[string]bool)
+	for _, child := range n.Children {
+		name := nodeName(child)
+		if seen[name] {
+			return fmt.Errorf("duplicate setting %q", name)
+		}
+		seen[name] = true
+		switch name {
+		case "off", "on":
+			if err := noValue(child); err != nil {
+				return err
+			}
+			if name == "on" {
+				on = true
+			} else {
+				c.XwaylandSatellite.Off = true
+			}
+		case "path":
+			args, err := stringArgs(child, 1, 1)
+			if err != nil {
+				return err
+			}
+			if args[0] == "" || len(child.Children) != 0 || len(child.Properties) != 0 {
+				return fmt.Errorf("path needs one nonempty executable")
+			}
+			c.XwaylandSatellite.Path = args[0]
+		default:
+			return fmt.Errorf("unknown setting %q", name)
+		}
+	}
+	if on {
+		c.XwaylandSatellite.Off = false
 	}
 	return nil
 }

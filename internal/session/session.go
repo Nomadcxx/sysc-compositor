@@ -42,9 +42,9 @@ func Activate(environment Environment) (*Lifecycle, error) {
 		{"SYSC_SOCKET", environment.SyscSocket},
 		{"XDG_CURRENT_DESKTOP", "niri:sysc"},
 		{"XDG_SESSION_TYPE", "wayland"},
-	}
-	if environment.Display != "" {
-		values = append(values, struct{ key, value string }{"DISPLAY", environment.Display})
+		// An empty value clears an inherited host display in process,
+		// systemd and D-Bus environments when satellite is unavailable.
+		{"DISPLAY", environment.Display},
 	}
 	lifecycle := &Lifecycle{previous: make(map[string]savedEnvironment, len(values))}
 	assignments := make([]string, 0, len(values))

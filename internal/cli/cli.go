@@ -143,7 +143,7 @@ func run(name, configFlag string, sessionMode bool, env Env) int {
 	if sessionMode {
 		lifecycle, err := session.Activate(session.Environment{
 			WaylandDisplay: s.SocketName(), NiriSocket: s.NiriSocket(),
-			SyscSocket: s.ControlPath(), Display: env.Getenv("DISPLAY"),
+			SyscSocket: s.ControlPath(), Display: s.Display(),
 		})
 		if err != nil {
 			fmt.Fprintf(env.Stderr, "%s: session: %v\n", name, err)

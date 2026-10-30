@@ -23,6 +23,11 @@ Build with Go 1.26.4 or newer, wlroots 0.20, SceneFX 0.5 and system libpipewire 
 For direct Go build/test/vet commands, set `CGO_CFLAGS_ALLOW=-fno-strict-overflow` too. No Go
 PipeWire binding dependency is required.
 
+X11 applications need xwayland-satellite 0.7 or newer and Xwayland installed at
+runtime. Satellite starts on demand. The `xwayland-satellite { path "..."; }`
+config section overrides its executable; `off` stops publishing DISPLAY to new
+applications while existing X11 applications keep running.
+
 ## Docs
 
 | Doc | What it is |
