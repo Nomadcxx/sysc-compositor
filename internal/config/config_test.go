@@ -943,7 +943,11 @@ func TestLocate(t *testing.T) {
 	user := filepath.Join(dir, "niri", "config.kdl")
 	env := map[string]string{"XDG_CONFIG_HOME": dir, "HOME": "/nonexistent"}
 	getenv := func(k string) string { return env[k] }
-	if got := Locate("", getenv); got != "" && got != "/etc/niri/config.kdl" {
+	search := Locate("", getenv)
+	if want := []string{user, "/etc/niri/config.kdl"}; !reflect.DeepEqual(search.Search, want) || search.Named != "" {
+		t.Fatalf("search: %+v, want %q", search, want)
+	}
+	if got := search.Resolve(); got != "" && got != "/etc/niri/config.kdl" {
 		t.Errorf("no user config: %q", got)
 	}
 	if err := os.MkdirAll(filepath.Dir(user), 0o755); err != nil {
@@ -952,15 +956,16 @@ func TestLocate(t *testing.T) {
 	if err := os.WriteFile(user, nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if got := Locate("", getenv); got != user {
+	// The search runs again, so a config created after startup is found.
+	if got := search.Resolve(); got != user {
 		t.Errorf("user config: %q, want %q", got, user)
 	}
 	env["NIRI_CONFIG"] = "/from/env.kdl"
-	if got := Locate("", getenv); got != "/from/env.kdl" {
-		t.Errorf("NIRI_CONFIG: %q", got)
+	if got := Locate("", getenv); got.Resolve() != "/from/env.kdl" || got.Search != nil {
+		t.Errorf("NIRI_CONFIG: %+v", got)
 	}
-	if got := Locate("/from/flag.kdl", getenv); got != "/from/flag.kdl" {
-		t.Errorf("-c: %q", got)
+	if got := Locate("/from/flag.kdl", getenv); got.Resolve() != "/from/flag.kdl" || got.Search != nil {
+		t.Errorf("-c: %+v", got)
 	}
 }
 

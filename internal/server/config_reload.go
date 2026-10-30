@@ -12,7 +12,7 @@ import (
 )
 
 type reloadTarget struct {
-	root     string
+	path     config.Path
 	explicit bool
 }
 
@@ -98,12 +98,11 @@ func (s *Server) stopConfigWatcher() {
 
 func (s *Server) requestConfigReload(path *string) {
 	s.reloadMu.Lock()
-	root := s.configPath
-	explicit := false
+	target := reloadTarget{path: s.configSearch}
 	if path != nil {
-		root, explicit = *path, true
+		target = reloadTarget{path: config.Path{Named: *path}, explicit: true}
 	}
-	targets := []reloadTarget{{root: root, explicit: explicit}}
+	targets := []reloadTarget{target}
 	sequence, c, ok := s.beginReloadLocked()
 	s.reloadMu.Unlock()
 	if ok {
@@ -113,9 +112,9 @@ func (s *Server) requestConfigReload(path *string) {
 
 func (s *Server) reloadWatchedConfigs() {
 	s.reloadMu.Lock()
-	targets := []reloadTarget{{root: s.configPath}}
+	targets := []reloadTarget{{path: s.configSearch}}
 	if s.retryRoot != "" && s.retryRoot != s.configPath {
-		targets = append(targets, reloadTarget{root: s.retryRoot, explicit: true})
+		targets = append(targets, reloadTarget{path: config.Path{Named: s.retryRoot}, explicit: true})
 	}
 	sequence, c, ok := s.beginReloadLocked()
 	s.reloadMu.Unlock()
@@ -138,7 +137,7 @@ func (s *Server) launchReload(sequence uint64, c *wlr.Compositor, targets []relo
 	go func() {
 		defer s.reloadWG.Done()
 		for _, target := range targets {
-			load, err := config.LoadWithSources(target.root)
+			load, err := config.LoadWithSources(target.path.Resolve())
 			if postErr := c.Post(func() { s.applyConfigReload(sequence, target, load, err) }); postErr != nil {
 				if !errors.Is(postErr, wlr.ErrClosed) {
 					os.Stderr.WriteString("sysc-compositor: config reload post: " + postErr.Error() + "\n")
@@ -155,6 +154,19 @@ func (s *Server) applyConfigReload(sequence uint64, target reloadTarget, load co
 		s.reloadMu.Unlock()
 		return
 	}
+	if loadErr == nil && load.Root == "" {
+		// No searched config exists: as niri, keep the active one. The
+		// watches still follow any searched directory created since, and a
+		// config written there before its watch was added loads now.
+		watched := s.watchedConfigs(s.configSources)
+		search := s.configSearch
+		s.reloadMu.Unlock()
+		s.updateConfigWatches(watched)
+		if search.Resolve() != "" {
+			s.reloadWatchedConfigs()
+		}
+		return
+	}
 	if loadErr == nil {
 		if load.Config == nil {
 			load.Config = config.Default()
@@ -166,9 +178,9 @@ func (s *Server) applyConfigReload(sequence uint64, target reloadTarget, load co
 		if target.explicit && load.Root != s.configPath {
 			s.retryRoot = load.Root
 		}
-		sources := slices.Clone(s.configSources)
+		watched := s.watchedConfigs(s.configSources)
 		s.reloadMu.Unlock()
-		s.updateConfigWatches(sources)
+		s.updateConfigWatches(watched)
 		os.Stderr.WriteString("sysc-compositor: config reload: " + loadErr.Error() + "\n")
 		s.state.publishConfigLoaded(s.events, true)
 		return
@@ -176,22 +188,32 @@ func (s *Server) applyConfigReload(sequence uint64, target reloadTarget, load co
 
 	s.cfg = load.Config
 	s.configPath = load.Root
+	if target.explicit {
+		s.configSearch = config.Path{Named: load.Root}
+	}
 	s.configSources = slices.Clone(load.Sources)
 	s.retryRoot = ""
 	s.spawn.updateEnvironment(s.c.SocketName(), s.NiriSocket(), load.Config.Environment, load.Config.Cursor)
-	sources := slices.Clone(s.configSources)
+	watched := s.watchedConfigs(s.configSources)
 	s.reloadMu.Unlock()
-	s.updateConfigWatches(sources)
+	s.updateConfigWatches(watched)
 	s.state.publishConfigLoaded(s.events, false)
 }
 
-func (s *Server) updateConfigWatches(sources []string) {
+func (s *Server) updateConfigWatches(watched []string) {
 	if s.configWatcher == nil {
 		return
 	}
-	if err := s.configWatcher.Update(sources); err != nil {
+	if err := s.configWatcher.Update(watched); err != nil {
 		os.Stderr.WriteString("sysc-compositor: config watcher update: " + err.Error() + "\n")
 	}
+}
+
+// watchedConfigs adds the searched config paths to sources, so creating or
+// removing a user or system config reloads, as niri's watcher does. The
+// caller holds reloadMu.
+func (s *Server) watchedConfigs(sources []string) []string {
+	return mergeSources(sources, s.configSearch.Search)
 }
 
 func mergeSources(first, second []string) []string {

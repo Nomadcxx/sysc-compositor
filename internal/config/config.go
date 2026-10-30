@@ -1510,26 +1510,41 @@ func numberArg(n *document.Node) (float64, error) {
 	return value, nil
 }
 
+// Path is where niri reads its config: one named file (-c, $NIRI_CONFIG or
+// load-config-file), or else Search, the user's and then the system config,
+// searched again on every load so a config created after startup is found.
+type Path struct {
+	Named  string
+	Search []string
+}
+
 // Locate is the config path niri would read: the -c flag, then $NIRI_CONFIG
-// (empty means unset), then the user's and the system config. It returns ""
-// when no file exists and none was named.
-func Locate(flag string, getenv func(string) string) string {
+// (empty means unset), then the user's and the system config.
+func Locate(flag string, getenv func(string) string) Path {
 	if flag != "" {
-		return flag
+		return Path{Named: flag}
 	}
 	if p := getenv("NIRI_CONFIG"); p != "" {
-		return p
+		return Path{Named: p}
 	}
-	var candidates []string
+	var search []string
 	if x := getenv("XDG_CONFIG_HOME"); filepath.IsAbs(x) {
-		candidates = append(candidates, filepath.Join(x, "niri", "config.kdl"))
+		search = append(search, filepath.Join(x, "niri", "config.kdl"))
 	} else if h := getenv("HOME"); h != "" {
-		candidates = append(candidates, filepath.Join(h, ".config", "niri", "config.kdl"))
+		search = append(search, filepath.Join(h, ".config", "niri", "config.kdl"))
 	}
-	candidates = append(candidates, "/etc/niri/config.kdl")
-	for _, p := range candidates {
-		if _, err := os.Stat(p); err == nil {
-			return p
+	return Path{Search: append(search, "/etc/niri/config.kdl")}
+}
+
+// Resolve is the file to load now. It returns "" when nothing was named and
+// no searched file exists.
+func (p Path) Resolve() string {
+	if p.Named != "" {
+		return p.Named
+	}
+	for _, candidate := range p.Search {
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
 		}
 	}
 	return ""

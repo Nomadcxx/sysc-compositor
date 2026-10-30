@@ -26,6 +26,7 @@ type Server struct {
 	c             *wlr.Compositor
 	cfg           *config.Config
 	configPath    string
+	configSearch  config.Path
 	configSources []string
 	configWatcher *config.Watcher
 	sessionDBus   *session.DBus
@@ -51,10 +52,10 @@ type Server struct {
 	stopping      chan struct{}
 }
 
-// New builds the compositor from cfg (nil is niri's defaults) and records
-// whether loading the user's startup config failed. The caller must already
-// hold the compositor thread.
-func New(load config.LoadResult, configLoadFailed bool) (*Server, error) {
+// New builds the compositor from load (a nil config is niri's defaults),
+// loaded from path, and records whether loading the user's startup config
+// failed. The caller must already hold the compositor thread.
+func New(load config.LoadResult, path config.Path, configLoadFailed bool) (*Server, error) {
 	cfg := load.Config
 	if cfg == nil {
 		cfg = config.Default()
@@ -64,7 +65,7 @@ func New(load config.LoadResult, configLoadFailed bool) (*Server, error) {
 		return nil, err
 	}
 	s := &Server{
-		c: c, cfg: cfg, configPath: load.Root, configSources: slices.Clone(load.Sources),
+		c: c, cfg: cfg, configPath: load.Root, configSearch: path, configSources: slices.Clone(load.Sources),
 		state: newNiriState(configLoadFailed), events: newEventHub(),
 		stopping: make(chan struct{}),
 	}
@@ -79,8 +80,8 @@ func New(load config.LoadResult, configLoadFailed bool) (*Server, error) {
 		// still can.
 		os.Stderr.WriteString("sysc-compositor: niri socket: " + err.Error() + "\n")
 	}
-	if len(s.configSources) != 0 {
-		watcher, watchErr := config.NewWatcher(s.configSources)
+	if watched := s.watchedConfigs(s.configSources); len(watched) != 0 {
+		watcher, watchErr := config.NewWatcher(watched)
 		if watchErr != nil {
 			os.Stderr.WriteString("sysc-compositor: config watcher: " + watchErr.Error() + "\n")
 		} else {
