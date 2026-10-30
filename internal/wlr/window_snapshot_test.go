@@ -1,6 +1,7 @@
 package wlr
 
 import (
+	"bytes"
 	"os"
 	"os/exec"
 	"strings"
@@ -158,7 +159,10 @@ func TestLayerKeyboardFocusKeepsWindowActionsAndSnapshot(t *testing.T) {
 	var views []*toplevelView
 	var windowChanges int
 	var focusedCandidateUpdated, closeRetainedFocus bool
+	// Retain the last event state so a slow layer-shell start has useful output.
+	var checked, wofiMapped, layerFocused, windowUnfocused bool
 	var wofi *exec.Cmd
+	var wofiErr bytes.Buffer
 	c.SetStateChanged(func() { windowChanges++ })
 	c.viewMapped = func(view *toplevelView) {
 		views = append(views, view)
@@ -167,17 +171,31 @@ func TestLayerKeyboardFocusKeepsWindowActionsAndSnapshot(t *testing.T) {
 		}
 		wofi = exec.Command(wofiPath, "--show", "drun")
 		wofi.Env = append(os.Environ(), "WAYLAND_DISPLAY="+c.SocketName())
+		wofi.Stderr = &wofiErr
 		if err := wofi.Start(); err != nil {
 			t.Errorf("start wofi: %v", err)
 			c.Terminate()
 			return
 		}
-		pollThenStop(c, func() bool {
-			if len(c.LayerSnapshot()) == 0 || c.keyboardFocusedView() != nil {
+		pollThenStopFor(c, 8*time.Second, func() bool {
+			wofiMapped, layerFocused, windowUnfocused = false, false, false
+			for _, layer := range c.LayerSnapshot() {
+				if layer.Namespace == "wofi" && layer.KeyboardInteractivity != LayerKeyboardNoneMode {
+					wofiMapped = true
+					break
+				}
+			}
+			layerFocused = c.layerSurfaceForSurface(c.seat.keyboard_state.focused_surface) != nil
+			windowUnfocused = c.keyboardFocusedView() == nil
+			if !wofiMapped || !layerFocused || !windowUnfocused {
 				return false
 			}
+			checked = true
 			before := windowChanges
 			target := views[0]
+			if target == c.focusedView {
+				target = views[1]
+			}
 			if !c.FocusWindow(target.id) {
 				t.Errorf("FocusWindow rejected mapped target %d", target.id)
 				return true
@@ -187,17 +205,23 @@ func TestLayerKeyboardFocusKeepsWindowActionsAndSnapshot(t *testing.T) {
 				t.Errorf("windows after focusing under layer = %+v; want target %d first but not keyboard-focused", windows, target.id)
 			}
 			focusedCandidateUpdated = windowChanges > before
-			if c.keyboardFocusedView() != nil {
+			if c.keyboardFocusedView() != nil || c.layerSurfaceForSurface(c.seat.keyboard_state.focused_surface) == nil {
 				t.Error("window action stole keyboard focus from the layer surface")
 			}
 			closeRetainedFocus = c.CloseWindow(nil)
 			return true
 		})
 	}
-	runClient(t, c, []string{"sh", "-c", "weston-terminal & weston-terminal & wait"}, nil, nil)
+	runClientWithTimeout(t, c, []string{"sh", "-c", "weston-terminal & weston-terminal & wait"}, nil, nil, 10*time.Second)
+	wofiState := "not started"
 	if wofi != nil && wofi.Process != nil {
 		_ = wofi.Process.Kill()
 		_ = wofi.Wait()
+		wofiState = wofi.ProcessState.String()
+	}
+	if !checked {
+		t.Fatalf("wofi's layer surface never held keyboard focus in time: views=%d wofi mapped=%v layer focused=%v window unfocused=%v wofi=%s stderr=%q",
+			len(views), wofiMapped, layerFocused, windowUnfocused, wofiState, wofiErr.String())
 	}
 	if !focusedCandidateUpdated {
 		t.Error("changing the retained window focus under a layer surface did not notify state changes")

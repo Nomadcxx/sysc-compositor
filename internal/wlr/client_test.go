@@ -19,6 +19,11 @@ import (
 // meanwhile, so hooks such as viewMapped fire while it waits.
 func runClient(t *testing.T, c *Compositor, argv []string, env []string, stop func(string) bool) []string {
 	t.Helper()
+	return runClientWithTimeout(t, c, argv, env, stop, 5*time.Second)
+}
+
+func runClientWithTimeout(t *testing.T, c *Compositor, argv []string, env []string, stop func(string) bool, timeout time.Duration) []string {
+	t.Helper()
 	path, err := exec.LookPath(argv[0])
 	if err != nil {
 		t.Skipf("%s unavailable: %v", argv[0], err)
@@ -62,11 +67,11 @@ func runClient(t *testing.T, c *Compositor, argv []string, env []string, stop fu
 		c.Terminate()
 		close(exited)
 	}()
-	timeout := time.AfterFunc(5*time.Second, c.Terminate)
+	timer := time.AfterFunc(timeout, c.Terminate)
 	if err := c.Run(); err != nil {
 		t.Fatal(err)
 	}
-	timeout.Stop()
+	timer.Stop()
 	_ = cmd.Process.Kill()
 	<-exited
 	// Let the reader drain what the client wrote before closing the pipe:
