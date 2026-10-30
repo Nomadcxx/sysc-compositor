@@ -1,0 +1,41 @@
+<!doctype html>
+<html><head><title>sysc cast probe</title>
+<style>body{background:#fff;font:20px sans-serif;margin:0}button{font-size:40px;padding:30px 60px;margin:60px}</style></head>
+<body>
+<button id="go">Share</button>
+<div id="state">idle</div>
+<video id="v" autoplay muted playsinline width="320"></video>
+<script>
+const state = document.getElementById('state');
+async function report(result) {
+  await fetch('/result', {method: 'POST', body: JSON.stringify(result)});
+  state.textContent = 'reported ' + JSON.stringify(result);
+}
+document.getElementById('go').onclick = async () => {
+  try {
+    state.textContent = 'requesting';
+    const stream = await navigator.mediaDevices.getDisplayMedia({video: true, audio: false});
+    const track = stream.getVideoTracks()[0];
+    const v = document.getElementById('v');
+    v.srcObject = stream;
+    let frames = 0;
+    const tick = () => { frames++; v.requestVideoFrameCallback(tick); };
+    v.requestVideoFrameCallback(tick);
+    await new Promise(r => setTimeout(r, 4000));
+    const c = document.createElement('canvas');
+    c.width = v.videoWidth; c.height = v.videoHeight;
+    const ctx = c.getContext('2d');
+    ctx.drawImage(v, 0, 0);
+    const px = ctx.getImageData(0, 0, c.width, c.height).data;
+    let sum = [0, 0, 0];
+    for (let i = 0; i < px.length; i += 4 * 97) { sum[0] += px[i]; sum[1] += px[i+1]; sum[2] += px[i+2]; }
+    const n = px.length / (4 * 97);
+    const settings = track.getSettings();
+    await report({ua: navigator.userAgent, frames, width: v.videoWidth, height: v.videoHeight,
+                  displaySurface: settings.displaySurface || null, mean: sum.map(s => Math.round(s / n))});
+    track.stop();
+  } catch (e) {
+    await report({ua: navigator.userAgent, error: String(e)});
+  }
+};
+</script></body></html>
