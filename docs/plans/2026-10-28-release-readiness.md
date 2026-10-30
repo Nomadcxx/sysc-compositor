@@ -67,7 +67,7 @@ hardware or integration completeness.
 | Gate | Work and acceptance evidence still needed | Owner |
 |---|---|---|
 | Client protocol hardware | Task 7's protocols have behavioral proof. Hardware qualification remains: gamma on a physical panel, explicit sync on NVIDIA, and a physical tablet and pad. Gamma control is proved on vkms. Explicit sync is proved with Vulkan on Intel; NVIDIA is not qualified. Tearing control records hints and never tears, as Niri; game frame pacing against Niri is `sysc-2056`. | M12 Task 7 |
-| X11 applications | xwayland-satellite lifecycle, DISPLAY publication, native/X11 focus, and Steam/Discord in nested and real sessions. | M13, `sysc-1278` |
+| X11 applications | M13's VM checks prove on-demand satellite lifecycle/restart, DISPLAY, native/X11 focus, clipboard and Steam's sign-in window in nested and real sessions. Discord's updater maps, but its application page reports a network error on X11 and native Wayland; finish that usable-app gate. | M13, `sysc-1278` |
 | Accessibility | KeyboardMonitor/announcements and a real Orca session. | M14, `sysc-1279` |
 | Output and action parity | Runtime/persistent output configuration, mixed DPI, VRR, GPU reset, missing IPC/actions/binds, easing, remaining rules and config effects; default and owner configs must use no unimplemented actions. | M15, `sysc-1280`; matrix |
 | Session integration | Retest production sysc-lock lock/unlock after its compatibility fix; prove shell idle blank/resume and injection rejection. Complete suite install/start/stop integration without replacing a host session during testing. | `sysc-1643`, `sysc-1283`; sibling owners |
