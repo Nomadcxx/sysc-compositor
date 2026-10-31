@@ -195,6 +195,7 @@ type Compositor struct {
 	lastShotSelection       image.Rectangle
 	animations              map[animationKey]*runningAnimation
 	animationTimer          *time.Timer
+	frameFallbackTimer      *time.Timer
 	activeWorkspaces        map[string]activeWorkspace
 	closingNodes            map[uint64]unsafe.Pointer
 	nextAnimationID         uint64
@@ -623,6 +624,7 @@ func NewWith(opts Options) (*Compositor, error) {
 	if !bool(C.wlr_backend_start(c.backend)) {
 		return nil, errors.New("wlr_backend_start failed")
 	}
+	c.scheduleFrameFallback()
 	built = true
 	return c, nil
 }
@@ -834,6 +836,10 @@ func (c *Compositor) Destroy() {
 	if c.animationTimer != nil {
 		c.animationTimer.Stop()
 		c.animationTimer = nil
+	}
+	if c.frameFallbackTimer != nil {
+		c.frameFallbackTimer.Stop()
+		c.frameFallbackTimer = nil
 	}
 	for _, view := range c.views {
 		c.closeForeignToplevel(view)

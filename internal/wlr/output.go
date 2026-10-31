@@ -200,6 +200,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"time"
 	"unsafe"
 )
 
@@ -595,6 +596,25 @@ func (c *Compositor) cursorLoadedAt(scale float64) bool {
 // requestedOutputSize is the size of the last state the host asked an output
 // to take, for tests.
 func (c *Compositor) requestedOutputSize() rect { return c.requested }
+
+// frameFallbackInterval is Niri's FRAME_CALLBACK_FALLBACK period
+// (src/niri.rs, send_frame_callbacks_on_fallback_timer).
+const frameFallbackInterval = time.Second
+
+// scheduleFrameFallback answers, once a second, the frame callbacks that no
+// output repaint can: surfaces on hidden workspaces, off every output, fully
+// covered, or on outputs that are off. Repaints answer only surfaces with a
+// pacing output, so a client paced by callbacks would otherwise stop, as Niri
+// prevents with the same timer. Nothing here schedules an output frame, and a
+// hidden surface's commits damage no output, so idle outputs stay idle.
+func (c *Compositor) scheduleFrameFallback() {
+	c.frameFallbackTimer = time.AfterFunc(frameFallbackInterval, func() {
+		_ = c.Post(func() {
+			sceneFXSendFallbackFrameDone(unsafe.Pointer(c.scene))
+			c.scheduleFrameFallback()
+		})
+	})
+}
 
 // scenesDrawn is how many output frames ran the scene commit, for tests.
 func (c *Compositor) scenesDrawn() int { return c.drawn }
