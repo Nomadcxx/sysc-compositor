@@ -957,3 +957,151 @@ func TestDestroyDropsRetainedResizeState(t *testing.T) {
 		t.Fatalf("tile after destroyed ID was mapped again = %+v, want defaults 500x768", window.Tile)
 	}
 }
+
+// activeIndex is the active workspace's position on output.
+func activeIndex(t *testing.T, m *Model, output string) int {
+	t.Helper()
+	i := 0
+	for _, workspace := range m.Snapshot().Workspaces {
+		if workspace.Output != output {
+			continue
+		}
+		if workspace.IsActive {
+			return i
+		}
+		i++
+	}
+	t.Fatalf("output %s has no active workspace", output)
+	return -1
+}
+
+// workspaceIDs lists output's workspace IDs in order.
+func workspaceIDs(m *Model, output string) []uint64 {
+	var ids []uint64
+	for _, workspace := range m.Snapshot().Workspaces {
+		if workspace.Output == output {
+			ids = append(ids, workspace.ID)
+		}
+	}
+	return ids
+}
+
+// threeWorkspaces maps windows 1-3 onto workspaces 1-3 of output, leaving
+// the trailing empty workspace as the fourth.
+func threeWorkspaces(t *testing.T, m *Model, output string) {
+	t.Helper()
+	for i := 1; i <= 3; i++ {
+		if !m.FocusWorkspace(output, uint8(i)) || !m.MapWindow(uint64(i), output) {
+			t.Fatalf("mapping window %d failed", i)
+		}
+	}
+}
+
+func TestFocusWorkspaceUpDownAndPreviousFollowNiri(t *testing.T) {
+	m := New()
+	m.AddOutput("DP-1", layout.Bounds{Width: 1000, Height: 800}, 500, 16)
+	threeWorkspaces(t, m, "DP-1")
+	m.FocusWorkspace("", 1)
+	if !m.FocusWorkspaceDown() || activeIndex(t, m, "DP-1") != 1 {
+		t.Fatalf("FocusWorkspaceDown: active %d, want 1", activeIndex(t, m, "DP-1"))
+	}
+	if !m.FocusWorkspaceDown() || activeIndex(t, m, "DP-1") != 2 {
+		t.Fatalf("second FocusWorkspaceDown: active %d, want 2", activeIndex(t, m, "DP-1"))
+	}
+	if !m.FocusWorkspacePrevious() || activeIndex(t, m, "DP-1") != 1 {
+		t.Fatalf("FocusWorkspacePrevious: active %d, want 1", activeIndex(t, m, "DP-1"))
+	}
+	if !m.FocusWorkspacePrevious() || activeIndex(t, m, "DP-1") != 2 {
+		t.Fatalf("second FocusWorkspacePrevious: active %d, want 2", activeIndex(t, m, "DP-1"))
+	}
+	m.FocusWorkspace("", 1)
+	if m.FocusWorkspaceUp() {
+		t.Fatal("FocusWorkspaceUp on the first workspace reported a change")
+	}
+
+	m.AddOutput("HDMI-A-1", layout.Bounds{X: 1000, Width: 1000, Height: 800}, 500, 16)
+	if !m.FocusOutput("HDMI-A-1") {
+		t.Fatal("FocusOutput(HDMI-A-1) failed")
+	}
+	if m.FocusWorkspacePrevious() {
+		t.Fatal("a new output with no history went to a previous workspace")
+	}
+	m.FocusOutput("DP-1")
+	if !m.FocusWorkspacePrevious() || activeIndex(t, m, "DP-1") != 2 {
+		t.Fatalf("DP-1's previous after a monitor change: active %d, want 2", activeIndex(t, m, "DP-1"))
+	}
+}
+
+func TestMoveWorkspaceDownKeepsPreviousAndTrailingEmpty(t *testing.T) {
+	m := New()
+	m.AddOutput("DP-1", layout.Bounds{Width: 1000, Height: 800}, 500, 16)
+	m.MapWindow(1, "DP-1")
+	m.FocusWorkspace("", 2)
+	m.MapWindow(2, "DP-1")
+	ids := workspaceIDs(m, "DP-1")
+	a, b := ids[0], ids[1]
+	m.FocusWorkspace("", 1) // previous is now B
+	if !m.MoveWorkspaceDown() {
+		t.Fatal("MoveWorkspaceDown() = false")
+	}
+	got := workspaceIDs(m, "DP-1")
+	if len(got) != 3 || got[0] != b || got[1] != a || activeIndex(t, m, "DP-1") != 1 {
+		t.Fatalf("after MoveWorkspaceDown: order %v active %d, want [%d %d empty] active 1", got, activeIndex(t, m, "DP-1"), b, a)
+	}
+	if !m.FocusWorkspacePrevious() || workspaceIDs(m, "DP-1")[activeIndex(t, m, "DP-1")] != b {
+		t.Fatal("MoveWorkspaceDown lost the previous workspace")
+	}
+	m.FocusWorkspaceID(a)
+	if !m.MoveWorkspaceUp() {
+		t.Fatal("MoveWorkspaceUp() = false")
+	}
+	if got := workspaceIDs(m, "DP-1"); got[0] != a || got[1] != b || len(got) != 3 {
+		t.Fatalf("after MoveWorkspaceUp: order %v, want [%d %d empty]", got, a, b)
+	}
+	m.FocusWorkspace("", 3)
+	if m.MoveWorkspaceDown() {
+		t.Fatal("MoveWorkspaceDown on the trailing empty workspace reported a change")
+	}
+	m.FocusWorkspaceID(b)
+	if !m.MoveWorkspaceDown() {
+		t.Fatal("MoveWorkspaceDown into the trailing position failed")
+	}
+	got = workspaceIDs(m, "DP-1")
+	if len(got) != 3 || got[1] != b {
+		t.Fatalf("moving B last: order %v, want [%d %d new-empty]", got, a, b)
+	}
+	if windows := m.Snapshot().Workspaces[2].WindowIDs; len(windows) != 0 {
+		t.Fatalf("trailing workspace has windows %v, want one empty trailing workspace", windows)
+	}
+}
+
+func TestMoveWorkspaceToIndexClampsAndResolvesReference(t *testing.T) {
+	m := New()
+	m.AddOutput("DP-1", layout.Bounds{Width: 1000, Height: 800}, 500, 16)
+	threeWorkspaces(t, m, "DP-1")
+	ids := workspaceIDs(m, "DP-1")
+	if !m.MoveWorkspaceToIndex(0, 0) {
+		t.Fatal("MoveWorkspaceToIndex(0) = false")
+	}
+	if got := workspaceIDs(m, "DP-1"); got[0] != ids[2] || activeIndex(t, m, "DP-1") != 0 {
+		t.Fatalf("index 0: order %v active %d, want %d first and active", got, activeIndex(t, m, "DP-1"), ids[2])
+	}
+	if !m.MoveWorkspaceToIndex(99, 0) {
+		t.Fatal("MoveWorkspaceToIndex(99) = false")
+	}
+	got := workspaceIDs(m, "DP-1")
+	if got[2] != ids[2] || activeIndex(t, m, "DP-1") != 2 || len(got) != 4 {
+		t.Fatalf("index 99: order %v active %d, want %d last before the trailing empty", got, activeIndex(t, m, "DP-1"), ids[2])
+	}
+	// A referenced inactive workspace moves; the active one keeps focus.
+	if !m.MoveWorkspaceToIndex(3, ids[0]) {
+		t.Fatal("MoveWorkspaceToIndex by reference = false")
+	}
+	got = workspaceIDs(m, "DP-1")
+	if got[2] != ids[0] || got[activeIndex(t, m, "DP-1")] != ids[2] {
+		t.Fatalf("by reference: order %v, active %d; want %d third and %d still active", got, activeIndex(t, m, "DP-1"), ids[0], ids[2])
+	}
+	if m.MoveWorkspaceToIndex(1, 9999) {
+		t.Fatal("an unknown workspace reference moved something")
+	}
+}

@@ -26,6 +26,11 @@ type outputState struct {
 	gap         int
 	workspaces  []*workspaceState
 	active      int
+	// activeID and previousWorkspace follow Niri's Monitor
+	// previous_workspace_id: reconcile records the old active workspace
+	// whenever the active one changes.
+	activeID          uint64
+	previousWorkspace uint64
 }
 
 type windowState struct {
@@ -775,6 +780,81 @@ func (m *Model) FocusWorkspaceByDelta(output string, delta int) bool {
 	return true
 }
 
+// FocusWorkspaceDown is Niri's switch_workspace_down on the focused output.
+func (m *Model) FocusWorkspaceDown() bool { return m.FocusWorkspaceByDelta(m.focusedOutput, 1) }
+
+// FocusWorkspaceUp is Niri's switch_workspace_up on the focused output.
+func (m *Model) FocusWorkspaceUp() bool { return m.FocusWorkspaceByDelta(m.focusedOutput, -1) }
+
+// FocusWorkspacePrevious returns the focused output to the workspace that
+// was active before the current one, if it is still on that output.
+func (m *Model) FocusWorkspacePrevious() bool {
+	out := m.outputs[m.focusedOutput]
+	if out == nil || out.previousWorkspace == 0 {
+		return false
+	}
+	owner, index, _ := m.workspaceLocation(out.previousWorkspace)
+	if owner != out || index == out.active {
+		return false
+	}
+	out.active = index
+	m.reconcile(out)
+	m.clearFocusedUrgency()
+	return true
+}
+
+// MoveWorkspaceDown swaps the focused output's active workspace with the
+// one below it, as Niri's Monitor::move_workspace_down; it stays active.
+func (m *Model) MoveWorkspaceDown() bool { return m.moveActiveWorkspace(1) }
+
+// MoveWorkspaceUp swaps the active workspace with the one above it.
+func (m *Model) MoveWorkspaceUp() bool { return m.moveActiveWorkspace(-1) }
+
+func (m *Model) moveActiveWorkspace(delta int) bool {
+	out := m.outputs[m.focusedOutput]
+	if out == nil || len(out.workspaces) == 0 {
+		return false
+	}
+	target := min(max(out.active+delta, 0), len(out.workspaces)-1)
+	if target == out.active {
+		return false
+	}
+	out.workspaces[out.active], out.workspaces[target] = out.workspaces[target], out.workspaces[out.active]
+	out.active = target
+	m.reconcile(out)
+	return true
+}
+
+// MoveWorkspaceToIndex moves a workspace within its output to the 1-based
+// index (0 counts as 1; past the end clamps), as Niri's
+// Monitor::move_workspace_to_idx. workspaceID 0 is the focused output's
+// active workspace. The active workspace stays active wherever it lands.
+func (m *Model) MoveWorkspaceToIndex(index int, workspaceID uint64) bool {
+	out := m.outputs[m.focusedOutput]
+	oldIndex := -1
+	if workspaceID == 0 {
+		if out != nil && len(out.workspaces) != 0 {
+			oldIndex = out.active
+		}
+	} else {
+		out, oldIndex, _ = m.workspaceLocation(workspaceID)
+	}
+	if out == nil || oldIndex < 0 {
+		return false
+	}
+	newIndex := min(max(index-1, 0), len(out.workspaces)-1)
+	if newIndex == oldIndex {
+		return false
+	}
+	active := out.workspaces[out.active].id
+	moved := out.workspaces[oldIndex]
+	out.workspaces = append(out.workspaces[:oldIndex], out.workspaces[oldIndex+1:]...)
+	out.workspaces = append(out.workspaces[:newIndex], append([]*workspaceState{moved}, out.workspaces[newIndex:]...)...)
+	out.active = m.workspaceIndex(out, active)
+	m.reconcile(out)
+	return true
+}
+
 // ScrollWorkspaceView moves one workspace's horizontal viewport without changing focus.
 func (m *Model) ScrollWorkspaceView(id uint64, delta int) bool {
 	workspace := m.workspaceByID(id)
@@ -1373,6 +1453,12 @@ func (m *Model) reconcile(out *outputState) {
 	last := out.workspaces[len(out.workspaces)-1]
 	if last.name != nil || len(last.strip.WindowOrder()) != 0 {
 		out.workspaces = append(out.workspaces, m.newWorkspace(out))
+	}
+	if id := out.workspaces[out.active].id; id != out.activeID {
+		if out.activeID != 0 {
+			out.previousWorkspace = out.activeID
+		}
+		out.activeID = id
 	}
 }
 
