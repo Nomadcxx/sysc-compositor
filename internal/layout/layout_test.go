@@ -785,3 +785,165 @@ func TestResizeClampsAtMaximumAndKeepsLeftAndTopAnchorsFixed(t *testing.T) {
 		t.Fatalf("anchored edges = (%d, %d), want (616, 466)", right, bottom)
 	}
 }
+
+func focusedID(t *testing.T, ws *Workspace) uint64 {
+	t.Helper()
+	id, ok := ws.FocusedWindow()
+	if !ok {
+		t.Fatal("no focused window")
+	}
+	return id
+}
+
+func TestStripIndexActionsClampLikeNiri(t *testing.T) {
+	ws := NewWorkspace(Bounds{Width: 1800, Height: 800}, 400, 16)
+	for _, id := range []uint64{1, 2, 3} {
+		ws.AddWindow(id)
+	}
+	ws.FocusWindow(3)
+	if !ws.FocusColumn(1) || focusedID(t, ws) != 1 {
+		t.Fatalf("FocusColumn(1) focused %d, want 1", focusedID(t, ws))
+	}
+	ws.FocusWindow(2)
+	if !ws.FocusColumn(0) || focusedID(t, ws) != 1 {
+		t.Fatalf("FocusColumn(0) focused %d, want 1", focusedID(t, ws))
+	}
+	if !ws.FocusColumn(9) || focusedID(t, ws) != 3 {
+		t.Fatalf("FocusColumn(9) focused %d, want 3", focusedID(t, ws))
+	}
+	ws.FocusWindow(1)
+	if !ws.MoveColumnToIndex(3) || !slices.Equal(ws.WindowOrder(), []uint64{2, 3, 1}) || focusedID(t, ws) != 1 {
+		t.Fatalf("MoveColumnToIndex(3): order %v focus %d, want [2 3 1] focus 1", ws.WindowOrder(), focusedID(t, ws))
+	}
+	if !ws.MoveColumnToIndex(0) || !slices.Equal(ws.WindowOrder(), []uint64{1, 2, 3}) {
+		t.Fatalf("MoveColumnToIndex(0): order %v, want [1 2 3]", ws.WindowOrder())
+	}
+
+	ws.AddWindow(4)
+	if !ws.SetWindowFloating(4, true, Bounds{X: 100, Y: 100, Width: 200, Height: 200}) || !ws.FocusFloating() {
+		t.Fatal("could not focus a floating window")
+	}
+	if ws.MoveColumnToIndex(2) {
+		t.Fatal("MoveColumnToIndex moved a column while floating was focused")
+	}
+	if !ws.FocusColumn(2) || focusedID(t, ws) != 2 {
+		t.Fatalf("FocusColumn(2) from floating focused %d, want tiled 2", focusedID(t, ws))
+	}
+}
+
+func TestStripWrapAndOrFallbacks(t *testing.T) {
+	ws := NewWorkspace(Bounds{Width: 1800, Height: 900}, 400, 16)
+	for _, id := range []uint64{1, 2, 3} {
+		ws.AddWindow(id)
+	}
+	ws.FocusWindow(3)
+	if !ws.FocusColumnRightOrFirst() || focusedID(t, ws) != 1 {
+		t.Fatalf("FocusColumnRightOrFirst on the last column focused %d, want 1", focusedID(t, ws))
+	}
+	if !ws.FocusColumnLeftOrLast() || focusedID(t, ws) != 3 {
+		t.Fatalf("FocusColumnLeftOrLast on the first column focused %d, want 3", focusedID(t, ws))
+	}
+
+	// Column 1 becomes [1, 2, 3]; column 2 holds 4.
+	col := NewWorkspace(Bounds{Width: 1800, Height: 900}, 400, 16)
+	for _, id := range []uint64{1, 2, 3, 4} {
+		col.AddWindow(id)
+	}
+	col.FocusWindow(1)
+	col.ConsumeWindowIntoColumn()
+	col.ConsumeWindowIntoColumn()
+	col.FocusWindow(1)
+	if !col.FocusWindowBottom() || focusedID(t, col) != 3 {
+		t.Fatalf("FocusWindowBottom focused %d, want 3", focusedID(t, col))
+	}
+	if !col.FocusWindowTop() || focusedID(t, col) != 1 {
+		t.Fatalf("FocusWindowTop focused %d, want 1", focusedID(t, col))
+	}
+	if !col.FocusWindowUpOrBottom() || focusedID(t, col) != 3 {
+		t.Fatalf("FocusWindowUpOrBottom from the top focused %d, want 3", focusedID(t, col))
+	}
+	if !col.FocusWindowDownOrTop() || focusedID(t, col) != 1 {
+		t.Fatalf("FocusWindowDownOrTop from the bottom focused %d, want 1", focusedID(t, col))
+	}
+	if !col.FocusWindowDownOrColumnRight() || focusedID(t, col) != 2 {
+		t.Fatalf("FocusWindowDownOrColumnRight mid-column focused %d, want 2", focusedID(t, col))
+	}
+	col.FocusWindow(3)
+	if !col.FocusWindowDownOrColumnRight() || focusedID(t, col) != 4 {
+		t.Fatalf("FocusWindowDownOrColumnRight at the bottom focused %d, want 4", focusedID(t, col))
+	}
+	if !col.FocusWindowUpOrColumnLeft() || focusedID(t, col) != 3 {
+		t.Fatalf("FocusWindowUpOrColumnLeft on a single tile focused %d, want column 1's active 3", focusedID(t, col))
+	}
+	if !col.FocusWindowUpOrColumnRight() || focusedID(t, col) != 2 {
+		t.Fatalf("FocusWindowUpOrColumnRight mid-column focused %d, want 2", focusedID(t, col))
+	}
+	col.FocusWindow(1)
+	if col.FocusWindowUpOrColumnLeft() {
+		t.Fatal("FocusWindowUpOrColumnLeft at the top of the first column reported a change")
+	}
+	col.FocusWindow(3)
+	if col.FocusWindowDownOrColumnLeft() || focusedID(t, col) != 3 {
+		t.Fatalf("FocusWindowDownOrColumnLeft at the first column's bottom changed focus to %d", focusedID(t, col))
+	}
+
+	col.AddWindow(5)
+	col.SetWindowFloating(5, true, Bounds{X: 100, Y: 500, Width: 100, Height: 100})
+	col.AddWindow(6)
+	col.SetWindowFloating(6, true, Bounds{X: 300, Y: 50, Width: 100, Height: 100})
+	col.FocusWindow(5)
+	if !col.FocusWindowTop() || focusedID(t, col) != 6 {
+		t.Fatalf("FocusWindowTop with floating focused %d, want topmost float 6", focusedID(t, col))
+	}
+	if !col.FocusWindowBottom() || focusedID(t, col) != 5 {
+		t.Fatalf("FocusWindowBottom with floating focused %d, want bottommost float 5", focusedID(t, col))
+	}
+}
+
+func TestSwapWindowMatchesNiri(t *testing.T) {
+	ws := NewWorkspace(Bounds{Width: 1800, Height: 900}, 400, 16)
+	ws.AddWindow(1)
+	ws.AddWindow(2)
+	ws.FocusWindow(1)
+	ws.ResizeWindow(1, 0, 0, 600, 0, ResizeOptions{ResizeWidth: true})
+	if !ws.SwapWindowRight() || !slices.Equal(ws.WindowOrder(), []uint64{2, 1}) || focusedID(t, ws) != 1 {
+		t.Fatalf("single-tile swap: order %v focus %d, want [2 1] focus 1", ws.WindowOrder(), focusedID(t, ws))
+	}
+	if placement, _ := ws.Placement(1); placement.Width != 600 {
+		t.Fatalf("single-tile swap left window 1 %d wide, want its column's 600 (a column move)", placement.Width)
+	}
+	if ws.SwapWindowRight() {
+		t.Fatal("SwapWindowRight on the last column reported a change")
+	}
+
+	col := NewWorkspace(Bounds{Width: 1800, Height: 900}, 400, 16)
+	for _, id := range []uint64{1, 2, 3} {
+		col.AddWindow(id)
+	}
+	col.FocusWindow(1)
+	col.ConsumeWindowIntoColumn() // column A = [1, 2], column B = [3]
+	col.FocusWindow(1)
+	if !col.SwapWindowRight() {
+		t.Fatal("SwapWindowRight() = false")
+	}
+	placements := map[uint64]Placement{}
+	for _, placement := range col.Placements() {
+		placements[placement.ID] = placement
+	}
+	if placements[3].Column != 0 || placements[3].Tile != 0 || placements[2].Column != 0 || placements[2].Tile != 1 ||
+		placements[1].Column != 1 || placements[1].Tile != 0 {
+		t.Fatalf("after swap: %+v, want A=[3 2] B=[1]", col.Placements())
+	}
+	if focusedID(t, col) != 1 {
+		t.Fatalf("focus after swap = %d, want the moved window 1", focusedID(t, col))
+	}
+	if !col.SwapWindowLeft() || focusedID(t, col) != 1 {
+		t.Fatal("SwapWindowLeft did not swap back")
+	}
+	col.AddWindow(4)
+	col.SetWindowFloating(4, true, Bounds{X: 10, Y: 10, Width: 100, Height: 100})
+	col.FocusWindow(4)
+	if col.SwapWindowLeft() || col.SwapWindowRight() {
+		t.Fatal("swap acted while floating was focused")
+	}
+}

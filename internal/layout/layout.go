@@ -756,6 +756,141 @@ func (w *Workspace) MoveLast() bool {
 	return true
 }
 
+// FocusColumn focuses the 1-based column index (0 counts as 1, past the end
+// clamps), leaving floating focus first, as Niri's Workspace::focus_column.
+func (w *Workspace) FocusColumn(index int) bool {
+	if len(w.columns) == 0 {
+		return false
+	}
+	changed := w.focusedFloat != 0 && w.FocusTiling()
+	target := min(max(index-1, 0), len(w.columns)-1)
+	if target != w.focused {
+		w.focused = target
+		changed = true
+	}
+	w.revealFocused()
+	return changed
+}
+
+// FocusColumnRightOrFirst wraps from the last column to the first.
+func (w *Workspace) FocusColumnRightOrFirst() bool { return w.FocusRight() || w.FocusFirst() }
+
+// FocusColumnLeftOrLast wraps from the first column to the last.
+func (w *Workspace) FocusColumnLeftOrLast() bool { return w.FocusLeft() || w.FocusLast() }
+
+// FocusWindowTop focuses the focused column's first tile, or the topmost
+// floating window while floating is focused (Niri's focus_window_top).
+func (w *Workspace) FocusWindowTop() bool { return w.focusWindowEnd(false) }
+
+// FocusWindowBottom focuses the column's last tile, or the bottommost float.
+func (w *Workspace) FocusWindowBottom() bool { return w.focusWindowEnd(true) }
+
+func (w *Workspace) focusWindowEnd(bottom bool) bool {
+	if w.focusedFloat != 0 {
+		best := -1
+		for i, floating := range w.floating {
+			if best < 0 || (bottom && floating.bounds.Y > w.floating[best].bounds.Y) ||
+				(!bottom && floating.bounds.Y < w.floating[best].bounds.Y) {
+				best = i
+			}
+		}
+		if best < 0 || w.floating[best].tile.id == w.focusedFloat {
+			return false
+		}
+		id := w.floating[best].tile.id
+		w.focusedFloat, w.activeFloat = id, id
+		return true
+	}
+	if w.focused < 0 || w.focused >= len(w.columns) {
+		return false
+	}
+	column := &w.columns[w.focused]
+	target := 0
+	if bottom {
+		target = len(column.tiles) - 1
+	}
+	if column.active == target {
+		return false
+	}
+	column.active = target
+	return true
+}
+
+// FocusWindowDownOrTop wraps from the bottom tile to the top one.
+func (w *Workspace) FocusWindowDownOrTop() bool { return w.FocusWindowDown() || w.FocusWindowTop() }
+
+// FocusWindowUpOrBottom wraps from the top tile to the bottom one.
+func (w *Workspace) FocusWindowUpOrBottom() bool { return w.FocusWindowUp() || w.FocusWindowBottom() }
+
+// FocusWindowDownOrColumnLeft focuses the tile below, or else the column to
+// the left; floating focus only moves vertically (Niri's focus_down_or_left).
+func (w *Workspace) FocusWindowDownOrColumnLeft() bool { return w.focusVerticalOr(1, w.FocusLeft) }
+
+// FocusWindowDownOrColumnRight focuses the tile below, or else the next column.
+func (w *Workspace) FocusWindowDownOrColumnRight() bool { return w.focusVerticalOr(1, w.FocusRight) }
+
+// FocusWindowUpOrColumnLeft focuses the tile above, or else the previous column.
+func (w *Workspace) FocusWindowUpOrColumnLeft() bool { return w.focusVerticalOr(-1, w.FocusLeft) }
+
+// FocusWindowUpOrColumnRight focuses the tile above, or else the next column.
+func (w *Workspace) FocusWindowUpOrColumnRight() bool { return w.focusVerticalOr(-1, w.FocusRight) }
+
+func (w *Workspace) focusVerticalOr(direction int, fallback func() bool) bool {
+	if w.focusWindowVertical(direction) {
+		return true
+	}
+	return w.focusedFloat == 0 && fallback()
+}
+
+// MoveColumnToIndex moves the focused column to the 1-based index (0 counts
+// as 1, past the end clamps); it does nothing while floating is focused.
+func (w *Workspace) MoveColumnToIndex(index int) bool {
+	if w.focusedFloat != 0 || w.focused < 0 || w.focused >= len(w.columns) {
+		return false
+	}
+	target := min(max(index-1, 0), len(w.columns)-1)
+	if target == w.focused {
+		return false
+	}
+	column := w.columns[w.focused]
+	w.columns = append(w.columns[:w.focused], w.columns[w.focused+1:]...)
+	w.columns = append(w.columns[:target], append([]columnState{column}, w.columns[target:]...)...)
+	w.focused = target
+	w.revealFocused()
+	return true
+}
+
+// SwapWindowLeft exchanges the active tile with the previous column's active
+// tile and follows it, as Niri's swap_window_in_direction.
+func (w *Workspace) SwapWindowLeft() bool { return w.swapWindow(-1) }
+
+// SwapWindowRight exchanges the active tile with the next column's.
+func (w *Workspace) SwapWindowRight() bool { return w.swapWindow(1) }
+
+func (w *Workspace) swapWindow(direction int) bool {
+	if w.focusedFloat != 0 || w.focused < 0 || w.focused >= len(w.columns) {
+		return false
+	}
+	target := w.focused + direction
+	if target < 0 || target >= len(w.columns) {
+		return false
+	}
+	source, other := &w.columns[w.focused], &w.columns[target]
+	if len(source.tiles) == 1 && len(other.tiles) == 1 {
+		// Niri moves the whole column then, width and all.
+		if direction < 0 {
+			return w.MoveLeft()
+		}
+		return w.MoveRight()
+	}
+	// Tiles carry their own sizes; column widths stay with the columns,
+	// which is what Niri's remove/add sequence leaves.
+	source.tiles[source.active], other.tiles[other.active] = other.tiles[other.active], source.tiles[source.active]
+	w.focused = target
+	w.revealFocused()
+	return true
+}
+
 // ConsumeWindowIntoColumn moves the first window of the next column into the
 // focused column. The focused window remains active, matching Niri's action.
 func (w *Workspace) ConsumeWindowIntoColumn() bool {
