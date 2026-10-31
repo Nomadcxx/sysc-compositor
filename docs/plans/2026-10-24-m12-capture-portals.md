@@ -519,9 +519,20 @@ synced buffer through its acquire wait. That qualifies the NVIDIA renderer and c
 DRM presentation on NVIDIA, with sysc on a desktop TTY, is not yet observed.
 
 **Gamma on a physical panel.** This waits for the owner. The laptop's eDP-1 check is staged as
-`~/sysc-compositor-hw-20261031/gamma-gate.sh`, built from `76fa0bd`. It needs a tty2 console
-login and gammastep. It reads the CRTC's `GAMMA_LUT` with modetest before sysc starts, under
-sysc, with a 3000 K ramp applied, after DPMS off and on, after gammastep exits and after sysc
-exits, and it asks what the panel showed.
+`~/sysc-compositor-hw-20261031/gamma-gate.sh`, built from `76fa0bd`, and kept as
+[laptop-gamma-gate.sh](assets/2026-10-31-m12-hardware/laptop-gamma-gate.sh). It needs a tty2
+console login and gammastep. It reads the CRTC's `GAMMA_LUT` with modetest before sysc starts,
+under sysc, with a 3000 K ramp applied, after DPMS off and on, after gammastep exits and after
+sysc exits, and it asks what the panel showed.
+
+**Desktop run, both checks at once.**
+[desktop-gate.sh](assets/2026-10-31-m12-hardware/desktop-gate.sh) builds sysc from the checkout
+it lives in. It then runs on the desktop's monitors from a tty2 console login with gammastep
+installed. It takes the gamma steps above on the NVIDIA CRTCs, and it runs vkcube through DRM
+with a window screenshot taken while it spins. Its `summary.txt` gives the advertised managers,
+the acquire and release counts, the screenshot and a `GAMMA_LUT` digest at each step. Under a
+working ramp, `2-applied` and `4-on` match each other and differ from `1-sysc`, and `5-restored`
+returns to `1-sysc`'s value. Both scripts find sysc's socket by its PID, because Niri's socket
+shares the runtime directory.
 
 **Tablet and pad.** This stays open: neither machine has a Wacom or Huion device attached.
