@@ -14,7 +14,8 @@ import (
 )
 
 // StartSessionDBus starts locale1/login1 clients, ScreenSaver inhibition,
-// GNOME portal services and the a11y KeyboardMonitor for --session only. Failures leave the session running.
+// GNOME portal services, the a11y KeyboardMonitor and the AT-SPI announcer
+// for --session only. Failures leave the session running.
 func (s *Server) StartSessionDBus() {
 	if s.c == nil {
 		return
@@ -48,6 +49,16 @@ func (s *Server) StartSessionDBus() {
 		} else {
 			s.keyMonitor = monitor
 			s.c.SetKeyboardMonitor(monitor.ProcessKey)
+		}
+	}
+	if s.announcer == nil {
+		// Compositor UI for screen readers, as Niri's AccessKit adapter.
+		announcer, err := a11y.StartAnnouncer()
+		if err != nil {
+			os.Stderr.WriteString("sysc-compositor: AT-SPI announcer: " + err.Error() + "\n")
+		} else {
+			s.announcer = announcer
+			s.c.SetAnnouncer(announcer)
 		}
 	}
 	if s.sessionDBus != nil {

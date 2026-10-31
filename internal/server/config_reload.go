@@ -182,6 +182,9 @@ func (s *Server) applyConfigReload(sequence uint64, target reloadTarget, load co
 		s.reloadMu.Unlock()
 		s.updateConfigWatches(watched)
 		os.Stderr.WriteString("sysc-compositor: config reload: " + loadErr.Error() + "\n")
+		if s.announcer != nil {
+			s.announcer.Announce(configErrorAnnouncement)
+		}
 		s.state.publishConfigLoaded(s.events, true)
 		return
 	}

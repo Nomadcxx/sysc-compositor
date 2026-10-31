@@ -198,6 +198,7 @@ type Compositor struct {
 	animationTimer          *time.Timer
 	frameFallbackTimer      *time.Timer
 	keyboardMonitor         func(a11y.Key, time.Duration) a11y.Decision
+	a11y                    a11yState
 	activeWorkspaces        map[string]activeWorkspace
 	closingNodes            map[uint64]unsafe.Pointer
 	nextAnimationID         uint64
@@ -772,6 +773,7 @@ func (c *Compositor) notifyStateChanged() {
 	c.syncCaptureSources()
 	c.damageCaptureSources()
 	c.syncForeignToplevels()
+	c.refreshA11y()
 	if c.stateChanged != nil {
 		c.stateChanged()
 	}

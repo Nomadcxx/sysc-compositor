@@ -1,10 +1,12 @@
 package ui
 
 import (
+	"html"
 	"image"
 	"image/color"
 	"image/draw"
 	"math"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -51,6 +53,32 @@ func actionOf(b config.OverlayBind) overlayAction {
 // overlay lists, in its order, each with the key that triggers it. modKey is
 // what Mod means in this session; keyName gives an XKB key's canonical name.
 func HotkeyLines(binds []config.OverlayBind, hideNotBound bool, modKey bind.Modifier, keyName func(string) string) []HotkeyLine {
+	return hotkeyLines(binds, hideNotBound, modKey, keyName, false)
+}
+
+// HotkeyOverlayText is Niri's a11y_text: what a screen reader announces when
+// the overlay opens. Keys keep their keysym names and titles lose markup.
+func HotkeyOverlayText(binds []config.OverlayBind, hideNotBound bool, modKey bind.Modifier, keyName func(string) string) string {
+	var b strings.Builder
+	b.WriteString(hotkeyTitle + "\n")
+	for _, line := range hotkeyLines(binds, hideNotBound, modKey, keyName, true) {
+		key := line.Key
+		if key == "" {
+			key = "not bound"
+		}
+		b.WriteString(key + " " + plainText(line.Action) + "\n")
+	}
+	return b.String()
+}
+
+var markupTag = regexp.MustCompile(`<[^>]*>`)
+
+// plainText drops Pango markup tags and entities, as pango::parse_markup.
+func plainText(markup string) string {
+	return html.UnescapeString(markupTag.ReplaceAllString(markup, ""))
+}
+
+func hotkeyLines(binds []config.OverlayBind, hideNotBound bool, modKey bind.Modifier, keyName func(string) string, screenReader bool) []HotkeyLine {
 	bound := func(match func(config.OverlayBind) bool) (config.OverlayBind, bool) {
 		for _, b := range binds {
 			if match(b) {
@@ -147,7 +175,7 @@ func HotkeyLines(binds []config.OverlayBind, hideNotBound bool, modKey bind.Modi
 			if b == nil {
 				b = plain
 			}
-			line.Key = KeyName(b.Chord, modKey, keyName)
+			line.Key = keyNameFor(b.Chord, modKey, keyName, screenReader)
 			if b.Title != nil {
 				line.Action = *b.Title
 			}
@@ -225,6 +253,12 @@ func escapeMarkup(s string) string {
 // KeyName is Niri's key_name: the modifiers, Mod first as what it means in
 // this session, then the key prettified.
 func KeyName(chord bind.Chord, modKey bind.Modifier, keyName func(string) string) string {
+	return keyNameFor(chord, modKey, keyName, false)
+}
+
+// keyNameFor is key_name; a screen reader gets keysym names such as "slash"
+// rather than the symbols drawn for them.
+func keyNameFor(chord bind.Chord, modKey bind.Modifier, keyName func(string) string, screenReader bool) string {
 	var b strings.Builder
 	mods := chord.Modifiers
 	names := []struct {
@@ -246,11 +280,11 @@ func KeyName(chord bind.Chord, modKey bind.Modifier, keyName func(string) string
 			b.WriteString(n.name + " + ")
 		}
 	}
-	b.WriteString(prettyKey(chord, keyName))
+	b.WriteString(prettyKey(chord, keyName, screenReader))
 	return b.String()
 }
 
-func prettyKey(chord bind.Chord, keyName func(string) string) string {
+func prettyKey(chord bind.Chord, keyName func(string) string, screenReader bool) string {
 	if chord.Trigger != bind.TriggerKey {
 		// MouseLeft → Mouse Left, WheelScrollDown → Wheel Scroll Down.
 		var b strings.Builder
@@ -263,37 +297,40 @@ func prettyKey(chord bind.Chord, keyName func(string) string) string {
 		return b.String()
 	}
 	name := keyName(chord.Key)
-	switch name {
-	case "slash":
+	switch {
+	case screenReader:
+	case name == "slash":
 		name = "/"
-	case "comma":
+	case name == "comma":
 		name = ","
-	case "period":
+	case name == "period":
 		name = "."
-	case "minus":
+	case name == "minus":
 		name = "-"
-	case "equal":
+	case name == "equal":
 		name = "="
-	case "grave":
+	case name == "grave":
 		name = "`"
-	case "bracketleft":
+	case name == "bracketleft":
 		name = "["
-	case "bracketright":
+	case name == "bracketright":
 		name = "]"
-	case "adiaeresis":
+	case name == "adiaeresis":
 		name = "Ä"
-	case "ediaeresis":
+	case name == "ediaeresis":
 		name = "Ë"
-	case "idiaeresis":
+	case name == "idiaeresis":
 		name = "Ï"
-	case "odiaeresis":
+	case name == "odiaeresis":
 		name = "Ö"
-	case "udiaeresis":
+	case name == "udiaeresis":
 		name = "Ü"
-	case "ydiaeresis":
+	case name == "ydiaeresis":
 		name = "Ÿ"
-	case "wdiaeresis":
+	case name == "wdiaeresis":
 		name = "Ẅ"
+	}
+	switch name {
 	case "Next":
 		name = "Page Down"
 	case "Prior":

@@ -1112,6 +1112,7 @@ func (c *Compositor) focusLayerSurface(layer *layerSurface) {
 }
 
 func (c *Compositor) updateKeyboardFocus() {
+	defer c.refreshA11y()
 	previousFocusedView := c.keyboardFocusedView()
 	if c.exitDialog.open {
 		// The dialog holds the keyboard, as Niri's ExitConfirmDialog focus.

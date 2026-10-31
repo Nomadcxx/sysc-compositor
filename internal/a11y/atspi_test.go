@@ -83,13 +83,19 @@ func nextEvent(t *testing.T, events chan *dbus.Signal, announcer string) event {
 	}
 }
 
-// TestAnnouncementsReachAnATSPIListener: while AT-SPI is enabled the
-// compositor embeds an application in the registry whose tree a screen
-// reader can walk (Niri's AccessKit tree), announces through a polite live
-// label with AccessKit's events, repeats identical text with a trailing
-// space, and moves focus with window and focused-state events. Disabled, it
-// registers nothing.
-func TestAnnouncementsReachAnATSPIListener(t *testing.T) {
+// harness is a session bus with a fake at-spi-bus-launcher, an
+// accessibility bus with a fake registry and a listener, and an announcer
+// started with AT-SPI disabled.
+type harness struct {
+	announcer *Announcer
+	status    *prop.Properties
+	embedded  chan objectAddress
+	events    chan *dbus.Signal
+	listener  *dbus.Conn
+}
+
+func startHarness(t *testing.T) harness {
+	t.Helper()
 	session, accessibility := privateBus(t), privateBus(t)
 
 	launcher := connectTo(t, session)
@@ -130,6 +136,33 @@ func TestAnnouncementsReachAnATSPIListener(t *testing.T) {
 	}
 	t.Cleanup(announcer.Close)
 
+	return harness{announcer, status, embedded, events, listener}
+}
+
+// enable turns AT-SPI on and returns where the compositor embedded.
+func (h harness) enable(t *testing.T) objectAddress {
+	t.Helper()
+	if err := h.status.Set("org.a11y.Status", "IsEnabled", dbus.MakeVariant(true)); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case app := <-h.embedded:
+		return app
+	case <-time.After(3 * time.Second):
+		t.Fatal("the compositor never embedded in the registry")
+		return objectAddress{}
+	}
+}
+
+// TestAnnouncementsReachAnATSPIListener: while AT-SPI is enabled the
+// compositor embeds an application in the registry whose tree a screen
+// reader can walk (Niri's AccessKit tree), announces through a polite live
+// label with AccessKit's events, repeats identical text with a trailing
+// space, and moves focus with window and focused-state events. Disabled, it
+// registers nothing.
+func TestAnnouncementsReachAnATSPIListener(t *testing.T) {
+	h := startHarness(t)
+	announcer, status, embedded, events, listener := h.announcer, h.status, h.embedded, h.events, h.listener
 	announcer.Announce("Workspace 1")
 	select {
 	case child := <-embedded:
@@ -201,7 +234,7 @@ func TestAnnouncementsReachAnATSPIListener(t *testing.T) {
 			t.Errorf("%s parent %v, want the window", child.Path, parent)
 		}
 	}
-	wantNames := []string{"Workspace 1", "Screenshot UI", "Exit niri", "Overview", "Recent windows"}
+	wantNames := []string{"Workspace 1", "Screenshot UI", "Exit sysc-compositor", "Overview", "Recent windows"}
 	wantRoles := []uint32{roleLabel, rolePanel, roleAlert, rolePanel, rolePanel}
 	if role != roleFrame || !reflect.DeepEqual(names, wantNames) || !reflect.DeepEqual(roles, wantRoles) {
 		t.Fatalf("window role %d, children %q roles %v; want frame with %q %v", role, names, roles, wantNames, wantRoles)
@@ -255,5 +288,51 @@ func TestAnnouncementsReachAnATSPIListener(t *testing.T) {
 			t.Fatal("the compositor stayed on the accessibility bus after AT-SPI was disabled")
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// TestRecentWindowsAndDescriptionsReachTheTree: the recent-windows node
+// flips between a panel and a button named for the selected window, as
+// Niri's MRU node does, repeats an identical title with a trailing space, and
+// a node's description can be set from the compositor's own text.
+func TestRecentWindowsAndDescriptionsReachTheTree(t *testing.T) {
+	h := startHarness(t)
+	app := h.enable(t)
+	expect := func(want event) {
+		t.Helper()
+		got := nextEvent(t, h.events, app.Name)
+		want.fromAnnouncer = true
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("event %+v, want %+v", got, want)
+		}
+	}
+	mru := RecentWindows.path()
+	role := func() uint32 {
+		t.Helper()
+		var role uint32
+		if err := h.listener.Object(app.Name, mru).Call(accessibleIface+".GetRole", 0).Store(&role); err != nil {
+			t.Fatal(err)
+		}
+		return role
+	}
+	const propertyChange = objectEvents + ".PropertyChange"
+	h.announcer.SetRecentWindows("Firefox", true)
+	expect(event{mru, propertyChange, "accessible-role", 0, uint32(rolePushButton), false})
+	expect(event{mru, propertyChange, "accessible-name", 0, "Firefox", false})
+	if got := role(); got != rolePushButton {
+		t.Errorf("selected window role %d, want push button", got)
+	}
+	h.announcer.SetRecentWindows("Firefox", true)
+	expect(event{mru, propertyChange, "accessible-name", 0, "Firefox ", false})
+	h.announcer.SetRecentWindows("Recent windows empty, Scope all", false)
+	expect(event{mru, propertyChange, "accessible-role", 0, uint32(rolePanel), false})
+	expect(event{mru, propertyChange, "accessible-name", 0, "Recent windows empty, Scope all", false})
+
+	dialog := ExitDialog.path()
+	h.announcer.SetDescription(ExitDialog, "Are you sure you want to exit?")
+	expect(event{dialog, propertyChange, "accessible-description", 0, "Are you sure you want to exit?", false})
+	v, err := h.listener.Object(app.Name, dialog).GetProperty(accessibleIface + ".Description")
+	if err != nil || v.Value() != "Are you sure you want to exit?" {
+		t.Errorf("exit dialog description %v, %v", v, err)
 	}
 }

@@ -546,6 +546,7 @@ func (c *Compositor) switcherHitAt(x, y float64) (uint64, bool) {
 // on its own output the scope panel and the previews in view, the selected
 // one highlighted, each with its title.
 func (c *Compositor) syncSwitcher() {
+	defer c.refreshA11y()
 	s := &c.switcher
 	if s.tree != nil || (s.mru != nil && s.shown) {
 		defer c.damageCaptureSources()

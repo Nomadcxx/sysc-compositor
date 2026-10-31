@@ -127,7 +127,7 @@ func startAnnouncer(session *dbus.Conn) (*Announcer, error) {
 		NoFocus:       {role: roleFrame},
 		announcement:  {role: roleLabel},
 		ScreenshotUI:  {role: rolePanel, name: "Screenshot UI"},
-		ExitDialog:    {role: roleAlert, name: "Exit niri"},
+		ExitDialog:    {role: roleAlert, name: "Exit sysc-compositor"},
 		Overview:      {role: rolePanel, name: "Overview"},
 		RecentWindows: {role: rolePanel, name: "Recent windows"},
 	}
@@ -282,6 +282,41 @@ func (a *Announcer) Announce(text string) {
 	path := announcement.path()
 	a.emit(path, objectEvents+".PropertyChange", "accessible-name", 0, text)
 	a.emit(path, objectEvents+".Announcement", "", livePolite, text)
+}
+
+// SetRecentWindows names the recent-windows node: as a button for the
+// selected window's title, or as a panel when nothing is selected. Niri
+// flips the node this way because Orca reads a button's name reliably. An
+// identical name gets a trailing space so it is spoken again.
+func (a *Announcer) SetRecentWindows(name string, button bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	e := &a.elements[RecentWindows]
+	path := RecentWindows.path()
+	role := uint32(rolePanel)
+	if button {
+		role = rolePushButton
+	}
+	if role != e.role {
+		e.role = role
+		a.emit(path, objectEvents+".PropertyChange", "accessible-role", 0, role)
+	}
+	if name == e.name {
+		name += " "
+	}
+	e.name = name
+	a.emit(path, objectEvents+".PropertyChange", "accessible-name", 0, name)
+}
+
+// SetDescription gives a node the text its drawn UI shows.
+func (a *Announcer) SetDescription(node Node, text string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if node < NoFocus || node >= nodeCount || a.elements[node].description == text {
+		return
+	}
+	a.elements[node].description = text
+	a.emit(node.path(), objectEvents+".PropertyChange", "accessible-description", 0, text)
 }
 
 // Focus moves the screen reader's focus to a piece of compositor UI, or with
