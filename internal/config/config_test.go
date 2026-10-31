@@ -109,13 +109,13 @@ func TestParseReportsUnappliedBindActions(t *testing.T) {
 	cfg, err := Parse("bindings.kdl", []byte(`
 binds {
     Mod+Q { close-window; spawn "kitty"; }
-    Mod+W { focus-workspace-down; }
+    Mod+W { toggle-debug-tint; }
 }
 `))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(cfg.UnappliedActions, []string{"focus-workspace-down"}) {
+	if !reflect.DeepEqual(cfg.UnappliedActions, []string{"toggle-debug-tint"}) {
 		t.Fatalf("unapplied actions = %q, want unique action names in source order", cfg.UnappliedActions)
 	}
 	if len(cfg.Binds) != 1 || len(cfg.Binds[0].Actions) != 2 {
@@ -1267,6 +1267,32 @@ input {
 	} {
 		if _, err := Parse("bad.kdl", []byte(bad)); err == nil {
 			t.Errorf("%s parsed", bad)
+		}
+	}
+}
+
+// niriDefaultConfig is the pinned Niri checkout's default config; tests that
+// read it skip where the checkout is absent (CI).
+const niriDefaultConfig = "/home/nomadx/references/niri/resources/default-config.kdl"
+
+func TestDefaultConfigNavigationBindsApply(t *testing.T) {
+	data, err := os.ReadFile(niriDefaultConfig)
+	if err != nil {
+		t.Skipf("Niri's default config is not available: %v", err)
+	}
+	cfg, err := Parse("default-config.kdl", data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bound := map[string]bool{}
+	for _, binding := range cfg.Binds {
+		for _, action := range binding.Actions {
+			bound[action.Name] = true
+		}
+	}
+	for _, name := range []string{"focus-workspace-down", "focus-workspace-up", "move-workspace-down", "move-workspace-up"} {
+		if !bound[name] {
+			t.Errorf("default config's key bind for %s was not applied (unapplied: %v)", name, cfg.UnappliedActions)
 		}
 	}
 }

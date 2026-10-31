@@ -436,6 +436,24 @@ func (h niriHandler) action(a ipc.Action) (ipc.Reply, func()) {
 		"FocusMonitorPrevious", "FocusMonitorNext", "MoveWorkspaceToMonitorLeft", "MoveWorkspaceToMonitorRight",
 		"MoveWorkspaceToMonitorUp", "MoveWorkspaceToMonitorDown", "MoveWorkspaceToMonitorPrevious", "MoveWorkspaceToMonitorNext":
 		return h.windowAction(a, 0)
+	case "FocusWorkspaceDown", "FocusWorkspaceUp", "FocusWorkspacePrevious", "MoveWorkspaceDown", "MoveWorkspaceUp",
+		"FocusColumn", "FocusColumnRightOrFirst", "FocusColumnLeftOrLast", "FocusWindowOrMonitorUp",
+		"FocusWindowOrMonitorDown", "FocusColumnOrMonitorLeft", "FocusColumnOrMonitorRight",
+		"FocusWindowDownOrColumnLeft", "FocusWindowDownOrColumnRight", "FocusWindowUpOrColumnLeft",
+		"FocusWindowUpOrColumnRight", "FocusWindowOrWorkspaceDown", "FocusWindowOrWorkspaceUp", "FocusWindowTop",
+		"FocusWindowBottom", "FocusWindowDownOrTop", "FocusWindowUpOrBottom", "MoveColumnLeftOrToMonitorLeft",
+		"MoveColumnRightOrToMonitorRight", "MoveColumnToIndex", "MoveWindowDownOrToWorkspaceDown",
+		"MoveWindowUpOrToWorkspaceUp", "SwapWindowLeft", "SwapWindowRight":
+		return h.windowAction(a, 0)
+	case "MoveWorkspaceToIndex":
+		if a.Workspace == nil {
+			return h.windowAction(a, 0)
+		}
+		target, ok := focusWorkspaceTarget(h.currentState(), a.Workspace)
+		if !ok {
+			return ipc.Reply{Ok: ipc.Handled}, nil
+		}
+		return h.windowAction(a, target)
 	case "SetWorkspaceName", "UnsetWorkspaceName":
 		state := h.currentState()
 		target, ok := focusedWorkspaceTarget(state)

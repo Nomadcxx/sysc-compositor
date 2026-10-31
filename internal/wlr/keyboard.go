@@ -791,6 +791,10 @@ func (c *Compositor) executeBindAction(action bind.Action) {
 	if c.model == nil {
 		return
 	}
+	if navigation, ok := navigationActions[action.Name]; ok {
+		c.runNavigation(navigation, action.Index, 0)
+		return
+	}
 	switch action.Name {
 	case bind.ActionSetDynamicCastWindow:
 		c.SetDynamicCastWindow(nil)

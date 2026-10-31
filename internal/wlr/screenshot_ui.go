@@ -380,13 +380,13 @@ func (c *Compositor) runShotBinding(binding bind.Binding) {
 			c.Quit(action.SkipConfirmation)
 		case bind.ActionPowerOffMonitors, bind.ActionPowerOnMonitors:
 			c.executeBindAction(action)
-		case bind.ActionMoveColumnLeft:
+		case bind.ActionMoveColumnLeft, bind.ActionMoveColumnLeftOrToMonitorLeft:
 			c.moveShotSelection(-shotMoveStep, 0)
-		case bind.ActionMoveColumnRight:
+		case bind.ActionMoveColumnRight, bind.ActionMoveColumnRightOrToMonitorRight:
 			c.moveShotSelection(shotMoveStep, 0)
-		case bind.ActionMoveWindowUp:
+		case bind.ActionMoveWindowUp, bind.ActionMoveWindowUpOrToWorkspaceUp:
 			c.moveShotSelection(0, -shotMoveStep)
-		case bind.ActionMoveWindowDown:
+		case bind.ActionMoveWindowDown, bind.ActionMoveWindowDownOrToWorkspaceDown:
 			c.moveShotSelection(0, shotMoveStep)
 		case bind.ActionMoveColumnToMonitor, bind.ActionMoveWindowToMonitor:
 			c.moveShotSelectionToOutput(action.Output)

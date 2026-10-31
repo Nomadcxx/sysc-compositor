@@ -42,9 +42,12 @@ type Action struct {
 	WorkspaceIndex uint8
 	WorkspaceName  string
 	ColumnIndex    uint8
-	ColumnDisplay  string
-	Output         string
-	Focus          bool
+	// Index is focus-column's, move-column-to-index's and
+	// move-workspace-to-index's 1-based index (Niri's usize; 0 saturates).
+	Index         int
+	ColumnDisplay string
+	Output        string
+	Focus         bool
 	// WriteToDisk and ShowPointer are the screenshot actions' properties;
 	// as in Niri, write-to-disk defaults to true, and show-pointer to true
 	// for screenshot-screen and false for screenshot-window.
@@ -157,6 +160,40 @@ const (
 	ActionFocusMonitorDown               = "focus-monitor-down"
 	ActionFocusMonitorPrevious           = "focus-monitor-previous"
 	ActionFocusMonitorNext               = "focus-monitor-next"
+)
+
+// M15 part 1: Niri's remaining navigation and workspace actions.
+const (
+	ActionFocusWorkspaceDown              = "focus-workspace-down"
+	ActionFocusWorkspaceUp                = "focus-workspace-up"
+	ActionFocusWorkspacePrevious          = "focus-workspace-previous"
+	ActionMoveWorkspaceDown               = "move-workspace-down"
+	ActionMoveWorkspaceUp                 = "move-workspace-up"
+	ActionMoveWorkspaceToIndex            = "move-workspace-to-index"
+	ActionFocusColumn                     = "focus-column"
+	ActionFocusColumnRightOrFirst         = "focus-column-right-or-first"
+	ActionFocusColumnLeftOrLast           = "focus-column-left-or-last"
+	ActionFocusWindowOrMonitorUp          = "focus-window-or-monitor-up"
+	ActionFocusWindowOrMonitorDown        = "focus-window-or-monitor-down"
+	ActionFocusColumnOrMonitorLeft        = "focus-column-or-monitor-left"
+	ActionFocusColumnOrMonitorRight       = "focus-column-or-monitor-right"
+	ActionFocusWindowDownOrColumnLeft     = "focus-window-down-or-column-left"
+	ActionFocusWindowDownOrColumnRight    = "focus-window-down-or-column-right"
+	ActionFocusWindowUpOrColumnLeft       = "focus-window-up-or-column-left"
+	ActionFocusWindowUpOrColumnRight      = "focus-window-up-or-column-right"
+	ActionFocusWindowOrWorkspaceDown      = "focus-window-or-workspace-down"
+	ActionFocusWindowOrWorkspaceUp        = "focus-window-or-workspace-up"
+	ActionFocusWindowTop                  = "focus-window-top"
+	ActionFocusWindowBottom               = "focus-window-bottom"
+	ActionFocusWindowDownOrTop            = "focus-window-down-or-top"
+	ActionFocusWindowUpOrBottom           = "focus-window-up-or-bottom"
+	ActionMoveColumnLeftOrToMonitorLeft   = "move-column-left-or-to-monitor-left"
+	ActionMoveColumnRightOrToMonitorRight = "move-column-right-or-to-monitor-right"
+	ActionMoveColumnToIndex               = "move-column-to-index"
+	ActionMoveWindowDownOrToWorkspaceDown = "move-window-down-or-to-workspace-down"
+	ActionMoveWindowUpOrToWorkspaceUp     = "move-window-up-or-to-workspace-up"
+	ActionSwapWindowLeft                  = "swap-window-left"
+	ActionSwapWindowRight                 = "swap-window-right"
 )
 
 // The window switcher's actions, Niri's knuffel(skip) Mru actions: no bind
@@ -387,6 +424,21 @@ func ParseAction(name string, args []string) (Action, bool, error) {
 		}
 		action.ColumnIndex = uint8(index)
 		return action, true, nil
+	case ActionFocusWorkspaceDown, ActionFocusWorkspaceUp, ActionFocusWorkspacePrevious, ActionMoveWorkspaceDown, ActionMoveWorkspaceUp, ActionFocusColumnRightOrFirst, ActionFocusColumnLeftOrLast, ActionFocusWindowOrMonitorUp, ActionFocusWindowOrMonitorDown, ActionFocusColumnOrMonitorLeft, ActionFocusColumnOrMonitorRight, ActionFocusWindowDownOrColumnLeft, ActionFocusWindowDownOrColumnRight, ActionFocusWindowUpOrColumnLeft, ActionFocusWindowUpOrColumnRight, ActionFocusWindowOrWorkspaceDown, ActionFocusWindowOrWorkspaceUp, ActionFocusWindowTop, ActionFocusWindowBottom, ActionFocusWindowDownOrTop, ActionFocusWindowUpOrBottom, ActionMoveColumnLeftOrToMonitorLeft, ActionMoveColumnRightOrToMonitorRight, ActionMoveWindowDownOrToWorkspaceDown, ActionMoveWindowUpOrToWorkspaceUp, ActionSwapWindowLeft, ActionSwapWindowRight:
+		if len(args) != 0 {
+			return Action{}, true, fmt.Errorf("%s takes no arguments", name)
+		}
+		return action, true, nil
+	case ActionFocusColumn, ActionMoveColumnToIndex, ActionMoveWorkspaceToIndex:
+		if len(args) != 1 {
+			return Action{}, true, fmt.Errorf("%s takes one index", name)
+		}
+		index, err := strconv.ParseUint(args[0], 10, 31)
+		if err != nil {
+			return Action{}, true, fmt.Errorf("%s index must be a non-negative integer", name)
+		}
+		action.Index = int(index)
+		return action, true, nil
 	case ActionSetColumnDisplay:
 		if len(args) != 1 || (args[0] != "normal" && args[0] != "tabbed") {
 			return Action{}, true, fmt.Errorf("set-column-display takes `normal` or `tabbed`")
@@ -449,7 +501,8 @@ func IsSupportedAction(name string) bool {
 		ActionMoveWorkspaceToMonitorUp, ActionMoveWorkspaceToMonitorDown,
 		ActionMoveWorkspaceToMonitorPrevious, ActionMoveWorkspaceToMonitorNext,
 		ActionFocusMonitorLeft, ActionFocusMonitorRight, ActionFocusMonitorUp,
-		ActionFocusMonitorDown, ActionFocusMonitorPrevious, ActionFocusMonitorNext:
+		ActionFocusMonitorDown, ActionFocusMonitorPrevious, ActionFocusMonitorNext,
+		ActionFocusWorkspaceDown, ActionFocusWorkspaceUp, ActionFocusWorkspacePrevious, ActionMoveWorkspaceDown, ActionMoveWorkspaceUp, ActionFocusColumnRightOrFirst, ActionFocusColumnLeftOrLast, ActionFocusWindowOrMonitorUp, ActionFocusWindowOrMonitorDown, ActionFocusColumnOrMonitorLeft, ActionFocusColumnOrMonitorRight, ActionFocusWindowDownOrColumnLeft, ActionFocusWindowDownOrColumnRight, ActionFocusWindowUpOrColumnLeft, ActionFocusWindowUpOrColumnRight, ActionFocusWindowOrWorkspaceDown, ActionFocusWindowOrWorkspaceUp, ActionFocusWindowTop, ActionFocusWindowBottom, ActionFocusWindowDownOrTop, ActionFocusWindowUpOrBottom, ActionMoveColumnLeftOrToMonitorLeft, ActionMoveColumnRightOrToMonitorRight, ActionMoveWindowDownOrToWorkspaceDown, ActionMoveWindowUpOrToWorkspaceUp, ActionSwapWindowLeft, ActionSwapWindowRight, ActionFocusColumn, ActionMoveColumnToIndex, ActionMoveWorkspaceToIndex:
 		return true
 	default:
 		return false

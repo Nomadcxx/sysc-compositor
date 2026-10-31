@@ -2,6 +2,7 @@ package bind
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -238,5 +239,55 @@ func TestParseM6WorkspaceAndMonitorActions(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// navigationActions is M15 part 1's 30 Niri actions by bind name.
+var navigationActions = []string{
+	"focus-workspace-down", "focus-workspace-up", "focus-workspace-previous",
+	"move-workspace-down", "move-workspace-up", "move-workspace-to-index",
+	"focus-column", "focus-column-right-or-first", "focus-column-left-or-last",
+	"focus-window-or-monitor-up", "focus-window-or-monitor-down",
+	"focus-column-or-monitor-left", "focus-column-or-monitor-right",
+	"focus-window-down-or-column-left", "focus-window-down-or-column-right",
+	"focus-window-up-or-column-left", "focus-window-up-or-column-right",
+	"focus-window-or-workspace-down", "focus-window-or-workspace-up",
+	"focus-window-top", "focus-window-bottom", "focus-window-down-or-top", "focus-window-up-or-bottom",
+	"move-column-left-or-to-monitor-left", "move-column-right-or-to-monitor-right",
+	"move-column-to-index", "move-window-down-or-to-workspace-down", "move-window-up-or-to-workspace-up",
+	"swap-window-left", "swap-window-right",
+}
+
+func TestNavigationActionArguments(t *testing.T) {
+	if len(navigationActions) != 30 {
+		t.Fatalf("navigationActions lists %d actions, want 30", len(navigationActions))
+	}
+	indexed := map[string]bool{"focus-column": true, "move-column-to-index": true, "move-workspace-to-index": true}
+	for _, name := range navigationActions {
+		if !IsSupportedAction(name) {
+			t.Errorf("%s is not a supported action", name)
+		}
+		if indexed[name] {
+			action, known, err := ParseAction(name, []string{"2"})
+			if !known || err != nil || action.Index != 2 {
+				t.Errorf("%s 2 = %+v, %t, %v; want Index 2", name, action, known, err)
+			}
+			if _, _, err := ParseAction(name, nil); err == nil {
+				t.Errorf("%s with no index parsed", name)
+			}
+			if _, _, err := ParseAction(name, []string{"-1"}); err == nil {
+				t.Errorf("%s -1 parsed", name)
+			}
+			continue
+		}
+		if _, known, err := ParseAction(name, nil); !known || err != nil {
+			t.Errorf("%s = %t, %v; want a known action with no arguments", name, known, err)
+		}
+		if _, _, err := ParseAction(name, []string{"x"}); err == nil || !strings.Contains(err.Error(), "takes no arguments") {
+			t.Errorf("%s x: error %v, want `takes no arguments`", name, err)
+		}
+	}
+	if action, _, err := ParseAction("focus-column", []string{"0"}); err != nil || action.Index != 0 {
+		t.Errorf("focus-column 0 = %+v, %v; want Index 0 (Niri saturates it to the first column)", action, err)
 	}
 }
