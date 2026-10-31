@@ -957,3 +957,300 @@ func TestDestroyDropsRetainedResizeState(t *testing.T) {
 		t.Fatalf("tile after destroyed ID was mapped again = %+v, want defaults 500x768", window.Tile)
 	}
 }
+
+// activeIndex is the active workspace's position on output.
+func activeIndex(t *testing.T, m *Model, output string) int {
+	t.Helper()
+	i := 0
+	for _, workspace := range m.Snapshot().Workspaces {
+		if workspace.Output != output {
+			continue
+		}
+		if workspace.IsActive {
+			return i
+		}
+		i++
+	}
+	t.Fatalf("output %s has no active workspace", output)
+	return -1
+}
+
+// workspaceIDs lists output's workspace IDs in order.
+func workspaceIDs(m *Model, output string) []uint64 {
+	var ids []uint64
+	for _, workspace := range m.Snapshot().Workspaces {
+		if workspace.Output == output {
+			ids = append(ids, workspace.ID)
+		}
+	}
+	return ids
+}
+
+// threeWorkspaces maps windows 1-3 onto workspaces 1-3 of output, leaving
+// the trailing empty workspace as the fourth.
+func threeWorkspaces(t *testing.T, m *Model, output string) {
+	t.Helper()
+	for i := 1; i <= 3; i++ {
+		if !m.FocusWorkspace(output, uint8(i)) || !m.MapWindow(uint64(i), output) {
+			t.Fatalf("mapping window %d failed", i)
+		}
+	}
+}
+
+func TestFocusWorkspaceUpDownAndPreviousFollowNiri(t *testing.T) {
+	m := New()
+	m.AddOutput("DP-1", layout.Bounds{Width: 1000, Height: 800}, 500, 16)
+	threeWorkspaces(t, m, "DP-1")
+	m.FocusWorkspace("", 1)
+	if !m.FocusWorkspaceDown() || activeIndex(t, m, "DP-1") != 1 {
+		t.Fatalf("FocusWorkspaceDown: active %d, want 1", activeIndex(t, m, "DP-1"))
+	}
+	if !m.FocusWorkspaceDown() || activeIndex(t, m, "DP-1") != 2 {
+		t.Fatalf("second FocusWorkspaceDown: active %d, want 2", activeIndex(t, m, "DP-1"))
+	}
+	if !m.FocusWorkspacePrevious() || activeIndex(t, m, "DP-1") != 1 {
+		t.Fatalf("FocusWorkspacePrevious: active %d, want 1", activeIndex(t, m, "DP-1"))
+	}
+	if !m.FocusWorkspacePrevious() || activeIndex(t, m, "DP-1") != 2 {
+		t.Fatalf("second FocusWorkspacePrevious: active %d, want 2", activeIndex(t, m, "DP-1"))
+	}
+	m.FocusWorkspace("", 1)
+	if m.FocusWorkspaceUp() {
+		t.Fatal("FocusWorkspaceUp on the first workspace reported a change")
+	}
+
+	m.AddOutput("HDMI-A-1", layout.Bounds{X: 1000, Width: 1000, Height: 800}, 500, 16)
+	if !m.FocusOutput("HDMI-A-1") {
+		t.Fatal("FocusOutput(HDMI-A-1) failed")
+	}
+	if m.FocusWorkspacePrevious() {
+		t.Fatal("a new output with no history went to a previous workspace")
+	}
+	m.FocusOutput("DP-1")
+	if !m.FocusWorkspacePrevious() || activeIndex(t, m, "DP-1") != 2 {
+		t.Fatalf("DP-1's previous after a monitor change: active %d, want 2", activeIndex(t, m, "DP-1"))
+	}
+}
+
+func TestMoveWorkspaceDownKeepsPreviousAndTrailingEmpty(t *testing.T) {
+	m := New()
+	m.AddOutput("DP-1", layout.Bounds{Width: 1000, Height: 800}, 500, 16)
+	m.MapWindow(1, "DP-1")
+	m.FocusWorkspace("", 2)
+	m.MapWindow(2, "DP-1")
+	ids := workspaceIDs(m, "DP-1")
+	a, b := ids[0], ids[1]
+	m.FocusWorkspace("", 1) // previous is now B
+	if !m.MoveWorkspaceDown() {
+		t.Fatal("MoveWorkspaceDown() = false")
+	}
+	got := workspaceIDs(m, "DP-1")
+	if len(got) != 3 || got[0] != b || got[1] != a || activeIndex(t, m, "DP-1") != 1 {
+		t.Fatalf("after MoveWorkspaceDown: order %v active %d, want [%d %d empty] active 1", got, activeIndex(t, m, "DP-1"), b, a)
+	}
+	if !m.FocusWorkspacePrevious() || workspaceIDs(m, "DP-1")[activeIndex(t, m, "DP-1")] != b {
+		t.Fatal("MoveWorkspaceDown lost the previous workspace")
+	}
+	m.FocusWorkspaceID(a)
+	if !m.MoveWorkspaceUp() {
+		t.Fatal("MoveWorkspaceUp() = false")
+	}
+	if got := workspaceIDs(m, "DP-1"); got[0] != a || got[1] != b || len(got) != 3 {
+		t.Fatalf("after MoveWorkspaceUp: order %v, want [%d %d empty]", got, a, b)
+	}
+	m.FocusWorkspace("", 3)
+	if m.MoveWorkspaceDown() {
+		t.Fatal("MoveWorkspaceDown on the trailing empty workspace reported a change")
+	}
+	m.FocusWorkspaceID(b)
+	if !m.MoveWorkspaceDown() {
+		t.Fatal("MoveWorkspaceDown into the trailing position failed")
+	}
+	got = workspaceIDs(m, "DP-1")
+	if len(got) != 3 || got[1] != b {
+		t.Fatalf("moving B last: order %v, want [%d %d new-empty]", got, a, b)
+	}
+	if windows := m.Snapshot().Workspaces[2].WindowIDs; len(windows) != 0 {
+		t.Fatalf("trailing workspace has windows %v, want one empty trailing workspace", windows)
+	}
+}
+
+func TestMoveWorkspaceToIndexClampsAndResolvesReference(t *testing.T) {
+	m := New()
+	m.AddOutput("DP-1", layout.Bounds{Width: 1000, Height: 800}, 500, 16)
+	threeWorkspaces(t, m, "DP-1")
+	ids := workspaceIDs(m, "DP-1")
+	if !m.MoveWorkspaceToIndex(0, 0) {
+		t.Fatal("MoveWorkspaceToIndex(0) = false")
+	}
+	if got := workspaceIDs(m, "DP-1"); got[0] != ids[2] || activeIndex(t, m, "DP-1") != 0 {
+		t.Fatalf("index 0: order %v active %d, want %d first and active", got, activeIndex(t, m, "DP-1"), ids[2])
+	}
+	if !m.MoveWorkspaceToIndex(99, 0) {
+		t.Fatal("MoveWorkspaceToIndex(99) = false")
+	}
+	got := workspaceIDs(m, "DP-1")
+	if got[2] != ids[2] || activeIndex(t, m, "DP-1") != 2 || len(got) != 4 {
+		t.Fatalf("index 99: order %v active %d, want %d last before the trailing empty", got, activeIndex(t, m, "DP-1"), ids[2])
+	}
+	// A referenced inactive workspace moves; the active one keeps focus.
+	if !m.MoveWorkspaceToIndex(3, ids[0]) {
+		t.Fatal("MoveWorkspaceToIndex by reference = false")
+	}
+	got = workspaceIDs(m, "DP-1")
+	if got[2] != ids[0] || got[activeIndex(t, m, "DP-1")] != ids[2] {
+		t.Fatalf("by reference: order %v, active %d; want %d third and %d still active", got, activeIndex(t, m, "DP-1"), ids[0], ids[2])
+	}
+	if m.MoveWorkspaceToIndex(1, 9999) {
+		t.Fatal("an unknown workspace reference moved something")
+	}
+}
+
+func focusedWindowID(t *testing.T, m *Model) uint64 {
+	t.Helper()
+	id, ok := m.ActiveWindow()
+	if !ok {
+		t.Fatal("no active window")
+	}
+	return id
+}
+
+func TestOrMonitorCompositesCrossOnlyAtTheEdge(t *testing.T) {
+	m := New()
+	m.AddOutput("L", layout.Bounds{Width: 1000, Height: 800}, 400, 16)
+	m.AddOutput("R", layout.Bounds{X: 1000, Width: 1000, Height: 800}, 400, 16)
+	m.FocusOutput("R")
+	m.MapWindow(3, "R")
+	m.MapWindow(4, "R")
+	m.FocusOutput("L")
+	m.MapWindow(1, "L")
+	m.MapWindow(2, "L")
+	m.FocusWindow(1)
+	if !m.FocusColumnOrMonitorRight() || focusedWindowID(t, m) != 2 || m.Snapshot().FocusedOutput != "L" {
+		t.Fatalf("mid-strip FocusColumnOrMonitorRight: output %s window %d, want L/2 and no output change",
+			m.Snapshot().FocusedOutput, focusedWindowID(t, m))
+	}
+	if !m.FocusColumnOrMonitorRight() || m.Snapshot().FocusedOutput != "R" {
+		t.Fatalf("edge FocusColumnOrMonitorRight: output %s, want R", m.Snapshot().FocusedOutput)
+	}
+	if !m.FocusColumnOrMonitorLeft() || m.Snapshot().FocusedOutput != "R" || focusedWindowID(t, m) != 3 {
+		t.Fatalf("FocusColumnOrMonitorLeft on R's last column: output %s window %d, want R/3",
+			m.Snapshot().FocusedOutput, focusedWindowID(t, m))
+	}
+	m.FocusOutput("L")
+	m.FocusWindow(2)
+	if !m.MoveColumnRightOrToMonitorRight() || m.Snapshot().FocusedOutput != "R" || focusedWindowID(t, m) != 2 {
+		t.Fatalf("edge MoveColumnRightOrToMonitorRight: output %s window %d, want window 2 on R",
+			m.Snapshot().FocusedOutput, focusedWindowID(t, m))
+	}
+
+	single := New()
+	single.AddOutput("L", layout.Bounds{Width: 1000, Height: 800}, 400, 16)
+	single.MapWindow(1, "L")
+	single.MapWindow(2, "L")
+	single.FocusWindow(1)
+	if !single.FocusColumnOrMonitorRight() || focusedWindowID(t, single) != 2 {
+		t.Fatalf("single-output FocusColumnOrMonitorRight focused %d, want plain focus-column-right to 2", focusedWindowID(t, single))
+	}
+	if !single.MoveColumnLeftOrToMonitorLeft() || !slicesEqual(single.Snapshot().Workspaces[0].WindowIDs, []uint64{2, 1}) {
+		t.Fatalf("single-output MoveColumnLeftOrToMonitorLeft: %v, want plain move-column-left", single.Snapshot().Workspaces[0].WindowIDs)
+	}
+
+	vertical := New()
+	vertical.AddOutput("T", layout.Bounds{Width: 1000, Height: 800}, 400, 16)
+	vertical.AddOutput("B", layout.Bounds{Y: 800, Width: 1000, Height: 800}, 400, 16)
+	vertical.FocusOutput("T")
+	vertical.MapWindow(1, "T")
+	if !vertical.FocusWindowOrMonitorDown() || vertical.Snapshot().FocusedOutput != "B" {
+		t.Fatalf("FocusWindowOrMonitorDown on a lone tile: output %s, want B", vertical.Snapshot().FocusedOutput)
+	}
+	if !vertical.FocusWindowOrMonitorUp() || vertical.Snapshot().FocusedOutput != "T" {
+		t.Fatalf("FocusWindowOrMonitorUp from an empty B: output %s, want T", vertical.Snapshot().FocusedOutput)
+	}
+}
+
+func slicesEqual(a, b []uint64) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func TestOrWorkspaceCompositesFallBackToWorkspace(t *testing.T) {
+	m := New()
+	m.AddOutput("DP-1", layout.Bounds{Width: 1400, Height: 900}, 400, 16)
+	for _, id := range []uint64{1, 2, 3} {
+		m.MapWindow(id, "DP-1")
+	}
+	m.FocusWindow(1)
+	m.ConsumeWindowIntoColumn()
+	m.ConsumeWindowIntoColumn() // one column [1, 2, 3]
+	m.FocusWindow(2)
+	if !m.FocusWindowOrWorkspaceDown() || focusedWindowID(t, m) != 3 || activeIndex(t, m, "DP-1") != 0 {
+		t.Fatalf("mid-column FocusWindowOrWorkspaceDown: window %d workspace %d, want 3 on workspace 0",
+			focusedWindowID(t, m), activeIndex(t, m, "DP-1"))
+	}
+	if !m.FocusWindowOrWorkspaceDown() || activeIndex(t, m, "DP-1") != 1 {
+		t.Fatalf("bottom-tile FocusWindowOrWorkspaceDown: workspace %d, want 1", activeIndex(t, m, "DP-1"))
+	}
+	if !m.FocusWindowOrWorkspaceUp() || activeIndex(t, m, "DP-1") != 0 {
+		t.Fatalf("FocusWindowOrWorkspaceUp from an empty workspace: workspace %d, want 0", activeIndex(t, m, "DP-1"))
+	}
+
+	m.FocusWindow(2)
+	if !m.MoveWindowDownOrToWorkspaceDown() || activeIndex(t, m, "DP-1") != 0 ||
+		!slicesEqual(m.Snapshot().Workspaces[0].WindowIDs, []uint64{1, 3, 2}) {
+		t.Fatalf("mid-column MoveWindowDownOrToWorkspaceDown: %v, want a plain move down", m.Snapshot().Workspaces[0].WindowIDs)
+	}
+	if !m.MoveWindowDownOrToWorkspaceDown() || activeIndex(t, m, "DP-1") != 1 || focusedWindowID(t, m) != 2 {
+		t.Fatalf("bottom MoveWindowDownOrToWorkspaceDown: workspace %d, want window 2 followed to workspace 1",
+			activeIndex(t, m, "DP-1"))
+	}
+	if !m.MoveWindowUpOrToWorkspaceUp() || activeIndex(t, m, "DP-1") != 0 || focusedWindowID(t, m) != 2 {
+		t.Fatalf("lone-tile MoveWindowUpOrToWorkspaceUp: workspace %d, want window 2 back on workspace 0",
+			activeIndex(t, m, "DP-1"))
+	}
+}
+
+func TestUnderMouseActionsLeaveTheFocusedOutput(t *testing.T) {
+	m := New()
+	m.AddOutput("DP-1", layout.Bounds{Width: 1000, Height: 800}, 500, 16)
+	m.AddOutput("HDMI-A-1", layout.Bounds{X: 1000, Width: 1000, Height: 800}, 500, 16)
+	threeWorkspaces(t, m, "HDMI-A-1")
+	if !m.FocusWorkspace("HDMI-A-1", 1) || !m.MapWindow(4, "HDMI-A-1") {
+		t.Fatal("could not give HDMI-A-1's first workspace a second column")
+	}
+	m.FocusWorkspace("DP-1", 1)
+	first := workspaceIDs(m, "HDMI-A-1")[0]
+	activeWindow := func() uint64 {
+		for _, workspace := range m.Snapshot().Workspaces {
+			if workspace.ID == first && workspace.ActiveWindowID != nil {
+				return *workspace.ActiveWindowID
+			}
+		}
+		return 0
+	}
+	if !m.FocusColumnLeftOnWorkspace(first) || activeWindow() != 1 {
+		t.Fatalf("FocusColumnLeftOnWorkspace: active window %d, want 1", activeWindow())
+	}
+	if !m.FocusColumnRightOnWorkspace(first) || activeWindow() != 4 {
+		t.Fatalf("FocusColumnRightOnWorkspace: active window %d, want 4", activeWindow())
+	}
+	if !m.FocusWorkspaceDownOn("HDMI-A-1") || activeIndex(t, m, "HDMI-A-1") != 1 {
+		t.Fatalf("FocusWorkspaceDownOn: active %d, want 1", activeIndex(t, m, "HDMI-A-1"))
+	}
+	if !m.FocusWorkspaceUpOn("HDMI-A-1") || activeIndex(t, m, "HDMI-A-1") != 0 {
+		t.Fatalf("FocusWorkspaceUpOn: active %d, want 0", activeIndex(t, m, "HDMI-A-1"))
+	}
+	if m.FocusWorkspaceUpOn("HDMI-A-1") {
+		t.Fatal("FocusWorkspaceUpOn on the first workspace reported a change")
+	}
+	if got := m.Snapshot().FocusedOutput; got != "DP-1" {
+		t.Fatalf("focused output %q after under-mouse actions on HDMI-A-1, want DP-1", got)
+	}
+}

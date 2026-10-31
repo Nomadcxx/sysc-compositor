@@ -26,6 +26,11 @@ type outputState struct {
 	gap         int
 	workspaces  []*workspaceState
 	active      int
+	// activeID and previousWorkspace follow Niri's Monitor
+	// previous_workspace_id: reconcile records the old active workspace
+	// whenever the active one changes.
+	activeID          uint64
+	previousWorkspace uint64
 }
 
 type windowState struct {
@@ -760,6 +765,19 @@ func (m *Model) FocusWorkspace(output string, index uint8) bool {
 
 // FocusWorkspaceByDelta switches an output's active workspace by a relative index.
 func (m *Model) FocusWorkspaceByDelta(output string, delta int) bool {
+	return m.switchWorkspaceBy(output, delta, true)
+}
+
+// FocusWorkspaceDownOn and FocusWorkspaceUpOn are Niri's
+// FocusWorkspace{Down,Up}UnderMouse: the output's monitor switches workspace
+// and the focused output stays where it is.
+func (m *Model) FocusWorkspaceDownOn(output string) bool {
+	return m.switchWorkspaceBy(output, 1, false)
+}
+
+func (m *Model) FocusWorkspaceUpOn(output string) bool { return m.switchWorkspaceBy(output, -1, false) }
+
+func (m *Model) switchWorkspaceBy(output string, delta int, focus bool) bool {
 	state := m.outputs[output]
 	if state == nil || delta == 0 || len(state.workspaces) == 0 {
 		return false
@@ -769,9 +787,86 @@ func (m *Model) FocusWorkspaceByDelta(output string, delta int) bool {
 		return false
 	}
 	state.active = index
-	m.focusedOutput = output
+	if focus {
+		m.focusedOutput = output
+	}
 	m.reconcile(state)
 	m.clearFocusedUrgency()
+	return true
+}
+
+// FocusWorkspaceDown is Niri's switch_workspace_down on the focused output.
+func (m *Model) FocusWorkspaceDown() bool { return m.FocusWorkspaceByDelta(m.focusedOutput, 1) }
+
+// FocusWorkspaceUp is Niri's switch_workspace_up on the focused output.
+func (m *Model) FocusWorkspaceUp() bool { return m.FocusWorkspaceByDelta(m.focusedOutput, -1) }
+
+// FocusWorkspacePrevious returns the focused output to the workspace that
+// was active before the current one, if it is still on that output.
+func (m *Model) FocusWorkspacePrevious() bool {
+	out := m.outputs[m.focusedOutput]
+	if out == nil || out.previousWorkspace == 0 {
+		return false
+	}
+	owner, index, _ := m.workspaceLocation(out.previousWorkspace)
+	if owner != out || index == out.active {
+		return false
+	}
+	out.active = index
+	m.reconcile(out)
+	m.clearFocusedUrgency()
+	return true
+}
+
+// MoveWorkspaceDown swaps the focused output's active workspace with the
+// one below it, as Niri's Monitor::move_workspace_down; it stays active.
+func (m *Model) MoveWorkspaceDown() bool { return m.moveActiveWorkspace(1) }
+
+// MoveWorkspaceUp swaps the active workspace with the one above it.
+func (m *Model) MoveWorkspaceUp() bool { return m.moveActiveWorkspace(-1) }
+
+func (m *Model) moveActiveWorkspace(delta int) bool {
+	out := m.outputs[m.focusedOutput]
+	if out == nil || len(out.workspaces) == 0 {
+		return false
+	}
+	target := min(max(out.active+delta, 0), len(out.workspaces)-1)
+	if target == out.active {
+		return false
+	}
+	out.workspaces[out.active], out.workspaces[target] = out.workspaces[target], out.workspaces[out.active]
+	out.active = target
+	m.reconcile(out)
+	return true
+}
+
+// MoveWorkspaceToIndex moves a workspace within its output to the 1-based
+// index (0 counts as 1; past the end clamps), as Niri's
+// Monitor::move_workspace_to_idx. workspaceID 0 is the focused output's
+// active workspace. The active workspace stays active wherever it lands.
+func (m *Model) MoveWorkspaceToIndex(index int, workspaceID uint64) bool {
+	out := m.outputs[m.focusedOutput]
+	oldIndex := -1
+	if workspaceID == 0 {
+		if out != nil && len(out.workspaces) != 0 {
+			oldIndex = out.active
+		}
+	} else {
+		out, oldIndex, _ = m.workspaceLocation(workspaceID)
+	}
+	if out == nil || oldIndex < 0 {
+		return false
+	}
+	newIndex := min(max(index-1, 0), len(out.workspaces)-1)
+	if newIndex == oldIndex {
+		return false
+	}
+	active := out.workspaces[out.active].id
+	moved := out.workspaces[oldIndex]
+	out.workspaces = append(out.workspaces[:oldIndex], out.workspaces[oldIndex+1:]...)
+	out.workspaces = append(out.workspaces[:newIndex], append([]*workspaceState{moved}, out.workspaces[newIndex:]...)...)
+	out.active = m.workspaceIndex(out, active)
+	m.reconcile(out)
 	return true
 }
 
@@ -1192,6 +1287,26 @@ func (m *Model) FocusColumnLeft() bool { return m.activeStripAction((*layout.Wor
 // FocusColumnRight focuses the following column on the active workspace.
 func (m *Model) FocusColumnRight() bool { return m.activeStripAction((*layout.Workspace).FocusRight) }
 
+// FocusColumnLeftOnWorkspace and FocusColumnRightOnWorkspace are Niri's
+// FocusColumn{Left,Right}UnderMouse: they act on the workspace under the
+// pointer, which in the overview need not be an active one.
+func (m *Model) FocusColumnLeftOnWorkspace(id uint64) bool {
+	return m.workspaceStripAction(id, (*layout.Workspace).FocusLeft)
+}
+
+func (m *Model) FocusColumnRightOnWorkspace(id uint64) bool {
+	return m.workspaceStripAction(id, (*layout.Workspace).FocusRight)
+}
+
+func (m *Model) workspaceStripAction(id uint64, action func(*layout.Workspace) bool) bool {
+	workspace := m.workspaceByID(id)
+	if workspace == nil || !action(workspace.strip) {
+		return false
+	}
+	m.clearFocusedUrgency()
+	return true
+}
+
 func (m *Model) FocusColumnFirst() bool { return m.activeStripAction((*layout.Workspace).FocusFirst) }
 
 func (m *Model) FocusColumnLast() bool { return m.activeStripAction((*layout.Workspace).FocusLast) }
@@ -1298,6 +1413,96 @@ func (m *Model) activeStripAction(action func(*layout.Workspace) bool) bool {
 	return changed
 }
 
+// The strip actions of Niri's Workspace, on the focused output.
+func (m *Model) FocusColumn(index int) bool {
+	return m.activeStripAction(func(w *layout.Workspace) bool { return w.FocusColumn(index) })
+}
+func (m *Model) FocusColumnRightOrFirst() bool {
+	return m.activeStripAction((*layout.Workspace).FocusColumnRightOrFirst)
+}
+func (m *Model) FocusColumnLeftOrLast() bool {
+	return m.activeStripAction((*layout.Workspace).FocusColumnLeftOrLast)
+}
+func (m *Model) FocusWindowTop() bool { return m.activeStripAction((*layout.Workspace).FocusWindowTop) }
+func (m *Model) FocusWindowBottom() bool {
+	return m.activeStripAction((*layout.Workspace).FocusWindowBottom)
+}
+func (m *Model) FocusWindowDownOrTop() bool {
+	return m.activeStripAction((*layout.Workspace).FocusWindowDownOrTop)
+}
+func (m *Model) FocusWindowUpOrBottom() bool {
+	return m.activeStripAction((*layout.Workspace).FocusWindowUpOrBottom)
+}
+func (m *Model) FocusWindowDownOrColumnLeft() bool {
+	return m.activeStripAction((*layout.Workspace).FocusWindowDownOrColumnLeft)
+}
+func (m *Model) FocusWindowDownOrColumnRight() bool {
+	return m.activeStripAction((*layout.Workspace).FocusWindowDownOrColumnRight)
+}
+func (m *Model) FocusWindowUpOrColumnLeft() bool {
+	return m.activeStripAction((*layout.Workspace).FocusWindowUpOrColumnLeft)
+}
+func (m *Model) FocusWindowUpOrColumnRight() bool {
+	return m.activeStripAction((*layout.Workspace).FocusWindowUpOrColumnRight)
+}
+func (m *Model) MoveColumnToIndex(index int) bool {
+	return m.activeStripAction(func(w *layout.Workspace) bool { return w.MoveColumnToIndex(index) })
+}
+func (m *Model) SwapWindowLeft() bool { return m.activeStripAction((*layout.Workspace).SwapWindowLeft) }
+func (m *Model) SwapWindowRight() bool {
+	return m.activeStripAction((*layout.Workspace).SwapWindowRight)
+}
+
+// The or-monitor composites: the plain action, or at the strip's edge the
+// output in that direction, as Niri's Action::FocusColumnOrMonitorLeft and
+// friends. With no output there they are the plain action.
+func (m *Model) FocusColumnOrMonitorLeft() bool {
+	return m.orMonitor("left", m.FocusColumnLeft, m.FocusOutputDirection)
+}
+func (m *Model) FocusColumnOrMonitorRight() bool {
+	return m.orMonitor("right", m.FocusColumnRight, m.FocusOutputDirection)
+}
+func (m *Model) FocusWindowOrMonitorUp() bool {
+	return m.orMonitor("up", m.FocusWindowUp, m.FocusOutputDirection)
+}
+func (m *Model) FocusWindowOrMonitorDown() bool {
+	return m.orMonitor("down", m.FocusWindowDown, m.FocusOutputDirection)
+}
+func (m *Model) MoveColumnLeftOrToMonitorLeft() bool {
+	return m.orMonitor("left", m.MoveColumnLeft, m.moveColumnToMonitorFollowing)
+}
+func (m *Model) MoveColumnRightOrToMonitorRight() bool {
+	return m.orMonitor("right", m.MoveColumnRight, m.moveColumnToMonitorFollowing)
+}
+
+func (m *Model) moveColumnToMonitorFollowing(direction string) bool {
+	return m.MoveFocusedColumnToMonitorDirection(direction, true)
+}
+
+func (m *Model) orMonitor(direction string, plain func() bool, cross func(string) bool) bool {
+	return plain() || (m.outputInDirection(m.focusedOutput, direction) != "" && cross(direction))
+}
+
+// FocusWindowOrWorkspaceDown focuses the tile below, or else the workspace
+// below (Niri's Monitor::focus_window_or_workspace_down).
+func (m *Model) FocusWindowOrWorkspaceDown() bool {
+	return m.FocusWindowDown() || m.FocusWorkspaceDown()
+}
+
+// FocusWindowOrWorkspaceUp focuses the tile above, or else the workspace above.
+func (m *Model) FocusWindowOrWorkspaceUp() bool { return m.FocusWindowUp() || m.FocusWorkspaceUp() }
+
+// MoveWindowDownOrToWorkspaceDown moves the window down its column, or else
+// to the workspace below and follows it (monitor.rs move_down_or_to_workspace_down).
+func (m *Model) MoveWindowDownOrToWorkspaceDown() bool {
+	return m.MoveWindowDown() || m.MoveWindowToWorkspaceDown(true)
+}
+
+// MoveWindowUpOrToWorkspaceUp moves the window up, or else to the workspace above.
+func (m *Model) MoveWindowUpOrToWorkspaceUp() bool {
+	return m.MoveWindowUp() || m.MoveWindowToWorkspaceUp(true)
+}
+
 // ActiveWindow returns the active column window on the focused output.
 func (m *Model) ActiveWindow() (uint64, bool) {
 	out := m.outputs[m.focusedOutput]
@@ -1373,6 +1578,12 @@ func (m *Model) reconcile(out *outputState) {
 	last := out.workspaces[len(out.workspaces)-1]
 	if last.name != nil || len(last.strip.WindowOrder()) != 0 {
 		out.workspaces = append(out.workspaces, m.newWorkspace(out))
+	}
+	if id := out.workspaces[out.active].id; id != out.activeID {
+		if out.activeID != 0 {
+			out.previousWorkspace = out.activeID
+		}
+		out.activeID = id
 	}
 }
 

@@ -94,3 +94,56 @@ binds {
 		})
 	})
 }
+
+// TestScreenshotUIMovesTheSelectionByOrActions: Niri's or-monitor column
+// moves and or-workspace window moves check the screenshot UI first, so they
+// move the selection as the plain moves do.
+func TestScreenshotUIMovesTheSelectionByOrActions(t *testing.T) {
+	cfg, err := config.Parse("or-moves.kdl", []byte(`
+binds {
+    Ctrl+Right { move-column-right-or-to-monitor-right; }
+    Ctrl+Down { move-window-down-or-to-workspace-down; }
+}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := newNestedWith(t, Options{Binds: cfg.Binds})
+	runTools(t, c, func(func(string, ...string) *exec.Cmd) {
+		var keyboard *fakeKeyboard
+		defer onCompositor(t, c, func() { keyboard.remove() })
+		onCompositor(t, c, func() {
+			keyboard = c.addFakeKeyboard()
+			press := func(keys ...uint32) {
+				for _, k := range keys {
+					keyboard.key(k, true)
+				}
+				for i := len(keys) - 1; i >= 0; i-- {
+					keyboard.key(keys[i], false)
+				}
+			}
+			if err := c.Screenshot(false, ""); err != nil {
+				t.Fatal(err)
+			}
+			ui := c.shotUI
+			var first unsafe.Pointer
+			for output := range ui.frames {
+				first = output
+				break
+			}
+			box := ui.frames[first].box
+			ui.output = first
+			ui.selection = image.Rect(box.Min.X+120, box.Min.Y+100, box.Min.X+220, box.Min.Y+150)
+			c.drawShotSelection()
+			press(keyLeftCtrl, keyRight)
+			if ui.selection.Min.X != box.Min.X+170 {
+				t.Errorf("after move-column-right-or-to-monitor-right the selection is %v", ui.selection)
+			}
+			press(keyLeftCtrl, keyDown)
+			if ui.selection.Min.Y != box.Min.Y+150 {
+				t.Errorf("after move-window-down-or-to-workspace-down the selection is %v", ui.selection)
+			}
+			c.closeScreenshotUI()
+		})
+	})
+}

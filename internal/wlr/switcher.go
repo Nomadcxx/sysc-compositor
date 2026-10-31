@@ -137,14 +137,16 @@ func switcherDynamicBinds(general []bind.Binding) []bind.Binding {
 	var keys []string
 	byKey := map[string]bind.Binding{}
 	for _, b := range general {
-		if len(b.Actions) == 0 || b.Chord.Trigger != bind.TriggerKey {
+		if len(b.Actions) == 0 {
 			continue
 		}
 		var action bind.Action
 		switch first := b.Actions[0]; first.Name {
-		case bind.ActionFocusColumnRight:
+		case bind.ActionFocusColumnRight, bind.ActionFocusColumnRightOrFirst,
+			bind.ActionFocusColumnOrMonitorRight, bind.ActionFocusWindowDownOrColumnRight:
 			action = bind.Action{Name: bind.ActionMRUAdvance}
-		case bind.ActionFocusColumnLeft:
+		case bind.ActionFocusColumnLeft, bind.ActionFocusColumnLeftOrLast,
+			bind.ActionFocusColumnOrMonitorLeft, bind.ActionFocusWindowUpOrColumnLeft:
 			action = bind.Action{Name: bind.ActionMRUAdvance, Backward: true}
 		case bind.ActionFocusColumnFirst:
 			action = bind.Action{Name: bind.ActionMRUFirst}
@@ -170,7 +172,7 @@ func switcherDynamicBinds(general []bind.Binding) []bind.Binding {
 	binds := make([]bind.Binding, len(keys))
 	for i, key := range keys {
 		binds[i] = byKey[key]
-		binds[i].Chord = bind.Chord{Key: key}
+		binds[i].Chord = bind.Chord{Key: key, Trigger: byKey[key].Chord.Trigger}
 	}
 	return binds
 }

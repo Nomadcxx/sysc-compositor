@@ -604,3 +604,46 @@ func TestNiriSnapshotsDoNotSharePointerFields(t *testing.T) {
 		t.Fatalf("second snapshot active window = %v, want 42", got)
 	}
 }
+
+func TestNavigationActionsAreHandled(t *testing.T) {
+	var posted []string
+	h := niriHandler{postAction: func(action ipc.Action, _ uint64) error {
+		posted = append(posted, action.Name)
+		return nil
+	}}
+	names := []string{
+		"FocusWorkspaceDown", "FocusWorkspaceUp", "FocusWorkspacePrevious", "MoveWorkspaceDown", "MoveWorkspaceUp",
+		"FocusColumnRightOrFirst", "FocusColumnLeftOrLast", "FocusWindowOrMonitorUp", "FocusWindowOrMonitorDown",
+		"FocusColumnOrMonitorLeft", "FocusColumnOrMonitorRight", "FocusWindowDownOrColumnLeft",
+		"FocusWindowDownOrColumnRight", "FocusWindowUpOrColumnLeft", "FocusWindowUpOrColumnRight",
+		"FocusWindowOrWorkspaceDown", "FocusWindowOrWorkspaceUp", "FocusWindowTop", "FocusWindowBottom",
+		"FocusWindowDownOrTop", "FocusWindowUpOrBottom", "MoveColumnLeftOrToMonitorLeft",
+		"MoveColumnRightOrToMonitorRight", "MoveWindowDownOrToWorkspaceDown", "MoveWindowUpOrToWorkspaceUp",
+		"SwapWindowLeft", "SwapWindowRight",
+	}
+	lines := make([]string, 0, len(names)+3)
+	for _, name := range names {
+		lines = append(lines, `{"Action":{"`+name+`":{}}}`)
+	}
+	lines = append(lines, `{"Action":{"FocusColumn":{"index":2}}}`, `{"Action":{"MoveColumnToIndex":{"index":1}}}`,
+		`{"Action":{"MoveWorkspaceToIndex":{"index":1,"reference":null}}}`)
+	if len(lines) != 30 {
+		t.Fatalf("test covers %d actions, want 30", len(lines))
+	}
+	for _, line := range lines {
+		r, err := ipc.DecodeRequest([]byte(line))
+		if err != nil {
+			t.Fatalf("%s: %v", line, err)
+		}
+		reply, after := h.handle(r)
+		out, _ := json.Marshal(reply)
+		if string(out) != `{"Ok":"Handled"}` || after == nil {
+			t.Errorf("%s: reply %s (after hook %v), want Handled with a posted action", line, out, after != nil)
+			continue
+		}
+		after()
+	}
+	if len(posted) != 30 {
+		t.Errorf("posted %d actions, want 30: %v", len(posted), posted)
+	}
+}

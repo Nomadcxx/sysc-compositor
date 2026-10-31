@@ -480,3 +480,43 @@ func TestScreenshotActionRoundTrips(t *testing.T) {
 		t.Errorf("re-decoded %+v, %v", again.Action, err)
 	}
 }
+
+func TestIndexActionsDecodeNiriShapes(t *testing.T) {
+	for _, tc := range []struct {
+		line  string
+		index uint64
+		named string
+	}{
+		{`{"Action":{"FocusColumn":{"index":2}}}`, 2, ""},
+		{`{"Action":{"MoveColumnToIndex":{"index":1}}}`, 1, ""},
+		{`{"Action":{"MoveWorkspaceToIndex":{"index":3,"reference":null}}}`, 3, ""},
+		{`{"Action":{"MoveWorkspaceToIndex":{"index":3,"reference":{"Name":"web"}}}}`, 3, "web"},
+	} {
+		request, err := DecodeRequest([]byte(tc.line))
+		if err != nil {
+			t.Fatalf("DecodeRequest(%s): %v", tc.line, err)
+		}
+		a := request.Action
+		if a.Index == nil || *a.Index != tc.index {
+			t.Errorf("%s: Index = %v, want %d", tc.line, a.Index, tc.index)
+		}
+		if tc.named == "" && a.Workspace != nil {
+			t.Errorf("%s: Workspace = %+v, want nil", tc.line, a.Workspace)
+		}
+		if tc.named != "" && (a.Workspace == nil || a.Workspace.Name == nil || *a.Workspace.Name != tc.named) {
+			t.Errorf("%s: Workspace = %+v, want name %q", tc.line, a.Workspace, tc.named)
+		}
+		if got := string(EncodeRequest(request)); got != tc.line {
+			t.Errorf("round trip = %s, want %s", got, tc.line)
+		}
+	}
+	for _, line := range []string{
+		`{"Action":{"FocusColumn":{}}}`,
+		`{"Action":{"MoveColumnToIndex":{"index":-1}}}`,
+		`{"Action":{"MoveWorkspaceToIndex":{"reference":null}}}`,
+	} {
+		if _, err := DecodeRequest([]byte(line)); err == nil {
+			t.Errorf("DecodeRequest(%s) accepted a missing or invalid index", line)
+		}
+	}
+}

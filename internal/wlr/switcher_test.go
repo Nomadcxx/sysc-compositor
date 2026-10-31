@@ -27,6 +27,12 @@ func TestSwitcherDynamicBindsFollowNiri(t *testing.T) {
     Mod+Q { close-window; }
     Print { screenshot; }
     Mod+T { spawn "foot"; }
+    Mod+Shift+WheelScrollDown { focus-column-right-or-first; }
+    Mod+L { focus-column-or-monitor-left; }
+    Mod+J { focus-window-down-or-column-right; }
+    Mod+K { focus-window-up-or-column-left; }
+    Mod+Tab { focus-column-left-or-last; }
+    Mod+O { focus-column-or-monitor-right; }
 }
 `))
 	if err != nil {
@@ -43,12 +49,21 @@ func TestSwitcherDynamicBindsFollowNiri(t *testing.T) {
 		"Home":  {Name: bind.ActionMRUFirst},
 		"Q":     {Name: bind.ActionMRUCloseCurrentWindow},
 		"Print": {Name: bind.ActionScreenshot, ShowPointer: true, WriteToDisk: true},
+		// Niri's mru.rs make_dynamic_opened_binds maps the or-actions too,
+		// on any trigger.
+		"WheelScrollDown": {Name: bind.ActionMRUAdvance},
+		"L":               {Name: bind.ActionMRUAdvance, Backward: true},
+		"J":               {Name: bind.ActionMRUAdvance},
+		"K":               {Name: bind.ActionMRUAdvance, Backward: true},
+		"Tab":             {Name: bind.ActionMRUAdvance, Backward: true},
+		"O":               {Name: bind.ActionMRUAdvance},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("dynamic binds = %+v", got)
 	}
 	for _, b := range got {
-		if b.Chord != (bind.Chord{Key: b.Chord.Key}) || len(b.Actions) != 1 || !reflect.DeepEqual(b.Actions[0], want[b.Chord.Key]) {
+		chord, _ := bind.ParseChord(b.Chord.Key)
+		if b.Chord != (bind.Chord{Key: b.Chord.Key, Trigger: chord.Trigger}) || len(b.Actions) != 1 || !reflect.DeepEqual(b.Actions[0], want[b.Chord.Key]) {
 			t.Errorf("dynamic bind %+v, want key alone running %+v", b, want[b.Chord.Key])
 		}
 	}

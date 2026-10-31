@@ -714,10 +714,19 @@ func (c *Compositor) processCursorMotion(time C.uint32_t) {
 		return
 	}
 	c.updateHotCorner()
-	if c.model != nil && (c.model.OverviewProgress() > 0 || c.model.OverviewOpen()) {
-		C.wlr_seat_pointer_notify_clear_focus(c.seat)
-		c.showDefaultImage()
-		return
+	// In the overview the windows are the overview's, but top and overlay
+	// layer surfaces still take the pointer (Niri's contents_under). A held
+	// button keeps the pointer only on the layer surface it was pressed on.
+	if c.overviewShown() {
+		keep := c.pointerOnLayerSurface()
+		if len(c.pressedPointerButtons) == 0 {
+			keep = c.upperLayerAt(float64(c.cursor.x), float64(c.cursor.y))
+		}
+		if !keep {
+			C.wlr_seat_pointer_notify_clear_focus(c.seat)
+			c.showDefaultImage()
+			return
+		}
 	}
 	if c.pointerGrab != nil && c.grabView != nil && c.grabView.tree != nil {
 		if c.tiledMove != nil && c.tiledMove.view == c.grabView && c.model != nil {
@@ -859,6 +868,9 @@ func (c *Compositor) handleCursorButton(data unsafe.Pointer) {
 	if !c.pointerInputAllowed(event.pointer) {
 		return
 	}
+	if c.mouseBinds(uint32(event.button), event.state == C.WL_POINTER_BUTTON_STATE_PRESSED, uint32(event.time_msec)) {
+		return
+	}
 	c.deliverPointerButton(unsafe.Pointer(event.pointer), event.time_msec, event.button, event.state)
 }
 
@@ -941,7 +953,7 @@ func (c *Compositor) deliverPointerButton(source unsafe.Pointer, timeMsec C.uint
 			c.clearPointerGrab()
 		}
 	}
-	if pressed && c.model != nil && (c.model.OverviewProgress() > 0 || c.model.OverviewOpen()) {
+	if pressed && c.overviewShown() && !c.pointerOnLayerSurface() {
 		c.consumedPointerButtons[button] = true
 		if button == uint32(C.BTN_LEFT) && !c.overviewSelectAt(float64(c.cursor.x), float64(c.cursor.y)) {
 			c.CloseOverview()
@@ -1003,6 +1015,11 @@ func (c *Compositor) handleCursorAxis(data unsafe.Pointer) {
 	}
 	c.hideExitDialog()
 	c.hideHotkeyOverlay()
+	if c.scrollBinds(event.source == C.WL_POINTER_AXIS_SOURCE_WHEEL, event.source == C.WL_POINTER_AXIS_SOURCE_FINGER,
+		event.orientation == C.WL_POINTER_AXIS_HORIZONTAL_SCROLL, float64(event.delta), int32(event.delta_discrete),
+		uint32(event.time_msec)) {
+		return
+	}
 	C.wlr_seat_pointer_notify_axis(c.seat, event.time_msec,
 		event.orientation, event.delta, event.delta_discrete,
 		event.source, event.relative_direction)
@@ -1010,6 +1027,25 @@ func (c *Compositor) handleCursorAxis(data unsafe.Pointer) {
 
 func (c *Compositor) handleCursorFrame(unsafe.Pointer) {
 	C.wlr_seat_pointer_notify_frame(c.seat)
+}
+
+// overviewShown reports whether the overview is open or still animating.
+func (c *Compositor) overviewShown() bool {
+	return c.model != nil && (c.model.OverviewProgress() > 0 || c.model.OverviewOpen())
+}
+
+// upperLayerAt reports whether a top or overlay layer surface is at layout
+// coordinates.
+func (c *Compositor) upperLayerAt(x, y float64) bool {
+	surface, _, _ := c.surfaceAt(x, y)
+	layer := c.layerSurfaceForSurface(surface)
+	return layer != nil && layer.layer >= layerTop
+}
+
+// pointerOnLayerSurface reports whether the pointer's focus is a layer
+// surface: Niri's test for leaving overview input to that surface.
+func (c *Compositor) pointerOnLayerSurface() bool {
+	return c.layerSurfaceForSurface(c.seat.pointer_state.focused_surface) != nil
 }
 
 // surfaceAt is the client surface at layout coordinates, with the

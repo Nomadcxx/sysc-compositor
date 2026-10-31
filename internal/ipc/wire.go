@@ -263,6 +263,7 @@ type Action struct {
 	Workspace        *WorkspaceReference
 	WorkspaceName    *string
 	ColumnIndex      *uint8
+	Index            *uint64 // FocusColumn, MoveColumnToIndex, MoveWorkspaceToIndex: usize
 	ColumnDisplay    string
 	Output           string
 	Focus            *bool
@@ -571,6 +572,29 @@ func decodeAction(raw json.RawMessage) (Action, error) {
 		a.Workspace, err = decodeWorkspaceReference(*f.Reference)
 		if err != nil {
 			return Action{}, ErrParse
+		}
+	case "FocusColumn", "MoveColumnToIndex":
+		var f struct {
+			Index *uint64 `json:"index"`
+		}
+		if err := strict(body, &f); err != nil || f.Index == nil {
+			return Action{}, ErrParse
+		}
+		a.Index = f.Index
+	case "MoveWorkspaceToIndex":
+		var f struct {
+			Index     *uint64          `json:"index"`
+			Reference *json.RawMessage `json:"reference"`
+		}
+		if err := strict(body, &f); err != nil || f.Index == nil {
+			return Action{}, ErrParse
+		}
+		a.Index = f.Index
+		if f.Reference != nil && string(*f.Reference) != "null" {
+			a.Workspace, err = decodeWorkspaceReference(*f.Reference)
+			if err != nil {
+				return Action{}, ErrParse
+			}
 		}
 	case "FocusWindowInColumn":
 		var f struct {
@@ -927,6 +951,15 @@ func EncodeRequest(r Request) []byte {
 				Index uint8 `json:"index"`
 			}{*a.ColumnIndex}
 		}
+	case "FocusColumn", "MoveColumnToIndex":
+		body = struct {
+			Index *uint64 `json:"index"`
+		}{a.Index}
+	case "MoveWorkspaceToIndex":
+		body = struct {
+			Index     *uint64 `json:"index"`
+			Reference any     `json:"reference"`
+		}{a.Index, workspaceReferenceValue(a.Workspace)}
 	case "SetColumnDisplay":
 		body = struct {
 			Display string `json:"display"`

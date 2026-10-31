@@ -4,6 +4,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Nomadcxx/sysc-compositor/internal/config"
+	"github.com/Nomadcxx/sysc-compositor/internal/wlr/testclient"
 	"github.com/Nomadcxx/sysc-compositor/internal/wm"
 )
 
@@ -175,4 +177,194 @@ func TestModDragPersistsFloatingWindowPositionOnRelease(t *testing.T) {
 		c.Terminate()
 	}
 	runClient(t, c, []string{"weston-terminal"}, nil, nil)
+}
+
+const buttonMiddle = 0x112 // BTN_MIDDLE
+
+// pointerBindHarness maps one toplevel under binds, puts a fake pointer over
+// it and a fake keyboard on the seat, then runs fn off the compositor thread.
+func pointerBindHarness(t *testing.T, binds string, fn func(c *Compositor, client *testclient.ToplevelClient,
+	pointer *fakePointer, keyboard *fakeKeyboard, view *toplevelView)) {
+	t.Helper()
+	cfg, err := config.Parse("pointer-binds.kdl", []byte(binds))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := newNestedWith(t, Options{Binds: cfg.Binds})
+	watchdog := time.AfterFunc(15*time.Second, c.Terminate)
+	t.Cleanup(func() { watchdog.Stop() })
+	mapped := make(chan *toplevelView, 1)
+	c.viewMapped = func(view *toplevelView) {
+		select {
+		case mapped <- view:
+		default:
+		}
+	}
+	go func() {
+		defer c.Terminate()
+		client, err := testclient.StartToplevelClient(c.SocketName(), time.Hour)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer client.Close()
+		var view *toplevelView
+		select {
+		case view = <-mapped:
+		case <-time.After(2 * time.Second):
+			t.Error("the toplevel never mapped")
+			return
+		}
+		var pointer *fakePointer
+		var keyboard *fakeKeyboard
+		defer onCompositor(t, c, func() {
+			pointer.remove()
+			keyboard.remove()
+		})
+		onCompositor(t, c, func() {
+			pointer, keyboard = c.addFakePointer(), c.addFakeKeyboard()
+			pointer.moveTo(c.viewCenter(view))
+		})
+		if !client.WaitPointerEnter(2 * time.Second) {
+			t.Error("the pointer never entered the toplevel")
+			return
+		}
+		fn(c, client, pointer, keyboard, view)
+	}()
+	if err := c.Run(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func focusedWorkspaceID(c *Compositor) uint64 {
+	for _, workspace := range c.WorkspaceSnapshot().Workspaces {
+		if workspace.IsFocused {
+			return workspace.ID
+		}
+	}
+	return 0
+}
+
+func TestWheelBindsInterceptOnlyBoundModifiers(t *testing.T) {
+	pointerBindHarness(t, `
+binds {
+    Ctrl+WheelScrollDown cooldown-ms=150 { focus-workspace-down; }
+    Ctrl+WheelScrollUp cooldown-ms=150 { focus-workspace-up; }
+    Ctrl+WheelScrollRight { focus-column-right; }
+}
+`, func(c *Compositor, client *testclient.ToplevelClient, pointer *fakePointer, keyboard *fakeKeyboard, view *toplevelView) {
+		var first uint64
+		axes := func() int {
+			if err := client.SyncInput(); err != nil {
+				t.Error(err)
+			}
+			return client.InputEvents().PointerAxes
+		}
+		before := axes()
+		onCompositor(t, c, func() {
+			first = focusedWorkspaceID(c)
+			keyboard.key(keyLeftCtrl, true)
+			pointer.wheelAt(1000, false, 120)
+			if focusedWorkspaceID(c) == first {
+				t.Error("Ctrl+wheel down did not switch the workspace")
+			}
+			pointer.wheelAt(1050, false, -120)
+			if focusedWorkspaceID(c) != first {
+				t.Error("Ctrl+wheel up did not switch back")
+			}
+			pointer.wheelAt(1100, false, 120)
+			if focusedWorkspaceID(c) != first {
+				t.Error("a wheel down 100 ms after the last one ran inside its 150 ms cooldown")
+			}
+			pointer.wheelAt(1200, false, 120)
+			if focusedWorkspaceID(c) == first {
+				t.Error("a wheel down 200 ms after the last one did not run")
+			}
+			pointer.wheelAt(1300, false, -120)
+			pointer.wheelAt(1400, false, 60)
+			pointer.wheelAt(1410, false, 60)
+			if focusedWorkspaceID(c) == first {
+				t.Error("two half detents did not add up to one tick")
+			}
+			pointer.wheelAt(1600, false, -120)
+			keyboard.key(keyLeftCtrl, false)
+		})
+		if got := axes(); got != before {
+			t.Errorf("the client got %d axis events from bound Ctrl+wheel scrolls, want 0", got-before)
+		}
+		onCompositor(t, c, func() {
+			pointer.moveTo(c.viewCenter(view))
+			pointer.wheelAt(2000, false, 120)
+		})
+		if got := axes(); got == before {
+			t.Error("an unmodified wheel never reached the client")
+		}
+		before = axes()
+		onCompositor(t, c, func() {
+			keyboard.key(keyLeftShift, true)
+			pointer.wheelAt(2100, false, 120)
+			keyboard.key(keyLeftShift, false)
+		})
+		if got := axes(); got == before {
+			t.Error("Shift+wheel, which no bind uses, never reached the client")
+		}
+	})
+}
+
+func TestMouseBindSuppressesItsRelease(t *testing.T) {
+	pointerBindHarness(t, `
+binds {
+    Ctrl+MouseMiddle { close-window; }
+}
+`, func(c *Compositor, client *testclient.ToplevelClient, pointer *fakePointer, keyboard *fakeKeyboard, _ *toplevelView) {
+		buttons := func() int {
+			if err := client.SyncInput(); err != nil {
+				t.Error(err)
+			}
+			return client.InputEvents().PointerButtons
+		}
+		before := buttons()
+		onCompositor(t, c, func() {
+			keyboard.key(keyLeftCtrl, true)
+			pointer.button(buttonMiddle, true)
+			keyboard.key(keyLeftCtrl, false)
+			pointer.button(buttonMiddle, false)
+		})
+		if got := buttons(); got != before {
+			t.Errorf("the client got %d button events from a Ctrl+middle bind, want none", got-before)
+		}
+		if !client.CloseRequested() {
+			t.Error("Ctrl+MouseMiddle did not run close-window")
+		}
+		onCompositor(t, c, func() {
+			pointer.button(buttonMiddle, true)
+			pointer.button(buttonMiddle, false)
+		})
+		if got := buttons(); got != before+2 {
+			t.Errorf("a plain middle click gave the client %d button events, want 2", got-before)
+		}
+	})
+}
+
+func TestTouchpadScrollBindsUseFingerTicks(t *testing.T) {
+	pointerBindHarness(t, `
+binds {
+    Ctrl+TouchpadScrollDown { focus-workspace-down; }
+}
+`, func(c *Compositor, client *testclient.ToplevelClient, pointer *fakePointer, keyboard *fakeKeyboard, _ *toplevelView) {
+		onCompositor(t, c, func() {
+			first := focusedWorkspaceID(c)
+			keyboard.key(keyLeftCtrl, true)
+			pointer.fingerScrollAt(1000, 4)
+			pointer.fingerScrollAt(1010, 4)
+			if focusedWorkspaceID(c) != first {
+				t.Error("8 units of finger scroll ran a bind before Niri's 10-unit tick")
+			}
+			pointer.fingerScrollAt(1020, 4)
+			if focusedWorkspaceID(c) == first {
+				t.Error("12 units of finger scroll did not run the bind")
+			}
+			keyboard.key(keyLeftCtrl, false)
+		})
+	})
 }

@@ -2,11 +2,16 @@ package wlr
 
 import (
 	"math"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 	"unsafe"
 
 	"github.com/Nomadcxx/sysc-compositor/internal/config"
+	"github.com/Nomadcxx/sysc-compositor/internal/layout"
 	"github.com/Nomadcxx/sysc-compositor/internal/wlr/testclient"
 	"github.com/Nomadcxx/sysc-compositor/internal/wm"
 )
@@ -914,4 +919,217 @@ func sameWorkspacePlacements(left, right []wm.WindowSnapshot) bool {
 		}
 	}
 	return true
+}
+
+// TestOverviewWheelSwitchesWorkspaceUnderPointer: Niri's built-in overview
+// wheel binds. A plain wheel switches the workspace of the output under the
+// pointer, at most once per 50 ms; Shift+wheel and a horizontal wheel move
+// the column focus of the workspace under it. None of it reaches a client.
+func TestOverviewWheelSwitchesWorkspaceUnderPointer(t *testing.T) {
+	pointerBindHarness(t, "binds {}\n", func(c *Compositor, client *testclient.ToplevelClient,
+		pointer *fakePointer, keyboard *fakeKeyboard, view *toplevelView) {
+		axes := func() int {
+			if err := client.SyncInput(); err != nil {
+				t.Error(err)
+			}
+			return client.InputEvents().PointerAxes
+		}
+		before := axes()
+		var first uint64
+		onCompositor(t, c, func() {
+			output := c.FocusedOutputName()
+			first = focusedWorkspaceID(c)
+			var next uint64
+			for _, workspace := range c.model.Snapshot().Workspaces {
+				if workspace.Output == output && !workspace.IsActive && len(workspace.WindowIDs) == 0 {
+					next = workspace.ID
+				}
+			}
+			if next == 0 || !c.model.MapWindowToWorkspace(2000, next) || !c.model.FocusWorkspaceID(first) ||
+				!c.model.MapWindow(1000, output) {
+				t.Error("could not set up a second column and a second workspace")
+				return
+			}
+			c.applyWorkspaceModel()
+			if !c.OpenOverview() {
+				t.Error("could not open the overview")
+				return
+			}
+			frame, ok := c.model.OverviewFrame(output, c.model.OverviewZoom(c.overviewConfig.Zoom))
+			var row layout.Bounds
+			for _, workspace := range frame.Workspaces {
+				if workspace.ID == first {
+					row = workspace.Bounds
+				}
+			}
+			if !ok || row.Height <= 0 {
+				t.Error("the active workspace has no overview row")
+				return
+			}
+			// The backdrop at the row's left edge: Niri's extended bounds.
+			pointer.moveTo(float64(frame.Output.X+5), float64(row.Y+row.Height/2))
+			activeWindow := func() uint64 {
+				id, _ := c.model.ActiveWindow()
+				return id
+			}
+			if activeWindow() != 1000 {
+				t.Errorf("active window %d before the wheel, want the new column 1000", activeWindow())
+				return
+			}
+			keyboard.key(keyLeftShift, true)
+			pointer.wheelAt(1000, false, -120)
+			keyboard.key(keyLeftShift, false)
+			if activeWindow() == 1000 {
+				t.Error("Shift+wheel up in the overview did not focus the previous column")
+			}
+			pointer.wheelAt(1010, true, 120)
+			if activeWindow() != 1000 {
+				t.Error("a horizontal wheel right in the overview did not focus the next column")
+			}
+			pointer.wheelAt(1020, true, -120)
+			pointer.wheelAt(1030, true, 120)
+			pointer.wheelAt(1040, true, -120)
+			if activeWindow() == 1000 {
+				t.Error("a horizontal wheel 20 ms after the last one did not run; it has no cooldown in Niri")
+			}
+			pointer.wheelAt(2000, false, 120)
+			second := focusedWorkspaceID(c)
+			if second == first {
+				t.Error("a wheel down in the overview did not switch the workspace")
+			}
+			pointer.wheelAt(2030, false, 120)
+			if focusedWorkspaceID(c) != second {
+				t.Error("a wheel down 30 ms after the last one ran inside Niri's 50 ms cooldown")
+			}
+			pointer.wheelAt(2100, false, 120)
+			if focusedWorkspaceID(c) == second {
+				t.Error("a wheel down 100 ms after the last one did not run")
+			}
+			c.CloseOverview()
+			c.model.FocusWorkspaceID(first)
+			c.applyWorkspaceModel()
+		})
+		if got := axes(); got != before {
+			t.Errorf("the client got %d axis events from overview wheels, want 0", got-before)
+		}
+		onCompositor(t, c, func() {
+			pointer.moveTo(c.viewCenter(view))
+			pointer.wheelAt(3000, false, 120)
+		})
+		if got := axes(); got == before {
+			t.Error("with the overview closed, a plain wheel never reached the window")
+		}
+	})
+}
+
+// TestOverviewWheelOverTopLayerReachesTheLayer: in the overview Niri keeps a
+// top layer surface, such as a bar, live: a scroll or a click over it is the
+// surface's, not the overview's.
+func TestOverviewWheelOverTopLayerReachesTheLayer(t *testing.T) {
+	dir := t.TempDir()
+	barConfig := filepath.Join(dir, "config.jsonc")
+	style := filepath.Join(dir, "style.css")
+	if err := os.WriteFile(barConfig, []byte(`{"layer":"top","position":"top","height":30,`+
+		`"modules-left":[],"modules-center":[],"modules-right":[]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(style, []byte("* { min-height: 0; }\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c := newNested(t)
+	var pointer *fakePointer
+	t.Cleanup(func() {
+		if pointer != nil {
+			pointer.remove()
+		}
+	})
+	var scrolled, clicked, sent atomic.Bool
+	var first, after uint64
+	var stillOpen bool
+	// The pointer exists before waybar starts, so the bar binds a wl_pointer
+	// before the overview scroll is sent.
+	if err := c.Post(func() { pointer = c.addFakePointer() }); err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		deadline := time.Now().Add(9 * time.Second)
+		for time.Now().Before(deadline) && !sent.Load() {
+			_ = c.Post(func() {
+				bar := mappedOn(c.layerPlacements(), layerTop)
+				if bar == nil || sent.Load() {
+					return
+				}
+				output := c.FocusedOutputName()
+				first = focusedWorkspaceID(c)
+				if !c.model.MapWindow(1000, output) {
+					t.Error("could not map a window to make a second workspace")
+				}
+				c.model.FocusWorkspaceID(first)
+				c.applyWorkspaceModel()
+				if !c.OpenOverview() {
+					t.Error("could not open the overview")
+				}
+				pointer.moveTo(float64(bar.box.x+bar.box.w/2), float64(bar.box.y+bar.box.h/2))
+				pointer.wheelAt(1000, false, 120)
+				pointer.wheelAt(1200, false, 120)
+				after = focusedWorkspaceID(c)
+				pointer.button(buttonLeft, true)
+				pointer.button(buttonLeft, false)
+				stillOpen = c.model.OverviewOpen()
+				sent.Store(true)
+			})
+			time.Sleep(20 * time.Millisecond)
+		}
+	}()
+	lines := runClientWithTimeout(t, c, []string{"waybar", "-c", barConfig, "-s", style}, []string{"WAYLAND_DEBUG=client"},
+		func(line string) bool {
+			if strings.Contains(line, "wl_pointer#") && strings.Contains(line, ".axis(") {
+				scrolled.Store(true)
+			}
+			if strings.Contains(line, "wl_pointer#") && strings.Contains(line, ".button(") {
+				clicked.Store(true)
+			}
+			return scrolled.Load() && clicked.Load()
+		}, 10*time.Second)
+	if !sent.Load() {
+		t.Fatalf("waybar never mapped a top layer surface; it said:\n%s", strings.Join(lines[max(0, len(lines)-20):], "\n"))
+	}
+	if after != first {
+		t.Error("a wheel over the bar in the overview switched the workspace")
+	}
+	if !scrolled.Load() {
+		t.Error("a wheel over the bar in the overview never reached the bar")
+	}
+	if !clicked.Load() || !stillOpen {
+		t.Errorf("a click over the bar in the overview: bar got it %v, overview still open %v; want both",
+			clicked.Load(), stillOpen)
+	}
+}
+
+// TestOverviewHeldButtonKeepsWindowsUnfocused: a button held on the overview
+// backdrop must not carry the pointer into a window the overview covers,
+// even one that had the pointer when the overview opened from a key.
+func TestOverviewHeldButtonKeepsWindowsUnfocused(t *testing.T) {
+	pointerBindHarness(t, "binds {}\n", func(c *Compositor, _ *testclient.ToplevelClient,
+		pointer *fakePointer, _ *fakeKeyboard, view *toplevelView) {
+		onCompositor(t, c, func() {
+			if c.userPointerFocus() == nil {
+				t.Error("the window lost the pointer before the overview opened")
+				return
+			}
+			if !c.OpenOverview() {
+				t.Error("could not open the overview")
+				return
+			}
+			x, y := c.viewCenter(view)
+			pointer.button(buttonRight, true)
+			pointer.moveTo(x+5, y+5)
+			focus := c.userPointerFocus()
+			pointer.button(buttonRight, false)
+			c.CloseOverview()
+			if focus != nil {
+				t.Error("a button held in the overview left the pointer on a window under it")
+			}
+		})
+	})
 }

@@ -624,7 +624,7 @@ func keysymMatches(kb *C.struct_wlr_keyboard, keycode uint32, name string) bool 
 
 func (c *Compositor) dispatchKeyBinding(keycode uint32) (bind.Binding, bool) {
 	binding, ok := c.matchKeyBinding(keycode)
-	if ok {
+	if ok && !c.bindCoolingDown(binding, uint32(nowMsec())) {
 		c.executeKeyBinding(binding)
 	}
 	return binding, ok
@@ -711,7 +711,9 @@ func (c *Compositor) handleKeyboardRepeat() {
 	if source == nil {
 		return
 	}
-	c.executeKeyBinding(c.keyboardRepeatBinding)
+	if !c.bindCoolingDown(c.keyboardRepeatBinding, uint32(nowMsec())) {
+		c.executeKeyBinding(c.keyboardRepeatBinding)
+	}
 	if c.keyboardRepeatSource == source && C.wl_event_source_timer_update(source, C.int(c.keyboardRepeatInterval)) < 0 {
 		c.stopKeyboardRepeat()
 		fmt.Fprintln(os.Stderr, "sysc-compositor: could not restart keyboard bind repeat timer")
@@ -789,6 +791,10 @@ func (c *Compositor) executeBindAction(action bind.Action) {
 		return
 	}
 	if c.model == nil {
+		return
+	}
+	if navigation, ok := navigationActions[action.Name]; ok {
+		c.runNavigation(navigation, action.Index, 0)
 		return
 	}
 	switch action.Name {

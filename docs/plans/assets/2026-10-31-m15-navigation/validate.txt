@@ -1,0 +1,20 @@
+== /home/nomadx/references/niri/resources/default-config.kdl
+sysc-compositor: warning: config section `layout.center-focused-column` is accepted but not applied yet
+sysc-compositor: warning: config section `layout.preset-column-widths` is accepted but not applied yet
+sysc-compositor: warning: config section `layout.border` is accepted but not applied yet
+sysc-compositor: warning: config section `layout.struts` is accepted but not applied yet
+sysc-compositor: warning: bind actions are accepted but not applied yet: switch-preset-column-width, switch-preset-column-width-back, switch-preset-window-height, reset-window-height, maximize-column, maximize-window-to-edges, expand-column-to-available-width, center-column, center-visible-columns, set-column-width, set-window-height
+sysc-compositor: configuration is valid: /home/nomadx/references/niri/resources/default-config.kdl
+exit 0
+== /home/nomadx/.config/niri/config.kdl
+sysc-compositor: warning: config section `output` is accepted but not applied yet
+sysc-compositor: warning: config section `layout.center-focused-column` is accepted but not applied yet
+sysc-compositor: warning: config section `layout.preset-column-widths` is accepted but not applied yet
+sysc-compositor: warning: config section `layout.border` is accepted but not applied yet
+sysc-compositor: warning: config section `layout.tab-indicator` is accepted but not applied yet
+sysc-compositor: warning: config section `config-notification` is accepted but not applied yet
+sysc-compositor: warning: config section `debug` is accepted but not applied yet
+sysc-compositor: warning: config section `window-rule` is accepted but not applied yet
+sysc-compositor: warning: bind actions are accepted but not applied yet: switch-preset-column-width, switch-preset-window-height, reset-window-height, maximize-column, center-column, set-column-width, set-window-height
+sysc-compositor: configuration is valid: /home/nomadx/.config/niri/config.kdl
+exit 0

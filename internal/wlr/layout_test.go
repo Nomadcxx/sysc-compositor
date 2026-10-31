@@ -11,6 +11,7 @@ import (
 	"github.com/Nomadcxx/sysc-compositor/internal/bind"
 	"github.com/Nomadcxx/sysc-compositor/internal/config"
 	"github.com/Nomadcxx/sysc-compositor/internal/layout"
+	"github.com/Nomadcxx/sysc-compositor/internal/wlr/testclient"
 	"github.com/Nomadcxx/sysc-compositor/internal/wm"
 )
 
@@ -1726,5 +1727,75 @@ func TestNestedKeyboardBindConsumeOrExpelWindowRight(t *testing.T) {
 	runClient(t, c, []string{"weston-terminal"}, nil, nil)
 	if first == nil || second == nil {
 		t.Fatalf("mapped windows = (%p, %p), want two", first, second)
+	}
+}
+
+func TestNavigationBindsDriveTheCompositor(t *testing.T) {
+	c := newNested(t)
+	watchdog := time.AfterFunc(15*time.Second, c.Terminate)
+	t.Cleanup(func() { watchdog.Stop() })
+	views := make(chan *toplevelView, 2)
+	c.viewMapped = func(view *toplevelView) { views <- view }
+	go func() {
+		defer c.Terminate()
+		var ids []uint64
+		for range 2 {
+			client, err := testclient.StartToplevelClient(c.SocketName(), time.Hour)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			defer client.Close()
+			select {
+			case view := <-views:
+				ids = append(ids, view.id)
+			case <-time.After(2 * time.Second):
+				t.Error("a toplevel never mapped")
+				return
+			}
+		}
+		onCompositor(t, c, func() {
+			changed := 0
+			c.stateChanged = func() { changed++ }
+			workspace := func() wm.WorkspaceSnapshot {
+				for _, w := range c.WorkspaceSnapshot().Workspaces {
+					if w.IsActive && w.IsFocused {
+						return w
+					}
+				}
+				return wm.WorkspaceSnapshot{}
+			}
+			first := workspace()
+			order := slices.Clone(first.WindowIDs)
+			c.FocusWindow(order[0])
+			c.executeBindAction(bind.Action{Name: bind.ActionSwapWindowRight})
+			if got := workspace().WindowIDs; !slices.Equal(got, []uint64{order[1], order[0]}) || changed == 0 {
+				t.Errorf("swap-window-right: order %v notifications %d, want %v reversed and a notification", got, changed, order)
+			}
+			c.executeBindAction(bind.Action{Name: bind.ActionFocusWorkspaceDown})
+			if got := workspace(); got.ID == first.ID {
+				t.Error("focus-workspace-down left the first workspace focused")
+			}
+			c.executeBindAction(bind.Action{Name: bind.ActionFocusWorkspacePrevious})
+			if got := workspace(); got.ID != first.ID {
+				t.Errorf("focus-workspace-previous focused workspace %d, want %d", got.ID, first.ID)
+			}
+			c.executeBindAction(bind.Action{Name: bind.ActionFocusColumn, Index: 1})
+			if got := workspace().ActiveWindowID; got == nil || *got != order[1] {
+				t.Errorf("focus-column 1 focused %v, want %d", got, order[1])
+			}
+			if !c.NavigationAction("MoveColumnToIndex", 2, 0) {
+				t.Error("NavigationAction(MoveColumnToIndex) = false")
+			}
+			if got := workspace().WindowIDs; !slices.Equal(got, order) {
+				t.Errorf("MoveColumnToIndex 2 over IPC: order %v, want %v", got, order)
+			}
+			if c.NavigationAction("ToggleDebugTint", 0, 0) {
+				t.Error("NavigationAction accepted an action outside this set")
+			}
+		})
+	}()
+	if err := c.Run(); err != nil {
+		t.Fatal(err)
 	}
 }

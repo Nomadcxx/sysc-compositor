@@ -7,6 +7,7 @@ package server
 
 import (
 	"errors"
+	"math"
 	"net"
 	"os"
 	"slices"
@@ -256,6 +257,13 @@ func (s *Server) Run() error {
 			stream: func(conn net.Conn) { s.state.serveEventStream(s.events, conn) },
 			postAction: func(action ipc.Action, workspaceID uint64) error {
 				return s.c.Post(func() {
+					index := 0
+					if action.Index != nil {
+						index = int(min(*action.Index, math.MaxInt32))
+					}
+					if s.c.NavigationAction(action.Name, index, workspaceID) {
+						return
+					}
 					switch action.Name {
 					case "LoadConfigFile":
 						s.requestConfigReload(action.ConfigPath)
