@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type Modifier uint8
@@ -75,6 +76,9 @@ type Binding struct {
 	// IgnoresInhibit keeps the bind working while the focused surface
 	// inhibits shortcuts (Niri's allow-inhibiting=false).
 	IgnoresInhibit bool
+	// Cooldown is Niri's cooldown-ms: the bind runs at most once per
+	// Cooldown; zero means no limit.
+	Cooldown time.Duration
 }
 
 const (

@@ -251,9 +251,11 @@ type Compositor struct {
 	grabView                *toplevelView
 	grabButton              uint32
 	pressedPointerButtons   map[uint32]bool
-	pointerSerialButtons    map[uint32]uint32
-	consumedPointerButtons  map[uint32]bool
-	capabilities            int
+	// pointerBinds is the scroll and mouse bind state (pointer_binds.go).
+	pointerBinds           pointerBindState
+	pointerSerialButtons   map[uint32]uint32
+	consumedPointerButtons map[uint32]bool
+	capabilities           int
 	// drawnImage is the xcursor name the compositor last drew, or "" while
 	// a client's surface is the image. wlroots keeps its own copy private.
 	drawnImage                     string

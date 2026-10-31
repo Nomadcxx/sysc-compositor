@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Nomadcxx/sysc-compositor/internal/bind"
 	"github.com/sblinch/kdl-go"
@@ -1288,6 +1289,13 @@ func (c *Config) binds(n *document.Node) error {
 			}
 			binding.AllowWhenLocked = allow
 		}
+		if property, ok := node.Properties["cooldown-ms"]; ok {
+			ms, ok := property.Value.(int64)
+			if !ok || ms < 0 {
+				return fmt.Errorf("bind %q: `cooldown-ms` must be a non-negative integer", nodeName(node))
+			}
+			binding.Cooldown = time.Duration(ms) * time.Millisecond
+		}
 		if property, ok := node.Properties["allow-inhibiting"]; ok {
 			allow, ok := property.Value.(bool)
 			if !ok {
@@ -1351,10 +1359,6 @@ func (c *Config) binds(n *document.Node) error {
 					}
 					action.SkipConfirmation = value
 				}
-			}
-			if chord.Trigger != bind.TriggerKey {
-				c.addUnappliedAction(name)
-				continue
 			}
 			binding.Actions = append(binding.Actions, action)
 		}

@@ -113,6 +113,21 @@ static void sysc_fake_pointer_button(struct wlr_pointer *pointer, uint32_t time,
 	wl_signal_emit_mutable(&pointer->events.frame, pointer);
 }
 
+static void sysc_fake_pointer_axis(struct wlr_pointer *pointer, uint32_t time,
+		enum wl_pointer_axis orientation, double delta, int32_t v120, enum wl_pointer_axis_source source) {
+	struct wlr_pointer_axis_event event = {
+		.pointer = pointer,
+		.time_msec = time,
+		.source = source,
+		.orientation = orientation,
+		.relative_direction = WL_POINTER_AXIS_RELATIVE_DIRECTION_IDENTICAL,
+		.delta = delta,
+		.delta_discrete = v120,
+	};
+	wl_signal_emit_mutable(&pointer->events.axis, &event);
+	wl_signal_emit_mutable(&pointer->events.frame, pointer);
+}
+
 static void sysc_fake_pointer_swipe_begin(struct wlr_pointer *pointer, uint32_t time,
 		uint32_t fingers) {
 	struct wlr_pointer_swipe_begin_event event = {
@@ -339,6 +354,23 @@ func (f *fakePointer) moveTo(x, y float64) {
 
 func (f *fakePointer) button(button uint32, pressed bool) {
 	C.sysc_fake_pointer_button(f.pointer, nowMsec(), C.uint32_t(button), C.bool(pressed))
+}
+
+// wheelAt sends one vertical (or horizontal) wheel event of v120 units at
+// timeMsec, with libinput's 15-unit-per-detent continuous delta.
+func (f *fakePointer) wheelAt(timeMsec uint32, horizontal bool, v120 int32) {
+	orientation := C.enum_wl_pointer_axis(C.WL_POINTER_AXIS_VERTICAL_SCROLL)
+	if horizontal {
+		orientation = C.WL_POINTER_AXIS_HORIZONTAL_SCROLL
+	}
+	C.sysc_fake_pointer_axis(f.pointer, C.uint32_t(timeMsec), orientation, C.double(float64(v120)/8),
+		C.int32_t(v120), C.WL_POINTER_AXIS_SOURCE_WHEEL)
+}
+
+// fingerScrollAt sends one vertical touchpad scroll of delta at timeMsec.
+func (f *fakePointer) fingerScrollAt(timeMsec uint32, delta float64) {
+	C.sysc_fake_pointer_axis(f.pointer, C.uint32_t(timeMsec), C.WL_POINTER_AXIS_VERTICAL_SCROLL,
+		C.double(delta), 0, C.WL_POINTER_AXIS_SOURCE_FINGER)
 }
 
 func (f *fakePointer) swipeBegin(fingers uint32) {

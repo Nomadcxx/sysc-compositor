@@ -7,6 +7,9 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/Nomadcxx/sysc-compositor/internal/bind"
 )
 
 func TestXwaylandSatelliteConfig(t *testing.T) {
@@ -554,20 +557,6 @@ func TestParseRejectsMalformedM5Binds(t *testing.T) {
 		if _, err := Parse("m5-invalid.kdl", []byte(src)); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("Parse(%q) error = %v, want %q", src, err, want)
 		}
-	}
-}
-
-func TestParseKeepsSupportedActionsOnUnsupportedTriggersVisible(t *testing.T) {
-	cfg, err := Parse("scroll.kdl", []byte(`
-binds {
-    Mod+WheelScrollLeft { focus-column-left; }
-}
-`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(cfg.Binds) != 0 || !reflect.DeepEqual(cfg.UnappliedActions, []string{"focus-column-left"}) {
-		t.Fatalf("binds = %+v, unapplied = %q; want no applied wheel bind and a visible action warning", cfg.Binds, cfg.UnappliedActions)
 	}
 }
 
@@ -1293,6 +1282,50 @@ func TestDefaultConfigNavigationBindsApply(t *testing.T) {
 	for _, name := range []string{"focus-workspace-down", "focus-workspace-up", "move-workspace-down", "move-workspace-up"} {
 		if !bound[name] {
 			t.Errorf("default config's key bind for %s was not applied (unapplied: %v)", name, cfg.UnappliedActions)
+		}
+	}
+}
+
+func TestScrollBindsParseWithCooldown(t *testing.T) {
+	cfg, err := Parse("scroll.kdl", []byte(`
+binds {
+    Mod+WheelScrollDown cooldown-ms=150 { focus-workspace-down; }
+    Mod+MouseMiddle { close-window; }
+}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.UnappliedActions) != 0 {
+		t.Fatalf("unapplied actions = %v, want scroll and mouse binds applied", cfg.UnappliedActions)
+	}
+	var wheel *Binding
+	for i := range cfg.Binds {
+		if cfg.Binds[i].Chord.Key == "WheelScrollDown" {
+			wheel = &cfg.Binds[i]
+		}
+	}
+	if wheel == nil || wheel.Chord.Trigger != bind.TriggerScroll || wheel.Cooldown != 150*time.Millisecond ||
+		len(wheel.Actions) != 1 || wheel.Actions[0].Name != bind.ActionFocusWorkspaceDown {
+		t.Fatalf("wheel bind = %+v, want a 150 ms scroll bind of focus-workspace-down", wheel)
+	}
+	if _, err := Parse("bad.kdl", []byte("binds {\n    Mod+T cooldown-ms=-1 { spawn \"foot\"; }\n}\n")); err == nil {
+		t.Fatal("cooldown-ms=-1 parsed")
+	}
+
+	data, err := os.ReadFile(niriDefaultConfig)
+	if err != nil {
+		t.Skipf("Niri's default config is not available: %v", err)
+	}
+	cfg, err = Parse("default-config.kdl", data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	part1 := []string{"focus-workspace-down", "focus-workspace-up", "move-column-to-workspace-down",
+		"move-column-to-workspace-up", "focus-column-right", "focus-column-left", "move-column-right", "move-column-left"}
+	for _, name := range cfg.UnappliedActions {
+		if slices.Contains(part1, name) {
+			t.Errorf("default config still leaves %s unapplied", name)
 		}
 	}
 }
