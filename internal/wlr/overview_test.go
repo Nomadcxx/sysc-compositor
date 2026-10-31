@@ -1105,3 +1105,31 @@ func TestOverviewWheelOverTopLayerReachesTheLayer(t *testing.T) {
 			clicked.Load(), stillOpen)
 	}
 }
+
+// TestOverviewHeldButtonKeepsWindowsUnfocused: a button held on the overview
+// backdrop must not carry the pointer into a window the overview covers,
+// even one that had the pointer when the overview opened from a key.
+func TestOverviewHeldButtonKeepsWindowsUnfocused(t *testing.T) {
+	pointerBindHarness(t, "binds {}\n", func(c *Compositor, _ *testclient.ToplevelClient,
+		pointer *fakePointer, _ *fakeKeyboard, view *toplevelView) {
+		onCompositor(t, c, func() {
+			if c.userPointerFocus() == nil {
+				t.Error("the window lost the pointer before the overview opened")
+				return
+			}
+			if !c.OpenOverview() {
+				t.Error("could not open the overview")
+				return
+			}
+			x, y := c.viewCenter(view)
+			pointer.button(buttonRight, true)
+			pointer.moveTo(x+5, y+5)
+			focus := c.userPointerFocus()
+			pointer.button(buttonRight, false)
+			c.CloseOverview()
+			if focus != nil {
+				t.Error("a button held in the overview left the pointer on a window under it")
+			}
+		})
+	})
+}

@@ -715,12 +715,18 @@ func (c *Compositor) processCursorMotion(time C.uint32_t) {
 	}
 	c.updateHotCorner()
 	// In the overview the windows are the overview's, but top and overlay
-	// layer surfaces still take the pointer (Niri's contents_under).
-	if c.overviewShown() && len(c.pressedPointerButtons) == 0 &&
-		!c.upperLayerAt(float64(c.cursor.x), float64(c.cursor.y)) {
-		C.wlr_seat_pointer_notify_clear_focus(c.seat)
-		c.showDefaultImage()
-		return
+	// layer surfaces still take the pointer (Niri's contents_under). A held
+	// button keeps the pointer only on the layer surface it was pressed on.
+	if c.overviewShown() {
+		keep := c.pointerOnLayerSurface()
+		if len(c.pressedPointerButtons) == 0 {
+			keep = c.upperLayerAt(float64(c.cursor.x), float64(c.cursor.y))
+		}
+		if !keep {
+			C.wlr_seat_pointer_notify_clear_focus(c.seat)
+			c.showDefaultImage()
+			return
+		}
 	}
 	if c.pointerGrab != nil && c.grabView != nil && c.grabView.tree != nil {
 		if c.tiledMove != nil && c.tiledMove.view == c.grabView && c.model != nil {
