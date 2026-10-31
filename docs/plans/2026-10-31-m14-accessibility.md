@@ -23,8 +23,11 @@ have no KeyboardMonitor, AT-SPI or AccessKit code. Niri's behavior is therefore 
 - A grabbed modifier pressed twice within the repeat delay passes through, so Insert or Caps Lock
   keep their normal meaning when tapped twice. The first press of a grabbed modifier must not
   change XKB state (`KbMonBlock::ModifierFirstPress`).
-- Other grabbed keys update XKB state but reach no client and no bind. Modifier releases are still
-  forwarded to the focused client (the Orca+Shift+A menu workaround in `src/input/mod.rs`).
+- Other grabbed keys update XKB state but reach no client and no bind. Niri still forwards grabbed
+  modifier releases (the Orca+Shift+A menu workaround in `src/input/mod.rs`), because smithay lists
+  intercepted keys as held in `wl_keyboard.enter`. sysc's seat keyboard holds only keys that reached
+  a client, so that enter never happens here; sysc forwards no unpaired release (ruling,
+  2026-10-31).
 - `src/dbus/mod.rs` starts the monitor only in a session instance (or under a debug flag). Niri's
   wiki: nested and plain TTY instances export no accessibility interfaces.
 - `src/a11y.rs` uses AccessKit's Unix adapter. Its tree is a `Window` root (toolkit `niri`) with
@@ -89,14 +92,14 @@ At the top of `handleKeyboardKeyFrom`, for the user seat's keyboards only (never
 injected seats), read the keysym, effective modifier mask and UTF-32 from the pre-update XKB
 state. Pass them, the event time and the configured repeat delay to the monitor hook.
 - On `ModifierFirstPress`, clear `event.update_state`, mark the key suppressed and return.
-- On `Block`, mark it suppressed and return, but let a modifier's release reach the client, as
-  Niri does.
+- On `Block`, mark it suppressed and return.
 - Binds, the exit dialog, the screenshot UI and VT switching never see a blocked key.
 
 Regressions: `TestKeyboardMonitorBlocksGrabbedKeysBeforeBinds` (a grabbed bind key reaches neither
 bind nor client; its release does not leak), `TestKeyboardMonitorFirstModifierPressKeepsXKBState`
 (a grabbed Caps Lock's first press leaves the locked mask and LED unchanged; a double tap toggles
-it) and `TestKeyboardMonitorReleasesGrabbedShiftToClient`. With no monitor attached, nested runs
+it) and `TestKeyboardMonitorKeepsGrabbedKeysFromClients` (a grabbed Shift held across a focus
+change is absent from the new client's enter keys). With no monitor attached, nested runs
 behave exactly as now.
 
 ## Task 4: AT-SPI announcements

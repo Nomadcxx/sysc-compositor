@@ -7,13 +7,14 @@ import (
 	"os"
 	"sync"
 
+	"github.com/Nomadcxx/sysc-compositor/internal/a11y"
 	"github.com/Nomadcxx/sysc-compositor/internal/config"
 	"github.com/Nomadcxx/sysc-compositor/internal/session"
 	"github.com/Nomadcxx/sysc-compositor/internal/wlr"
 )
 
-// StartSessionDBus starts locale1/login1 clients, ScreenSaver inhibition and
-// GNOME portal services for --session only. Failures leave the session running.
+// StartSessionDBus starts locale1/login1 clients, ScreenSaver inhibition,
+// GNOME portal services and the a11y KeyboardMonitor for --session only. Failures leave the session running.
 func (s *Server) StartSessionDBus() {
 	if s.c == nil {
 		return
@@ -37,6 +38,16 @@ func (s *Server) StartSessionDBus() {
 			os.Stderr.WriteString("sysc-compositor: org.freedesktop.ScreenSaver: " + err.Error() + "\n")
 		} else {
 			s.screenSaver = screenSaver
+		}
+	}
+	if s.keyMonitor == nil {
+		// Orca's key grabs, as Niri serves them to session instances only.
+		monitor, err := session.StartKeyboardMonitor(a11y.NewMonitor())
+		if err != nil {
+			os.Stderr.WriteString("sysc-compositor: org.freedesktop.a11y.Manager: " + err.Error() + "\n")
+		} else {
+			s.keyMonitor = monitor
+			s.c.SetKeyboardMonitor(monitor.ProcessKey)
 		}
 	}
 	if s.sessionDBus != nil {

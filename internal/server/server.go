@@ -32,6 +32,7 @@ type Server struct {
 	configWatcher *config.Watcher
 	sessionDBus   *session.DBus
 	screenSaver   *session.ScreenSaver
+	keyMonitor    *session.KeyboardMonitor
 	portal        *session.Portal
 	satellite     *x11.Satellite
 	localeXKB     *config.Keyboard
@@ -500,6 +501,11 @@ func (s *Server) Destroy() {
 	if s.screenSaver != nil {
 		s.screenSaver.Close()
 		s.screenSaver = nil
+	}
+	if s.keyMonitor != nil {
+		s.c.SetKeyboardMonitor(nil)
+		s.keyMonitor.Close()
+		s.keyMonitor = nil
 	}
 	if s.sessionDBus != nil {
 		s.sessionDBus.Close()

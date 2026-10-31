@@ -126,6 +126,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/Nomadcxx/sysc-compositor/internal/a11y"
 	"github.com/Nomadcxx/sysc-compositor/internal/bind"
 	"github.com/Nomadcxx/sysc-compositor/internal/config"
 	"github.com/Nomadcxx/sysc-compositor/internal/wm"
@@ -196,6 +197,7 @@ type Compositor struct {
 	animations              map[animationKey]*runningAnimation
 	animationTimer          *time.Timer
 	frameFallbackTimer      *time.Timer
+	keyboardMonitor         func(a11y.Key, time.Duration) a11y.Decision
 	activeWorkspaces        map[string]activeWorkspace
 	closingNodes            map[uint64]unsafe.Pointer
 	nextAnimationID         uint64
