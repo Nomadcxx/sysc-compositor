@@ -156,3 +156,40 @@ closes M14 after the Orca gate passes.
 
 **Stop condition:** Orca drives the VM session with its key grabs and speaks every announcement
 above. CI is green, the matrix names the evidence and the changes have merged. Do not start M15.
+
+## Execution record, 2026-10-31
+
+Tasks 1–5 ran test first. The compositor tests ran headless on the laptop, one command each,
+and every test failed before its code existed. The rulings are in the PR description. Three are
+worth repeating here:
+- Grabbed modifier releases are not forwarded. sysc's seat keyboard holds only keys that reached a
+  client, so the stale `wl_keyboard.enter` that Niri works around cannot happen.
+  `TestKeyboardMonitorKeepsGrabbedKeysFromClients` shows the bug with the hook off.
+- The exit dialog node is "Exit sysc-compositor". Its description is the dialog's drawn text.
+- The config error names `sysc-compositor validate`.
+
+**VM gate.** The session VM ran virgl and a real greetd login through sysc-greet, with the branch
+installed as `/usr/local/bin/sysc-compositor` (the previous binary is
+`sysc-compositor.pre-m14-20261031`). Installed in the VM only: Orca 51.1, speech-dispatcher 0.12.1
+and espeak-ng; at-spi2-core is 2.62.1. The VM has no audio; evidence is Orca's debug log, whose
+spoken lines are in [orca-speech.txt](assets/2026-10-31-m14-orca/orca-speech.txt). Actions went
+over the Niri IPC socket and keys through QMP ([qmphold.py](assets/2026-10-31-m14-orca/qmphold.py)
+holds keys).
+
+| Check | Result |
+|---|---|
+| Discovery | `org.freedesktop.a11y.Manager` owned by `sysc-compositor --session`; after Orca started, `IsEnabled` was true and the registry listed the compositor's application with toolkit `niri` |
+| Keyboard monitor | Orca echoed keys (`escape`, `insert`, `left alt`); Insert+T spoke the time |
+| Workspace switch | "Workspace 2", "Workspace 1" |
+| Overview, screenshot UI | "Overview", "Screenshot UI" |
+| Exit dialog | "alert Exit sysc-compositor", then the dialog's text; Escape kept the session |
+| Recent windows | a held Alt+Tab spoke the selected window's title as a button |
+| Hotkey overlay | the overlay text, opened over IPC |
+| Config error | writing an invalid `config.kdl` spoke the error text |
+
+The gate found one bug. The hotkey overlay opened over IPC was not announced, because the
+announcement sat only in the bind path. Niri announces from its action handler, which IPC also
+uses. The fix moved the announcement into `ShowHotkeyOverlay`, and
+`TestHotkeyOverlayActionIsAnnounced` now covers the IPC path. The Caps Lock single-tap rule was not
+exercised in the VM, because that needs Orca's laptop layout.
+`TestKeyboardMonitorFirstModifierPressKeepsXKBState` proves it on real wlroots XKB state.
