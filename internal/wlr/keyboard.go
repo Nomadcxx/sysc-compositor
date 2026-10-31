@@ -769,10 +769,7 @@ func (c *Compositor) executeBindAction(action bind.Action) {
 		return
 	}
 	if action.Name == bind.ActionShowHotkeyOverlay {
-		if !c.hotkeyOverlay.open {
-			c.ShowHotkeyOverlay()
-			c.announceHotkeyOverlay()
-		}
+		c.ShowHotkeyOverlay()
 		return
 	}
 	if action.Name == bind.ActionSpawn {

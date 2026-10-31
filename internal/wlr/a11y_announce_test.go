@@ -150,7 +150,8 @@ func TestA11yRecentWindowsNamesTheSelection(t *testing.T) {
 }
 
 // TestHotkeyOverlayActionIsAnnounced: opening the hotkey overlay through
-// its action announces its text once, as Niri's ShowHotkeyOverlay does.
+// its action, from a bind or IPC, announces its text once, as Niri's
+// ShowHotkeyOverlay does.
 func TestHotkeyOverlayActionIsAnnounced(t *testing.T) {
 	c := newNestedWith(t, Options{Binds: []bind.Binding{keyBind(t, "Mod+Shift+Slash", bind.ActionShowHotkeyOverlay)},
 		OverlayBinds: []config.OverlayBind{{Action: bind.ActionShowHotkeyOverlay}}})
@@ -162,7 +163,13 @@ func TestHotkeyOverlayActionIsAnnounced(t *testing.T) {
 			c.executeBindAction(bind.Action{Name: bind.ActionShowHotkeyOverlay})
 			c.executeBindAction(bind.Action{Name: bind.ActionShowHotkeyOverlay})
 			if len(rec.announced) != 1 || !strings.HasPrefix(rec.announced[0], "Important Hotkeys\n") {
-				t.Errorf("announced %q, want the overlay text once", rec.announced)
+				t.Errorf("bind: announced %q, want the overlay text once", rec.announced)
+			}
+			// The IPC action reaches ShowHotkeyOverlay directly.
+			c.hideHotkeyOverlay()
+			c.ShowHotkeyOverlay()
+			if len(rec.announced) != 2 || rec.announced[1] != rec.announced[0] {
+				t.Errorf("IPC: announced %q, want the overlay text again", rec.announced)
 			}
 		})
 	}()

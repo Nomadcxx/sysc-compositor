@@ -65,11 +65,13 @@ type hotkeyOverlay struct {
 // HotkeyOverlayOpen reports whether the hotkey overlay is up.
 func (c *Compositor) HotkeyOverlayOpen() bool { return c.hotkeyOverlay.open }
 
-// ShowHotkeyOverlay is Niri's ShowHotkeyOverlay action.
+// ShowHotkeyOverlay is Niri's ShowHotkeyOverlay action, from a bind or IPC.
+// Opening it reads it to a screen reader; showing it at startup does not.
 func (c *Compositor) ShowHotkeyOverlay() {
 	if !c.hotkeyOverlay.open {
 		c.hotkeyOverlay.open = true
 		c.syncHotkeyOverlay()
+		c.announceHotkeyOverlay()
 	}
 }
 

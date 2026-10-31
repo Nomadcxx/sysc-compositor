@@ -116,7 +116,8 @@ func scopeText(scope wm.MRUScope) string {
 	return "Scope all"
 }
 
-// announceHotkeyOverlay reads the overlay out when its action opens it.
+// announceHotkeyOverlay reads the overlay out when its action opens it,
+// as Niri's a11y_announce_hotkey_overlay.
 func (c *Compositor) announceHotkeyOverlay() {
 	if c.a11y.announcer != nil {
 		o := &c.hotkeyOverlay
