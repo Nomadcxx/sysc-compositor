@@ -6,6 +6,7 @@ package wlr
 #include <scenefx/render/fx_renderer/fx_renderer.h>
 #include <scenefx/types/wlr_scene.h>
 #include <math.h>
+#include <time.h>
 #include <wlr/types/wlr_compositor.h>
 #include <wlr/types/wlr_xdg_shell.h>
 
@@ -412,6 +413,50 @@ static void sysc_scene_blur_box(struct wlr_scene_node *node, int *x, int *y, int
 static void *sysc_scene_node_destroy_signal(struct wlr_scene_node *node) {
 	return &node->events.destroy;
 }
+
+// sysc_surface_has_pacing_output is wlroots' get_surface_frame_pacing_output
+// (types/scene/surface.c) as a test: an output repaint answers a surface's
+// frame callbacks only through an unsuspended output the surface has entered.
+// A disabled, fully covered or offscreen buffer leaves every output.
+static bool sysc_surface_has_pacing_output(struct wlr_surface *surface) {
+	struct wlr_surface_output *surface_output;
+	wl_list_for_each(surface_output, &surface->current_outputs, link) {
+		if (!surface_output->WLR_PRIVATE.suspended) {
+			return true;
+		}
+	}
+	return false;
+}
+
+// sysc_scene_node_send_fallback_frame_done walks disabled subtrees too, which
+// wlr_scene_node_for_each_buffer skips: hidden workspaces are disabled trees.
+static void sysc_scene_node_send_fallback_frame_done(struct wlr_scene_node *node,
+		const struct timespec *now) {
+	if (node->type == WLR_SCENE_NODE_TREE) {
+		struct wlr_scene_tree *tree = wlr_scene_tree_from_node(node);
+		struct wlr_scene_node *child;
+		wl_list_for_each(child, &tree->children, link) {
+			sysc_scene_node_send_fallback_frame_done(child, now);
+		}
+		return;
+	}
+	if (node->type != WLR_SCENE_NODE_BUFFER) {
+		return;
+	}
+	struct wlr_scene_surface *scene_surface =
+		wlr_scene_surface_try_from_buffer(wlr_scene_buffer_from_node(node));
+	if (scene_surface == NULL || !scene_surface->surface->mapped ||
+			sysc_surface_has_pacing_output(scene_surface->surface)) {
+		return;
+	}
+	wlr_surface_send_frame_done(scene_surface->surface, now);
+}
+
+static void sysc_scene_send_fallback_frame_done(void *scene) {
+	struct timespec now;
+	clock_gettime(CLOCK_MONOTONIC, &now);
+	sysc_scene_node_send_fallback_frame_done(&((struct wlr_scene *)scene)->tree.node, &now);
+}
 */
 import "C"
 
@@ -512,6 +557,12 @@ func sceneFXNodeEnabled(node unsafe.Pointer) bool {
 	}
 	var x, y C.int
 	return bool(C.wlr_scene_node_coords((*C.struct_wlr_scene_node)(node), &x, &y))
+}
+
+// sceneFXSendFallbackFrameDone answers the frame callbacks of every mapped
+// surface no output repaint reaches.
+func sceneFXSendFallbackFrameDone(scene unsafe.Pointer) {
+	C.sysc_scene_send_fallback_frame_done(scene)
 }
 
 // sceneFXNodeDestroySignal is the node's destroy signal, for a listener.

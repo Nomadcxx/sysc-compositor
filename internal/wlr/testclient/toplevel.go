@@ -431,6 +431,7 @@ struct sysc_idle_client {
 	struct wl_proxy *wm_base, *notifier, *inhibit_manager, *cursor_shape_manager;
 	struct wl_proxy *effect_manager, *effect;
 	struct wl_proxy *tearing_manager, *tearing;
+	int frame_dones;
 	struct wl_proxy *tablet_manager, *tablet_seat, *other_tablet_seat;
 	int other_seat_tablet_objects;
 	int tablets_added, tablets_removed, tools_added, pads_added, pads_removed;
@@ -857,6 +858,24 @@ static int sysc_client_set_blur_region(struct sysc_idle_client *c, const int32_t
 	wl_region_destroy(region);
 	wl_surface_commit(c->surface);
 	return wl_display_roundtrip(c->display) < 0 ? 4 : 0;
+}
+
+// Requests a wl_surface.frame callback and commits. Each done event requests
+// the next one, as a client that draws only when it is told to.
+static void sysc_client_request_frame(struct sysc_idle_client *c);
+static void sysc_client_frame_done(void *data, struct wl_callback *callback, uint32_t time) {
+	struct sysc_idle_client *c = data;
+	wl_callback_destroy(callback);
+	c->frame_dones++;
+	sysc_client_request_frame(c);
+}
+static const struct wl_callback_listener sysc_client_frame_listener = {
+	.done = sysc_client_frame_done,
+};
+static void sysc_client_request_frame(struct sysc_idle_client *c) {
+	wl_callback_add_listener(wl_surface_frame(c->surface), &sysc_client_frame_listener, c);
+	wl_surface_commit(c->surface);
+	wl_display_flush(c->display);
 }
 
 // Sets the toplevel surface's presentation hint (0 vsync, 1 async), creating
@@ -1596,6 +1615,14 @@ func (c *ToplevelClient) SetCursorShape(shape uint32) error {
 	}
 	return nil
 }
+
+// PaceFrames starts drawing on frame callbacks: the client asks for one and
+// commits, and asks for the next from each done event, without a new buffer.
+// FrameDones counts the done events dispatched so far.
+func (c *ToplevelClient) PaceFrames() { C.sysc_client_request_frame(c.state) }
+
+// FrameDones is how many wl_surface.frame callbacks have completed.
+func (c *ToplevelClient) FrameDones() int { return int(c.state.frame_dones) }
 
 // SetTearingHint sets the toplevel surface's tearing-control presentation
 // hint (0 vsync, 1 async) and commits it.
