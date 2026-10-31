@@ -118,6 +118,17 @@ func (m *Monitor) Forget(name string) {
 	m.rebuildGrabbedMods()
 }
 
+// Reset forgets every caller and every swallowed key, as when the service
+// loses its bus name: no grab may outlive the interface that took it.
+func (m *Monitor) Reset() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	clear(m.callers)
+	clear(m.grabbedMods)
+	clear(m.lastPress)
+	clear(m.suppressed)
+}
+
 func (m *Monitor) rebuildGrabbedMods() {
 	clear(m.grabbedMods)
 	for _, c := range m.callers {

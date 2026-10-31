@@ -101,6 +101,14 @@ func TestKeyboardMonitorGrabsLikeNiri(t *testing.T) {
 			{key: press(1100, symH, maskControl), decision: Pass},
 			{key: press(1200, symInsert, 0), decision: ModifierFirstPress, to: []string{":1.9"}},
 		}},
+		{"a reset forgets every caller and swallowed key", []step{
+			{call: orca},
+			{call: func(m *Monitor) { m.Watch(":1.7") }},
+			{key: press(1000, symH, maskControl), decision: Block, to: []string{":1.5", ":1.7"}},
+			{call: func(m *Monitor) { m.Reset() }},
+			{key: release(1010, symH, maskControl), decision: Pass},
+			{key: press(1100, symCapsLock, 0), decision: Pass},
+		}},
 		{"new key grabs replace the previous ones", []step{
 			{call: orca},
 			{call: func(m *Monitor) { m.SetKeyGrabs(":1.5", []uint32{symInsert}, nil) }},
