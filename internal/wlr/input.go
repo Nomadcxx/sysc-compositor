@@ -714,7 +714,10 @@ func (c *Compositor) processCursorMotion(time C.uint32_t) {
 		return
 	}
 	c.updateHotCorner()
-	if c.model != nil && (c.model.OverviewProgress() > 0 || c.model.OverviewOpen()) {
+	// In the overview the windows are the overview's, but top and overlay
+	// layer surfaces still take the pointer (Niri's contents_under).
+	if c.overviewShown() && len(c.pressedPointerButtons) == 0 &&
+		!c.upperLayerAt(float64(c.cursor.x), float64(c.cursor.y)) {
 		C.wlr_seat_pointer_notify_clear_focus(c.seat)
 		c.showDefaultImage()
 		return
@@ -944,7 +947,7 @@ func (c *Compositor) deliverPointerButton(source unsafe.Pointer, timeMsec C.uint
 			c.clearPointerGrab()
 		}
 	}
-	if pressed && c.model != nil && (c.model.OverviewProgress() > 0 || c.model.OverviewOpen()) {
+	if pressed && c.overviewShown() && !c.pointerOnLayerSurface() {
 		c.consumedPointerButtons[button] = true
 		if button == uint32(C.BTN_LEFT) && !c.overviewSelectAt(float64(c.cursor.x), float64(c.cursor.y)) {
 			c.CloseOverview()
@@ -1018,6 +1021,25 @@ func (c *Compositor) handleCursorAxis(data unsafe.Pointer) {
 
 func (c *Compositor) handleCursorFrame(unsafe.Pointer) {
 	C.wlr_seat_pointer_notify_frame(c.seat)
+}
+
+// overviewShown reports whether the overview is open or still animating.
+func (c *Compositor) overviewShown() bool {
+	return c.model != nil && (c.model.OverviewProgress() > 0 || c.model.OverviewOpen())
+}
+
+// upperLayerAt reports whether a top or overlay layer surface is at layout
+// coordinates.
+func (c *Compositor) upperLayerAt(x, y float64) bool {
+	surface, _, _ := c.surfaceAt(x, y)
+	layer := c.layerSurfaceForSurface(surface)
+	return layer != nil && layer.layer >= layerTop
+}
+
+// pointerOnLayerSurface reports whether the pointer's focus is a layer
+// surface: Niri's test for leaving overview input to that surface.
+func (c *Compositor) pointerOnLayerSurface() bool {
+	return c.layerSurfaceForSurface(c.seat.pointer_state.focused_surface) != nil
 }
 
 // surfaceAt is the client surface at layout coordinates, with the

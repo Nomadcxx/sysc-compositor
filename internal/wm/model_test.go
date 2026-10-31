@@ -1216,3 +1216,41 @@ func TestOrWorkspaceCompositesFallBackToWorkspace(t *testing.T) {
 			activeIndex(t, m, "DP-1"))
 	}
 }
+
+func TestUnderMouseActionsLeaveTheFocusedOutput(t *testing.T) {
+	m := New()
+	m.AddOutput("DP-1", layout.Bounds{Width: 1000, Height: 800}, 500, 16)
+	m.AddOutput("HDMI-A-1", layout.Bounds{X: 1000, Width: 1000, Height: 800}, 500, 16)
+	threeWorkspaces(t, m, "HDMI-A-1")
+	if !m.FocusWorkspace("HDMI-A-1", 1) || !m.MapWindow(4, "HDMI-A-1") {
+		t.Fatal("could not give HDMI-A-1's first workspace a second column")
+	}
+	m.FocusWorkspace("DP-1", 1)
+	first := workspaceIDs(m, "HDMI-A-1")[0]
+	activeWindow := func() uint64 {
+		for _, workspace := range m.Snapshot().Workspaces {
+			if workspace.ID == first && workspace.ActiveWindowID != nil {
+				return *workspace.ActiveWindowID
+			}
+		}
+		return 0
+	}
+	if !m.FocusColumnLeftOnWorkspace(first) || activeWindow() != 1 {
+		t.Fatalf("FocusColumnLeftOnWorkspace: active window %d, want 1", activeWindow())
+	}
+	if !m.FocusColumnRightOnWorkspace(first) || activeWindow() != 4 {
+		t.Fatalf("FocusColumnRightOnWorkspace: active window %d, want 4", activeWindow())
+	}
+	if !m.FocusWorkspaceDownOn("HDMI-A-1") || activeIndex(t, m, "HDMI-A-1") != 1 {
+		t.Fatalf("FocusWorkspaceDownOn: active %d, want 1", activeIndex(t, m, "HDMI-A-1"))
+	}
+	if !m.FocusWorkspaceUpOn("HDMI-A-1") || activeIndex(t, m, "HDMI-A-1") != 0 {
+		t.Fatalf("FocusWorkspaceUpOn: active %d, want 0", activeIndex(t, m, "HDMI-A-1"))
+	}
+	if m.FocusWorkspaceUpOn("HDMI-A-1") {
+		t.Fatal("FocusWorkspaceUpOn on the first workspace reported a change")
+	}
+	if got := m.Snapshot().FocusedOutput; got != "DP-1" {
+		t.Fatalf("focused output %q after under-mouse actions on HDMI-A-1, want DP-1", got)
+	}
+}

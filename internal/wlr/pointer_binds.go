@@ -3,8 +3,10 @@ package wlr
 import (
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/Nomadcxx/sysc-compositor/internal/bind"
+	"github.com/Nomadcxx/sysc-compositor/internal/wm"
 )
 
 // Niri's bind triggers for scrolls and buttons, and its tick sizes: a wheel
@@ -103,10 +105,53 @@ func (c *Compositor) runTriggerBinding(trigger string, modifiers bind.Modifiers,
 	}
 }
 
+// overviewWheelCooldown is the cooldown of Niri's built-in overview wheel
+// binds that switch workspaces or, with Shift, columns.
+const overviewWheelCooldown = 50 * time.Millisecond
+
+// overviewWheelBind is Niri's built-in overview bind for a wheel trigger with
+// modifiers, if there is one: with no modifiers the wheel switches the
+// workspace of the output under the pointer and a horizontal wheel moves the
+// column focus of the workspace under it; with Shift a vertical wheel moves
+// the column focus. Its chord carries no modifiers, as Niri's does, so Shift
+// and plain wheels share a cooldown.
+func (c *Compositor) overviewWheelBind(trigger string, modifiers bind.Modifiers) (bind.Binding, func(*wm.Model) bool, bool) {
+	x, y := float64(c.cursor.x), float64(c.cursor.y)
+	output := c.outputNameAt(x, y)
+	workspace := c.workspaceUnderGesture(output)
+	workspaceDown := func(m *wm.Model) bool { return m.FocusWorkspaceDownOn(output) }
+	workspaceUp := func(m *wm.Model) bool { return m.FocusWorkspaceUpOn(output) }
+	columnRight := func(m *wm.Model) bool { return m.FocusColumnRightOnWorkspace(workspace) }
+	columnLeft := func(m *wm.Model) bool { return m.FocusColumnLeftOnWorkspace(workspace) }
+	var action func(*wm.Model) bool
+	var cooldown time.Duration
+	switch {
+	case modifiers == 0 && trigger == "WheelScrollDown":
+		action, cooldown = workspaceDown, overviewWheelCooldown
+	case modifiers == 0 && trigger == "WheelScrollUp":
+		action, cooldown = workspaceUp, overviewWheelCooldown
+	case modifiers == 0 && trigger == "WheelScrollRight":
+		action = columnRight
+	case modifiers == 0 && trigger == "WheelScrollLeft":
+		action = columnLeft
+	case modifiers == bind.Modifiers(bind.ModifierShift) && trigger == "WheelScrollDown":
+		action, cooldown = columnRight, overviewWheelCooldown
+	case modifiers == bind.Modifiers(bind.ModifierShift) && trigger == "WheelScrollUp":
+		action, cooldown = columnLeft, overviewWheelCooldown
+	default:
+		return bind.Binding{}, nil, false
+	}
+	binding := bind.Binding{Chord: bind.Chord{Key: trigger, Trigger: bind.TriggerScroll}, Cooldown: cooldown}
+	return binding, action, true
+}
+
 // scrollBinds is Niri's on_pointer_axis bind branch. A wheel or finger
 // scroll is the binds' when some bind of that kind uses the held modifiers:
 // it accumulates into ticks, runs the bind once per tick and never reaches
-// the client. Otherwise the accumulators reset and the scroll goes on.
+// the client. Otherwise the accumulators reset and the scroll goes on. In
+// the overview every wheel is the compositor's unless the pointer is on a
+// layer surface, and the built-in overview binds come before configured
+// ones.
 func (c *Compositor) scrollBinds(wheel, finger, horizontal bool, delta float64, v120 int32, timeMsec uint32) bool {
 	state := &c.pointerBinds
 	trackers, triggers, tick, amount := &state.wheel, wheelTriggers, float64(wheelTick), float64(v120)
@@ -118,7 +163,8 @@ func (c *Compositor) scrollBinds(wheel, finger, horizontal bool, delta float64, 
 		return false
 	}
 	modifiers := c.activeBindModifiers()
-	if !c.hasTriggerBinds(triggers, modifiers) {
+	inOverview := wheel && c.model != nil && c.model.OverviewOpen() && !c.pointerOnLayerSurface()
+	if !inOverview && !c.hasTriggerBinds(triggers, modifiers) {
 		trackers[0].reset()
 		trackers[1].reset()
 		return false
@@ -130,12 +176,23 @@ func (c *Compositor) scrollBinds(wheel, finger, horizontal bool, delta float64, 
 	if trackers[axis].tick == 0 {
 		trackers[axis] = newScrollTracker(tick)
 	}
+	run := func(trigger string) {
+		if inOverview {
+			if binding, action, ok := c.overviewWheelBind(trigger, modifiers); ok {
+				if !c.bindCoolingDown(binding, timeMsec) {
+					c.applyWorkspaceFocusAction(action)
+				}
+				return
+			}
+		}
+		c.runTriggerBinding(trigger, modifiers, timeMsec)
+	}
 	ticks := trackers[axis].accumulate(amount)
 	for ; ticks > 0; ticks-- {
-		c.runTriggerBinding(forward, modifiers, timeMsec)
+		run(forward)
 	}
 	for ; ticks < 0; ticks++ {
-		c.runTriggerBinding(back, modifiers, timeMsec)
+		run(back)
 	}
 	return true
 }

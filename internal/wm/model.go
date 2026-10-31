@@ -765,6 +765,19 @@ func (m *Model) FocusWorkspace(output string, index uint8) bool {
 
 // FocusWorkspaceByDelta switches an output's active workspace by a relative index.
 func (m *Model) FocusWorkspaceByDelta(output string, delta int) bool {
+	return m.switchWorkspaceBy(output, delta, true)
+}
+
+// FocusWorkspaceDownOn and FocusWorkspaceUpOn are Niri's
+// FocusWorkspace{Down,Up}UnderMouse: the output's monitor switches workspace
+// and the focused output stays where it is.
+func (m *Model) FocusWorkspaceDownOn(output string) bool {
+	return m.switchWorkspaceBy(output, 1, false)
+}
+
+func (m *Model) FocusWorkspaceUpOn(output string) bool { return m.switchWorkspaceBy(output, -1, false) }
+
+func (m *Model) switchWorkspaceBy(output string, delta int, focus bool) bool {
 	state := m.outputs[output]
 	if state == nil || delta == 0 || len(state.workspaces) == 0 {
 		return false
@@ -774,7 +787,9 @@ func (m *Model) FocusWorkspaceByDelta(output string, delta int) bool {
 		return false
 	}
 	state.active = index
-	m.focusedOutput = output
+	if focus {
+		m.focusedOutput = output
+	}
 	m.reconcile(state)
 	m.clearFocusedUrgency()
 	return true
@@ -1271,6 +1286,26 @@ func (m *Model) FocusColumnLeft() bool { return m.activeStripAction((*layout.Wor
 
 // FocusColumnRight focuses the following column on the active workspace.
 func (m *Model) FocusColumnRight() bool { return m.activeStripAction((*layout.Workspace).FocusRight) }
+
+// FocusColumnLeftOnWorkspace and FocusColumnRightOnWorkspace are Niri's
+// FocusColumn{Left,Right}UnderMouse: they act on the workspace under the
+// pointer, which in the overview need not be an active one.
+func (m *Model) FocusColumnLeftOnWorkspace(id uint64) bool {
+	return m.workspaceStripAction(id, (*layout.Workspace).FocusLeft)
+}
+
+func (m *Model) FocusColumnRightOnWorkspace(id uint64) bool {
+	return m.workspaceStripAction(id, (*layout.Workspace).FocusRight)
+}
+
+func (m *Model) workspaceStripAction(id uint64, action func(*layout.Workspace) bool) bool {
+	workspace := m.workspaceByID(id)
+	if workspace == nil || !action(workspace.strip) {
+		return false
+	}
+	m.clearFocusedUrgency()
+	return true
+}
 
 func (m *Model) FocusColumnFirst() bool { return m.activeStripAction((*layout.Workspace).FocusFirst) }
 
