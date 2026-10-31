@@ -1378,6 +1378,96 @@ func (m *Model) activeStripAction(action func(*layout.Workspace) bool) bool {
 	return changed
 }
 
+// The strip actions of Niri's Workspace, on the focused output.
+func (m *Model) FocusColumn(index int) bool {
+	return m.activeStripAction(func(w *layout.Workspace) bool { return w.FocusColumn(index) })
+}
+func (m *Model) FocusColumnRightOrFirst() bool {
+	return m.activeStripAction((*layout.Workspace).FocusColumnRightOrFirst)
+}
+func (m *Model) FocusColumnLeftOrLast() bool {
+	return m.activeStripAction((*layout.Workspace).FocusColumnLeftOrLast)
+}
+func (m *Model) FocusWindowTop() bool { return m.activeStripAction((*layout.Workspace).FocusWindowTop) }
+func (m *Model) FocusWindowBottom() bool {
+	return m.activeStripAction((*layout.Workspace).FocusWindowBottom)
+}
+func (m *Model) FocusWindowDownOrTop() bool {
+	return m.activeStripAction((*layout.Workspace).FocusWindowDownOrTop)
+}
+func (m *Model) FocusWindowUpOrBottom() bool {
+	return m.activeStripAction((*layout.Workspace).FocusWindowUpOrBottom)
+}
+func (m *Model) FocusWindowDownOrColumnLeft() bool {
+	return m.activeStripAction((*layout.Workspace).FocusWindowDownOrColumnLeft)
+}
+func (m *Model) FocusWindowDownOrColumnRight() bool {
+	return m.activeStripAction((*layout.Workspace).FocusWindowDownOrColumnRight)
+}
+func (m *Model) FocusWindowUpOrColumnLeft() bool {
+	return m.activeStripAction((*layout.Workspace).FocusWindowUpOrColumnLeft)
+}
+func (m *Model) FocusWindowUpOrColumnRight() bool {
+	return m.activeStripAction((*layout.Workspace).FocusWindowUpOrColumnRight)
+}
+func (m *Model) MoveColumnToIndex(index int) bool {
+	return m.activeStripAction(func(w *layout.Workspace) bool { return w.MoveColumnToIndex(index) })
+}
+func (m *Model) SwapWindowLeft() bool { return m.activeStripAction((*layout.Workspace).SwapWindowLeft) }
+func (m *Model) SwapWindowRight() bool {
+	return m.activeStripAction((*layout.Workspace).SwapWindowRight)
+}
+
+// The or-monitor composites: the plain action, or at the strip's edge the
+// output in that direction, as Niri's Action::FocusColumnOrMonitorLeft and
+// friends. With no output there they are the plain action.
+func (m *Model) FocusColumnOrMonitorLeft() bool {
+	return m.orMonitor("left", m.FocusColumnLeft, m.FocusOutputDirection)
+}
+func (m *Model) FocusColumnOrMonitorRight() bool {
+	return m.orMonitor("right", m.FocusColumnRight, m.FocusOutputDirection)
+}
+func (m *Model) FocusWindowOrMonitorUp() bool {
+	return m.orMonitor("up", m.FocusWindowUp, m.FocusOutputDirection)
+}
+func (m *Model) FocusWindowOrMonitorDown() bool {
+	return m.orMonitor("down", m.FocusWindowDown, m.FocusOutputDirection)
+}
+func (m *Model) MoveColumnLeftOrToMonitorLeft() bool {
+	return m.orMonitor("left", m.MoveColumnLeft, m.moveColumnToMonitorFollowing)
+}
+func (m *Model) MoveColumnRightOrToMonitorRight() bool {
+	return m.orMonitor("right", m.MoveColumnRight, m.moveColumnToMonitorFollowing)
+}
+
+func (m *Model) moveColumnToMonitorFollowing(direction string) bool {
+	return m.MoveFocusedColumnToMonitorDirection(direction, true)
+}
+
+func (m *Model) orMonitor(direction string, plain func() bool, cross func(string) bool) bool {
+	return plain() || (m.outputInDirection(m.focusedOutput, direction) != "" && cross(direction))
+}
+
+// FocusWindowOrWorkspaceDown focuses the tile below, or else the workspace
+// below (Niri's Monitor::focus_window_or_workspace_down).
+func (m *Model) FocusWindowOrWorkspaceDown() bool {
+	return m.FocusWindowDown() || m.FocusWorkspaceDown()
+}
+
+// FocusWindowOrWorkspaceUp focuses the tile above, or else the workspace above.
+func (m *Model) FocusWindowOrWorkspaceUp() bool { return m.FocusWindowUp() || m.FocusWorkspaceUp() }
+
+// MoveWindowDownOrToWorkspaceDown moves the window down its column, or else
+// to the workspace below and follows it (monitor.rs move_down_or_to_workspace_down).
+func (m *Model) MoveWindowDownOrToWorkspaceDown() bool {
+	return m.MoveWindowDown() || m.MoveWindowToWorkspaceDown(true)
+}
+
+// MoveWindowUpOrToWorkspaceUp moves the window up, or else to the workspace above.
+func (m *Model) MoveWindowUpOrToWorkspaceUp() bool {
+	return m.MoveWindowUp() || m.MoveWindowToWorkspaceUp(true)
+}
+
 // ActiveWindow returns the active column window on the focused output.
 func (m *Model) ActiveWindow() (uint64, bool) {
 	out := m.outputs[m.focusedOutput]
