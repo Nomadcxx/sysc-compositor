@@ -507,3 +507,21 @@ both lanes on #72.
 Task 8's checks have passed. M12's software scope meets the stop condition once #72 merges.
 Hardware qualification stays open: gamma on a physical panel, explicit sync on NVIDIA, and a
 physical tablet and pad. Whether that blocks closing `sysc-1277` is the owner's decision.
+
+## Execution record: hardware qualification (`sysc-2081`), 2026-10-31
+
+**Explicit sync on NVIDIA.** On the desktop's GeForce RTX 4060 (driver 615.78.08, kernel 7.2.11,
+vulkan-tools 1.4.363), `TestExplicitSyncVulkanClientPresentsAndReleases` passed on main `76fa0bd`
+with the headless backend, in one run the owner approved. That machine has one render node and
+one Vulkan device, both the NVIDIA GPU. The renderer took DRM syncobj timelines, so the manager
+was offered. vkcube set 100 acquire and 100 release points, and the window screenshot sampled the
+synced buffer through its acquire wait. That qualifies the NVIDIA renderer and client path.
+DRM presentation on NVIDIA, with sysc on a desktop TTY, is not yet observed.
+
+**Gamma on a physical panel.** This waits for the owner. The laptop's eDP-1 check is staged as
+`~/sysc-compositor-hw-20261031/gamma-gate.sh`, built from `76fa0bd`. It needs a tty2 console
+login and gammastep. It reads the CRTC's `GAMMA_LUT` with modetest before sysc starts, under
+sysc, with a 3000 K ramp applied, after DPMS off and on, after gammastep exits and after sysc
+exits, and it asks what the panel showed.
+
+**Tablet and pad.** This stays open: neither machine has a Wacom or Huion device attached.
