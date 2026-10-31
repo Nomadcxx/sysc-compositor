@@ -133,6 +133,28 @@ M6 adds the window, column, floating, fullscreen, urgency, named-workspace, and 
 | ToggleOverview | [x] | M7 — toggles overview state |
 | OpenOverview / CloseOverview | [x] | M7 — idempotent state actions |
 
+### Navigation and workspace (M15 part 1)
+
+Every action here is a KDL bind and an IPC action (`TestNavigationActionArguments`,
+`TestIndexActionsDecodeNiriShapes`, `TestNavigationActionsAreHandled`), driven through real binds in
+`TestNavigationBindsDriveTheCompositor`; `validate` applies all of them on Niri's default config and
+the owner's (`TestDefaultConfigNavigationBindsApply`). VM gate:
+[the M15 part 1 plan](2026-10-31-m15-navigation-binds.md).
+
+| Action | Status | Milestone |
+|---|---|---|
+| FocusWorkspaceDown/Up | [x] | M15 — Niri's `switch_workspace_down/up`, clamped at the ends (`TestFocusWorkspaceUpDownAndPreviousFollowNiri`) |
+| FocusWorkspacePrevious | [x] | M15 — each output keeps its own previous workspace, as Niri's `Monitor` does (`TestFocusWorkspaceUpDownAndPreviousFollowNiri`) |
+| MoveWorkspaceDown/Up | [x] | M15 — keeps the previous workspace and the trailing empty one (`TestMoveWorkspaceDownKeepsPreviousAndTrailingEmpty`) |
+| MoveWorkspaceToIndex | [x] | M15 — one-based index, clamped, with an optional workspace reference (`TestMoveWorkspaceToIndexClampsAndResolvesReference`) |
+| FocusColumn / MoveColumnToIndex | [x] | M15 — one-based, `saturating_sub(1)` and clamped (`TestStripIndexActionsClampLikeNiri`) |
+| FocusColumnRightOrFirst / FocusColumnLeftOrLast | [x] | M15 — wrap around the strip (`TestStripWrapAndOrFallbacks`) |
+| FocusWindowTop/Bottom / FocusWindowDownOrTop / FocusWindowUpOrBottom | [x] | M15 (`TestStripWrapAndOrFallbacks`) |
+| FocusWindowDownOrColumnLeft/Right / FocusWindowUpOrColumnLeft/Right | [x] | M15 (`TestStripWrapAndOrFallbacks`) |
+| SwapWindowLeft/Right | [x] | M15 (`TestSwapWindowMatchesNiri`) |
+| FocusColumnOrMonitorLeft/Right / FocusWindowOrMonitorUp/Down / MoveColumnLeftOrToMonitorLeft / MoveColumnRightOrToMonitorRight | [x] | M15 — cross to the next monitor only at the edge, otherwise the plain action (`TestOrMonitorCompositesCrossOnlyAtTheEdge`); in the screenshot UI the moves move the selection (`TestScreenshotUIMovesTheSelectionByOrActions`) |
+| FocusWindowOrWorkspaceDown/Up / MoveWindowDownOrToWorkspaceDown / MoveWindowUpOrToWorkspaceUp | [x] | M15 — fall back to the workspace action at the column's end (`TestOrWorkspaceCompositesFallBackToWorkspace`) |
+
 ## Config sections
 
 | Section | Status | Milestone |
@@ -140,14 +162,14 @@ M6 adds the window, column, floating, fullscreen, urgency, named-workspace, and 
 | input | [~] | M2 keyboard xkb + repeat; M5 nested Mod defaults, core key binds, Mod+drag, and edge resize with tile dimensions retained across unmap/remap; M12 transfers those dimensions to each fresh mapped-window ID; M6 adds its keyboard action subset; M7 adds overview gestures, hot corners, tiled insert hints, and DND edge scrolling; M9 adds layout switching and session locale defaults; physical input and client gesture delivery remain unverified; remaining input work is M10; M12 applies `input.tablet` `off`, `map-to-output` and `map-to-focused-output` (`left-handed` and `calibration-matrix` warn until libinput device settings land) |
 | output | [~] | M3 reports connected outputs, available/current modes, logical geometry, scale/transform, and VRR capability/state; M15 applies mode/refresh, scale, position, transform, power, and VRR settings |
 | layout | [~] | M5 gaps, default column width, scrolling columns, client min/max size bounds, centered window offsets, and retained pointer-resized dimensions; M7 insert hints and tiled drag placement; M8 focus ring, window shadow, rounded outer subsurface corners, geometry clipping, and clipped snapshot bounds. SceneFX shadows use one radius, so nonuniform corner rules use the top-left radius; direct-session visual calibration remains unverified |
-| binds | [~] | M5 core key subset plus M6 window, workspace, urgency, and monitor actions; M7 overview actions; unsupported later actions and mouse/scroll triggers warn |
+| binds | [~] | M5 core key subset plus M6 window, workspace, urgency, and monitor actions; M7 overview actions; M15 part 1: the navigation and workspace actions, `WheelScroll*`, `TouchpadScroll*` and `Mouse*` triggers and `cooldown-ms` (`TestWheelBindsInterceptOnlyBoundModifiers`, `TestTouchpadScrollBindsUseFingerTicks`, `TestMouseBindSuppressesItsRelease`, `TestScrollTrackerMatchesNiri`). Column sizing and the M15 part 4 actions still warn |
 | switch-events | [x] | M9 — lid and tablet switch spawn actions; login1 also updates lid state |
 | window-rule | [~] | M6 app-id/title match and exclude, ordered placement/fullscreen overrides, and default size fields; M8 ordered `geometry-corner-radius` and `clip-to-geometry`; M12 `block-out-from` `"screencast"`/`"screen-capture"` for casts, screenshots and capture protocols (capture privacy tests; VM gate with portal casts, screenshots and OBS); remaining Niri rule effects are unimplemented |
 | layer-rule | [~] | M6 parses namespace matching and `place-within-backdrop`; M7 does not render qualifying background surfaces within the overview backdrop or project background/bottom surfaces into workspace thumbnails; other Niri layer-rule effects remain unimplemented |
 | blur | [x] | M10 — off, passes, offset, noise and saturation with Niri's defaults, applied to SceneFX blur at start and on reload (`TestBlurDefaultsMatchNiriAndUnnamedFieldsStay`) |
 | animations | [~] | M8 applies the seven laptop spring kinds and animates overview, workspace, window, movement, and resize transitions; M11 adds `exit-confirmation-open-close` (Niri's default spring 0.6/500/0.01). Easing, slowdown, custom shaders, and three other recognized animation kinds warn and remain unapplied |
 | gestures | [~] | M7 swipe, hot-corner, and DND edge-scroll logic passes synthetic nested tests; physical touchpad input, bound-client forwarding of unsupported gestures, and live client DND remain unverified |
-| overview | [~] | M7 IPC, backdrop, window projection, and pointer selection; background/bottom layer projection and visual `place-within-backdrop` behavior remain unimplemented; spring animation is M8 |
+| overview | [~] | M7 IPC, backdrop, window projection, and pointer selection; spring animation is M8; M15 part 1 adds Niri's overview wheel: the wheel switches the workspace under the pointer, and Shift+wheel or a horizontal wheel moves the column focus (`TestOverviewWheelSwitchesWorkspaceUnderPointer`). Top and overlay layer surfaces keep the pointer, scrolls and clicks in the overview (`TestOverviewWheelOverTopLayerReachesTheLayer`). Not yet: background/bottom layer projection, visual `place-within-backdrop`, and Niri's overview touchpad scroll gesture |
 | hotkey-overlay | [x] | M11 — shown at startup unless `skip-at-startup`; `hide-not-bound` |
 | environment | [x] | M2 (applied to spawns) |
 | cursor | [~] | M5 theme/size and child environment; M10 cursor-shape-v1 from the pointer's client; per-output scale M15 |
@@ -156,7 +178,7 @@ M6 adds the window, column, floating, fullscreen, urgency, named-workspace, and 
 | spawn-at-startup / spawn-sh-at-startup | [x] | M2 |
 | workspace | [~] | M6 named workspace declarations and output placement; remaining Niri workspace options are unimplemented |
 | xwayland-satellite | [~] | M13 — on-demand socket handoff, config/reload and DISPLAY; `TestX11SatelliteMapsAndSharesNativeFocus` proves X11/native focus and close in the VM; complete application gates remain in the M13 plan |
-| recent-windows | [~] | M11 — every option, the binds block and `recent-windows-close`; the switcher with previews, titles, the scope panel, highlight, Niri's keys, modifier release, pointer selection and the close fade (`TestWindowSwitcherSelectsConfirmsAndCancels`). the view springs to the selection; previews slide with window-movement when a window goes or the scope or filter changes (`TestWindowSwitcherPreviewsMoveAsNiri`) and are clipped to the window geometry and corner radius (`TestWindowSwitcherClipsPreviewsToGeometry`). Not yet: new previews fading in with window-open (easing, M15); mouse/scroll binds while open (mouse and scroll binds are not applied at all); opened keys for the or-first, or-monitor and window-or-column focus actions, which are not built |
+| recent-windows | [~] | M11 — every option, the binds block and `recent-windows-close`; the switcher with previews, titles, the scope panel, highlight, Niri's keys, modifier release, pointer selection and the close fade (`TestWindowSwitcherSelectsConfirmsAndCancels`). the view springs to the selection; previews slide with window-movement when a window goes or the scope or filter changes (`TestWindowSwitcherPreviewsMoveAsNiri`) and are clipped to the window geometry and corner radius (`TestWindowSwitcherClipsPreviewsToGeometry`). M15 part 1 adds Niri's opened binds for the or-first, or-monitor and window-or-column focus actions on every trigger, scroll and mouse included (`TestSwitcherDynamicBindsFollowNiri`). Not yet: new previews fading in with window-open (easing, M15) |
 | debug | [ ] | M15 |
 | include | [x] | M3 positional merge |
 

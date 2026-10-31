@@ -558,3 +558,69 @@ Capture `gvnccapture` screenshots and save them under the evidence directory.
 - Update the `recent-windows` row's "opened keys for … or-first … not built".
 
 - [ ] **Step 4: Commit, push and open the PR. Merge on green CI under the standing approval.**
+
+## Execution record, 2026-10-31
+
+All seven tasks ran inline (executing-plans), with nested tests on the laptop, one test per
+command. The whole-branch review was a self-review, because this session does not start subagents
+unless the owner asks.
+
+**Tests.** Unit tests in `wm`, `layout`, `bind`, `config`, `ipc` and `server` pass. Nested tests
+on the laptop: `TestNavigationBindsDriveTheCompositor`, `TestScreenshotUIMovesTheSelectionByOrActions`,
+`TestWheelBindsInterceptOnlyBoundModifiers`, `TestMouseBindSuppressesItsRelease`,
+`TestTouchpadScrollBindsUseFingerTicks`, `TestOverviewWheelSwitchesWorkspaceUnderPointer`,
+`TestOverviewWheelOverTopLayerReachesTheLayer` and `TestOverviewHeldButtonKeepsWindowsUnfocused`
+each failed before their code, and pass. The existing overview, pointer-focus, DND and
+hot-corner tests still pass.
+
+**`validate`** ([validate.txt](assets/2026-10-31-m15-navigation/validate.txt)). Niri's default
+config and the owner's `config.kdl` now list only Part 2 sizing actions as unapplied
+(`switch-preset-*`, `set-column-width`, `set-window-height`, `reset-window-height`, `maximize-*`,
+`expand-column-to-available-width`, `center-*`).
+
+**VM gate.** The session VM ran virgl and a real greetd login through sysc-greet. The branch at `269ceb7`, before
+the final review's fix, was installed as `/usr/local/bin/sysc-compositor` (the previous binary is
+`sysc-compositor.pre-m15-20261031`). The VM used a copy of the owner's `config.kdl`, with
+`sysc-shell.kdl` and `sysc.kdl`. Three foot windows were opened over IPC. Keys went through QMP, and
+wheels through [qmpwheel.py](assets/2026-10-31-m15-navigation/qmpwheel.py), which holds keys
+and sends wheel clicks a set time apart. State was read over the Niri IPC socket.
+
+| Check | Result |
+|---|---|
+| Mod+Page_Down, Mod+Page_Up | workspace 1 → 2 → 1 ([ws2](assets/2026-10-31-m15-navigation/m15-ws2.png), [ws1](assets/2026-10-31-m15-navigation/m15-ws1.png)) |
+| Mod+Tab (`focus-workspace-previous` in the owner's config) | 1 → 2 → 1 |
+| Mod+wheel down, `cooldown-ms=150` | three clicks 50 ms apart moved one workspace; two clicks 250 ms apart moved two |
+| Mod+Ctrl+wheel down | the focused column moved to workspace 2 and focus followed ([moved](assets/2026-10-31-m15-navigation/m15-moved.png)) |
+| Overview wheel, on the backdrop | a click down switched workspace 2 → 3 ([overview](assets/2026-10-31-m15-navigation/m15-overview-wheel.png)); three clicks up 15 ms apart moved one workspace (50 ms cooldown) |
+| Overview Shift+wheel up | column focus moved left (window 3 → 4) ([shift](assets/2026-10-31-m15-navigation/m15-overview-shift.png)) |
+
+The VM's virtio tablet reports only `REL_WHEEL`, so it cannot send a horizontal wheel.
+`TestOverviewWheelSwitchesWorkspaceUnderPointer` covers the horizontal overview binds.
+
+**Rulings.**
+- The or-composites return whether anything changed, not Niri's output-changed bool. sysc has no
+  cursor warp for that bool to drive.
+- `TestNavigationBindsDriveTheCompositor` is a nested test, because focus actions need a real seat.
+- `TestParseReportsUnappliedBindActions` now uses `toggle-debug-tint` (Part 4) as its unapplied
+  example. `TestParseKeepsSupportedActionsOnUnsupportedTriggersVisible` is removed, because it
+  pinned wheel binds as unapplied. `TestScrollBindsParseWithCooldown` pins the new contract.
+- The open window switcher takes Niri's opened binds for the or-first, or-monitor and
+  window-or-column focus actions, on every trigger (`mru.rs` `make_dynamic_opened_binds`).
+- Key-bind cooldowns use a wall clock in milliseconds; pointer-bind cooldowns use the event's
+  `time_msec`. Each chord only ever sees one clock.
+- The overview's column wheel acts on the workspace under the pointer, which may be an inactive
+  row. That is Niri's `workspace_under_cursor(true)`; the brief had said the output's active
+  workspace.
+- In the overview, top and overlay layer surfaces now keep the pointer, scrolls and clicks, as
+  Niri's `contents_under` gives them. Before, the overview cleared pointer focus everywhere. A click
+  on a bar in the overview therefore no longer closes the overview.
+- The final review found that this change let a button held on the overview backdrop carry motion
+  to a window with stale pointer focus. It is fixed, and
+  `TestOverviewHeldButtonKeepsWindowsUnfocused` covers it.
+
+**Deferred.**
+- Niri's overview touchpad scroll gesture (`overview_scroll_swipe_gesture`) is not built. A finger
+  scroll in the overview reaches nothing.
+- Popups of top and overlay layer surfaces do not take the pointer in the overview.
+
+Part 2 (sizing) is next.
