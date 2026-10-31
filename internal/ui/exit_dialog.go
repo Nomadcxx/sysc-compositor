@@ -15,11 +15,15 @@ import (
 
 // Niri's exit_confirm_dialog.rs constants.
 const (
-	exitDialogPadding = 16
-	exitDialogBorder  = 8
-	exitDialogMarkup  = "Are you sure you want to exit sysc-compositor?\n\n" +
-		"Press <span face='mono' bgcolor='#2C2C2C'> Enter </span> to confirm."
+	exitDialogPadding  = 16
+	exitDialogBorder   = 8
+	exitDialogQuestion = "Are you sure you want to exit sysc-compositor?\n\n"
+	exitDialogMarkup   = exitDialogQuestion + "Press <span face='mono' bgcolor='#2C2C2C'> Enter </span> to confirm."
 )
+
+// ExitDialogText is the dialog's words for a screen reader: Niri's
+// text(false), with the key unstyled.
+func ExitDialogText() string { return exitDialogQuestion + "Press Enter to confirm." }
 
 var (
 	exitDialogFont       = text.Font{Family: "sans", Size: 14}

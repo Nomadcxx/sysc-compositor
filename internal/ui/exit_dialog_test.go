@@ -49,3 +49,12 @@ func TestExitDialogIsNiriPanel(t *testing.T) {
 		t.Errorf("scale 2 border is not 8px")
 	}
 }
+
+// TestExitDialogTextIsTheDrawnText: the screen reader reads the dialog's
+// drawn words without their markup.
+func TestExitDialogTextIsTheDrawnText(t *testing.T) {
+	want := "Are you sure you want to exit sysc-compositor?\n\nPress Enter to confirm."
+	if got := ExitDialogText(); got != want {
+		t.Errorf("ExitDialogText() = %q, want %q", got, want)
+	}
+}

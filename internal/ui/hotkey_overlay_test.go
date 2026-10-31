@@ -167,3 +167,27 @@ func TestHotkeyOverlayPanelLaysOutKeysAndActions(t *testing.T) {
 		t.Errorf("no lines drew %v, %v", empty, err)
 	}
 }
+
+// TestHotkeyOverlayTextReadsLikeNiri is Niri's a11y_text: the title, then a
+// line per action with the key as a screen reader names it (keysym names,
+// not symbols) and the title's markup removed.
+func TestHotkeyOverlayTextReadsLikeNiri(t *testing.T) {
+	cfg, err := config.Parse("overlay.kdl", []byte(`binds {
+	Mod+Shift+Slash { show-hotkey-overlay; }
+	Mod+Q hotkey-overlay-title="Close <b>the</b> window &amp; more" { close-window; }
+}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonical := strings.ToLower // XKB's canonical names for these keys
+	got := HotkeyOverlayText(cfg.OverlayBinds, true, bind.ModifierSuper, canonical)
+	want := "Important Hotkeys\n" +
+		"Super + Shift + slash Show Important Hotkeys\n" +
+		"Super + Q Close the window & more\n"
+	if got != want {
+		t.Errorf("overlay text\n%q\nwant\n%q", got, want)
+	}
+	if got := HotkeyOverlayText(cfg.OverlayBinds, false, bind.ModifierSuper, canonical); !strings.Contains(got, "not bound Exit sysc-compositor\n") {
+		t.Errorf("overlay text without hide-not-bound lacks the unbound quit line:\n%s", got)
+	}
+}

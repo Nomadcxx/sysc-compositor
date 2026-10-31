@@ -1,0 +1,17 @@
+08:12:35.808608 - SPEECH OUTPUT: 'Screen reader on.'{'established': 'False'}
+08:12:55.804017 - SPEECH OUTPUT: 'escape'{'established': 'False',
+08:12:57.000069 - SPEECH OUTPUT: 'Important Hotkeys
+08:13:09.223429 - SPEECH OUTPUT: 'escape'{'established': 'False',
+08:13:09.265919 - SPEECH OUTPUT: 'insert'{'established': 'False',
+08:13:09.392259 - SPEECH OUTPUT: '08:13:09 AM'{'established': 'False'}
+08:13:12.281490 - SPEECH OUTPUT: 'left alt'{'established': 'False',
+08:13:14.931952 - SPEECH OUTPUT: 'nomadx@sysc-session:~ button'{'established': 'False', 'voice-type': 'system'}
+08:13:31.695507 - SPEECH OUTPUT: 'Workspace 2'{'established': 'False'}
+08:13:33.723376 - SPEECH OUTPUT: 'Workspace 1'{'established': 'False'}
+08:13:35.857838 - SPEECH OUTPUT: 'Overview'{'established': 'False', 'voice-type': 'default'}
+08:13:40.862494 - SPEECH OUTPUT: 'Screenshot UI'{'established': 'False', 'voice-type': 'default'}
+08:13:43.817620 - SPEECH OUTPUT: 'escape'{'established': 'False',
+08:13:46.205728 - SPEECH OUTPUT: 'alert Exit sysc-compositor'{'established': 'False', 'voice-type': 'default'}
+08:13:46.214559 - SPEECH OUTPUT: 'Are you sure you want to exit sysc-compositor?
+08:13:49.152314 - SPEECH OUTPUT: 'escape'{'established': 'False',
+08:13:51.447884 - SPEECH OUTPUT: 'Failed to parse the config file. Please run sysc-compositor validate to see the errors.'{'established': 'False'}

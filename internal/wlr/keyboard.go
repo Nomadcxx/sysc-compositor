@@ -66,6 +66,22 @@ static int sysc_switch_vt_for_key(struct wlr_keyboard *keyboard, uint32_t keycod
 	return (int)(keysym - XKB_KEY_XF86Switch_VT_1 + 1);
 }
 
+// sysc_keyboard_a11y_key reads what an assistive technology is told about a
+// key: its keysym, the effective modifier mask and its character. wlroots
+// emits the key event before it updates XKB state, so this is the state the
+// key was pressed or released in, as Niri reads it.
+static void sysc_keyboard_a11y_key(struct wlr_keyboard *keyboard, uint32_t keycode,
+		uint32_t *keysym, uint32_t *mods, uint32_t *unichar) {
+	*keysym = *mods = *unichar = 0;
+	if (keyboard == NULL || keyboard->xkb_state == NULL) {
+		return;
+	}
+	xkb_keycode_t code = keycode + 8;
+	*keysym = xkb_state_key_get_one_sym(keyboard->xkb_state, code);
+	*mods = xkb_state_serialize_mods(keyboard->xkb_state, XKB_STATE_MODS_EFFECTIVE);
+	*unichar = xkb_state_key_get_utf32(keyboard->xkb_state, code);
+}
+
 static bool sysc_modifier_active(struct wlr_keyboard *keyboard, const char *name) {
 	return keyboard != NULL && keyboard->xkb_state != NULL &&
 		xkb_state_mod_name_is_active(keyboard->xkb_state, name,
@@ -179,8 +195,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"time"
 	"unsafe"
 
+	"github.com/Nomadcxx/sysc-compositor/internal/a11y"
 	"github.com/Nomadcxx/sysc-compositor/internal/bind"
 	"github.com/Nomadcxx/sysc-compositor/internal/layout"
 )
@@ -473,6 +491,13 @@ func (c *Compositor) addKeyboard(kb *C.struct_wlr_keyboard) bool {
 	return bool(C.sysc_keyboard_group_join(c.keyboardGroup, kb))
 }
 
+// SetKeyboardMonitor routes the user seat's keys through an assistive
+// technology's grabs before anything else sees them. nil removes it. Call it
+// on the compositor thread.
+func (c *Compositor) SetKeyboardMonitor(monitor func(a11y.Key, time.Duration) a11y.Decision) {
+	c.keyboardMonitor = monitor
+}
+
 // handleKeyboardKey delivers a key from any keyboard to the user seat's focus.
 func (c *Compositor) handleKeyboardKey(data unsafe.Pointer) {
 	c.handleKeyboardKeyFrom(c.keyboard, c.suppressedKeys, data)
@@ -496,6 +521,9 @@ func (c *Compositor) handleKeyboardKeyFrom(keyboard *C.struct_wlr_keyboard, supp
 	keycode := uint32(event.keycode)
 	if keyboard == c.keyboard {
 		c.userActivity()
+		if c.keyboardMonitor != nil && c.a11yConsumedKey(keyboard, suppressed, event) {
+			return
+		}
 	}
 	if event.state == C.WL_KEYBOARD_KEY_STATE_PRESSED {
 		// Niri closes the hotkey overlay after the press is handled, so a
@@ -549,6 +577,36 @@ func (c *Compositor) handleKeyboardKeyFrom(keyboard *C.struct_wlr_keyboard, supp
 	// Typing into the focused window marks it recently used at once.
 	c.applyPendingWindowFocus()
 	c.forwardKeyboardKey(keyboard, event)
+}
+
+// a11yConsumedKey offers a user-seat key to the assistive technology's grabs
+// before VT switching, dialogs and binds see it, as Niri does. It reports
+// whether the grabs kept the key.
+func (c *Compositor) a11yConsumedKey(keyboard *C.struct_wlr_keyboard, suppressed map[uint32]bool,
+	event *C.struct_wlr_keyboard_key_event) bool {
+	var keysym, mods, unichar C.uint32_t
+	C.sysc_keyboard_a11y_key(keyboard, event.keycode, &keysym, &mods, &unichar)
+	key := a11y.Key{Time: time.Duration(event.time_msec) * time.Millisecond,
+		Released: event.state != C.WL_KEYBOARD_KEY_STATE_PRESSED, Mods: uint32(mods),
+		Keysym: uint32(keysym), Unichar: uint32(unichar), Keycode: uint16(event.keycode + 8)}
+	decision := c.keyboardMonitor(key, time.Duration(keyboard.repeat_info.delay)*time.Millisecond)
+	if decision == a11y.Pass {
+		return false
+	}
+	if decision == a11y.ModifierFirstPress {
+		// wlr_keyboard_notify_key reads this after its listeners return, so
+		// a single tap of the screen reader's modifier never reaches XKB.
+		event.update_state = false
+	}
+	// Niri also forwards grabbed modifier releases, because smithay lists
+	// grabbed keys as held in wl_keyboard.enter. The seat keyboard here holds
+	// only keys that reached a client, so a release goes where its press went.
+	if keycode := uint32(event.keycode); key.Released {
+		delete(suppressed, keycode)
+	} else {
+		suppressed[keycode] = true
+	}
+	return true
 }
 
 // keysymIs reports whether keycode is the named bind key on the user

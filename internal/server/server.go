@@ -32,6 +32,9 @@ type Server struct {
 	configWatcher *config.Watcher
 	sessionDBus   *session.DBus
 	screenSaver   *session.ScreenSaver
+	keyMonitor    *session.KeyboardMonitor
+	announcer     sessionAnnouncer
+	a11yWorkspace uint64
 	portal        *session.Portal
 	satellite     *x11.Satellite
 	localeXKB     *config.Keyboard
@@ -144,6 +147,11 @@ func (s *Server) refreshNiriState() {
 		focused = &copy
 	}
 	workspaces := toNiriWorkspaces(model)
+	if s.announcer != nil {
+		if text, ok := workspaceAnnouncement(workspaces, &s.a11yWorkspace); ok {
+			s.announcer.Announce(text)
+		}
+	}
 	layers := s.c.LayerSnapshot()
 	wireLayers := make([]ipc.LayerSurface, len(layers))
 	for i, layer := range layers {
@@ -500,6 +508,16 @@ func (s *Server) Destroy() {
 	if s.screenSaver != nil {
 		s.screenSaver.Close()
 		s.screenSaver = nil
+	}
+	if s.announcer != nil {
+		s.c.SetAnnouncer(nil)
+		s.announcer.Close()
+		s.announcer = nil
+	}
+	if s.keyMonitor != nil {
+		s.c.SetKeyboardMonitor(nil)
+		s.keyMonitor.Close()
+		s.keyMonitor = nil
 	}
 	if s.sessionDBus != nil {
 		s.sessionDBus.Close()
