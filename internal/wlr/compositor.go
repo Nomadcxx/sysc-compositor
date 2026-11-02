@@ -222,6 +222,7 @@ type Compositor struct {
 	pointerDevices          map[unsafe.Pointer]bool
 	pointerGestureListeners map[unsafe.Pointer][]*Listener
 	pointerSwipeStates      map[unsafe.Pointer]*pointerSwipeState
+	overviewScroll          *pointerSwipeState // the overview's touchpad scroll gesture, while it runs
 	switchToggleListeners   map[unsafe.Pointer]*Listener
 	switchToggle            func(SwitchToggle)
 	keyboardDevices         map[unsafe.Pointer]bool

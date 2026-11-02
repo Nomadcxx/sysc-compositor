@@ -934,9 +934,16 @@ func TestOverviewWheelSwitchesWorkspaceUnderPointer(t *testing.T) {
 			}
 			return client.InputEvents().PointerAxes
 		}
+		// Cooldowns run on the bind clock; step it with each wheel event.
+		var clock time.Duration
+		wheel := func(ms uint32, horizontal bool, v120 int32) {
+			clock = time.Duration(ms) * time.Millisecond
+			pointer.wheelAt(ms, horizontal, v120)
+		}
 		before := axes()
 		var first uint64
 		onCompositor(t, c, func() {
+			c.pointerBinds.now = func() time.Duration { return clock }
 			output := c.FocusedOutputName()
 			first = focusedWorkspaceID(c)
 			var next uint64
@@ -977,31 +984,31 @@ func TestOverviewWheelSwitchesWorkspaceUnderPointer(t *testing.T) {
 				return
 			}
 			keyboard.key(keyLeftShift, true)
-			pointer.wheelAt(1000, false, -120)
+			wheel(1000, false, -120)
 			keyboard.key(keyLeftShift, false)
 			if activeWindow() == 1000 {
 				t.Error("Shift+wheel up in the overview did not focus the previous column")
 			}
-			pointer.wheelAt(1010, true, 120)
+			wheel(1010, true, 120)
 			if activeWindow() != 1000 {
 				t.Error("a horizontal wheel right in the overview did not focus the next column")
 			}
-			pointer.wheelAt(1020, true, -120)
-			pointer.wheelAt(1030, true, 120)
-			pointer.wheelAt(1040, true, -120)
+			wheel(1020, true, -120)
+			wheel(1030, true, 120)
+			wheel(1040, true, -120)
 			if activeWindow() == 1000 {
 				t.Error("a horizontal wheel 20 ms after the last one did not run; it has no cooldown in Niri")
 			}
-			pointer.wheelAt(2000, false, 120)
+			wheel(2000, false, 120)
 			second := focusedWorkspaceID(c)
 			if second == first {
 				t.Error("a wheel down in the overview did not switch the workspace")
 			}
-			pointer.wheelAt(2030, false, 120)
+			wheel(2030, false, 120)
 			if focusedWorkspaceID(c) != second {
 				t.Error("a wheel down 30 ms after the last one ran inside Niri's 50 ms cooldown")
 			}
-			pointer.wheelAt(2100, false, 120)
+			wheel(2100, false, 120)
 			if focusedWorkspaceID(c) == second {
 				t.Error("a wheel down 100 ms after the last one did not run")
 			}
@@ -1014,10 +1021,110 @@ func TestOverviewWheelSwitchesWorkspaceUnderPointer(t *testing.T) {
 		}
 		onCompositor(t, c, func() {
 			pointer.moveTo(c.viewCenter(view))
-			pointer.wheelAt(3000, false, 120)
+			wheel(3000, false, 120)
 		})
 		if got := axes(); got == before {
 			t.Error("with the overview closed, a plain wheel never reached the window")
+		}
+	})
+}
+
+// TestOverviewTouchpadScrollSwipes: in the overview Niri makes a plain
+// touchpad or continuous scroll a swipe. A horizontal one moves the hovered
+// row's view; a vertical one switches the workspace, in sysc once per gesture,
+// until libinput's scroll stop. With a modifier held it is no gesture, and no
+// scroll reaches a window.
+func TestOverviewTouchpadScrollSwipes(t *testing.T) {
+	pointerBindHarness(t, "binds {}\n", func(c *Compositor, client *testclient.ToplevelClient,
+		pointer *fakePointer, keyboard *fakeKeyboard, _ *toplevelView) {
+		axes := func() int {
+			if err := client.SyncInput(); err != nil {
+				t.Error(err)
+			}
+			return client.InputEvents().PointerAxes
+		}
+		before := axes()
+		var first uint64
+		onCompositor(t, c, func() {
+			output := c.FocusedOutputName()
+			first = focusedWorkspaceID(c)
+			var next uint64
+			for _, workspace := range c.model.Snapshot().Workspaces {
+				if workspace.Output == output && !workspace.IsActive && len(workspace.WindowIDs) == 0 {
+					next = workspace.ID
+				}
+			}
+			if next == 0 || !c.model.MapWindowToWorkspace(2000, next) || !c.model.FocusWorkspaceID(first) {
+				t.Error("could not set up a second workspace")
+				return
+			}
+			// Columns wider than the output, so the view has room to scroll.
+			for id := uint64(1000); id < 1004; id++ {
+				if !c.model.MapWindow(id, output) {
+					t.Error("could not map more columns")
+					return
+				}
+			}
+			c.applyWorkspaceModel()
+			if !c.OpenOverview() {
+				t.Error("could not open the overview")
+				return
+			}
+			frame, ok := c.model.OverviewFrame(output, c.model.OverviewZoom(c.overviewConfig.Zoom))
+			var row layout.Bounds
+			for _, workspace := range frame.Workspaces {
+				if workspace.ID == first {
+					row = workspace.Bounds
+				}
+			}
+			if !ok || row.Height <= 0 {
+				t.Error("the active workspace has no overview row")
+				return
+			}
+			pointer.moveTo(float64(frame.Output.X+5), float64(row.Y+row.Height/2))
+
+			startX := windowPlacementX(c.model.Snapshot().Windows, 1003)
+			pointer.fingerScrollAt(1000, true, -10)
+			pointer.fingerScrollAt(1010, true, -10)
+			pointer.fingerScrollAt(1020, true, 0)
+			if windowPlacementX(c.model.Snapshot().Windows, 1003) == startX || focusedWorkspaceID(c) != first {
+				t.Error("a horizontal touchpad scroll did not move the hovered row's view, or switched the workspace")
+			}
+
+			pointer.fingerScrollAt(1100, false, 10)
+			pointer.fingerScrollAt(1110, false, 10)
+			second := focusedWorkspaceID(c)
+			if second == first {
+				t.Error("a vertical touchpad scroll down did not switch the workspace")
+			}
+			pointer.fingerScrollAt(1120, false, 10)
+			pointer.fingerScrollAt(1130, false, 10)
+			if focusedWorkspaceID(c) != second {
+				t.Error("one vertical touchpad gesture switched the workspace twice")
+			}
+			pointer.fingerScrollAt(1140, false, 0)
+			pointer.continuousScrollAt(1200, 10)
+			pointer.continuousScrollAt(1210, 10)
+			third := focusedWorkspaceID(c)
+			if third == second {
+				t.Error("a continuous scroll after the scroll stop did not switch the workspace again")
+			}
+			pointer.continuousScrollAt(1220, 0)
+
+			keyboard.key(keyLeftShift, true)
+			pointer.fingerScrollAt(1300, false, -10)
+			pointer.fingerScrollAt(1310, false, -10)
+			pointer.fingerScrollAt(1320, false, 0)
+			keyboard.key(keyLeftShift, false)
+			if focusedWorkspaceID(c) != third {
+				t.Error("a touchpad scroll with Shift held ran the overview gesture")
+			}
+			c.CloseOverview()
+			c.model.FocusWorkspaceID(first)
+			c.applyWorkspaceModel()
+		})
+		if got := axes(); got != before {
+			t.Errorf("the window got %d axis events from overview touchpad scrolls, want 0", got-before)
 		}
 	})
 }
@@ -1103,6 +1210,96 @@ func TestOverviewWheelOverTopLayerReachesTheLayer(t *testing.T) {
 	if !clicked.Load() || !stillOpen {
 		t.Errorf("a click over the bar in the overview: bar got it %v, overview still open %v; want both",
 			clicked.Load(), stillOpen)
+	}
+}
+
+// TestOverviewLayerPopupTakesThePointer: a bar's menu is an xdg popup of its
+// layer surface, and in the overview it is as live as the bar (Niri's
+// find_root_shell_surface): a wheel and a click over it are the popup's, and
+// the click gives the bar its on-demand keyboard focus.
+func TestOverviewLayerPopupTakesThePointer(t *testing.T) {
+	c := newNested(t)
+	watchdog := time.AfterFunc(15*time.Second, c.Terminate)
+	t.Cleanup(func() { watchdog.Stop() })
+	go func() {
+		defer c.Terminate()
+		var pointer *fakePointer
+		// The pointer exists before the client starts, so it binds a wl_pointer.
+		onCompositor(t, c, func() { pointer = c.addFakePointer() })
+		defer onCompositor(t, c, func() { pointer.remove() })
+		client, err := testclient.StartLayerPopupClient(c.SocketName())
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer client.Close()
+		var first uint64
+		var bar *layerSurface
+		onCompositor(t, c, func() {
+			placed := mappedOn(c.layerPlacements(), layerTop)
+			if placed == nil {
+				t.Error("the bar never mapped on the top layer")
+				return
+			}
+			output := c.FocusedOutputName()
+			first = focusedWorkspaceID(c)
+			if !c.model.MapWindow(1000, output) || !c.model.FocusWorkspaceID(first) {
+				t.Error("could not map a window to make a second workspace")
+				return
+			}
+			c.applyWorkspaceModel()
+			if !c.OpenOverview() {
+				t.Error("could not open the overview")
+				return
+			}
+			// The popup hangs 120x80 from the bar's bottom-left corner.
+			x, y := float64(placed.box.x+60), float64(placed.box.y+placed.box.h+40)
+			surface, _, _ := c.surfaceAt(x, y)
+			bar = c.layerSurfaceForSurface(surface)
+			if surface == nil || bar == nil || unsafe.Pointer(surface) == unsafe.Pointer(bar.surface.surface) {
+				t.Errorf("the surface under the popup's place is not a popup of the bar (layer found %v)", bar != nil)
+				return
+			}
+			pointer.moveTo(x, y)
+		})
+		if t.Failed() {
+			return
+		}
+		if !client.WaitPopupEnter(2 * time.Second) {
+			t.Error("the pointer never entered the bar's popup in the overview")
+			return
+		}
+		var after uint64
+		var stillOpen bool
+		var focused *layerSurface
+		onCompositor(t, c, func() {
+			pointer.wheelAt(1000, false, 120)
+			pointer.button(buttonLeft, true)
+			pointer.button(buttonLeft, false)
+			after = focusedWorkspaceID(c)
+			stillOpen = c.model.OverviewOpen()
+			focused = c.onDemandLayerFocus
+			c.CloseOverview()
+		})
+		if err := client.Sync(); err != nil {
+			t.Error(err)
+			return
+		}
+		if got := client.PopupInput(); got.Axes == 0 || got.Buttons != 2 {
+			t.Errorf("the popup got %d axis and %d button events, want some and 2", got.Axes, got.Buttons)
+		}
+		if after != first {
+			t.Error("a wheel over the popup in the overview switched the workspace")
+		}
+		if !stillOpen {
+			t.Error("a click on the popup closed the overview")
+		}
+		if focused != bar {
+			t.Error("a click on the popup did not give its on-demand bar the keyboard")
+		}
+	}()
+	if err := c.Run(); err != nil {
+		t.Fatal(err)
 	}
 }
 

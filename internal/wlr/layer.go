@@ -201,12 +201,13 @@ func (c *Compositor) layerSurfaceTree(surface *C.struct_wlr_surface) *C.struct_w
 	return nil
 }
 
+// layerSurfaceForSurface is the layer surface a surface, subsurface or popup
+// belongs to, or nil.
 func (c *Compositor) layerSurfaceForSurface(surface *C.struct_wlr_surface) *layerSurface {
 	if surface == nil {
 		return nil
 	}
-	root := C.wlr_surface_get_root_surface(surface)
-	return c.layerSurfaces[unsafe.Pointer(root)]
+	return c.layerSurfaces[unsafe.Pointer(shellSurface(surface))]
 }
 
 // handleNewLayerSurface gives a layer surface an output, when the client left

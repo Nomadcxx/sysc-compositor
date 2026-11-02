@@ -258,11 +258,17 @@ func (c *Compositor) viewForSurface(surface *C.struct_wlr_surface) *toplevelView
 	if surface == nil {
 		return nil
 	}
-	toplevel := C.wlr_xdg_toplevel_try_from_wlr_surface(C.sysc_window_surface(surface))
+	toplevel := C.wlr_xdg_toplevel_try_from_wlr_surface(shellSurface(surface))
 	if toplevel == nil {
 		return nil
 	}
 	return c.views[unsafe.Pointer(toplevel)]
+}
+
+// shellSurface is the toplevel or layer surface a surface, subsurface or
+// popup belongs to: Niri's find_root_shell_surface.
+func shellSurface(surface *C.struct_wlr_surface) *C.struct_wlr_surface {
+	return C.sysc_window_surface(surface)
 }
 
 // applyFullscreen answers a toplevel's fullscreen request. Fullscreen covers

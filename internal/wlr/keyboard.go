@@ -624,7 +624,7 @@ func keysymMatches(kb *C.struct_wlr_keyboard, keycode uint32, name string) bool 
 
 func (c *Compositor) dispatchKeyBinding(keycode uint32) (bind.Binding, bool) {
 	binding, ok := c.matchKeyBinding(keycode)
-	if ok && !c.bindCoolingDown(binding, uint32(nowMsec())) {
+	if ok && !c.bindCoolingDown(binding) {
 		c.executeKeyBinding(binding)
 	}
 	return binding, ok
@@ -711,7 +711,7 @@ func (c *Compositor) handleKeyboardRepeat() {
 	if source == nil {
 		return
 	}
-	if !c.bindCoolingDown(c.keyboardRepeatBinding, uint32(nowMsec())) {
+	if !c.bindCoolingDown(c.keyboardRepeatBinding) {
 		c.executeKeyBinding(c.keyboardRepeatBinding)
 	}
 	if c.keyboardRepeatSource == source && C.wl_event_source_timer_update(source, C.int(c.keyboardRepeatInterval)) < 0 {

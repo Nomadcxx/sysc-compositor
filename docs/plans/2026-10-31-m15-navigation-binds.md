@@ -623,4 +623,71 @@ The VM's virtio tablet reports only `REL_WHEEL`, so it cannot send a horizontal 
   scroll in the overview reaches nothing.
 - Popups of top and overlay layer surfaces do not take the pointer in the overview.
 
+Both are built in the addendum below.
+
+## Addendum, 2026-11-02: overview input follow-up
+
+The owner asked for the two deferred items, and for part 1's rulings to be checked against Mango
+and Hyprland. Branch `feat/sysc-1280-m15-overview-input-20261101`; the steps are in
+[the handover](2026-11-02-m15-overview-input-handover.md).
+
+**Rulings against Mango and Hyprland.** One changed. Bind cooldowns now run on the compositor's
+monotonic clock for keys, wheels and mouse binds, not on event timestamps (`ef3afe9`). Niri times a
+cooldown with its own timer, and Hyprland's `binds:scroll_event_delay` is a wall-clock timer too. A
+virtual pointer that stamps every event alike left a bind stuck in its cooldown
+(`TestWheelCooldownIgnoresEventTimestamps`). The other rulings stand; the handover has the table.
+
+**Layer popups in the overview** (`e6b1e2a`). A popup is not a subsurface, so the root-surface
+lookup never mapped a bar's menu to its layer. In the overview the menu lost the pointer. Outside
+it, a click on the menu cleared the bar's on-demand keyboard focus. `layerSurfaceForSurface` now
+walks popup parents through `shellSurface`, which the window lookup already used. That is Niri's
+`find_root_shell_surface`. `TestOverviewLayerPopupTakesThePointer` uses a new hand-written client,
+`testclient.LayerPopupClient`: a top-layer bar with on-demand keyboard and an xdg popup. In the
+overview, a wheel and a click on the popup reach it. The overview stays open, the workspace does
+not change, and the bar takes the keyboard. The client binds layer-shell v4, not v1, because
+on-demand keyboard needs v4.
+
+**Overview touchpad scroll** (`208581f`). This is Niri's `overview_scroll_swipe_gesture`. In the
+overview, with no modifiers held and the pointer off layer surfaces, a finger or continuous scroll
+is a gesture and reaches no bind or client. sysc feeds it through the 3-finger swipe; the swipe's
+update is now `workspaceSwipe`, and its aim is `aimWorkspaceSwipe`. A horizontal scroll moves the
+view of the row under the pointer. A vertical scroll switches the workspace. A zero delta,
+libinput's scroll stop, ends the gesture. So does any scroll outside those conditions, and that
+scroll then goes on to binds and clients. Continuous scrolls now also count as touchpad scrolls
+for `TouchpadScroll*` binds, as in Niri. `TestOverviewTouchpadScrollSwipes` covers the horizontal
+view move, one switch per vertical gesture, a second switch after the scroll stop (from a
+continuous source), no gesture with Shift held, and no axis reaching the window.
+
+**Rulings.**
+- The axis is chosen by the swipe's 16 px threshold, not by Niri's "first event decides".
+- The vertical switch is discrete, once per gesture, as sysc's 3-finger swipe is. Niri's
+  `workspace_switch_gesture` follows the fingers. That gap predates this work.
+- Niri reads a positive scroll as down or right. The 3-finger swipe reads a positive dx as right
+  but a positive dy as up, so the vertical scroll delta is flipped before it reaches the swipe.
+- Found, not fixed: sysc applies no libinput settings, so touchpad `natural-scroll` (on in Niri's
+  default config) is never set. The 3-finger swipe's two axes also assume opposite settings. With
+  natural scrolling on, Niri's horizontal swipe moves the view the other way from sysc's.
+
+**Tests.** `TestOverviewLayerPopupTakesThePointer` and `TestOverviewTouchpadScrollSwipes` failed
+before their code, and pass. The touchpad test's RED run had the gesture call disabled in the
+laptop copy. These nested tests also pass on the laptop, one per command:
+- `TestTouchpadScrollBindsUseFingerTicks` and `TestPointerGesturesAndHotCornerDriveOverviewOnCompositorThread`;
+- `TestOverviewWheelOverTopLayerReachesTheLayer` and `TestOverviewWheelSwitchesWorkspaceUnderPointer`;
+- `TestOverviewHeldButtonKeepsWindowsUnfocused` and `TestLayerKeyboardFocusKeepsWindowActionsAndSnapshot`;
+- `TestWheelBindsInterceptOnlyBoundModifiers`, `TestMouseBindSuppressesItsRelease` and `TestWheelCooldownIgnoresEventTimestamps`;
+- `TestExclusiveZoneShrinksUsableArea` and `TestNavigationBindsDriveTheCompositor`.
+
+**VM check.** The session VM ran this branch at `208581f`, installed as
+`/usr/local/bin/sysc-compositor`, with a greetd login through sysc-greet. The part 1 build it
+replaced was not kept; `sysc-compositor.pre-m15-20261031` is still there. waybar 0.15 ran a
+custom module with `"menu": "on-click"`; its first item touches a marker file
+([config](assets/2026-11-02-m15-overview-input/waybar-menu-config.txt)). A foot window was open,
+and the overview was opened over IPC. A QMP click on the module opened the menu in the overview
+([menu](assets/2026-11-02-m15-overview-input/overview-layer-menu.png)). A click on the first item
+created the file, and `overview-state` stayed open
+([after](assets/2026-11-02-m15-overview-input/overview-after-menu-item.png)). In an earlier
+attempt, on an empty workspace, the first click on the module after Escape had closed the menu
+outside the overview showed nothing, and the second opened it; the item click passed the same
+way. QMP's tablet cannot send a finger scroll, so the touchpad gesture is proved by test only.
+
 Part 2 (sizing) is next.

@@ -27,9 +27,15 @@ const (
 // buttons whose press ran a bind, as Niri keeps them in State.
 type pointerBindState struct {
 	wheel, finger [2]scrollTracker // [vertical, horizontal]
-	cooldowns     map[bind.Chord]uint32
+	cooldowns     map[bind.Chord]time.Duration
 	suppressed    map[uint32]bool
+	// now is the clock cooldowns run on; nil is the monotonic clock. Tests
+	// replace it.
+	now func() time.Duration
 }
+
+// bindClockStart anchors the monotonic clock bind cooldowns are measured on.
+var bindClockStart = time.Now()
 
 // mouseTrigger is Niri's trigger for an evdev button code, or "".
 func mouseTrigger(button uint32) string {
@@ -80,27 +86,31 @@ func (c *Compositor) matchTriggerBinding(trigger string, modifiers bind.Modifier
 	return bind.Binding{}, false
 }
 
-// bindCoolingDown reports whether binding ran less than its cooldown before
-// timeMsec, and otherwise starts a new cooldown, as Niri's handle_bind.
-// Times are one input source's milliseconds, so each chord compares like
-// with like.
-func (c *Compositor) bindCoolingDown(binding bind.Binding, timeMsec uint32) bool {
+// bindCoolingDown reports whether binding ran less than its cooldown ago, and
+// otherwise starts a new cooldown, as Niri's handle_bind. Like Niri's timer,
+// it runs on the compositor's monotonic clock, not on event timestamps, which
+// a virtual device may stamp as it likes.
+func (c *Compositor) bindCoolingDown(binding bind.Binding) bool {
 	if binding.Cooldown <= 0 {
 		return false
 	}
-	if last, ok := c.pointerBinds.cooldowns[binding.Chord]; ok && timeMsec-last < uint32(binding.Cooldown.Milliseconds()) {
+	now := time.Since(bindClockStart)
+	if c.pointerBinds.now != nil {
+		now = c.pointerBinds.now()
+	}
+	if last, ok := c.pointerBinds.cooldowns[binding.Chord]; ok && now-last < binding.Cooldown {
 		return true
 	}
 	if c.pointerBinds.cooldowns == nil {
-		c.pointerBinds.cooldowns = map[bind.Chord]uint32{}
+		c.pointerBinds.cooldowns = map[bind.Chord]time.Duration{}
 	}
-	c.pointerBinds.cooldowns[binding.Chord] = timeMsec
+	c.pointerBinds.cooldowns[binding.Chord] = now
 	return false
 }
 
-func (c *Compositor) runTriggerBinding(trigger string, modifiers bind.Modifiers, timeMsec uint32) {
+func (c *Compositor) runTriggerBinding(trigger string, modifiers bind.Modifiers) {
 	binding, ok := c.matchTriggerBinding(trigger, modifiers)
-	if ok && !c.bindCoolingDown(binding, timeMsec) {
+	if ok && !c.bindCoolingDown(binding) {
 		c.executeKeyBinding(binding)
 	}
 }
@@ -152,7 +162,7 @@ func (c *Compositor) overviewWheelBind(trigger string, modifiers bind.Modifiers)
 // the overview every wheel is the compositor's unless the pointer is on a
 // layer surface, and the built-in overview binds come before configured
 // ones.
-func (c *Compositor) scrollBinds(wheel, finger, horizontal bool, delta float64, v120 int32, timeMsec uint32) bool {
+func (c *Compositor) scrollBinds(wheel, finger, horizontal bool, delta float64, v120 int32) bool {
 	state := &c.pointerBinds
 	trackers, triggers, tick, amount := &state.wheel, wheelTriggers, float64(wheelTick), float64(v120)
 	switch {
@@ -179,13 +189,13 @@ func (c *Compositor) scrollBinds(wheel, finger, horizontal bool, delta float64, 
 	run := func(trigger string) {
 		if inOverview {
 			if binding, action, ok := c.overviewWheelBind(trigger, modifiers); ok {
-				if !c.bindCoolingDown(binding, timeMsec) {
+				if !c.bindCoolingDown(binding) {
 					c.applyWorkspaceFocusAction(action)
 				}
 				return
 			}
 		}
-		c.runTriggerBinding(trigger, modifiers, timeMsec)
+		c.runTriggerBinding(trigger, modifiers)
 	}
 	ticks := trackers[axis].accumulate(amount)
 	for ; ticks > 0; ticks-- {
@@ -199,7 +209,7 @@ func (c *Compositor) scrollBinds(wheel, finger, horizontal bool, delta float64, 
 
 // mouseBinds is Niri's on_pointer_button bind branch: a press that runs a
 // bind is the bind's, and so is its release.
-func (c *Compositor) mouseBinds(button uint32, pressed bool, timeMsec uint32) bool {
+func (c *Compositor) mouseBinds(button uint32, pressed bool) bool {
 	state := &c.pointerBinds
 	if !pressed {
 		if state.suppressed[button] {
@@ -221,7 +231,7 @@ func (c *Compositor) mouseBinds(button uint32, pressed bool, timeMsec uint32) bo
 		state.suppressed = map[uint32]bool{}
 	}
 	state.suppressed[button] = true
-	if !c.bindCoolingDown(binding, timeMsec) {
+	if !c.bindCoolingDown(binding) {
 		c.executeKeyBinding(binding)
 	}
 	return true
