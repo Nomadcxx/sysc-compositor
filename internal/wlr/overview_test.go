@@ -1083,6 +1083,7 @@ func TestOverviewTouchpadScrollSwipes(t *testing.T) {
 			}
 			pointer.moveTo(float64(frame.Output.X+5), float64(row.Y+row.Height/2))
 
+			t.Logf("overview scroll fixture: modifiers=%#x overview-open=%t progress=%.3f output=%q hovered-workspace=%d active-workspace=%d", c.activeBindModifiers(), c.model.OverviewOpen(), c.model.OverviewProgress(), output, c.workspaceUnderGesture(output), focusedWorkspaceID(c))
 			startX := windowPlacementX(c.model.Snapshot().Windows, 1003)
 			pointer.fingerScrollAt(1000, true, -10)
 			pointer.fingerScrollAt(1010, true, -10)
