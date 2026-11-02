@@ -7,7 +7,7 @@ export CGO_CFLAGS_ALLOW="${CGO_CFLAGS_ALLOW:--fno-strict-overflow}"
 
 pacman -Syu --noconfirm --needed git gcc pkgconf go wlroots0.20 scenefx wayland \
 	wayland-protocols libxkbcommon xkeyboard-config mesa seatd dbus adwaita-cursors \
-	weston wayland-utils foot swaybg waybar wofi ttf-dejavu grim wl-clipboard libpipewire pipewire \
+	weston wayland-utils foot swaybg waybar wofi ttf-dejavu grim wl-clipboard libpipewire pipewire libinput \
 	xwayland-satellite xorg-xmessage >/dev/null
 git config --global --add safe.directory "$PWD"
 install -d -m 0700 "$XDG_RUNTIME_DIR"

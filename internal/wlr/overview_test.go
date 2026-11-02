@@ -529,7 +529,7 @@ func TestPointerGesturesAndHotCornerDriveOverviewOnCompositorThread(t *testing.T
 			t.Error("three-finger horizontal swipe did not scroll the active workspace")
 		}
 		pointer.swipeBegin(3)
-		pointer.swipeUpdate(3, 0, -16)
+		pointer.swipeUpdate(3, 0, 16)
 		pointer.swipeEnd(false)
 		activeChanged := false
 		for _, workspace := range c.model.Snapshot().Workspaces {

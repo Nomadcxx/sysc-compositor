@@ -220,6 +220,8 @@ type Compositor struct {
 	popups                  map[*C.struct_wlr_xdg_popup]struct{}
 	views                   map[unsafe.Pointer]*toplevelView
 	pointerDevices          map[unsafe.Pointer]bool
+	pointerKinds            map[unsafe.Pointer]pointerKind
+	pointers                config.Pointers
 	pointerGestureListeners map[unsafe.Pointer][]*Listener
 	pointerSwipeStates      map[unsafe.Pointer]*pointerSwipeState
 	overviewScroll          *pointerSwipeState // the overview's touchpad scroll gesture, while it runs
@@ -371,6 +373,7 @@ type Options struct {
 	Animations   config.Animations
 	Blur         config.Blur
 	Tablet       config.Tablet
+	Pointers     config.Pointers
 	PreferNoCSD  bool
 	// ScreenshotPath is the screenshot-path pattern, nil for clipboard only.
 	ScreenshotPath *string
@@ -420,6 +423,7 @@ func NewWith(opts Options) (*Compositor, error) {
 	}()
 	c.overviewConfig = opts.Overview
 	c.tabletConfig = opts.Tablet
+	c.pointers = opts.Pointers
 	c.animationConfig = opts.Animations
 	c.blurConfig = opts.Blur
 	c.screenshotPattern = opts.ScreenshotPath
@@ -700,6 +704,7 @@ func (c *Compositor) Reconfigure(opts Options) error {
 	c.layoutOptions = *opts.Layout
 	c.overviewConfig = opts.Overview
 	c.setTabletConfig(opts.Tablet)
+	c.setPointerConfig(opts.Pointers)
 	c.animationConfig = opts.Animations
 	c.screenshotPattern = opts.ScreenshotPath
 	c.configureSwitcher(*opts.RecentWindows)
@@ -886,6 +891,7 @@ func (c *Compositor) Destroy() {
 	c.popups = nil
 	c.views = nil
 	c.pointerDevices = nil
+	c.pointerKinds = nil
 	c.keyboardDevices = nil
 	c.suppressedKeys = nil
 	c.keyboardRoutes = nil
