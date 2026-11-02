@@ -34,13 +34,13 @@ type Lifecycle struct {
 
 func Activate(environment Environment) (*Lifecycle, error) {
 	if environment.WaylandDisplay == "" || environment.NiriSocket == "" || environment.SyscSocket == "" {
-		return nil, fmt.Errorf("session: Wayland, Niri, and sysc sockets must all be available")
+		return nil, fmt.Errorf("session: Wayland, IPC, and control sockets must all be available")
 	}
 	values := []struct{ key, value string }{
 		{"WAYLAND_DISPLAY", environment.WaylandDisplay},
 		{"NIRI_SOCKET", environment.NiriSocket},
 		{"SYSC_SOCKET", environment.SyscSocket},
-		{"XDG_CURRENT_DESKTOP", "niri:sysc"},
+		{"XDG_CURRENT_DESKTOP", "sysc"},
 		{"XDG_SESSION_TYPE", "wayland"},
 		// An empty value clears an inherited host display in process,
 		// systemd and D-Bus environments when satellite is unavailable.

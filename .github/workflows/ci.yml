@@ -18,7 +18,7 @@ env:
   CGO_CFLAGS_ALLOW: "-fno-strict-overflow"
 
 jobs:
-  # Lane 1 needs no display: static checks, both builds, and the tests of every
+  # Lane 1 needs no display: static checks, the build, and the tests of every
   # package that never builds a compositor.
   check:
     runs-on: ubuntu-latest
@@ -38,7 +38,7 @@ jobs:
       - name: vet
         run: go vet -p 2 ./...
       - name: build
-        run: go build ./cmd/sysc-compositor ./cmd/niri
+        run: go build ./cmd/sysc-compositor
       - name: go.mod and go.sum unchanged
         run: git diff --exit-code -- go.mod go.sum
       - name: test packages without a compositor

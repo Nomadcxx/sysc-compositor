@@ -507,7 +507,7 @@ func TestUsageLeadsWithSyscCompositorAndNamesTheNiriAlias(t *testing.T) {
 			t.Errorf("%s usage %q does not lead with sysc-compositor", name, out)
 		}
 		alias := strings.Contains(out, "niri is a compatibility alias of sysc-compositor")
-		if alias != (name == "niri") {
+		if alias {
 			t.Errorf("%s usage %q: alias note present = %v", name, out, alias)
 		}
 	}

@@ -84,7 +84,7 @@ func New(load config.LoadResult, path config.Path, configLoadFailed bool) (*Serv
 	if err := s.startNiri(); err != nil {
 		// Without it, `niri msg` cannot reach this compositor; clients
 		// still can.
-		os.Stderr.WriteString("sysc-compositor: niri socket: " + err.Error() + "\n")
+		os.Stderr.WriteString("sysc-compositor: ipc socket: " + err.Error() + "\n")
 	}
 	if watched := s.watchedConfigs(s.configSources); len(watched) != 0 {
 		watcher, watchErr := config.NewWatcher(watched)
@@ -204,7 +204,7 @@ func niriWindowOutputName(windowOutput, focusedOutput string, outputs map[string
 }
 
 func (s *Server) startNiri() error {
-	path, err := niriSocketPath(os.Getenv("XDG_RUNTIME_DIR"), s.c.SocketName(), os.Getpid())
+	path, err := ipcSocketPath(os.Getenv("XDG_RUNTIME_DIR"), s.c.SocketName(), os.Getpid())
 	if err != nil {
 		return err
 	}

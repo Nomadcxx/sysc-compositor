@@ -193,7 +193,7 @@ func TestScreenCastDepartureCancelsPendingStart(t *testing.T) {
 	if err := other.Object(introspectName, introspectPath).Call(introspectName+".GetWindows", 0).Store(&windows); err != nil {
 		t.Fatal(err)
 	}
-	if windows[900]["title"].Value() != "niri Dynamic Cast Target" || windows[900]["app-id"].Value() != "rs.bxt.niri.desktop" {
+	if windows[900]["title"].Value() != "sysc-compositor Dynamic Cast Target" || windows[900]["app-id"].Value() != "sysc-compositor" {
 		t.Fatal("missing dynamic target")
 	}
 	var stream dbus.ObjectPath

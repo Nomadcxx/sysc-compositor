@@ -200,8 +200,11 @@ func TestAnnouncementsReachAnATSPIListener(t *testing.T) {
 		}
 		return v.Value()
 	}
-	if got := property(rootPath, "org.a11y.atspi.Application", "ToolkitName"); got != "niri" {
-		t.Errorf("ToolkitName = %v, want niri", got)
+	if got := property(rootPath, "org.a11y.atspi.Application", "ToolkitName"); got != "sysc-compositor" {
+		t.Errorf("ToolkitName = %v, want sysc-compositor", got)
+	}
+	if got := property(rootPath, "org.a11y.atspi.Accessible", "Name"); got != "sysc-compositor" {
+		t.Errorf("Name = %v, want sysc-compositor", got)
 	}
 	if err := object(rootPath).SetProperty("org.a11y.atspi.Application.Id", dbus.MakeVariant(int32(7))); err != nil {
 		t.Errorf("the registry could not set the application Id: %v", err)

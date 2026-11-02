@@ -967,14 +967,14 @@ func TestLoadRejectsRecursiveIncludes(t *testing.T) {
 
 func TestLocate(t *testing.T) {
 	dir := t.TempDir()
-	user := filepath.Join(dir, "niri", "config.kdl")
+	user := filepath.Join(dir, "sysc-compositor", "config.kdl")
 	env := map[string]string{"XDG_CONFIG_HOME": dir, "HOME": "/nonexistent"}
 	getenv := func(k string) string { return env[k] }
 	search := Locate("", getenv)
-	if want := []string{user, "/etc/niri/config.kdl"}; !reflect.DeepEqual(search.Search, want) || search.Named != "" {
+	if want := []string{user, "/etc/sysc-compositor/config.kdl"}; !reflect.DeepEqual(search.Search, want) || search.Named != "" {
 		t.Fatalf("search: %+v, want %q", search, want)
 	}
-	if got := search.Resolve(); got != "" && got != "/etc/niri/config.kdl" {
+	if got := search.Resolve(); got != "" && got != "/etc/sysc-compositor/config.kdl" {
 		t.Errorf("no user config: %q", got)
 	}
 	if err := os.MkdirAll(filepath.Dir(user), 0o755); err != nil {
@@ -987,9 +987,9 @@ func TestLocate(t *testing.T) {
 	if got := search.Resolve(); got != user {
 		t.Errorf("user config: %q, want %q", got, user)
 	}
-	env["NIRI_CONFIG"] = "/from/env.kdl"
+	env["SYSC_COMPOSITOR_CONFIG"] = "/from/env.kdl"
 	if got := Locate("", getenv); got.Resolve() != "/from/env.kdl" || got.Search != nil {
-		t.Errorf("NIRI_CONFIG: %+v", got)
+		t.Errorf("SYSC_COMPOSITOR_CONFIG: %+v", got)
 	}
 	if got := Locate("/from/flag.kdl", getenv); got.Resolve() != "/from/flag.kdl" || got.Search != nil {
 		t.Errorf("-c: %+v", got)

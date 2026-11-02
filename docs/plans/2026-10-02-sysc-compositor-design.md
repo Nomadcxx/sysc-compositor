@@ -1,6 +1,6 @@
 # sysc-compositor design
 
-The compositor for the sysc desktop. **Go + cgo only** (no `.c` / `.h` in this tree), wlroots 0.20. **Niri parity** is the product contract: same scrollable-tiling model, same KDL config, same JSON IPC, same CLI, same portals and a11y surfaces, so sysc-shell, sysc-greet, sysc-launch, and an existing `~/.config/niri/config.kdl` keep working.
+The compositor for the sysc desktop. **Go + cgo only** (no `.c` / `.h` in this tree), wlroots 0.20. Niri 26.04 supplies the behaviour target and compatible KDL and niri-ipc contracts. sysc-compositor has its own commands, config paths, session identity and license (owner decision 2026-11-02).
 
 sysc owns the rest of the pipeline (greeter, shell, wallpaper, notify, tray, clipboard, launch, wayland client). This repo is the compositor those pieces sit on.
 
@@ -30,11 +30,14 @@ Implementation map: [orchestration](2026-10-02-orchestration.md). Remaining-work
 | TUI animations | sysc-Go |
 | Compositor | **this repo** |
 
-`XDG_CURRENT_DESKTOP` is **`niri:sysc`** (niri first so `xdg-desktop-portal-gnome` still matches; sysc second so we own identity). Portal config ships `niri-portals.conf` *and* `sysc-portals.conf` pointing at gnome + gtk, same as a niri session.
+**Identity (owner decision 2026-11-02).** `XDG_CURRENT_DESKTOP=sysc`. The compositor ships
+`sysc-portals.conf`, selecting GNOME for ScreenCast and Screenshot and GTK as the default.
+The compatible IPC path remains in `NIRI_SOCKET`; its filename is
+`sysc-compositor.<display>.<pid>.sock`. `SYSC_SOCKET` remains the separate control socket.
 
-`$NIRI_SOCKET` is the compositor IPC path (niri’s env name, our process). `$SYSC_SOCKET` is the same inode.
-
-The CLI is `sysc-compositor` (`cmd/sysc-compositor`): `sysc-compositor msg`, `sysc-compositor validate`, `sysc-compositor -c`, `sysc-compositor --session`. A `niri` binary in this repo (`cmd/niri`) is a compatibility alias with the same arguments, and the drop-in for greetd (`niri -c /etc/greetd/niri-greeter-config.kdl`) and sysc-launch (`LookPath("niri")`). The compositor process can be `sysc-compositor` or `niri` (symlink).
+The installed command is `sysc-compositor`, with `msg`, `validate`, `-c` and `--session`.
+`sysc-compositor-session` starts its systemd session. The package installs no `niri` alias.
+Sibling launchers use IPC and the greeter selects its own sysc-compositor config.
 
 **Definition of done (parity):** this machine’s `~/.config/niri/config.kdl` (including `sysc-shell.kdl`) loads, live-reloads, and drives a session that sysc-shell, greeter, Steam/X11 via xwayland-satellite, OBS via gnome portal, and Orca can use without niri installed.
 
@@ -166,17 +169,19 @@ Do not import mango tags or mango’s 14 layouts.
 
 ---
 
-## 4. Config: niri KDL
+## 4. Config (Niri-compatible KDL)
 
-**Parse niri KDL.** No private TOML as the user-facing format. Paths, flags, and live-reload match niri:
+**Config lookup (owner decision 2026-11-02).** Keep Niri-compatible KDL and live reload:
 
-- `$XDG_CONFIG_HOME/niri/config.kdl` → `~/.config/niri/config.kdl` → `/etc/niri/config.kdl`
-- `-c` / `--config` and `$NIRI_CONFIG` with niri’s empty-string rule
-- `include "file.kdl"` positional merge (niri 25.11 rules: binds override, window-rule inserted at include site, some sections do not merge)
-- live-reload on save (inotify), including output mode, binds, window-rule
-- `niri validate` parses and prints errors; `ConfigLoaded { failed }` event
-- `LoadConfigFile` IPC action
-- missing user config: write the embedded default (we ship niri’s default as the seed, then can add sysc spawn lines)
+- `-c` / `--config`, then `$SYSC_COMPOSITOR_CONFIG`;
+- `$XDG_CONFIG_HOME/sysc-compositor/config.kdl` (an absolute XDG path), otherwise
+  `~/.config/sysc-compositor/config.kdl`, then `/etc/sysc-compositor/config.kdl`;
+- on the first unnamed start, copy an existing Niri user config and its relative includes once,
+  preserving existing targets; otherwise write the embedded sysc-compositor default;
+- `include "file.kdl"` keeps positional merge and section replacement semantics;
+- live reload on save, `sysc-compositor validate`, and `LoadConfigFile` IPC remain supported;
+- config/import errors report the cause and keep the session on built-in defaults;
+- binds or startup commands that run `niri` warn that `sysc-compositor msg` is available.
 
 Sections that must parse (niri wiki):
 
@@ -210,7 +215,9 @@ Parser is pure Go (`internal/config`). Use a KDL library if one exists that matc
 
 ---
 
-## 5. IPC: complete niri-ipc 26.4.0
+## 5. IPC (niri-ipc 26.4.0 compatible)
+
+Wire compatibility stays unchanged (owner decision 2026-11-02).
 
 Unix socket, one JSON value per line. EventStream dumps full state first, then deltas.
 
@@ -258,9 +265,9 @@ Grouped for implementation (not for dropping):
 
 ---
 
-## 6. CLI (`cmd/sysc-compositor`, alias `cmd/niri`)
+## 6. CLI (`cmd/sysc-compositor`)
 
-Match niri’s user-facing CLI well enough that scripts and docs keep working:
+Keep the compatible request vocabulary under the sysc-compositor command (owner decision 2026-11-02):
 
 - no args / `--session`: start compositor (session imports env and notifies systemd; `sysc-compositor-session` runs it as `sysc-compositor.service`, which binds graphical-session.target)
 - `-c` / `--config`
@@ -273,9 +280,10 @@ Match niri’s user-facing CLI well enough that scripts and docs keep working:
 - `sysc-compositor msg --print-request` / `raw-request` if present in 26.04
 - `-v` / version string (sysc-compositor version + “niri-ipc 26.4.0 compatible”)
 
-**Naming (owner decision 2026-10-22).** `sysc-compositor msg` and `sysc-compositor validate` are the official commands; docs, help text and new scripts use them. `niri` is a compatibility alias with the same flags and JSON, kept so the greeter config and older scripts work unmodified. The niri-ipc wire contract does not change. Later steps: the suite installer's `sysc` passes `msg` and `validate` through (bd `sysc-1633`, installer repo), then `cmd/niri` retires once no sibling invokes `niri` (`sysc-1634`).
-
-sysc-greet’s `niri msg action quit --skip-confirmation` and sysc-launch’s `{compositor} msg action spawn -- …` are the first two CLI tests.
+**Naming (owner decision 2026-11-02).** `sysc-compositor msg` and `sysc-compositor validate`
+are the installed commands. The `niri` alias is removed after the sibling launchers and greeter
+switch to IPC. The wire contract and `NIRI_SOCKET` remain compatible. The suite installer's
+`sysc msg` forwarding is separate work (`sysc-1633`).
 
 ---
 
@@ -385,24 +393,23 @@ Nested / TTY-without-session: do not export a11y names (niri rule, avoid fightin
 
 ```
 sysc-compositor --session      # user session: env import, graphical-session.target
-niri -c /etc/greetd/niri-greeter-config.kdl   # greeter (alias, so sysc-greet's file runs unmodified)
+sysc-compositor -c /etc/greetd/sysc-compositor-greeter-config.kdl  # greeter
 sysc-compositor validate
 sysc-compositor msg …
 ```
 
-Greeter kdl (already in sysc-greet): empty binds, animations off, spawn wallpaper + kitty, then `niri msg action quit --skip-confirmation`. That file must work unmodified.
+Greeter config (owner decision 2026-11-02): sysc-greet installs a separate sysc-compositor file with its own command names. Its Niri backend keeps its existing config.
 
-Session: import `WAYLAND_DISPLAY`, `NIRI_SOCKET`, `SYSC_SOCKET`, `DISPLAY`, `XDG_CURRENT_DESKTOP=niri:sysc`, `XDG_SESSION_TYPE=wayland`. Then notify systemd (`READY=1`). As with Niri, the session entry runs `sysc-compositor-session` (`share/bin/`), which starts `sysc-compositor.service` (`Type=notify`, `BindsTo=graphical-session.target`), so sysc-shell.service and portals come up once the compositor is ready; systemd refuses to start `graphical-session.target` by hand. When the service exits, crashed or not, the script starts `sysc-compositor-shutdown.target` and unsets the variables (owner decision 2026-10-24).
+Session: import `WAYLAND_DISPLAY`, `NIRI_SOCKET`, `SYSC_SOCKET`, `DISPLAY`, `XDG_CURRENT_DESKTOP=sysc` (owner decision 2026-11-02), `XDG_SESSION_TYPE=wayland`. Then notify systemd (`READY=1`). As with Niri, the session entry runs `sysc-compositor-session` (`share/bin/`), which starts `sysc-compositor.service` (`Type=notify`, `BindsTo=graphical-session.target`), so sysc-shell.service and portals come up once the compositor is ready; systemd refuses to start `graphical-session.target` by hand. When the service exits, crashed or not, the script starts `sysc-compositor-shutdown.target` and unsets the variables (owner decision 2026-10-24).
 
 ---
 
 ## 13. Repository
 
-Module `github.com/Nomadcxx/sysc-compositor`. License BSD-3-Clause.
+Module `github.com/Nomadcxx/sysc-compositor`. License GPL-3.0-or-later (owner decision 2026-11-02). `NOTICE` records bundled godbus and protocol licenses.
 
 ```
-cmd/sysc-compositor/     compositor main (may be the same main as niri)
-cmd/niri/                CLI + compositor entry (drop-in)
+cmd/sysc-compositor/     compositor main and CLI
 internal/wlr/            cgo in .go files only (no .c/.h)
 internal/server/         display, backend, globals, run
 internal/wm/             windows, workspaces, outputs, floating, overview

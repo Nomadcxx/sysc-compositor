@@ -26,6 +26,7 @@ type Config struct {
 	SpawnShAtStartup []string
 	Warnings         []string
 	UnappliedActions []string
+	NiriCommandBinds []string
 	// Environment is applied to spawned commands; a nil value unsets.
 	Environment  map[string]*string
 	Keyboard     Keyboard
@@ -291,11 +292,17 @@ func decode(name string, nodes []*document.Node) (*Config, error) {
 			var argv []string
 			if argv, err = stringArgs(n, 1, -1); err == nil {
 				c.SpawnAtStartup = append(c.SpawnAtStartup, argv)
+				if runsNiri("spawn", argv) {
+					c.NiriCommandBinds = append(c.NiriCommandBinds, node)
+				}
 			}
 		case "spawn-sh-at-startup":
 			var argv []string
 			if argv, err = stringArgs(n, 1, 1); err == nil {
 				c.SpawnShAtStartup = append(c.SpawnShAtStartup, argv[0])
+				if runsNiri("spawn-sh", argv) {
+					c.NiriCommandBinds = append(c.NiriCommandBinds, node)
+				}
 			}
 		case "environment":
 			err = c.environment(n)
@@ -1283,6 +1290,7 @@ func (c *Config) cursor(n *document.Node) error {
 }
 
 func (c *Config) binds(n *document.Node) error {
+	var niriBinds []string
 	var parsed []Binding
 	var overlay []OverlayBind
 	overrides := make(map[bind.Chord]struct{}, len(n.Children))
@@ -1341,6 +1349,9 @@ func (c *Config) binds(n *document.Node) error {
 			args, err := actionArgs(actionNode)
 			if err != nil {
 				return fmt.Errorf("bind %q action %s: %w", nodeName(node), name, err)
+			}
+			if runsNiri(name, args) && !slices.Contains(niriBinds, nodeName(node)) {
+				niriBinds = append(niriBinds, nodeName(node))
 			}
 			action, _, err := bind.ParseAction(name, args)
 			if err != nil {
@@ -1409,7 +1420,29 @@ func (c *Config) binds(n *document.Node) error {
 		}
 	}
 	c.OverlayBinds = append(keptOverlay, overlay...)
+	keptNames := c.NiriCommandBinds[:0]
+	for _, key := range c.NiriCommandBinds {
+		chord, err := bind.ParseChord(key)
+		if _, replaced := overrides[chord]; err != nil || !replaced {
+			keptNames = append(keptNames, key)
+		}
+	}
+	c.NiriCommandBinds = append(keptNames, niriBinds...)
 	return nil
+}
+
+func runsNiri(action string, argv []string) bool {
+	if len(argv) == 0 {
+		return false
+	}
+	switch action {
+	case "spawn":
+		return filepath.Base(argv[0]) == "niri"
+	case "spawn-sh":
+		words := strings.Fields(argv[0])
+		return len(words) > 0 && words[0] == "niri"
+	}
+	return false
 }
 
 // overlayBind reads what the hotkey overlay needs from a bind node.
@@ -1593,30 +1626,42 @@ func numberArg(n *document.Node) (float64, error) {
 	return value, nil
 }
 
-// Path is where niri reads its config: one named file (-c, $NIRI_CONFIG or
-// load-config-file), or else Search, the user's and then the system config,
-// searched again on every load so a config created after startup is found.
+// Path selects one named config or the user and system search paths. Searches
+// run again on each load so a config created after startup is found.
 type Path struct {
 	Named  string
 	Search []string
 }
 
-// Locate is the config path niri would read: the -c flag, then $NIRI_CONFIG
-// (empty means unset), then the user's and the system config.
+// Locate uses -c, then SYSC_COMPOSITOR_CONFIG, then user and system configs.
 func Locate(flag string, getenv func(string) string) Path {
 	if flag != "" {
 		return Path{Named: flag}
 	}
-	if p := getenv("NIRI_CONFIG"); p != "" {
+	if p := getenv("SYSC_COMPOSITOR_CONFIG"); p != "" {
 		return Path{Named: p}
 	}
 	var search []string
-	if x := getenv("XDG_CONFIG_HOME"); filepath.IsAbs(x) {
-		search = append(search, filepath.Join(x, "niri", "config.kdl"))
-	} else if h := getenv("HOME"); h != "" {
-		search = append(search, filepath.Join(h, ".config", "niri", "config.kdl"))
+	if p := UserPath(getenv); p != "" {
+		search = append(search, p)
 	}
-	return Path{Search: append(search, "/etc/niri/config.kdl")}
+	return Path{Search: append(search, "/etc/sysc-compositor/config.kdl")}
+}
+
+// UserPath is the user config path, or empty when no config home can be formed.
+func UserPath(getenv func(string) string) string { return userPath("sysc-compositor", getenv) }
+
+// NiriUserPath identifies the optional source of the one-time config import.
+func NiriUserPath(getenv func(string) string) string { return userPath("niri", getenv) }
+
+func userPath(name string, getenv func(string) string) string {
+	if x := getenv("XDG_CONFIG_HOME"); filepath.IsAbs(x) {
+		return filepath.Join(x, name, "config.kdl")
+	}
+	if h := getenv("HOME"); h != "" {
+		return filepath.Join(h, ".config", name, "config.kdl")
+	}
+	return ""
 }
 
 // Resolve is the file to load now. It returns "" when nothing was named and

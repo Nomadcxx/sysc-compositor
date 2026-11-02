@@ -31,7 +31,7 @@ func TestSessionLifecyclePublishesAndClearsEnvironment(t *testing.T) {
 	}
 	first := readCommandLog(t, logPath)
 	wantStart := []string{
-		"dbus-update-activation-environment WAYLAND_DISPLAY=wayland-sysc NIRI_SOCKET=/run/user/1000/niri.sock SYSC_SOCKET=/run/user/1000/sysc.sock XDG_CURRENT_DESKTOP=niri:sysc XDG_SESSION_TYPE=wayland DISPLAY=:3",
+		"dbus-update-activation-environment WAYLAND_DISPLAY=wayland-sysc NIRI_SOCKET=/run/user/1000/niri.sock SYSC_SOCKET=/run/user/1000/sysc.sock XDG_CURRENT_DESKTOP=sysc XDG_SESSION_TYPE=wayland DISPLAY=:3",
 		"systemctl --user import-environment WAYLAND_DISPLAY NIRI_SOCKET SYSC_SOCKET XDG_CURRENT_DESKTOP XDG_SESSION_TYPE DISPLAY",
 	}
 	if !reflect.DeepEqual(first, wantStart) {

@@ -1,8 +1,8 @@
-# Run by sysc-compositor-session, as niri.service is by niri-session. Binding
+# Run by sysc-compositor-session. Binding
 # graphical-session.target starts it once the compositor is ready, which
 # systemd refuses to do by hand, and stops it when the compositor exits.
 [Unit]
-Description=sysc-compositor, a Niri-compatible Wayland compositor
+Description=sysc-compositor Wayland session
 Documentation=https://github.com/Nomadcxx/sysc-compositor
 BindsTo=graphical-session.target
 Before=graphical-session.target

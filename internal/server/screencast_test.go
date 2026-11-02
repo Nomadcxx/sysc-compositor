@@ -156,7 +156,7 @@ context.modules = [
 	}
 	var dynamic uint64
 	for id, window := range windows {
-		if window["title"].Value() == "niri Dynamic Cast Target" {
+		if window["title"].Value() == "sysc-compositor Dynamic Cast Target" {
 			dynamic = id
 		}
 	}

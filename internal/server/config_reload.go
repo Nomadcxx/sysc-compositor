@@ -2,9 +2,11 @@ package server
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"github.com/Nomadcxx/sysc-compositor/internal/config"
 	"github.com/Nomadcxx/sysc-compositor/internal/wlr"
@@ -190,6 +192,9 @@ func (s *Server) applyConfigReload(sequence uint64, target reloadTarget, load co
 		return
 	}
 
+	if len(load.Config.NiriCommandBinds) > 0 {
+		fmt.Fprintf(os.Stderr, "sysc-compositor: warning: these run `niri`, which is not part of sysc-compositor; use `sysc-compositor msg`: %s\n", strings.Join(load.Config.NiriCommandBinds, ", "))
+	}
 	s.cfg = load.Config
 	s.configPath = load.Root
 	if target.explicit {

@@ -461,11 +461,11 @@ func TestNiriM6ActionsArePosted(t *testing.T) {
 }
 
 func TestNiriSocketPath(t *testing.T) {
-	got, err := niriSocketPath("/run/user/1000", "wayland-1", 42)
-	if err != nil || got != "/run/user/1000/niri.wayland-1.42.sock" {
-		t.Fatalf("niriSocketPath = %q, %v", got, err)
+	got, err := ipcSocketPath("/run/user/1000", "wayland-1", 42)
+	if err != nil || got != "/run/user/1000/sysc-compositor.wayland-1.42.sock" {
+		t.Fatalf("ipcSocketPath = %q, %v", got, err)
 	}
-	if _, err := niriSocketPath("relative", "wayland-1", 42); err == nil {
+	if _, err := ipcSocketPath("relative", "wayland-1", 42); err == nil {
 		t.Fatal("a relative runtime dir was accepted")
 	}
 }

@@ -514,12 +514,12 @@ func (p properties) values(iface string) (map[string]dbus.Variant, *dbus.Error) 
 	defer p.a.mu.Unlock()
 	switch {
 	case iface == applicationIface && p.root:
-		return map[string]dbus.Variant{"ToolkitName": dbus.MakeVariant("niri"), "Version": dbus.MakeVariant(""),
+		return map[string]dbus.Variant{"ToolkitName": dbus.MakeVariant("sysc-compositor"), "Version": dbus.MakeVariant(""),
 			"AtspiVersion": dbus.MakeVariant("2.1"), "Id": dbus.MakeVariant(p.a.id)}, nil
 	case iface != accessibleIface:
 		return nil, dbus.NewError("org.freedesktop.DBus.Error.UnknownInterface", []any{iface})
 	case p.root:
-		return map[string]dbus.Variant{"Name": dbus.MakeVariant("niri"), "Description": dbus.MakeVariant(""),
+		return map[string]dbus.Variant{"Name": dbus.MakeVariant("sysc-compositor"), "Description": dbus.MakeVariant(""),
 			"Parent": dbus.MakeVariant(p.a.parent), "ChildCount": dbus.MakeVariant(int32(1)),
 			"Locale": dbus.MakeVariant(""), "AccessibleId": dbus.MakeVariant(""), "HelpText": dbus.MakeVariant("")}, nil
 	}
