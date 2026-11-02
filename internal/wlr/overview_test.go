@@ -934,9 +934,16 @@ func TestOverviewWheelSwitchesWorkspaceUnderPointer(t *testing.T) {
 			}
 			return client.InputEvents().PointerAxes
 		}
+		// Cooldowns run on the bind clock; step it with each wheel event.
+		var clock time.Duration
+		wheel := func(ms uint32, horizontal bool, v120 int32) {
+			clock = time.Duration(ms) * time.Millisecond
+			pointer.wheelAt(ms, horizontal, v120)
+		}
 		before := axes()
 		var first uint64
 		onCompositor(t, c, func() {
+			c.pointerBinds.now = func() time.Duration { return clock }
 			output := c.FocusedOutputName()
 			first = focusedWorkspaceID(c)
 			var next uint64
@@ -977,31 +984,31 @@ func TestOverviewWheelSwitchesWorkspaceUnderPointer(t *testing.T) {
 				return
 			}
 			keyboard.key(keyLeftShift, true)
-			pointer.wheelAt(1000, false, -120)
+			wheel(1000, false, -120)
 			keyboard.key(keyLeftShift, false)
 			if activeWindow() == 1000 {
 				t.Error("Shift+wheel up in the overview did not focus the previous column")
 			}
-			pointer.wheelAt(1010, true, 120)
+			wheel(1010, true, 120)
 			if activeWindow() != 1000 {
 				t.Error("a horizontal wheel right in the overview did not focus the next column")
 			}
-			pointer.wheelAt(1020, true, -120)
-			pointer.wheelAt(1030, true, 120)
-			pointer.wheelAt(1040, true, -120)
+			wheel(1020, true, -120)
+			wheel(1030, true, 120)
+			wheel(1040, true, -120)
 			if activeWindow() == 1000 {
 				t.Error("a horizontal wheel 20 ms after the last one did not run; it has no cooldown in Niri")
 			}
-			pointer.wheelAt(2000, false, 120)
+			wheel(2000, false, 120)
 			second := focusedWorkspaceID(c)
 			if second == first {
 				t.Error("a wheel down in the overview did not switch the workspace")
 			}
-			pointer.wheelAt(2030, false, 120)
+			wheel(2030, false, 120)
 			if focusedWorkspaceID(c) != second {
 				t.Error("a wheel down 30 ms after the last one ran inside Niri's 50 ms cooldown")
 			}
-			pointer.wheelAt(2100, false, 120)
+			wheel(2100, false, 120)
 			if focusedWorkspaceID(c) == second {
 				t.Error("a wheel down 100 ms after the last one did not run")
 			}
@@ -1014,7 +1021,7 @@ func TestOverviewWheelSwitchesWorkspaceUnderPointer(t *testing.T) {
 		}
 		onCompositor(t, c, func() {
 			pointer.moveTo(c.viewCenter(view))
-			pointer.wheelAt(3000, false, 120)
+			wheel(3000, false, 120)
 		})
 		if got := axes(); got == before {
 			t.Error("with the overview closed, a plain wheel never reached the window")

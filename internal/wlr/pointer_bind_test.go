@@ -260,33 +260,40 @@ binds {
 			}
 			return client.InputEvents().PointerAxes
 		}
+		// Cooldowns run on the bind clock; step it with each wheel event.
+		var clock time.Duration
+		wheel := func(ms uint32, horizontal bool, v120 int32) {
+			clock = time.Duration(ms) * time.Millisecond
+			pointer.wheelAt(ms, horizontal, v120)
+		}
 		before := axes()
 		onCompositor(t, c, func() {
+			c.pointerBinds.now = func() time.Duration { return clock }
 			first = focusedWorkspaceID(c)
 			keyboard.key(keyLeftCtrl, true)
-			pointer.wheelAt(1000, false, 120)
+			wheel(1000, false, 120)
 			if focusedWorkspaceID(c) == first {
 				t.Error("Ctrl+wheel down did not switch the workspace")
 			}
-			pointer.wheelAt(1050, false, -120)
+			wheel(1050, false, -120)
 			if focusedWorkspaceID(c) != first {
 				t.Error("Ctrl+wheel up did not switch back")
 			}
-			pointer.wheelAt(1100, false, 120)
+			wheel(1100, false, 120)
 			if focusedWorkspaceID(c) != first {
 				t.Error("a wheel down 100 ms after the last one ran inside its 150 ms cooldown")
 			}
-			pointer.wheelAt(1200, false, 120)
+			wheel(1200, false, 120)
 			if focusedWorkspaceID(c) == first {
 				t.Error("a wheel down 200 ms after the last one did not run")
 			}
-			pointer.wheelAt(1300, false, -120)
-			pointer.wheelAt(1400, false, 60)
-			pointer.wheelAt(1410, false, 60)
+			wheel(1300, false, -120)
+			wheel(1400, false, 60)
+			wheel(1410, false, 60)
 			if focusedWorkspaceID(c) == first {
 				t.Error("two half detents did not add up to one tick")
 			}
-			pointer.wheelAt(1600, false, -120)
+			wheel(1600, false, -120)
 			keyboard.key(keyLeftCtrl, false)
 		})
 		if got := axes(); got != before {
@@ -294,7 +301,7 @@ binds {
 		}
 		onCompositor(t, c, func() {
 			pointer.moveTo(c.viewCenter(view))
-			pointer.wheelAt(2000, false, 120)
+			wheel(2000, false, 120)
 		})
 		if got := axes(); got == before {
 			t.Error("an unmodified wheel never reached the client")
@@ -302,7 +309,7 @@ binds {
 		before = axes()
 		onCompositor(t, c, func() {
 			keyboard.key(keyLeftShift, true)
-			pointer.wheelAt(2100, false, 120)
+			wheel(2100, false, 120)
 			keyboard.key(keyLeftShift, false)
 		})
 		if got := axes(); got == before {
@@ -365,6 +372,41 @@ binds {
 				t.Error("12 units of finger scroll did not run the bind")
 			}
 			keyboard.key(keyLeftCtrl, false)
+		})
+	})
+}
+
+// TestWheelCooldownIgnoresEventTimestamps: Niri times a bind's cooldown on
+// its own clock, so a device that stamps every event alike (a virtual pointer
+// can) still runs the bind once the cooldown has passed.
+func TestWheelCooldownIgnoresEventTimestamps(t *testing.T) {
+	pointerBindHarness(t, `
+binds {
+    Ctrl+WheelScrollDown cooldown-ms=150 { focus-workspace-down; }
+}
+`, func(c *Compositor, _ *testclient.ToplevelClient, pointer *fakePointer, keyboard *fakeKeyboard, _ *toplevelView) {
+		var first, second uint64
+		onCompositor(t, c, func() {
+			if !c.model.MapWindow(1000, c.FocusedOutputName()) || !c.model.FocusWorkspaceDown() ||
+				!c.model.MapWindow(1001, c.FocusedOutputName()) || !c.model.FocusWorkspaceUp() {
+				t.Error("could not set up three workspaces")
+			}
+			c.applyWorkspaceModel()
+			first = focusedWorkspaceID(c)
+			keyboard.key(keyLeftCtrl, true)
+			pointer.wheelAt(5000, false, 120)
+		})
+		time.Sleep(200 * time.Millisecond)
+		onCompositor(t, c, func() {
+			second = focusedWorkspaceID(c)
+			pointer.wheelAt(5000, false, 120)
+			keyboard.key(keyLeftCtrl, false)
+			if second == first {
+				t.Error("the first Ctrl+wheel down did not switch the workspace")
+			}
+			if focusedWorkspaceID(c) == second {
+				t.Error("a Ctrl+wheel down 200 ms later, stamped like the first, stayed in the 150 ms cooldown")
+			}
 		})
 	})
 }

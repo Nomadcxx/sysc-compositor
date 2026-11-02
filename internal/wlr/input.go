@@ -868,7 +868,7 @@ func (c *Compositor) handleCursorButton(data unsafe.Pointer) {
 	if !c.pointerInputAllowed(event.pointer) {
 		return
 	}
-	if c.mouseBinds(uint32(event.button), event.state == C.WL_POINTER_BUTTON_STATE_PRESSED, uint32(event.time_msec)) {
+	if c.mouseBinds(uint32(event.button), event.state == C.WL_POINTER_BUTTON_STATE_PRESSED) {
 		return
 	}
 	c.deliverPointerButton(unsafe.Pointer(event.pointer), event.time_msec, event.button, event.state)
@@ -1016,8 +1016,7 @@ func (c *Compositor) handleCursorAxis(data unsafe.Pointer) {
 	c.hideExitDialog()
 	c.hideHotkeyOverlay()
 	if c.scrollBinds(event.source == C.WL_POINTER_AXIS_SOURCE_WHEEL, event.source == C.WL_POINTER_AXIS_SOURCE_FINGER,
-		event.orientation == C.WL_POINTER_AXIS_HORIZONTAL_SCROLL, float64(event.delta), int32(event.delta_discrete),
-		uint32(event.time_msec)) {
+		event.orientation == C.WL_POINTER_AXIS_HORIZONTAL_SCROLL, float64(event.delta), int32(event.delta_discrete)) {
 		return
 	}
 	C.wlr_seat_pointer_notify_axis(c.seat, event.time_msec,
