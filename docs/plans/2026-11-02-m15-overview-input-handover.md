@@ -1,6 +1,8 @@
 # Handover: M15 part 1 follow-up (overview input), 2026-11-02
 
-Read this first when continuing. Tracker: `sysc-1280` in `/home/nomadx/sysc-shell`.
+**Done.** Items 1–3 are built, and the record is the
+[part 1 plan's addendum](2026-10-31-m15-navigation-binds.md#addendum-2026-11-02-overview-input-follow-up).
+This file is kept as history. Tracker: `sysc-1280` in `/home/nomadx/sysc-shell`.
 
 ## State
 

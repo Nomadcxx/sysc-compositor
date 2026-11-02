@@ -64,7 +64,8 @@ executed until the owner schedules the milestone they belong to.
 | [plans/2026-10-30-m13-x11.md](plans/2026-10-30-m13-x11.md) | plan | M13: on-demand satellite sockets and lifecycle, config, DISPLAY publication, and native/X11 application gates. |
 | [plans/2026-10-31-frame-pacing-audit.md](plans/2026-10-31-frame-pacing-audit.md) | report | sysc-2056 source audit: native callback scheduling and scanout, the hidden-surface fallback (fixed in #78), and the remaining physical game benchmark. |
 | [plans/2026-10-31-m14-accessibility.md](plans/2026-10-31-m14-accessibility.md) | plan | M14: Niri's KeyboardMonitor grab rules on wlroots' key path, a session-only D-Bus service, a minimal AT-SPI announcer, announcement sources and the Orca VM gate. |
-| [plans/2026-10-31-m15-navigation-binds.md](plans/2026-10-31-m15-navigation-binds.md) | plan | M15 split into four parts; Part 1: the 30 navigation and workspace actions, wheel/touchpad/mouse bind triggers with `cooldown-ms`, and Niri's overview wheel. Executed, with the VM gate record. |
+| [plans/2026-10-31-m15-navigation-binds.md](plans/2026-10-31-m15-navigation-binds.md) | plan | M15 split into four parts; Part 1: the 30 navigation and workspace actions, wheel/touchpad/mouse bind triggers with `cooldown-ms`, and Niri's overview wheel. Executed, with the VM gate record; its 2026-11-02 addendum records the overview input follow-up. |
+| [plans/2026-11-02-m15-overview-input-handover.md](plans/2026-11-02-m15-overview-input-handover.md) | handover | Done (history). Part 1's rulings checked against Mango and Hyprland, the monotonic bind clock, layer popups in the overview and the overview touchpad scroll gesture. |
 
 ## Reference sources (pinned)
 

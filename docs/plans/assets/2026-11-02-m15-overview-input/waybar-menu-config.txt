@@ -1,0 +1,18 @@
+{"layer":"top","position":"bottom","height":30,"modules-left":["custom/m"],"modules-center":[],"modules-right":[],
+ "custom/m":{"format":"  MENU  ","menu":"on-click","menu-file":"/home/nomadx/m15i/menu.xml",
+   "menu-actions":{"touch":"touch /home/nomadx/m15i/clicked"}}}
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <object class="GtkMenu" id="menu">
+    <child>
+      <object class="GtkMenuItem" id="touch">
+        <property name="label">Touch the marker file</property>
+      </object>
+    </child>
+    <child>
+      <object class="GtkMenuItem" id="other">
+        <property name="label">Second item</property>
+      </object>
+    </child>
+  </object>
+</interface>
