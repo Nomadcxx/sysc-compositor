@@ -301,3 +301,13 @@ manifest and install-for-next-login.sh. The script backs up installed files and
 writes a rollback script before replacing them. It has not run. See the
 [next-login instructions](assets/2026-11-02-input-devices/laptop-next-login.md).
 bd holds the remaining physical-input and packaging gates.
+
+The VM also ran shell Phase B at 6c8724f6 (including merged theme fix #615).
+Opening Session → Mouse & touchpad hid touchpad-only rows on the mouse-only guest.
+A QMP click enabled Left handed: shell JSON stored only mouse.left-handed=true,
+the managed KDL file contained the mouse override, and its optional include was
+last in the main sysc config. A subsequent QMP right-click reached wev as BTN_LEFT
+without restarting shell or compositor. Source Niri hashes still passed. See
+[the Settings screenshot](assets/2026-11-02-input-devices/vm-native-input-settings.png)
+and [event output](assets/2026-11-02-input-devices/vm-shell-input-ui.txt).
+This proves the VM mouse integration, not physical touchpad acceptance.

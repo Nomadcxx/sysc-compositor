@@ -1,0 +1,6 @@
+[        15:      wl_pointer] button: serial: 15316; time: 20681792; button: 272 (left), state: 1 (pressed)
+[        15:      wl_pointer] button: serial: 15317; time: 20681994; button: 272 (left), state: 0 (released)
+[        15:      wl_pointer] axis_relative_direction: axis: 0 (vertical), direction: 0
+[        15:      wl_pointer] axis_value120: axis: 0 (vertical), value120: -120
+[        15:      wl_pointer] axis: time: 20682197; axis: 0 (vertical), value: -15.000000
+PASS mouse toggle in shell UI -> persisted JSON/KDL -> compositor reload -> BTN_LEFT in wev
