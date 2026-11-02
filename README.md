@@ -1,8 +1,7 @@
 # sysc-compositor
 
-Wayland compositor for the sysc desktop. **Go and cgo only** (no `.c` / `.h` here; gSlapper keeps the C). wlroots 0.20. Niri parity: same KDL config, JSON IPC, and CLI so sysc-shell, sysc-greet, sysc-launch, and an existing `~/.config/niri/config.kdl` keep working.
-
-This directory holds the product and the plans. Code starts at M0.
+A Wayland compositor written in Go for the sysc desktop, using wlroots 0.20 and SceneFX.
+It supports the niri-ipc 26.4.0 wire format so existing shell clients can connect.
 
 ## Commands
 
@@ -13,8 +12,21 @@ sysc-compositor validate [-c CONFIG]  # check a config without running it
 sysc-compositor msg [--json] REQUEST  # talk to a running compositor over $NIRI_SOCKET
 ```
 
-`niri` is a compatibility alias with the same arguments and JSON, so the greeter config and scripts
-written for niri keep working. Use `sysc-compositor` in new docs and scripts.
+## Moving from Niri
+
+On the first start without a named config, sysc-compositor copies your Niri config and
+relative includes into `~/.config/sysc-compositor/` (or `$XDG_CONFIG_HOME/sysc-compositor/`).
+It keeps existing destination files and leaves your Niri files untouched. Later starts use
+the copy; they do not import again. Without a Niri config, it writes its shipped default.
+Use `-c PATH` or `SYSC_COMPOSITOR_CONFIG` to select a config explicitly.
+
+The `NIRI_SOCKET` variable and IPC remain compatible. Existing `niri msg` scripts work
+while Niri is installed; use `sysc-compositor msg` to remove that command dependency.
+This package installs no `niri` command. Binds that still run it produce a migration warning.
+
+Sessions publish `XDG_CURRENT_DESKTOP=sysc`. The shipped `sysc-portals.conf` selects the
+GNOME backend for ScreenCast and Screenshot and GTK for other desktop portals.
+The [parity matrix](docs/plans/niri-parity-matrix.md) lists features still to implement.
 
 ## Build
 
@@ -42,3 +54,7 @@ applications while existing X11 applications keep running.
 ## What this repo is not
 
 Not a shell, greeter, wallpaper engine, notification daemon, tray, clipboard, or Wayland **client** library. Those already exist. sysc-wayland is client-only and stays that way.
+
+## License
+
+GPL-3.0-or-later. See [LICENSE](LICENSE) and [NOTICE](NOTICE) for bundled-code notices.
