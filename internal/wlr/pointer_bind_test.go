@@ -362,12 +362,12 @@ binds {
 		onCompositor(t, c, func() {
 			first := focusedWorkspaceID(c)
 			keyboard.key(keyLeftCtrl, true)
-			pointer.fingerScrollAt(1000, 4)
-			pointer.fingerScrollAt(1010, 4)
+			pointer.fingerScrollAt(1000, false, 4)
+			pointer.fingerScrollAt(1010, false, 4)
 			if focusedWorkspaceID(c) != first {
 				t.Error("8 units of finger scroll ran a bind before Niri's 10-unit tick")
 			}
-			pointer.fingerScrollAt(1020, 4)
+			pointer.fingerScrollAt(1020, false, 4)
 			if focusedWorkspaceID(c) == first {
 				t.Error("12 units of finger scroll did not run the bind")
 			}

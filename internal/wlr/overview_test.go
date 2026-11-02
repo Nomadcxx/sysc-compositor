@@ -1029,6 +1029,106 @@ func TestOverviewWheelSwitchesWorkspaceUnderPointer(t *testing.T) {
 	})
 }
 
+// TestOverviewTouchpadScrollSwipes: in the overview Niri makes a plain
+// touchpad or continuous scroll a swipe. A horizontal one moves the hovered
+// row's view; a vertical one switches the workspace, in sysc once per gesture,
+// until libinput's scroll stop. With a modifier held it is no gesture, and no
+// scroll reaches a window.
+func TestOverviewTouchpadScrollSwipes(t *testing.T) {
+	pointerBindHarness(t, "binds {}\n", func(c *Compositor, client *testclient.ToplevelClient,
+		pointer *fakePointer, keyboard *fakeKeyboard, _ *toplevelView) {
+		axes := func() int {
+			if err := client.SyncInput(); err != nil {
+				t.Error(err)
+			}
+			return client.InputEvents().PointerAxes
+		}
+		before := axes()
+		var first uint64
+		onCompositor(t, c, func() {
+			output := c.FocusedOutputName()
+			first = focusedWorkspaceID(c)
+			var next uint64
+			for _, workspace := range c.model.Snapshot().Workspaces {
+				if workspace.Output == output && !workspace.IsActive && len(workspace.WindowIDs) == 0 {
+					next = workspace.ID
+				}
+			}
+			if next == 0 || !c.model.MapWindowToWorkspace(2000, next) || !c.model.FocusWorkspaceID(first) {
+				t.Error("could not set up a second workspace")
+				return
+			}
+			// Columns wider than the output, so the view has room to scroll.
+			for id := uint64(1000); id < 1004; id++ {
+				if !c.model.MapWindow(id, output) {
+					t.Error("could not map more columns")
+					return
+				}
+			}
+			c.applyWorkspaceModel()
+			if !c.OpenOverview() {
+				t.Error("could not open the overview")
+				return
+			}
+			frame, ok := c.model.OverviewFrame(output, c.model.OverviewZoom(c.overviewConfig.Zoom))
+			var row layout.Bounds
+			for _, workspace := range frame.Workspaces {
+				if workspace.ID == first {
+					row = workspace.Bounds
+				}
+			}
+			if !ok || row.Height <= 0 {
+				t.Error("the active workspace has no overview row")
+				return
+			}
+			pointer.moveTo(float64(frame.Output.X+5), float64(row.Y+row.Height/2))
+
+			startX := windowPlacementX(c.model.Snapshot().Windows, 1003)
+			pointer.fingerScrollAt(1000, true, -10)
+			pointer.fingerScrollAt(1010, true, -10)
+			pointer.fingerScrollAt(1020, true, 0)
+			if windowPlacementX(c.model.Snapshot().Windows, 1003) == startX || focusedWorkspaceID(c) != first {
+				t.Error("a horizontal touchpad scroll did not move the hovered row's view, or switched the workspace")
+			}
+
+			pointer.fingerScrollAt(1100, false, 10)
+			pointer.fingerScrollAt(1110, false, 10)
+			second := focusedWorkspaceID(c)
+			if second == first {
+				t.Error("a vertical touchpad scroll down did not switch the workspace")
+			}
+			pointer.fingerScrollAt(1120, false, 10)
+			pointer.fingerScrollAt(1130, false, 10)
+			if focusedWorkspaceID(c) != second {
+				t.Error("one vertical touchpad gesture switched the workspace twice")
+			}
+			pointer.fingerScrollAt(1140, false, 0)
+			pointer.continuousScrollAt(1200, 10)
+			pointer.continuousScrollAt(1210, 10)
+			third := focusedWorkspaceID(c)
+			if third == second {
+				t.Error("a continuous scroll after the scroll stop did not switch the workspace again")
+			}
+			pointer.continuousScrollAt(1220, 0)
+
+			keyboard.key(keyLeftShift, true)
+			pointer.fingerScrollAt(1300, false, -10)
+			pointer.fingerScrollAt(1310, false, -10)
+			pointer.fingerScrollAt(1320, false, 0)
+			keyboard.key(keyLeftShift, false)
+			if focusedWorkspaceID(c) != third {
+				t.Error("a touchpad scroll with Shift held ran the overview gesture")
+			}
+			c.CloseOverview()
+			c.model.FocusWorkspaceID(first)
+			c.applyWorkspaceModel()
+		})
+		if got := axes(); got != before {
+			t.Errorf("the window got %d axis events from overview touchpad scrolls, want 0", got-before)
+		}
+	})
+}
+
 // TestOverviewWheelOverTopLayerReachesTheLayer: in the overview Niri keeps a
 // top layer surface, such as a bar, live: a scroll or a click over it is the
 // surface's, not the overview's.

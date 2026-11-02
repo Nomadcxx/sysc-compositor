@@ -356,21 +356,32 @@ func (f *fakePointer) button(button uint32, pressed bool) {
 	C.sysc_fake_pointer_button(f.pointer, nowMsec(), C.uint32_t(button), C.bool(pressed))
 }
 
+func axisOrientation(horizontal bool) C.enum_wl_pointer_axis {
+	if horizontal {
+		return C.WL_POINTER_AXIS_HORIZONTAL_SCROLL
+	}
+	return C.WL_POINTER_AXIS_VERTICAL_SCROLL
+}
+
 // wheelAt sends one vertical (or horizontal) wheel event of v120 units at
 // timeMsec, with libinput's 15-unit-per-detent continuous delta.
 func (f *fakePointer) wheelAt(timeMsec uint32, horizontal bool, v120 int32) {
-	orientation := C.enum_wl_pointer_axis(C.WL_POINTER_AXIS_VERTICAL_SCROLL)
-	if horizontal {
-		orientation = C.WL_POINTER_AXIS_HORIZONTAL_SCROLL
-	}
-	C.sysc_fake_pointer_axis(f.pointer, C.uint32_t(timeMsec), orientation, C.double(float64(v120)/8),
-		C.int32_t(v120), C.WL_POINTER_AXIS_SOURCE_WHEEL)
+	C.sysc_fake_pointer_axis(f.pointer, C.uint32_t(timeMsec), axisOrientation(horizontal),
+		C.double(float64(v120)/8), C.int32_t(v120), C.WL_POINTER_AXIS_SOURCE_WHEEL)
 }
 
-// fingerScrollAt sends one vertical touchpad scroll of delta at timeMsec.
-func (f *fakePointer) fingerScrollAt(timeMsec uint32, delta float64) {
-	C.sysc_fake_pointer_axis(f.pointer, C.uint32_t(timeMsec), C.WL_POINTER_AXIS_VERTICAL_SCROLL,
+// fingerScrollAt sends one vertical (or horizontal) touchpad scroll of delta
+// at timeMsec. A zero delta is libinput's scroll stop.
+func (f *fakePointer) fingerScrollAt(timeMsec uint32, horizontal bool, delta float64) {
+	C.sysc_fake_pointer_axis(f.pointer, C.uint32_t(timeMsec), axisOrientation(horizontal),
 		C.double(delta), 0, C.WL_POINTER_AXIS_SOURCE_FINGER)
+}
+
+// continuousScrollAt sends one vertical scroll of delta from a continuous
+// source, such as a trackpoint, at timeMsec.
+func (f *fakePointer) continuousScrollAt(timeMsec uint32, delta float64) {
+	C.sysc_fake_pointer_axis(f.pointer, C.uint32_t(timeMsec), C.WL_POINTER_AXIS_VERTICAL_SCROLL,
+		C.double(delta), 0, C.WL_POINTER_AXIS_SOURCE_CONTINUOUS)
 }
 
 func (f *fakePointer) swipeBegin(fingers uint32) {

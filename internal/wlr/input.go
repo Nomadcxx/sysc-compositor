@@ -418,11 +418,7 @@ func (c *Compositor) handlePointerSwipeBegin(device, data unsafe.Pointer) {
 	c.pointerSwipeStates[device] = state
 	switch state.fingers {
 	case 3:
-		state.output = c.outputNameAt(float64(c.cursor.x), float64(c.cursor.y))
-		if state.output == "" && c.model != nil {
-			state.output = c.model.Snapshot().FocusedOutput
-		}
-		state.workspaceID = c.workspaceUnderGesture(state.output)
+		c.aimWorkspaceSwipe(state)
 	case 4:
 		if c.model != nil {
 			progress, _, _ := c.animationValue(animationKey{property: "overview"},
@@ -460,7 +456,24 @@ func (c *Compositor) handlePointerSwipeUpdate(device, data unsafe.Pointer) {
 		}
 		return
 	}
-	axis, delta, selected := state.selector.Add(float64(event.dx), float64(event.dy))
+	c.workspaceSwipe(state, float64(event.dx), float64(event.dy))
+}
+
+// aimWorkspaceSwipe points a 3-finger swipe at the output under the pointer,
+// or the focused one, and at the workspace there that it scrolls.
+func (c *Compositor) aimWorkspaceSwipe(state *pointerSwipeState) {
+	state.output = c.outputNameAt(float64(c.cursor.x), float64(c.cursor.y))
+	if state.output == "" && c.model != nil {
+		state.output = c.model.Snapshot().FocusedOutput
+	}
+	state.workspaceID = c.workspaceUnderGesture(state.output)
+}
+
+// workspaceSwipe is the 3-finger swipe once its axis is chosen: a horizontal
+// swipe scrolls the view of the workspace it is aimed at, and a vertical one
+// switches the output's workspace once per gesture.
+func (c *Compositor) workspaceSwipe(state *pointerSwipeState, dx, dy float64) {
+	axis, delta, selected := state.selector.Add(dx, dy)
 	if !selected {
 		return
 	}
@@ -1015,13 +1028,47 @@ func (c *Compositor) handleCursorAxis(data unsafe.Pointer) {
 	}
 	c.hideExitDialog()
 	c.hideHotkeyOverlay()
-	if c.scrollBinds(event.source == C.WL_POINTER_AXIS_SOURCE_WHEEL, event.source == C.WL_POINTER_AXIS_SOURCE_FINGER,
-		event.orientation == C.WL_POINTER_AXIS_HORIZONTAL_SCROLL, float64(event.delta), int32(event.delta_discrete)) {
+	// Niri treats a continuous scroll, such as a trackpoint's, as a touchpad's.
+	finger := event.source == C.WL_POINTER_AXIS_SOURCE_FINGER || event.source == C.WL_POINTER_AXIS_SOURCE_CONTINUOUS
+	horizontal := event.orientation == C.WL_POINTER_AXIS_HORIZONTAL_SCROLL
+	if c.overviewScrollGesture(finger, horizontal, float64(event.delta)) ||
+		c.scrollBinds(event.source == C.WL_POINTER_AXIS_SOURCE_WHEEL, finger,
+			horizontal, float64(event.delta), int32(event.delta_discrete)) {
 		return
 	}
 	C.wlr_seat_pointer_notify_axis(c.seat, event.time_msec,
 		event.orientation, event.delta, event.delta_discrete,
 		event.source, event.relative_direction)
+}
+
+// overviewScrollGesture is Niri's overview touchpad scroll. In the overview,
+// with no modifiers held and the pointer off layer surfaces, a finger or
+// continuous scroll is a 3-finger swipe and reaches no bind or client. A
+// wlroots axis event carries one orientation. A zero delta is libinput's
+// scroll stop and ends the gesture; so does any scroll outside these
+// conditions, which then goes on as usual.
+func (c *Compositor) overviewScrollGesture(finger, horizontal bool, delta float64) bool {
+	if !finger || c.model == nil || !c.model.OverviewOpen() || c.activeBindModifiers() != 0 ||
+		c.pointerOnLayerSurface() {
+		c.overviewScroll = nil
+		return false
+	}
+	if delta == 0 {
+		c.overviewScroll = nil
+		return true
+	}
+	if c.overviewScroll == nil {
+		c.overviewScroll = &pointerSwipeState{}
+		c.aimWorkspaceSwipe(c.overviewScroll)
+	}
+	// Niri reads a positive scroll as down or right. The 3-finger swipe reads
+	// a positive dx as right but a positive dy as up, so dy is flipped.
+	if horizontal {
+		c.workspaceSwipe(c.overviewScroll, delta, 0)
+	} else {
+		c.workspaceSwipe(c.overviewScroll, 0, -delta)
+	}
+	return true
 }
 
 func (c *Compositor) handleCursorFrame(unsafe.Pointer) {
