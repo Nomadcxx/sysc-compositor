@@ -1,0 +1,47 @@
+Identity session VM gate, 2026-11-02 (completion evidence)
+
+This extends vm-gate-prelogin.txt. All runtime mutations took place in the
+isolated sysc-session guest on laptop; no owner-host shell was deployed.
+
+First login sources: compositor 76b4ccd, shell Phase A 1b77a61b,
+launcher 6a8506d, greeter b993f73. Sibling changes have merged and released:
+sysc-shell 0.2.6, sysc-launch 0.5.2, sysc-greet 1.3.2.
+
+Observed after greetd login:
+- Imported config.kdl, sysc-shell.kdl and sysc.kdl into ~/.config/sysc-compositor.
+  Main config starts with the dated import header. Journal has one import line.
+- NIRI_SOCKET=/run/user/1000/sysc-compositor.wayland-0.4588.sock,
+  SYSC_SOCKET=/run/user/1000/wayland-0-control.sock,
+  XDG_CURRENT_DESKTOP=sysc and XDG_SESSION_TYPE=wayland.
+- /usr/local/bin/niri remained absent. Shell launcher accepted foot and opened
+  a foot window (window 2, app_id foot, PID 10606).
+- Waybar niri/workspaces connected to the sysc socket and displayed workspaces 1/2.
+  Its journal reports Niri IPC starting and a 1280x28 bar on Virtual-1.
+- Original three Niri config/include files passed their pre-gate SHA256 manifest.
+
+Theme reload exposed an existing shell bug, tracked as sysc-2218 and fixed in
+sysc-shell PR #615 (8aa74a4d). An equal-size layer configure left a mapped bar in
+hostConfiguring; reload skipped configuring its replacement, then painted a
+0x0 body. The regression failed before the fix and passes afterward.
+
+Guest proof uses Phase A 1b77a61b plus that narrow fix. With source=palette and
+seed=gruvbox (the guest has no first wallpaper palette), dark/light changes:
+- kept shell PID 21205 with NRestarts=0;
+- changed sysc-shell.kdl SHA256 between dadbe0d5f6c6ba8c7b39168270f3bdc37f9c848c7866fb11c485e0a19151e089
+  and 60957456730557f0d47e8e6b806e654c96dd26507b800b4a87e131f8ac526b1a;
+- toggled the theme include off/on only in the sysc-compositor config;
+- left original Niri file hashes unchanged.
+
+A second greetd login used the combined input branch build (same identity
+implementation). Config and all imported include/backup hashes stayed identical;
+no second import line appeared. New compositor PID 23764 published the new sysc
+socket and desktop=sysc. This also exercised alias-free login a second time.
+
+The owner authorized a temporary VM-only password. Each successful login used a
+random password held in memory, then restored the original hash through stdin.
+Constant-time verification confirmed restoration; no plaintext password remains.
+No credentials appear in these assets.
+
+Screenshots: vm-native-launcher.png, vm-native-foot.png, vm-native-waybar.png.
+Command evidence: vm-gate-postlogin-output.txt.
+The VM remains in use for the input gate; restoration is recorded separately.
