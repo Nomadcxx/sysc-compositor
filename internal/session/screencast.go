@@ -94,7 +94,7 @@ func (p *Portal) EnableScreenCast(lifetime context.Context, hooks ScreenCastHook
 }
 
 func dynamicCastWindow() map[string]dbus.Variant {
-	return map[string]dbus.Variant{"title": dbus.MakeVariant("niri Dynamic Cast Target"), "app-id": dbus.MakeVariant("rs.bxt.niri.desktop")}
+	return map[string]dbus.Variant{"title": dbus.MakeVariant("sysc-compositor Dynamic Cast Target"), "app-id": dbus.MakeVariant("sysc-compositor")}
 }
 
 func (p *Portal) exportCastObject(path dbus.ObjectPath, name string, object any, properties prop.Map, signals []introspect.Signal) (err error) {

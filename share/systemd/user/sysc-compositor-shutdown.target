@@ -1,5 +1,5 @@
 # Started by sysc-compositor-session after the compositor exits, crashed or
-# not, as niri-shutdown.target is: it stops the graphical session.
+# not: it stops the graphical session.
 [Unit]
 Description=Shutdown running sysc-compositor session
 DefaultDependencies=no
