@@ -272,3 +272,32 @@ phase B.
   sections, and the M15 addendum's "found, not fixed" item points here as fixed.
 - [ ] **Step 4: Write the execution record** in this plan, then open the PR and merge it on green
   CI.
+
+
+## Execution evidence (2026-11-02)
+
+PR #89 implements decoding, classification, libinput application/default restoration,
+scroll scaling and Niri-compatible gesture direction. Named pure checks, vet and
+build passed. CI passed at 16258da after the animation test started computing its
+expected sample at the operation's recorded timestamp.
+
+The isolated session VM used the combined input build through greetd. Its input.go,
+libinput.go and pointer_settings.go hashes match the implementation at 16258da.
+QMP right-click reached wev as BTN_RIGHT (273) by default and BTN_LEFT (272) after
+loading mouse left-handed. scroll-factor 2 changed the same wheel event from
+−120/−15 to −240/−30 (v120/axis delta). Removing the overrides and reloading
+restored BTN_RIGHT and −120/−15 without a restart. Raw events are in
+[vm-mouse-events.txt](assets/2026-11-02-input-devices/vm-mouse-events.txt).
+
+Three approved laptop nested tests passed on their first run. The overview scroll
+test failed on its first run and passed the approved diagnostic rerun, with no
+behavior change; sysc-2219 tracks that intermittent fixture. All approved nested
+runs are consumed. No physical touchpad acceptance is claimed.
+
+The owner chose to perform the physical check later through the existing
+sysc-greet entry at reboot. A current build and seven installation files are
+staged under ~/.cache/sysc-compositor-gate-20261102 on laptop, with a checksum
+manifest and install-for-next-login.sh. The script backs up installed files and
+writes a rollback script before replacing them. It has not run. See the
+[next-login instructions](assets/2026-11-02-input-devices/laptop-next-login.md).
+bd holds the remaining physical-input and packaging gates.

@@ -1,0 +1,24 @@
+
+baseline
+
+[        15:      wl_pointer] button: serial: 397; time: 19696977; button: 273 (right), state: 1 (pressed)
+[        15:      wl_pointer] button: serial: 401; time: 19697179; button: 273 (right), state: 0 (released)
+[        15:      wl_pointer] axis_relative_direction: axis: 0 (vertical), direction: 0
+[        15:      wl_pointer] axis_value120: axis: 0 (vertical), value120: -120
+[        15:      wl_pointer] axis: time: 19697383; axis: 0 (vertical), value: -15.000000
+
+overrides
+
+[        15:      wl_pointer] button: serial: 1104; time: 19741712; button: 272 (left), state: 1 (pressed)
+[        15:      wl_pointer] button: serial: 1108; time: 19741918; button: 272 (left), state: 0 (released)
+[        15:      wl_pointer] axis_relative_direction: axis: 0 (vertical), direction: 0
+[        15:      wl_pointer] axis_value120: axis: 0 (vertical), value120: -240
+[        15:      wl_pointer] axis: time: 19742121; axis: 0 (vertical), value: -30.000000
+
+restored
+
+[        15:      wl_pointer] button: serial: 1760; time: 19783295; button: 273 (right), state: 1 (pressed)
+[        15:      wl_pointer] button: serial: 1764; time: 19783502; button: 273 (right), state: 0 (released)
+[        15:      wl_pointer] axis_relative_direction: axis: 0 (vertical), direction: 0
+[        15:      wl_pointer] axis_value120: axis: 0 (vertical), value120: -120
+[        15:      wl_pointer] axis: time: 19783703; axis: 0 (vertical), value: -15.000000
