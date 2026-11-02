@@ -55,15 +55,14 @@ func TestAnimateValuePreservesSameTargetAndRetargetsSample(t *testing.T) {
 		t.Fatal("same-target request restarted the running spring")
 	}
 
-	now := time.Now()
-	elapsed := now.Sub(started)
-	wantValue := oldSpring.ValueAt(elapsed)
-	wantVelocity := oldSpring.VelocityAt(elapsed)
 	c.animateValue(secondKey, testSpringAnimation(), 0, 2, 0, func(float64) {}, nil)
 	retargeted := c.animations[secondKey]
 	if retargeted == second || retargeted.target != 2 {
 		t.Fatalf("retargeted animation = %+v, want a new spring targeting 2", retargeted)
 	}
+	elapsed := retargeted.started.Sub(started)
+	wantValue := oldSpring.ValueAt(elapsed)
+	wantVelocity := oldSpring.VelocityAt(elapsed)
 	if got := retargeted.spring.ValueAt(0); math.Abs(got-wantValue) > 1e-4 {
 		t.Errorf("retargeted start = %v, want sampled value %v", got, wantValue)
 	}
