@@ -1,5 +1,5 @@
 #!/bin/sh
-# The session entry's command, as niri-session is Niri's (systemd only): run
+# Run the compositor's systemd session:
 # sysc-compositor.service, wait for it, then stop the graphical session and
 # clear the environment the compositor published, even if it crashed.
 

@@ -16,12 +16,12 @@ import (
 	"github.com/Nomadcxx/sysc-compositor/internal/wm"
 )
 
-// niriSocketPath is where Niri puts its socket (src/ipc/server.rs:81).
-func niriSocketPath(runtimeDir, display string, pid int) (string, error) {
+// ipcSocketPath is where Niri puts its socket (src/ipc/server.rs:81).
+func ipcSocketPath(runtimeDir, display string, pid int) (string, error) {
 	if !filepath.IsAbs(runtimeDir) {
 		return "", errors.New("server: XDG_RUNTIME_DIR must be an absolute path")
 	}
-	return filepath.Join(runtimeDir, fmt.Sprintf("niri.%s.%d.sock", display, pid)), nil
+	return filepath.Join(runtimeDir, fmt.Sprintf("sysc-compositor.%s.%d.sock", display, pid)), nil
 }
 
 // Version is what the Version request answers: ours, and the wire it speaks.

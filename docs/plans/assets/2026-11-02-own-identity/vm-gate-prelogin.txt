@@ -1,0 +1,54 @@
+Identity session VM gate, 2026-11-02 (partial; login pending)
+
+Scope: headless sysc-session VM on laptop, accessed through
+ssh laptop '~/vm/sysc-session/vssh ...'. All mutations below occurred inside
+that guest. Host desktop, host binaries, host greetd, and host shell were untouched.
+
+Sources built inside guest:
+- sysc-compositor 76b4ccd, ~/sysc-identity-20261102/bin/sysc-compositor
+- sysc-shell Phase A 1b77a61b, ~/sysc-shell-identity-20261102/sysc-shell
+- sysc-launch 6a8506d, ~/sysc-launch-identity-20261102/sysc-launch
+- sysc-greet b993f73, ~/sysc-greet-identity-20261102/sysc-greet
+
+Backups: guest ~/identity-gate-backup-20261102/ contains root-files.tar,
+new-root-paths manifest, original Niri and shell configs, original shell service,
+Niri SHA256 manifest, and a VM-hostname-guarded restore.sh. No password material
+was copied into this evidence directory.
+
+Prepared guest:
+- Installed compositor branch binary, session script/unit/entry, portal config,
+  default reference config, and sibling greet/launch builds.
+- Removed old /usr/local/bin/niri alias after backing it up.
+- Guest greetd now runs:
+  sysc-compositor -c /etc/greetd/sysc-compositor-greeter-config.kdl
+- Shell service drop-in identity-gate.conf points to the scratch Phase A binary.
+- New greeter config validates, with the existing accepted-but-unapplied warnings
+  for layout.center-focused-column and layout.border.
+
+Observed:
+- Native greeter compositor runs without niri alias (PID 3177 at observation).
+- New sysc-greet runs fullscreen in kitty (PID 3236 at observation).
+- Child NIRI_SOCKET=/run/user/966/sysc-compositor.wayland-0.3177.sock.
+- As greeter user, sysc-compositor msg -j version/outputs/workspaces all succeed.
+- Version identifies sysc-compositor (devel), niri-ipc 26.4.0.
+- Output Virtual-1 is 1280x800; workspace snapshots return normal compatible JSON.
+- A root-peer IPC query was refused; the same query as greeter succeeded.
+- Original ~/.config/niri/{config.kdl,sysc-shell.kdl,sysc.kdl} hashes remain unchanged.
+- Nomadx ~/.config/sysc-compositor remains absent: login import has not run.
+
+Authentication:
+- VNC initially showed ambient greeter. One Enter pressed from ambient submitted
+  an empty password and returned AUTH_ERR. No passwords were guessed.
+- Checked only the VM seed and explicitly approved VM records/assets without
+  printing credential values; no plaintext throwaway password was available.
+- At the owner's request via parent, guest remains prepared at the login prompt.
+  No password reset, authentication bypass, host login, or host key injection ran.
+
+Outstanding acceptance proof after successful owner login:
+- Real greetd -> sysc-compositor-session login, one-time Niri config/include import.
+- Import journal line, XDG_CURRENT_DESKTOP=sysc, named session IPC/control sockets.
+- Waybar niri/workspaces, shell launcher starts foot, theme targets new directory.
+- Screenshots and exit/relogin proof that import does not repeat.
+
+Screenshot: vm-native-greeter-prelogin.png. It records the empty-password rejection,
+not a successful login or completed session gate.

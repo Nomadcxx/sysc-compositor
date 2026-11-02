@@ -171,8 +171,15 @@ func newConfigReloadTestServer(t *testing.T, loaded config.LoadResult) *Server {
 
 func newConfigReloadTestServerAt(t *testing.T, loaded config.LoadResult, path config.Path) *Server {
 	t.Helper()
+	// AF_UNIX paths include the test runtime directory and have a 108-byte
+	// ceiling. A long test name or TMPDIR must not prevent IPC startup.
+	dir, err := os.MkdirTemp("/var/tmp", "sysc-reload-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	t.Setenv("XDG_RUNTIME_DIR", dir)
 	runtime.LockOSThread()
-	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
 	s, err := New(loaded, path, false)
 	if err != nil {
 		runtime.UnlockOSThread()
@@ -182,6 +189,9 @@ func newConfigReloadTestServerAt(t *testing.T, loaded config.LoadResult, path co
 		s.Destroy()
 		runtime.UnlockOSThread()
 	})
+	if s.NiriSocket() == "" {
+		t.Fatal("test compositor did not start its IPC socket")
+	}
 	return s
 }
 

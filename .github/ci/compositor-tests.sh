@@ -14,9 +14,25 @@ install -d -m 0700 "$XDG_RUNTIME_DIR"
 # waybar needs a machine id; the tests load the "default" pointer theme.
 dbus-uuidgen --ensure=/etc/machine-id
 printf '[Icon Theme]\nInherits=Adwaita\n' | install -D -m 0644 /dev/stdin /usr/share/icons/default/index.theme
-# vkms has a primary node only; wlroots renders on it when the DRM backend
-# hands it over. The container has no udev, so the device is named.
-WLR_DRM_DEVICES=$(ls /dev/dri/card* | head -n1)
+# Card numbering varies across runner images. Newer kernels bind the default
+# vkms device to faux_driver; other faux devices must not match it.
+vkms_card() {
+    local card driver device
+    for card in "$1"/card[0-9]*; do
+        [[ ${card##*/} =~ ^card[0-9]+$ ]] || continue
+        driver=$(readlink -f "$card/device/driver") || continue
+        device=$(readlink -f "$card/device") || continue
+        if [[ ${driver##*/} == vkms ||
+              ( ${driver##*/} == faux_driver && ${device##*/} == vkms ) ]]; then
+            printf 'Selected vkms: %s/%s (driver=%s device=%s)\n' "$2" "${card##*/}" "${driver##*/}" "${device##*/}" >&2
+            printf '%s/%s\n' "$2" "${card##*/}"
+            return 0
+        fi
+    done
+    echo '::error::no vkms DRM card found' >&2
+    return 1
+}
+WLR_DRM_DEVICES=$(vkms_card /sys/class/drm /dev/dri)
 export WLR_DRM_DEVICES
 echo "WLR_DRM_DEVICES=$WLR_DRM_DEVICES"
 go generate ./internal/wlr
