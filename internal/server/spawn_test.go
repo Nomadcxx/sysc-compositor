@@ -117,14 +117,14 @@ func TestSpawnerFollowsTheSessionEnvironment(t *testing.T) {
 	t.Setenv("XDG_SESSION_TYPE", "")
 	s := newSpawner("wayland-9", "", nil, config.Default().Cursor, "")
 	t.Setenv("XDG_SESSION_TYPE", "wayland")
-	t.Setenv("XDG_CURRENT_DESKTOP", "niri:sysc")
+	t.Setenv("XDG_CURRENT_DESKTOP", "sysc")
 	got := make(map[string]string)
 	for _, item := range s.childEnvironment() {
 		if name, value, ok := strings.Cut(item, "="); ok {
 			got[name] = value
 		}
 	}
-	if got["XDG_SESSION_TYPE"] != "wayland" || got["XDG_CURRENT_DESKTOP"] != "niri:sysc" {
+	if got["XDG_SESSION_TYPE"] != "wayland" || got["XDG_CURRENT_DESKTOP"] != "sysc" {
 		t.Fatalf("child environment missed the session variables: XDG_SESSION_TYPE=%q XDG_CURRENT_DESKTOP=%q",
 			got["XDG_SESSION_TYPE"], got["XDG_CURRENT_DESKTOP"])
 	}

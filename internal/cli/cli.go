@@ -1,6 +1,5 @@
-// Package cli is the command line shared by sysc-compositor and its niri
-// drop-in (design §6): no subcommand runs the compositor, `msg` is a client
-// of $NIRI_SOCKET speaking niri-ipc 26.4.0.
+// Package cli runs sysc-compositor and its command-line client.
+// The msg command speaks niri-ipc 26.4.0 over $NIRI_SOCKET.
 package cli
 
 import (
@@ -18,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/Nomadcxx/sysc-compositor/internal/config"
 	"github.com/Nomadcxx/sysc-compositor/internal/ipc"
@@ -78,13 +78,9 @@ func parseRunOptions(args []string) (runOptions, error) {
 	return options, nil
 }
 
-// usage leads with the sysc-compositor names; niri is a compatibility alias
-// that takes the same arguments (design §6).
+// usage describes the installed sysc-compositor command.
 func usage(name string, env Env, problem string) int {
 	fmt.Fprintf(env.Stderr, "%s: %s\nusage: sysc-compositor [--session] [-c CONFIG] | sysc-compositor validate [-c CONFIG] | sysc-compositor msg [--json] REQUEST\n", name, problem)
-	if name != "sysc-compositor" {
-		fmt.Fprintf(env.Stderr, "%s is a compatibility alias of sysc-compositor and takes the same arguments\n", name)
-	}
 	return 2
 }
 
@@ -119,6 +115,9 @@ func validateConfig(name string, args []string, env Env) int {
 		fmt.Fprintf(env.Stderr, "%s: warning: bind actions are accepted but not applied yet: %s\n",
 			name, strings.Join(cfg.UnappliedActions, ", "))
 	}
+	if len(cfg.NiriCommandBinds) > 0 {
+		fmt.Fprintf(env.Stderr, "%s: warning: these run `niri`, which is not part of sysc-compositor; use `sysc-compositor msg`: %s\n", name, strings.Join(cfg.NiriCommandBinds, ", "))
+	}
 	fmt.Fprintf(env.Stdout, "%s: configuration is valid: %s\n", name, path)
 	return 0
 }
@@ -129,7 +128,28 @@ func run(name, configFlag string, sessionMode bool, env Env) int {
 	// wlroots objects belong to the thread that created them.
 	runtime.LockOSThread()
 	path := config.Locate(configFlag, env.Getenv)
-	loaded, err := config.LoadWithSources(path.Resolve())
+	first, prepareErr := config.PrepareUserConfig(path, env.Getenv, time.Now())
+	if first.Imported != "" {
+		fmt.Fprintf(env.Stderr, "%s: imported Niri config from %s to %s\n", name, first.Imported, first.Wrote)
+	} else if first.Wrote != "" {
+		fmt.Fprintf(env.Stderr, "%s: wrote the default config to %s\n", name, first.Wrote)
+	}
+	for _, item := range first.Kept {
+		fmt.Fprintf(env.Stderr, "%s: config import: kept existing %s\n", name, item)
+	}
+	for _, item := range first.Missing {
+		fmt.Fprintf(env.Stderr, "%s: config import: missing include %s\n", name, item)
+	}
+	for _, item := range first.Outside {
+		fmt.Fprintf(env.Stderr, "%s: config import: include still points outside %s\n", name, item)
+	}
+	var loaded config.LoadResult
+	var err error
+	if prepareErr != nil {
+		err = prepareErr
+	} else {
+		loaded, err = config.LoadWithSources(path.Resolve())
+	}
 	if err != nil {
 		fmt.Fprintf(env.Stderr, "%s: config: %v; using the defaults\n", name, err)
 		loaded.Config = config.Default()
@@ -311,7 +331,7 @@ func responseValue(raw json.RawMessage, name string) (json.RawMessage, error) {
 
 func streamEvents(name, socket string, asJSON bool, env Env) int {
 	if socket == "" {
-		fmt.Fprintf(env.Stderr, "Error: error communicating with %s: NIRI_SOCKET is not set, are you running this within niri?\n", name)
+		fmt.Fprintf(env.Stderr, "Error: error communicating with %s: NIRI_SOCKET is not set, are you running this within sysc-compositor?\n", name)
 		return 1
 	}
 	conn, err := net.Dial("unix", socket)
@@ -732,7 +752,7 @@ func parseWorkspaceReference(value string) (*ipc.WorkspaceReference, error) {
 func send(socket string, r ipc.Request) (ipc.Reply, error) {
 	if socket == "" {
 		// niri-ipc's own message (socket.rs).
-		return ipc.Reply{}, errors.New("NIRI_SOCKET is not set, are you running this within niri?")
+		return ipc.Reply{}, errors.New("NIRI_SOCKET is not set, are you running this within sysc-compositor?")
 	}
 	c, err := net.Dial("unix", socket)
 	if err != nil {
@@ -773,15 +793,15 @@ func warnCompositorVersion(name, socket string, stderr io.Writer) {
 			return
 		}
 	}
-	fmt.Fprintln(stderr, "Unable to get the running niri compositor version.")
-	fmt.Fprintln(stderr, "Did you forget to restart niri after an update?")
+	fmt.Fprintln(stderr, "Unable to get the running sysc-compositor version.")
+	fmt.Fprintln(stderr, "Did you forget to restart sysc-compositor after an update?")
 	fmt.Fprintln(stderr)
 }
 
 func printVersionMismatch(name, compositor, cli string, stderr io.Writer) {
-	fmt.Fprintf(stderr, "Running niri compositor has a different version from the %s CLI:\n", name)
+	fmt.Fprintf(stderr, "Running sysc-compositor has a different version from the %s CLI:\n", name)
 	fmt.Fprintf(stderr, "Compositor version: %s\n", compositor)
 	fmt.Fprintf(stderr, "CLI version:        %s\n", cli)
-	fmt.Fprintln(stderr, "Did you forget to restart niri after an update?")
+	fmt.Fprintln(stderr, "Did you forget to restart sysc-compositor after an update?")
 	fmt.Fprintln(stderr)
 }
