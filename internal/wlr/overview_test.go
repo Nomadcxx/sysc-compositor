@@ -1113,6 +1113,96 @@ func TestOverviewWheelOverTopLayerReachesTheLayer(t *testing.T) {
 	}
 }
 
+// TestOverviewLayerPopupTakesThePointer: a bar's menu is an xdg popup of its
+// layer surface, and in the overview it is as live as the bar (Niri's
+// find_root_shell_surface): a wheel and a click over it are the popup's, and
+// the click gives the bar its on-demand keyboard focus.
+func TestOverviewLayerPopupTakesThePointer(t *testing.T) {
+	c := newNested(t)
+	watchdog := time.AfterFunc(15*time.Second, c.Terminate)
+	t.Cleanup(func() { watchdog.Stop() })
+	go func() {
+		defer c.Terminate()
+		var pointer *fakePointer
+		// The pointer exists before the client starts, so it binds a wl_pointer.
+		onCompositor(t, c, func() { pointer = c.addFakePointer() })
+		defer onCompositor(t, c, func() { pointer.remove() })
+		client, err := testclient.StartLayerPopupClient(c.SocketName())
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer client.Close()
+		var first uint64
+		var bar *layerSurface
+		onCompositor(t, c, func() {
+			placed := mappedOn(c.layerPlacements(), layerTop)
+			if placed == nil {
+				t.Error("the bar never mapped on the top layer")
+				return
+			}
+			output := c.FocusedOutputName()
+			first = focusedWorkspaceID(c)
+			if !c.model.MapWindow(1000, output) || !c.model.FocusWorkspaceID(first) {
+				t.Error("could not map a window to make a second workspace")
+				return
+			}
+			c.applyWorkspaceModel()
+			if !c.OpenOverview() {
+				t.Error("could not open the overview")
+				return
+			}
+			// The popup hangs 120x80 from the bar's bottom-left corner.
+			x, y := float64(placed.box.x+60), float64(placed.box.y+placed.box.h+40)
+			surface, _, _ := c.surfaceAt(x, y)
+			bar = c.layerSurfaceForSurface(surface)
+			if surface == nil || bar == nil || unsafe.Pointer(surface) == unsafe.Pointer(bar.surface.surface) {
+				t.Errorf("the surface under the popup's place is not a popup of the bar (layer found %v)", bar != nil)
+				return
+			}
+			pointer.moveTo(x, y)
+		})
+		if t.Failed() {
+			return
+		}
+		if !client.WaitPopupEnter(2 * time.Second) {
+			t.Error("the pointer never entered the bar's popup in the overview")
+			return
+		}
+		var after uint64
+		var stillOpen bool
+		var focused *layerSurface
+		onCompositor(t, c, func() {
+			pointer.wheelAt(1000, false, 120)
+			pointer.button(buttonLeft, true)
+			pointer.button(buttonLeft, false)
+			after = focusedWorkspaceID(c)
+			stillOpen = c.model.OverviewOpen()
+			focused = c.onDemandLayerFocus
+			c.CloseOverview()
+		})
+		if err := client.Sync(); err != nil {
+			t.Error(err)
+			return
+		}
+		if got := client.PopupInput(); got.Axes == 0 || got.Buttons != 2 {
+			t.Errorf("the popup got %d axis and %d button events, want some and 2", got.Axes, got.Buttons)
+		}
+		if after != first {
+			t.Error("a wheel over the popup in the overview switched the workspace")
+		}
+		if !stillOpen {
+			t.Error("a click on the popup closed the overview")
+		}
+		if focused != bar {
+			t.Error("a click on the popup did not give its on-demand bar the keyboard")
+		}
+	}()
+	if err := c.Run(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestOverviewHeldButtonKeepsWindowsUnfocused: a button held on the overview
 // backdrop must not carry the pointer into a window the overview covers,
 // even one that had the pointer when the overview opened from a key.
