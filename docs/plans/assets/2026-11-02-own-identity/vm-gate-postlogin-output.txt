@@ -1,0 +1,20 @@
+/home/nomadx/.config/niri/config.kdl: OK
+/home/nomadx/.config/niri/sysc-shell.kdl: OK
+/home/nomadx/.config/niri/sysc.kdl: OK
+{"applied":"niri","enabled":false,"id":1,"ok":true,"results":{"alacritty":{"status":"applied"},"btop":{"status":"applied"},"cava":{"status":"applied"},"foot":{"status":"applied"},"ghostty":{"status":"applied"},"gtk3":{"status":"applied"},"gtk4":{"status":"applied"},"helix":{"status":"applied"},"kcolorscheme":{"status":"applied"},"kitty":{"status":"applied"},"niri":{"status":"applied"},"qt":{"status":"applied"},"starship":{"status":"applied"},"wezterm":{"status":"applied"}}}
+{"applied":"niri","enabled":true,"id":1,"ok":true,"results":{"alacritty":{"status":"applied"},"btop":{"status":"applied"},"cava":{"status":"applied"},"foot":{"status":"applied"},"ghostty":{"status":"applied"},"gtk3":{"status":"applied"},"gtk4":{"status":"applied"},"helix":{"status":"applied"},"kcolorscheme":{"status":"applied"},"kitty":{"status":"applied"},"niri":{"status":"applied"},"qt":{"status":"applied"},"starship":{"status":"applied"},"wezterm":{"status":"applied"}}}
+PASS theme enable/disable targets sysc-compositor
+Nov 02 12:14:07 sysc-session sysc-compositor[4588]: sysc-compositor: imported Niri config from /home/nomadx/.config/niri/config.kdl to /home/nomadx/.config/sysc-compositor/config.kdl
+
+MainPID=21205
+NRestarts=0
+
+sysc config hashes before second start {"config.kdl": "34fe7c824711cb8716cb8bdde0e92a346b8eb1c3cc006e09771c61f7981e61c2", "sysc-shell.kdl": "60957456730557f0d47e8e6b806e654c96dd26507b800b4a87e131f8ac526b1a", "sysc-shell.kdl.bak": "df2fdd938c24d7b848e2337c1680671a6a52af412fe83ad677d073af86511bda", "sysc.kdl": "0e98dfb1c907fa9815481064ba9043f7a86b1ebf2c97c3d6d7cf9dce70fd1dea"}
+/home/nomadx/.config/niri/config.kdl: OK
+/home/nomadx/.config/niri/sysc-shell.kdl: OK
+/home/nomadx/.config/niri/sysc.kdl: OK
+PASS second greetd login: imported config/include hashes unchanged
+Nov 02 12:14:07 sysc-session sysc-compositor[4588]: sysc-compositor: imported Niri config from /home/nomadx/.config/niri/config.kdl to /home/nomadx/.config/sysc-compositor/config.kdl
+
+session identity {'NIRI_SOCKET': '/run/user/1000/sysc-compositor.wayland-0.23764.sock', 'SYSC_SOCKET': '/run/user/1000/wayland-0-control.sock', 'XDG_CURRENT_DESKTOP': 'sysc'}
+Running as unit: input-gate-wev.service; invocation ID: 8a9d262007dc431ab4578fdc2f1e48a2

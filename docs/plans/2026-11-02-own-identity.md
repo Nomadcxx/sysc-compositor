@@ -352,3 +352,18 @@ These land and release **before** the compositor PR merges.
   - Capture screenshots into `docs/plans/assets/2026-11-02-own-identity/`.
 - [ ] **Step 3: Write the execution record** in this plan. Close bd `sysc-1634`. Open the PR and
   merge it on green CI under the standing approval, after the sibling PRs.
+
+
+## Execution evidence (2026-11-02)
+
+Implementation and named checks are in PR #88. Launcher #31, greeter #150 and shell #613
+have merged; releases 0.5.2, 1.3.2 and 0.2.6 carry their changes. Both compositor
+CI lanes passed at b5f54aa. The approved laptop navigation test passed.
+
+The headless session VM completed greetd login, recursive first import, sysc
+environment/socket identity, alias-free shell launch, Waybar compatibility,
+theme apply/unapply targeting and unchanged source Niri hashes. A second login
+kept all imported file hashes and produced no new import. See
+[completion evidence](assets/2026-11-02-own-identity/vm-gate-completion.txt) and
+the screenshots beside it. Theme reload required the separate shell fix PR #615;
+the gate records its exact source and proof. bd holds merge/dependency state.
