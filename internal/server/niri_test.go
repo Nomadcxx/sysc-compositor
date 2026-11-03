@@ -184,7 +184,7 @@ func TestNiriFocusedWindowQuery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `{"Ok":{"FocusedWindow":{"id":9,"title":"Terminal","app_id":null,"pid":null,"workspace_id":null,"is_focused":true,"is_floating":false,"is_urgent":false,"layout":{"pos_in_scrolling_layout":null,"tile_size":[0,0],"window_size":[0,0],"tile_pos_in_workspace_view":null,"window_offset_in_tile":[0,0]},"focus_timestamp":null}}}`
+	want := `{"Ok":{"FocusedWindow":{"id":9,"title":"Terminal","app_id":null,"pid":null,"workspace_id":null,"is_focused":true,"is_floating":false,"is_urgent":false,"is_fullscreen":false,"layout":{"pos_in_scrolling_layout":null,"tile_size":[0,0],"window_size":[0,0],"tile_pos_in_workspace_view":null,"window_offset_in_tile":[0,0]},"focus_timestamp":null}}}`
 	if string(got) != want {
 		t.Fatalf("FocusedWindow = %s, want %s", got, want)
 	}
