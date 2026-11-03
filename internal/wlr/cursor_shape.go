@@ -39,6 +39,8 @@ func (c *Compositor) handleRequestSetShape(data unsafe.Pointer) {
 	if !bool(C.sysc_cursor_shape_request_valid(c.seat, event)) {
 		return
 	}
+	c.drop(c.cursorSurfaceCommit)
+	c.cursorSurfaceCommit = nil
 	if c.cursorSurfaceDestroy != nil {
 		c.drop(c.cursorSurfaceDestroy)
 		c.cursorSurfaceDestroy = nil

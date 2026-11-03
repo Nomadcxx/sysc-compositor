@@ -9,6 +9,7 @@ package wlr
 #include <wlr/types/wlr_compositor.h>
 #include <wlr/types/wlr_data_device.h>
 #include <wlr/types/wlr_cursor.h>
+#include <wlr/types/wlr_cursor_shape_v1.h>
 #include <wlr/types/wlr_buffer.h>
 #include <wlr/types/wlr_scene.h>
 #include <wlr/types/wlr_pointer.h>
@@ -302,6 +303,26 @@ static int sysc_surface_subsurface_count(struct wlr_surface *surface) {
 import "C"
 
 import "unsafe"
+
+// requestCursorShapeForTest exercises the request handler without a backend,
+// Wayland connection or desktop window. The temporary seat owns no resources.
+func (c *Compositor) requestCursorShapeForTest(shape uint32, focused bool) {
+	seat := (*C.struct_wlr_seat)(C.calloc(1, C.sizeof_struct_wlr_seat))
+	client := (*C.struct_wlr_seat_client)(C.calloc(1, C.sizeof_struct_wlr_seat_client))
+	defer C.free(unsafe.Pointer(seat))
+	defer C.free(unsafe.Pointer(client))
+	c.seat = seat
+	defer func() { c.seat = nil }()
+	if focused {
+		seat.pointer_state.focused_client = client
+	}
+	event := C.struct_wlr_cursor_shape_manager_v1_request_set_shape_event{
+		seat_client: client,
+		device_type: C.WLR_CURSOR_SHAPE_MANAGER_V1_DEVICE_TYPE_POINTER,
+		shape:       C.enum_wp_cursor_shape_device_v1_shape(shape),
+	}
+	c.handleRequestSetShape(unsafe.Pointer(&event))
+}
 
 // fakePointer is an in-process pointer attached to the user seat the way a
 // backend pointer is, for tests: the nested backend's one pointer is the
