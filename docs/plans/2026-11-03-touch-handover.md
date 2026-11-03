@@ -417,7 +417,8 @@ session does not check it again:
 3. **Bar auto-hide** (`sysc-2229`, P1). PR #616 needs a look on the laptop
    once a shell build carrying it is installed; the release path is the shell
    repo's business.
-4. **The config surface that is really not applied.** The handover's earlier
+4. **The config surface that is really not applied** (`sysc-2231`, P2). The
+   handover's earlier
    claim was wrong and was checked on 2026-11-03: sysc does **not** ignore
    `window-rule` and `layer-rule` as a whole. `validate` warns per unsupported
    **sub-key**, and the compositor applies the supported ones. `window-rule`
@@ -441,7 +442,10 @@ session does not check it again:
    `is-active-in-column`, `is-floating`, `is-window-cast-target`, `is-urgent`,
    `at-startup`, plus `layer-rule.match`'s `at-startup` and `layer`). Those
    warn, so the user is told. A tranche here is milestone-sized and wants its
-   own plan, the way the touch tranche did.
+   own plan, the way the touch tranche did. The archThink's own config shows
+   the gap on a real machine: it uses `open-maximized`,
+   `draw-border-with-background`, `opacity` and `match is-active=false`, so
+   the compositor prints the `window-rule` warning at every start.
 5. **The two flakes**: the portal colour picker under vkms, and the overview
    scroll fixture (`sysc-2219`).
 6. **Packaging** (`sysc-2200` plus the children `sysc-2201`–`2213`) once the
