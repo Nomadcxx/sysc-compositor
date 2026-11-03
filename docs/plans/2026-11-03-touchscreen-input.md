@@ -101,8 +101,19 @@ without a compositor.
 - **The surface that goes away releases the finger.** Each finger holds a listener on its
   surface's destroy signal, so a window that dies mid-gesture does not leave a dangling touch
   point.
-- **The device that goes away cancels its fingers.** A touch device that is destroyed cancels every
-  touch point on the seat and drops its listeners.
+- **The device that goes away ends its fingers.** A touch device that is destroyed lifts every
+  finger it held and drops its listeners.
+
+### One wlroots caveat worth writing down
+
+wlroots 0.20's `wlr_seat_touch_notify_cancel` takes a seat client and does not check it:
+`wlr_seat_touch_send_cancel` walks `seat_client->touches` straight away, so a nil seat client
+faults. A nil client also clears nothing, because the point loop matches on `point->client == NULL`,
+which no real point does. Mango calls it that way; on 0.20 it cannot be called that way.
+
+So the compositor ends each finger on its own with `wlr_seat_touch_notify_up`, which is a no-op
+when the point is already gone. The device going away, a cancel from the device and `input.touch`
+going off all go through one helper, `endTouchPoints`.
 
 ### The config surface
 
