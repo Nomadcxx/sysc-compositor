@@ -1,11 +1,13 @@
 package server
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"reflect"
 	"runtime"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -161,6 +163,25 @@ func TestFailedExplicitConfigReloadKeepsActiveRoot(t *testing.T) {
 	}
 	if !slices.Contains(s.configSources, filepath.Join(dir, "missing.kdl")) {
 		t.Fatalf("failed explicit include was not tracked: %q", s.configSources)
+	}
+}
+
+func TestReportConfigGapsNamesUnappliedActions(t *testing.T) {
+	cfg := &config.Config{
+		Warnings:         []string{"blur"},
+		UnappliedActions: []string{"maximize-column", "set-column-width"},
+		NiriCommandBinds: []string{"Mod+Z"},
+	}
+	var stderr bytes.Buffer
+	reportConfigGaps(cfg, &stderr)
+	for _, want := range []string{
+		"config section `blur` is accepted but not applied yet",
+		"bind actions are accepted but not applied yet, so these binds do nothing: maximize-column, set-column-width",
+		"these run `niri`, which is not part of sysc-compositor",
+	} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Errorf("warning %q does not contain %q", stderr.String(), want)
+		}
 	}
 }
 
