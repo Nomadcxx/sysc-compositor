@@ -22,7 +22,10 @@ type reloadTarget struct {
 func compositorOptions(cfg *config.Config, locale *config.Keyboard) wlr.Options {
 	workspaces := make([]wm.WorkspaceConfig, len(cfg.Workspaces))
 	for i, workspace := range cfg.Workspaces {
-		workspaces[i] = wm.WorkspaceConfig{Name: workspace.Name, OpenOnOutput: workspace.OpenOnOutput}
+		workspaces[i] = wm.WorkspaceConfig{
+			Name: workspace.Name, OpenOnOutput: workspace.OpenOnOutput,
+			Layout: workspaceLayout(workspace.Layout),
+		}
 	}
 	k := cfg.Keyboard
 	if locale != nil {
@@ -48,6 +51,17 @@ func compositorOptions(cfg *config.Config, locale *config.Keyboard) wlr.Options 
 		RecentWindows:              &cfg.RecentWindows,
 		PreferNoCSD:                cfg.PreferNoCSD, Workspaces: workspaces,
 		WindowRules: cfg.WindowRules, LayerRules: cfg.LayerRules,
+	}
+}
+
+// workspaceLayout converts the layout override of a workspace for the model.
+func workspaceLayout(layout *config.WorkspaceLayout) *wm.WorkspaceLayout {
+	if layout == nil {
+		return nil
+	}
+	return &wm.WorkspaceLayout{
+		Gaps: layout.Gaps, ColumnWidthProportion: layout.ColumnWidthProportion,
+		FixedColumnWidth: layout.FixedColumnWidth,
 	}
 }
 

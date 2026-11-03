@@ -17,6 +17,15 @@ type workspaceState struct {
 type WorkspaceConfig struct {
 	Name         string
 	OpenOnOutput string
+	Layout       *WorkspaceLayout
+}
+
+// WorkspaceLayout holds the layout overrides a workspace sets. A nil field
+// means the workspace keeps the value of its output.
+type WorkspaceLayout struct {
+	Gaps                  *int
+	ColumnWidthProportion *float64
+	FixedColumnWidth      *int
 }
 
 type outputState struct {
@@ -204,7 +213,8 @@ func (m *Model) SetOutputGeometry(name string, bounds layout.Bounds, columnWidth
 	out.columnWidth = columnWidth
 	out.gap = gap
 	for _, workspace := range out.workspaces {
-		workspace.strip.SetGeometry(bounds, columnWidth, gap)
+		width, workspaceGap := m.workspaceGeometry(out, workspace)
+		workspace.strip.SetGeometry(bounds, width, workspaceGap)
 	}
 	for id, state := range m.windows {
 		if state.output == name {
@@ -215,10 +225,43 @@ func (m *Model) SetOutputGeometry(name string, bounds layout.Bounds, columnWidth
 	return true
 }
 
+// workspaceGeometry returns the column width and the gap of a workspace: the
+// values of its output, with the workspace's own layout merged over them.
+func (m *Model) workspaceGeometry(out *outputState, workspace *workspaceState) (int, int) {
+	width, gap := out.columnWidth, out.gap
+	override := m.workspaceLayout(workspace)
+	if override == nil {
+		return width, gap
+	}
+	if override.Gaps != nil {
+		gap = *override.Gaps
+	}
+	switch {
+	case override.FixedColumnWidth != nil:
+		width = *override.FixedColumnWidth
+	case override.ColumnWidthProportion != nil:
+		width = layout.ColumnWidthPixels(out.bounds.Width, gap, *override.ColumnWidthProportion)
+	}
+	return width, gap
+}
+
+// workspaceLayout returns the layout override of a named workspace.
+func (m *Model) workspaceLayout(workspace *workspaceState) *WorkspaceLayout {
+	if workspace == nil || workspace.name == nil {
+		return nil
+	}
+	for _, config := range m.workspaceConfig {
+		if equalName(config.Name, *workspace.name) {
+			return config.Layout
+		}
+	}
+	return nil
+}
+
 // SetWorkspaceConfig adds newly configured named workspaces to live outputs.
 // Existing workspaces keep their identity and placement across config reloads.
 func (m *Model) SetWorkspaceConfig(workspaces []WorkspaceConfig) bool {
-	if slices.Equal(m.workspaceConfig, workspaces) {
+	if sameWorkspaceConfig(m.workspaceConfig, workspaces) {
 		return false
 	}
 	m.workspaceConfig = slices.Clone(workspaces)
@@ -226,7 +269,58 @@ func (m *Model) SetWorkspaceConfig(workspaces []WorkspaceConfig) bool {
 	for _, name := range m.outputNames() {
 		m.addConfiguredWorkspaces(m.outputs[name], name == first)
 	}
+	// A workspace that already exists keeps its identity, but its own layout
+	// may have changed.
+	for _, name := range m.outputNames() {
+		out := m.outputs[name]
+		for _, workspace := range out.workspaces {
+			width, gap := m.workspaceGeometry(out, workspace)
+			workspace.strip.SetGeometry(out.bounds, width, gap)
+		}
+	}
 	return true
+}
+
+// sameWorkspaceConfig compares two workspace configurations by value.
+func sameWorkspaceConfig(a, b []WorkspaceConfig) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].Name != b[i].Name || a[i].OpenOnOutput != b[i].OpenOnOutput {
+			return false
+		}
+		if !sameWorkspaceLayout(a[i].Layout, b[i].Layout) {
+			return false
+		}
+	}
+	return true
+}
+
+// sameWorkspaceLayout compares two workspace layouts by value.
+func sameWorkspaceLayout(a, b *WorkspaceLayout) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	if !sameIntPtr(a.Gaps, b.Gaps) || !sameFloatPtr(a.ColumnWidthProportion, b.ColumnWidthProportion) ||
+		!sameIntPtr(a.FixedColumnWidth, b.FixedColumnWidth) {
+		return false
+	}
+	return true
+}
+
+func sameIntPtr(a, b *int) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
+}
+
+func sameFloatPtr(a, b *float64) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
 }
 
 // MapWindow places a new window on the requested output, or on the focused
@@ -1753,6 +1847,8 @@ func (m *Model) addConfiguredWorkspaces(out *outputState, firstOutput bool) {
 		workspace := m.newWorkspace(out)
 		name := config.Name
 		workspace.name = &name
+		width, gap := m.workspaceGeometry(out, workspace)
+		workspace.strip.SetGeometry(out.bounds, width, gap)
 		out.workspaces = append(out.workspaces, nil)
 		copy(out.workspaces[1:], out.workspaces[:len(out.workspaces)-1])
 		out.workspaces[0] = workspace

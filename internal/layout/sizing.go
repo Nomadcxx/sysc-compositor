@@ -50,6 +50,19 @@ func ParseSizeChange(arg string) (SizeChange, error) {
 // the working width.
 var presetColumnWidths = []float64{1.0 / 3.0, 0.5, 2.0 / 3.0}
 
+// ColumnWidthPixels returns the width of a column that takes the given share
+// of the available width, with the gaps around it.
+func ColumnWidthPixels(available, gap int, proportion float64) int {
+	if available <= 0 {
+		return 0
+	}
+	if proportion <= 0 {
+		proportion = 0.5
+	}
+	width := (float64(available-gap) * proportion) - float64(gap)
+	return max(1, int(math.Round(width)))
+}
+
 // presetWindowHeights are the window heights Niri cycles through, as a share
 // of the working height.
 var presetWindowHeights = []float64{1.0 / 3.0, 0.5, 2.0 / 3.0}

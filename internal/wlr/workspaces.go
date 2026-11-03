@@ -29,7 +29,6 @@ static void sysc_workspace_set_size(struct wlr_xdg_toplevel *toplevel, int width
 import "C"
 
 import (
-	"math"
 	"unsafe"
 
 	"github.com/Nomadcxx/sysc-compositor/internal/layout"
@@ -345,12 +344,7 @@ func (c *Compositor) defaultColumnWidth(available int) int {
 	if c.layoutOptions.FixedColumnWidth > 0 {
 		return c.layoutOptions.FixedColumnWidth
 	}
-	proportion := c.layoutOptions.ColumnWidthProportion
-	if proportion <= 0 {
-		proportion = 0.5
-	}
-	width := (float64(available-c.layoutOptions.Gaps) * proportion) - float64(c.layoutOptions.Gaps)
-	return max(1, int(math.Round(width)))
+	return layout.ColumnWidthPixels(available, c.layoutOptions.Gaps, c.layoutOptions.ColumnWidthProportion)
 }
 
 func (c *Compositor) applyWorkspaceModel() {
