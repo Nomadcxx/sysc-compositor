@@ -14,13 +14,14 @@ that asked for touch, as Niri does. The tranche is on draft PR #91 with green
 CI on both lanes. **The evidence route the gate needs now exists**: a
 `sysc-compositor touch-probe` client that asks the seat for touch and prints
 every event it receives, plus the compositor's own log lines for the seat's
-capabilities and for every finger. The physical gate on the archThink is
-staged and **armed, but not yet run**: the new binary is on the laptop, a
-systemd user drop-in that runs it without sudo is in place, and the gate is a
-login cycle plus `capture-touch-gate.sh` and a finger on the panel. The
-sizing family (`sysc-2228`) and the bar auto-hide (`sysc-2229`) gates are
-still the owner's to run on the same machine. The packaging tranche stays
-deferred, and PR #89 and PR #91 stay draft until the physical gates pass.
+capabilities and for every finger. **The physical gate on the archThink
+passed on 2026-11-03**: the seat advertised `pointer|keyboard|touch`, libinput
+picked up the ELAN panel as a touch device, and a finger on the panel reached
+the probe's own window as a whole stroke — down, motion, up — with the
+compositor's log naming the same finger. The sizing family (`sysc-2228`) and
+the bar auto-hide (`sysc-2229`) gates are still the owner's to run on the same
+machine. The packaging tranche stays deferred, and PR #89 and PR #91 stay
+draft until the physical gates pass.
 
 ## Repositories and their state
 
@@ -41,7 +42,7 @@ named here.
 | `main` | `1b03199` | the merged sizing and bar work |
 | `feat/sysc-input-20261102` | `c082c44` | the input branch: PR #89, draft |
 | `feat/touch-input-20261103` | `0b1a5e9`, `699a97e`, `db64bcc`, `6226600` | main plus the touch tranche and the evidence route: PR #91, draft |
-| `feat/laptop-touch-gate-20261103` | `02e3335`, `72ce0d6`, `59f135f`, `aec02f4` | the input branch plus the touch tranche and the evidence route: what the laptop runs |
+| `feat/laptop-touch-gate-20261103` | `02e3335`, `72ce0d6`, `59f135f`, `aec02f4`, `e3647f6` | the input branch plus the touch tranche and the evidence route: what the laptop runs |
 
 **`main` does not carry the pointing-device work.** The pointer settings
 (`internal/config/pointer.go`, `internal/wlr/pointer_settings.go`,
@@ -59,7 +60,9 @@ and gains the TOUCH case; `internal/server/config_reload.go` keeps
 `Pointers:` and gains `Touch:`; `internal/wlr/compositor.go` keeps
 `Pointers config.Pointers` and gains `Touch config.Touch` in three places;
 the `input` row of the parity matrix keeps the pointing-device sentence and
-gains the touch sentence.
+gains the touch sentence. The last code commit on the gate branch is
+`e3647f6` ("feat(input): let the touch probe wait for the finger to lift"),
+the `--until-stroke` flag the gate's rerun used.
 
 Open PRs: **#91** (touch, draft), **#89** (input, draft), **#92** (the
 performance research plan, draft, not ours). #89 and #91 stay draft until the
@@ -169,11 +172,15 @@ rejected here, as it is in Niri.
   finger the compositor sends.
 - `internal/touchprobe/probe_test.go`, `TestCapabilityNames`,
   `TestSummaryCountsTheFinger` and `TestHasTouchCapability` — lane 1, pure.
+- `internal/cli/cli_test.go`, `TestTouchProbeTakesTheUntilStrokeFlag` — lane 1.
+  The flag has to be part of the command: an unknown flag ends with the usage
+  code, a known one runs.
 
 CI run `41604096155` is green on both lanes: lane 1 `check` and lane 2
 `compositor` under vkms. Every touch test ran and passed, including
 `TestTouchProbeSeesTheFinger`, which is the evidence route. The earlier run
-`41588290485` was green for the tranche alone.
+`41588290485` was green for the tranche alone. The `--until-stroke` flag and
+its test came after that run, so the next CI run on the branch covers them.
 
 ## The laptop (archThink)
 
@@ -194,16 +201,19 @@ observation that the deployed compositor does not use the touchscreen.
 **The staged install.** The gate directory is
 `~/.cache/sysc-compositor-gate-20261103/` and now holds:
 
-- `bin/sysc-compositor.touch` — the new build, 17478872 bytes, sha256
-  `c6c9e6a810d0e27613459fdb59706c5ae185aff07e93968fbb71d0870f58b11f`. It was
-  built on archPC from `feat/laptop-touch-gate-20261103` at `84dc7a0` and
-  copied over; its version string reads `84dc7a0+dirty` because the checkout
+- `bin/sysc-compositor.touch` — the new build, 17480000 bytes, sha256
+  `809b19fd751321078e35e074e22ae5140397720ba4210e02a1b1f6b44234abd3`. It was
+  built on archPC from `feat/laptop-touch-gate-20261103` at `e3647f6` and
+  copied over; its version string reads `e3647f6+dirty` because the checkout
   carries the untracked `.commandcode/` directory. It carries the touch tranche
-  **and** the `touch-probe` evidence route. Two earlier staged builds were
+  **and** the `touch-probe` evidence route, with `--until-stroke` so the gate
+  records the finger's lift as well. Three earlier staged builds were
   replaced: the touch tranche alone (17385096 bytes, sha256
-  `86a6b52918464d3bc51f68050f5745cf12f3acb7f4a759d60e8a84e57e036bb5`) and the
+  `86a6b52918464d3bc51f68050f5745cf12f3acb7f4a759d60e8a84e57e036bb5`), the
   tranche plus the probe built from a dirty tree (17478904 bytes, sha256
-  `a8b2293e0d07e35a3e7b69417d45fabc9cde58957a1da54d77ca1f500dca45e3`).
+  `a8b2293e0d07e35a3e7b69417d45fabc9cde58957a1da54d77ca1f500dca45e3`) and
+  the probe without the stroke wait (17478872 bytes, sha256
+  `c6c9e6a810d0e27613459fdb59706c5ae185aff07e93968fbb71d0870f58b11f`).
 - `install-touch-compositor.sh` — the installer, following the pattern of
   `install-gapfix-compositor.sh`: it refuses to run as root, refuses to run
   anywhere but archThink, refuses to run twice, backs the current binary up
@@ -258,6 +268,54 @@ what the finger did to `touch-gate-capture.txt`. The probe maps a small
 anywhere else belongs to a client that has not asked for touch, and the
 compositor drops it with the reason `the client did not ask for touch`.
 
+The script runs the probe with `--until-stroke`, so it waits for the finger's
+**lift** as well and ends by itself: one tap and one lift is the whole record,
+and nothing has to be interrupted by hand. It takes an output file and a
+timeout as arguments, and it appends the compositor's own journal lines for
+the same window to the record, so the file holds both sides of the stroke.
+The exit code says what happened: 0 a whole stroke arrived, 1 no finger, 3 the
+seat does not advertise touch, 4 the probe could not run, 5 the finger arrived
+but never lifted.
+
+**The gate passed on 2026-11-03.** The owner logged out and back in, so the
+armed drop-in started the staged build (pid 1373), and the record in
+`~/.cache/sysc-compositor-gate-20261103/touch-gate-capture.txt` says:
+
+```
+touch-probe: seat capabilities=pointer|keyboard|touch
+touch-probe: touch bound
+touch-probe: window mapped
+touch-probe: down id=0 x=116.8 y=89.6 surface=probe
+touch-probe: frame
+touch-probe: motion id=0 x=116.8 y=90.2
+touch-probe: frame
+touch-probe: up id=0
+touch-probe: frame
+touch-probe: summary downs=1 ups=1 motions=1 frames=3 cancels=0 on_surface=1
+--- compositor journal since 2026-11-03 10:09:49 ---
+sysc-compositor: touch down dropped: no surface under the finger
+sysc-compositor: touch down id=0 delivered to the client
+sysc-compositor: touch up id=0
+exit=0
+```
+
+The seat advertised touch, the panel was seen as a touch device
+(`sysc-compositor: touch device added: ELAN Touchscreen`, and the seat's
+capabilities went `touch` → `pointer|touch` → `pointer|keyboard|touch` as the
+devices came up), and one finger on the panel reached the probe's own window
+as a whole stroke. The compositor's log names the same finger the client saw.
+The tap that landed outside the window was dropped with the reason
+`no surface under the finger`, which is the rule working, not a failure.
+
+The first run of the gate recorded only the landing (`downs=1 ups=0`): the
+probe stopped the moment the finger went down, so the lift was never in the
+record. `--until-stroke` fixes that, and the record above is the rerun.
+`touch-gate-capture-down-only.txt` keeps the first run next to it.
+
+The drop-in was **disarmed** after the gate, so the next login starts
+`/usr/local/bin/sysc-compositor` again. The session that ran the gate was
+still on the staged build until it was logged out of.
+
 ### What was checked before the gate
 
 - The running old build advertises no touch. The probe against the live
@@ -308,12 +366,15 @@ ask for touch`), and `touch up id=1`.
 prints every event.
 
 ```
-sysc-compositor touch-probe --timeout 60s
+sysc-compositor touch-probe --timeout 60s [--until-stroke]
 ```
 
 It exits 0 when a finger arrived, 1 when the run ended with no finger, 3 when
-the seat does not advertise touch, and 4 when the probe could not run. The
-lines are stable: `touch-probe: seat capabilities=pointer|keyboard|touch`,
+the seat does not advertise touch, 4 when the probe could not run, and 5 when
+`--until-stroke` was given and the finger arrived but never lifted. With
+`--until-stroke` the probe waits for the lift as well, so the record holds the
+whole stroke instead of only the moment the finger landed. The lines are
+stable: `touch-probe: seat capabilities=pointer|keyboard|touch`,
 `touch-probe: touch bound`, `touch-probe: down id=1 x=… y=… surface=probe`,
 and a summary with the counts. The probe maps a window, so the owner runs it
 on the laptop's session where the finger is.
@@ -400,14 +461,17 @@ session does not check it again:
 
 ## Open work, in order
 
-1. **The touch gate on the laptop** (`sysc-2227`, P2). The build is staged
-   and the no-sudo drop-in is armed, so the gate is: log out, log back in,
-   then `sh ~/.cache/sysc-compositor-gate-20261103/capture-touch-gate.sh`
-   and touch inside the probe's 200x150 window. The evidence route is built:
-   `sysc-compositor touch-probe` on the laptop's session, and the journal's
-   touch lines (see "How to see whether the gate passed" and "What was
-   checked before the gate"). The session's new build is the staged one
-   until `disarm-touch-gate.sh` is run.
+1. **The touch gate on the laptop** (`sysc-2227`, P2). **Done — it passed on
+   2026-11-03.** The seat advertised `pointer|keyboard|touch`, the ELAN panel
+   was seen as a touch device, and a finger on the panel reached the probe's
+   own window as a whole stroke (down, motion, up), with the compositor's log
+   naming the same finger. The record is in
+   `~/.cache/sysc-compositor-gate-20261103/touch-gate-capture.txt` on the
+   laptop; the gate steps and the evidence route are in "The gate, step by
+   step" and "How to see whether the gate passed". The drop-in was disarmed
+   afterwards, so the next login starts the installed build again. What is
+   left is the paperwork: close the bead, and open a pull request from the
+   gate branch so CI sees the exact tree the laptop ran.
 2. **The sizing family gate on the laptop** (`sysc-2228`, P1). The owner
    compares against Niri on the same hardware: maximise-column,
    maximise-window-to-edges, centre-column, centre-visible-columns,
@@ -443,9 +507,15 @@ session does not check it again:
    `at-startup`, plus `layer-rule.match`'s `at-startup` and `layer`). Those
    warn, so the user is told. A tranche here is milestone-sized and wants its
    own plan, the way the touch tranche did. The archThink's own config shows
-   the gap on a real machine: it uses `open-maximized`,
-   `draw-border-with-background`, `opacity` and `match is-active=false`, so
-   the compositor prints the `window-rule` warning at every start.
+   the gap on a real machine: it prints **fifteen** warnings at every start,
+   one per config block that holds something unsupported — `config-notification`,
+   `output`, `layout.background-color`, `layout.center-focused-column`,
+   `layout.preset-column-widths`, `layout.border`, `layout.struts`,
+   `overview.workspace-shadow`, `debug`, `animations.window-open.easing`,
+   `animations.window-close.easing`, `animations.config-notification-open-close`,
+   `animations.screenshot-ui-open`, `window-rule` and `window-rule.match`.
+   The warning names the block, not the whole feature: the supported keys
+   inside `output` or `window-rule` still apply.
 5. **The two flakes**: the portal colour picker under vkms, and the overview
    scroll fixture (`sysc-2219`).
 6. **Packaging** (`sysc-2200` plus the children `sysc-2201`–`2213`) once the

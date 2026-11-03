@@ -1,6 +1,6 @@
 # Touchscreen input — plan and record
 
-Milestone: native touch routing. Date: 2026-11-03. Status: implemented, awaiting the laptop gate.
+Milestone: native touch routing. Date: 2026-11-03. Status: implemented, the laptop gate passed.
 
 Bead: `sysc-2227`. Depends on: `sysc-2199`.
 
@@ -200,11 +200,12 @@ proved before it is used on the laptop.
 
 ## What is still open
 
-- The laptop gate: the touchscreen on the archThink has to answer. The ELAN panel reports
-  `ID_INPUT_TOUCHSCREEN=1` on event4, so the device must now reach the compositor as a touch
-  device; the owner has to confirm that a finger lands where it lands under Niri. The probe above
-  is how the finger is seen: `sysc-compositor touch-probe` prints the seat's capabilities and every
-  event, and the journal says what the compositor did with it.
+- **The laptop gate passed on 2026-11-03.** The seat advertised `pointer|keyboard|touch`, the ELAN
+  panel was picked up as a touch device, and a finger on the panel reached the probe's own window as
+  a whole stroke — down, motion, up — with the compositor's log naming the same finger. The record
+  is in `~/.cache/sysc-compositor-gate-20261103/touch-gate-capture.txt` on the laptop. The probe
+  grew a `--until-stroke` flag for this, so the record holds the finger's lift as well as its
+  landing; the exit code says which half was missing (5 = the finger arrived but never lifted).
 - Multi-finger gestures are not implemented. Each finger is tracked separately and delivered
   correctly, but pinch, rotate and swipe are Niri's gestures, not this milestone's.
 - Touch does not drive the compositor's own UI yet — the overview, the switcher and the colour
