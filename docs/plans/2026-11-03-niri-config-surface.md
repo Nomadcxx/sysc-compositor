@@ -4,7 +4,9 @@
 - Bead: `sysc-2231`
 - Branch: `feat/config-surface-20261103`
 - Status: slices 1, 2 and 3 landed on 2026-11-03 (commits `3bd4e41`,
-  `79b939d` and `99a6c7e`, draft PR #94). Slices 4 to 6 are not started.
+  `79b939d` and `99a6c7e`, draft PR #94). Slice 4a, the per-workspace
+  layout, landed on 2026-11-03 (commit `c817344`). Slices 4b to 6 are not
+  started.
 - Reference: niri v26.04 in `/home/nomadx/references/niri`
   (`niri-config/src/window_rule.rs`, `layer_rule.rs`, `workspace.rs`, `layout.rs`,
   `docs/wiki/Configuration:-Window-Rules.md`, `Configuration:-Layer-Rules.md`,
@@ -105,8 +107,9 @@ Supported today: `match` / `exclude` on `namespace`, and
 ### 2.5 `workspace` and the `layout` section
 
 `workspace` supports `open-on-output`. `workspace.layout` is Niri's
-per-workspace layout override (a `LayoutPart`) and is the one whole section
-that warns and does nothing.
+per-workspace layout override (a `LayoutPart`). Slice 4a made `gaps` and
+`default-column-width` work per workspace; the other keys of the layout part
+warn by name (`workspace.layout.<key>`).
 
 The `layout` section supports `gaps`, `default-column-width`, `insert-hint`,
 `focus-ring` and `shadow`. Missing from Niri's `LayoutPart`: `border`,
@@ -216,6 +219,39 @@ shipped:
 to read the gaps and the column width from the workspace instead of from the
 output. `scroll-factor` per window rides along here.
 
+#### Slice 4a — the gaps and the column width per workspace (landed)
+
+**Landed on 2026-11-03** (commit `c817344`, draft PR #94).
+
+- `internal/config/rules.go` gained `WorkspaceLayout{Gaps, ColumnWidthProportion,
+  FixedColumnWidth}` and the parser for the `layout` child of a workspace. The
+  keys the compositor cannot apply warn by name (`workspace.layout.<key>`), so
+  `workspace.layout` itself no longer warns.
+- `internal/wm/model.go` gained the same layout on `WorkspaceConfig`. The model
+  merges it over the values of the output in `workspaceGeometry`: a workspace
+  that sets the gaps uses them, and a workspace that sets the column width
+  gets it from its proportion or its fixed size. The merge happens when the
+  workspace is created, when the config changes, and whenever the output is
+  resized.
+- `internal/layout/sizing.go` gained `ColumnWidthPixels`, the one place that
+  turns a share of the available width into pixels; the compositor and the
+  model use it.
+- `internal/server/config_reload.go` carries the layout from the config into
+  the model options.
+
+**Where sysc differs from Niri:** a workspace that sets only the gaps keeps
+the column width in pixels that the output computed with the output's gaps.
+Niri recomputes the width from the share and the new gaps. Making that exact
+would mean the model would need the share of the output, not only its pixels;
+the model takes the width in pixels today, and the change would touch every
+caller of `model.AddOutput` and `model.SetOutputGeometry`.
+
+**Still open in slice 4:** `preset-column-widths`, `preset-window-heights` and
+`default-column-display` (the layout has the presets and the column display
+as fixed values today), `center-focused-column`, `struts`, and the appearance
+keys of the layout part, which belong to slice 5. `scroll-factor` per window
+is still open.
+
 ### Slice 5 — the appearance properties
 
 `opacity`, `border`, `focus-ring`, `shadow`, `tab-indicator`,
@@ -257,7 +293,14 @@ rejected with a clear message rather than accepted and ignored.
   `TestMaximizeWindowToEdgesFillsTheColumnHeight`,
   `TestSetColumnDisplayForSetsTheColumnOfTheWindow`,
   `TestSetFloatingPositionPlacesTheWindow` and
-  `TestSetFloatingPositionKeepsThePositionForALaterFloat`.
+  `TestSetFloatingPositionKeepsThePositionForALaterFloat`. Slice 4a added
+  `internal/wm/workspace_layout_test.go` with
+  `TestWorkspaceLayoutOverridesTheOutputLayout` and
+  `TestWorkspaceLayoutFixedColumnWidth`.
+- `internal/config`: slice 4a added `internal/config/workspace_layout_test.go`
+  with `TestWorkspaceLayoutIsParsed`,
+  `TestWorkspaceLayoutWarnsForTheKeysTheCompositorCannotApply` and
+  `TestWorkspaceLayoutRejectsBadValues`.
 - `internal/wlr`: one test per key that the compositor applies it, next to the
   existing rule tests. These need a compositor, so they run in CI lane 2
   under vkms, not locally. Slice 1 added `internal/wlr/window_rules_test.go`
@@ -271,7 +314,11 @@ rejected with a clear message rather than accepted and ignored.
   `TestWindowRuleAtStartupMatchesInsideTheStartupWindow` and
   `TestWindowRuleStartupTimerEndsTheStartupWindow`. Slice 3 added
   `TestWindowRuleIsActiveAppliesToTheActiveWindow` and
-  `TestWindowRuleIsWindowCastTargetIsNeverTrue`.
+  `TestWindowRuleIsWindowCastTargetIsNeverTrue`. Slice 4a added
+  `internal/wlr/workspace_layout_test.go` with
+  `TestWorkspaceLayoutOverridesTheOutputLayout`.
+- `internal/server`: the config has to carry the layout of a workspace into the
+  model options. Slice 4a added `TestWorkspaceLayoutReachesTheModelOptions`.
 - `internal/cli`: `validate` on a config that uses the new keys must print no
   warning. Slice 1 covered this in the config test instead: a config that
   uses the new keys parses without a warning.
