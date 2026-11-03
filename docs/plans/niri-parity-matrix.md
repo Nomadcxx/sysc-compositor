@@ -111,6 +111,26 @@ Until implemented, decode and reply `Err` with `unimplemented: <Name>`. Tick whe
 | MoveColumnToMonitor / MoveColumnToMonitorLeft/Right/Up/Down/Previous/Next | [x] | M6 — move a tiled column, or the focused floating window |
 | MoveWorkspaceToMonitor / MoveWorkspaceToMonitorLeft/Right/Up/Down/Previous/Next | [x] | M6 — move the selected or focused workspace between outputs |
 
+### Column width and window height
+
+The family Niri's own default config binds, and which the compositor used to accept without
+applying. Niri's semantics, the deliberate differences and the code are in
+[the sizing plan](2026-11-03-column-width-and-window-height.md).
+
+| Action | Status | Milestone |
+|---|---|---|
+| MaximizeColumn | [x] | 2026-11-03 — toggles the focused column's full width and restores the stored width (`TestToggleMaximizeColumnFillsTheWidthAndRestoresIt`) |
+| MaximizeWindowToEdges | [x] | 2026-11-03 — toggles the column to the full width and the window to the column height, hiding the other windows of the column (`TestMaximizeWindowToEdgesFillsTheColumnAndHidesTheRest`) |
+| CenterColumn | [x] | 2026-11-03 — scrolls the focused column into the middle of the working area (`TestCenterColumnCentersTheFocusedColumn`) |
+| CenterVisibleColumns | [x] | 2026-11-03 — centres the columns that are fully visible, as Niri does |
+| ExpandColumnToAvailableWidth | [x] | 2026-11-03 — grows the focused column into the free space; toggles full width when it is the only visible column (`TestExpandColumnToAvailableWidthUsesTheFreeSpace`) |
+| SetColumnWidth | [x] | 2026-11-03 — `SetFixed`, `SetProportion`, `AdjustFixed`, `AdjustProportion`; a fixed size gives the focused window that width (`TestSetColumnWidthUsesTheWorkingWidth`) |
+| SwitchPresetColumnWidth / SwitchPresetColumnWidthBack | [x] | 2026-11-03 — cycles `1/3`, `1/2`, `2/3` of the working width (`TestSwitchPresetColumnWidthCyclesThePresets`) |
+| SetWindowHeight | [x] | 2026-11-03 — the same four shapes against the working height (`TestSetWindowHeightSplitsTheColumn`) |
+| ResetWindowHeight | [x] | 2026-11-03 — the window goes back to its automatic height |
+| SwitchPresetWindowHeight / SwitchPresetWindowHeightBack | [x] | 2026-11-03 — cycles the height presets (`TestSwitchPresetWindowHeightCyclesThePresets`) |
+| SwitchPresetWindowWidth / SwitchPresetWindowWidthBack | [ ] | M15 — the width presets of a single window; Niri moves the column for it |
+
 ### Window / column / workspace / monitor / floating / overview / cast / debug
 
 Track the rest against niri-ipc 26.4.0 `Action` as they are implemented in M4–M15. First landing of each group:
@@ -161,8 +181,8 @@ the owner's (`TestDefaultConfigNavigationBindsApply`). VM gate:
 |---|---|---|
 | input | [~] | M2 keyboard xkb + repeat; M5 nested Mod defaults, core key binds, Mod+drag, and edge resize with tile dimensions retained across unmap/remap; M12 transfers those dimensions to each fresh mapped-window ID; M6 adds its keyboard action subset; M7 adds overview gestures, hot corners, tiled insert hints, and DND edge scrolling; M9 adds layout switching and session locale defaults; physical input and client gesture delivery remain unverified; the 2026-11-02 pointing-device tranche decodes touchpad/mouse/trackpoint/trackball, applies libinput settings on add/reload, restores device defaults when sections disappear, and scales touchpad/mouse axes; physical qualification remains pending; M12 applies `input.tablet` `off`, `map-to-output` and `map-to-focused-output` (`left-handed` and `calibration-matrix` warn until libinput device settings land) |
 | output | [~] | M3 reports connected outputs, available/current modes, logical geometry, scale/transform, and VRR capability/state; M15 applies mode/refresh, scale, position, transform, power, and VRR settings |
-| layout | [~] | M5 gaps, default column width, scrolling columns, client min/max size bounds, centered window offsets, and retained pointer-resized dimensions; M7 insert hints and tiled drag placement; M8 focus ring, window shadow, rounded outer subsurface corners, geometry clipping, and clipped snapshot bounds. SceneFX shadows use one radius, so nonuniform corner rules use the top-left radius; direct-session visual calibration remains unverified |
-| binds | [~] | M5 core key subset plus M6 window, workspace, urgency, and monitor actions; M7 overview actions; M15 part 1: the navigation and workspace actions, `WheelScroll*`, `TouchpadScroll*` (finger and continuous sources) and `Mouse*` triggers and `cooldown-ms` on the compositor's clock (`TestWheelBindsInterceptOnlyBoundModifiers`, `TestWheelCooldownIgnoresEventTimestamps`, `TestTouchpadScrollBindsUseFingerTicks`, `TestMouseBindSuppressesItsRelease`, `TestScrollTrackerMatchesNiri`). Column sizing and the M15 part 4 actions still warn |
+| layout | [~] | M5 gaps, default column width, scrolling columns, client min/max size bounds, centered window offsets, and retained pointer-resized dimensions; M7 insert hints and tiled drag placement; M8 focus ring, window shadow, rounded outer subsurface corners, geometry clipping, and clipped snapshot bounds. SceneFX shadows use one radius, so nonuniform corner rules use the top-left radius; direct-session visual calibration remains unverified. 2026-11-03: the column width and the window height can be changed at run time, so the maximize, center, expand and preset actions have something to act on |
+| binds | [~] | M5 core key subset plus M6 window, workspace, urgency, and monitor actions; M7 overview actions; M15 part 1: the navigation and workspace actions, `WheelScroll*`, `TouchpadScroll*` (finger and continuous sources) and `Mouse*` triggers and `cooldown-ms` on the compositor's clock (`TestWheelBindsInterceptOnlyBoundModifiers`, `TestWheelCooldownIgnoresEventTimestamps`, `TestTouchpadScrollBindsUseFingerTicks`, `TestMouseBindSuppressesItsRelease`, `TestScrollTrackerMatchesNiri`). 2026-11-03: the column and window sizing actions apply, so the shipped default config leaves no accepted-but-unapplied action (`TestShippedDefaultConfigIsValid`); the M15 part 4 actions still warn |
 | switch-events | [x] | M9 — lid and tablet switch spawn actions; login1 also updates lid state |
 | window-rule | [~] | M6 app-id/title match and exclude, ordered placement/fullscreen overrides, and default size fields; M8 ordered `geometry-corner-radius` and `clip-to-geometry`; M12 `block-out-from` `"screencast"`/`"screen-capture"` for casts, screenshots and capture protocols (capture privacy tests; VM gate with portal casts, screenshots and OBS); remaining Niri rule effects are unimplemented |
 | layer-rule | [~] | M6 parses namespace matching and `place-within-backdrop`; M7 does not render qualifying background surfaces within the overview backdrop or project background/bottom surfaces into workspace thumbnails; other Niri layer-rule effects remain unimplemented |

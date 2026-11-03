@@ -131,7 +131,35 @@ Two cross-checks came back clean, which is worth recording:
   comparison (`FocusColumn`, `SwapWindowLeft`, `MoveWorkspaceToIndex` and the rest) are all in the
   navigation table.
 
-## 6. Test and CI state
+## 6. The wlroots listener sweep
+
+The crash in [the first-login record](2026-11-03-first-login-crash-record.md) was a wlroots
+assertion: a surface was destroyed while a commit listener was still attached to it, and wlroots
+requires that list to be empty. So every place the compositor attaches a listener to a surface that
+can be destroyed was read by hand and checked for a matching removal.
+
+There are six such places, and all six are sound:
+
+| Site | Commit listener | What removes it |
+|---|---|---|
+| `background_effect.go` | the effect surface's commit | the same surface's destroy listener, which drops the commit listener and the root's |
+| `window_capture.go` | the captured surface's commit | the surface's destroy listener, which drops the commit, unmap and destroy listeners together |
+| `input.go` (toplevel) | the toplevel surface's initial commit | the commit callback removes it, and the view's teardown drops it again |
+| `input.go` (pointer image) | the client's pointer surface's commit | the pointer surface's destroy listener, and the request handler that replaces it |
+| `cursor_shape.go` | the client's pointer surface's commit | the named-shape handler drops it, then the destroy listener that would have dropped it |
+| `xdg.go` (popup) | the popup surface's commit and damage | the popup's destroy listener, which drops the commit, damage, reposition and destroy listeners together |
+| `overview.go` | the overview surface's commit and unmap | the surface's destroy listener, which calls the overview's own drop helper |
+
+Two points make the remaining cases safe. `Listener.Destroy` is idempotent — it returns at once
+when the listener has already been removed — so a listener that is dropped twice, as the toplevel's
+initial commit is, cannot be freed twice. And the pointer surface's destroy listener only clears
+the compositor's pointers when the surface it watches is still the current one, so a surface that
+was replaced leaves the newer one alone.
+
+The one leak was the named-shape path, and it is fixed and merged. No other listener site in
+`internal/wlr` attaches to a surface that can go away without the matching removal.
+
+## 7. Test and CI state
 
 - Every package except `internal/wlr` and `internal/server` passes when run one at a time. Those
   two need a nested compositor and are covered by the CI `compositor` lane.
@@ -146,7 +174,7 @@ Two cross-checks came back clean, which is worth recording:
     gives black. Intermittent; the same branch passed later.
 - The overview scroll fixture failure in the same lane is the known one tracked as `sysc-2219`.
 
-## 7. Changes made by this audit
+## 8. Changes made by this audit
 
 | Change | File |
 |---|---|
@@ -156,13 +184,16 @@ Two cross-checks came back clean, which is worth recording:
 | Sample the old spring at the retarget instant | `internal/wlr/animation_test.go` |
 | Keep dead actions out of the hotkey overlay | `internal/ui/hotkey_overlay.go`, `internal/ui/hotkey_overlay_test.go` |
 
-## 8. Still open
+## 9. Still open
 
 1. **The Niri width and height family** — `maximize-column`, `maximize-window-to-edges`,
    `center-column`, `center-visible-columns`, `expand-column-to-available-width`,
    `set-column-width`, `switch-preset-column-width`, `set-window-height`, `reset-window-height`.
    Nine of the thirteen dead binds. This needs a layout-level column width setter and, for the
    height family, a vertical sizing model. It is the natural next milestone.
+   **Done on 2026-11-03** — see
+   [the sizing plan](2026-11-03-column-width-and-window-height.md); the family applies now and the
+   shipped default config leaves no accepted-but-unapplied action.
 2. **Config sections that are parsed and ignored** — `window-rule` and `layer-rule` effects, and
    `workspace.layout`. The `window-rule` block in the shipped default config is dead today.
 3. **Touchscreen input** — `sysc-2227`. The compositor skips touch devices and never advertises
