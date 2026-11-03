@@ -15,11 +15,12 @@ CI on both lanes. **The evidence route the gate needs now exists**: a
 `sysc-compositor touch-probe` client that asks the seat for touch and prints
 every event it receives, plus the compositor's own log lines for the seat's
 capabilities and for every finger. The physical gate on the archThink is
-staged but **not yet run**: the install script and the new binary are on the
-laptop, the owner has to run the script because sudo needs a password, and the
-new binary only takes effect at a session restart. The sizing family
-(`sysc-2228`) and the bar auto-hide (`sysc-2229`) gates are still the owner's
-to run on the same machine. The packaging tranche stays deferred.
+staged and **armed, but not yet run**: the new binary is on the laptop, a
+systemd user drop-in that runs it without sudo is in place, and the gate is a
+login cycle plus `capture-touch-gate.sh` and a finger on the panel. The
+sizing family (`sysc-2228`) and the bar auto-hide (`sysc-2229`) gates are
+still the owner's to run on the same machine. The packaging tranche stays
+deferred, and PR #89 and PR #91 stay draft until the physical gates pass.
 
 ## Repositories and their state
 
@@ -116,6 +117,24 @@ lines for the seat's capabilities and for every finger, and the lane-2 test
 that proves the probe against a nested compositor. See "How to see whether the
 gate passed" below.
 
+### sysc-wayland needs no change
+
+The sibling library already carries the whole `wl_touch` surface, so nothing
+has to change there for this tranche:
+`/home/nomadx/sysc-wayland/client/client.go` has `Seat.GetTouch()` (line
+4761), `SeatCapabilityTouch` (line 4806), the `wl_touch` interface (line
+6276 onwards) and `Touch` with `SetDownHandler`, `SetUpHandler`,
+`SetMotionHandler`, `SetFrameHandler`, `SetCancelHandler`,
+`SetShapeHandler` and `SetOrientationHandler`. It is generated from the
+vendored `protocols/wayland.xml`.
+
+No consumer calls `GetTouch` yet, and that is correct rather than a gap: the
+compositor hands a finger only to the client that asked for touch, so a shell
+client has to opt in deliberately. Because there is no mouse emulation, a
+finger over a surface whose client never bound touch does nothing at all — so
+the shell panels stay finger-dead until a shell client binds touch. That is
+the shell repo's decision, and it does not gate this tranche.
+
 ### One wlroots caveat worth writing down
 
 `wlr_seat_touch_notify_cancel(seat, NULL)` is a NULL dereference in wlroots
@@ -196,13 +215,78 @@ observation that the deployed compositor does not use the touchscreen.
 
 ```
 sh ~/.cache/sysc-compositor-gate-20261103/install-touch-compositor.sh
-systemctl --user restart sysc-compositor.service
 ```
 
-The restart is the owner's call: the unit `BindsTo=graphical-session.target`,
-so restarting it is disruptive. The running session (pid 1021, started
-03:48:33) still uses the old binary, sha256
-`8bb0bd7cc44a124bb7cc5302d18d3b90ae4c098ba15f0ad70b74b5a07dfac689`.
+**A unit restart ends the graphical session.** `systemctl --user restart
+sysc-compositor.service` is not a quiet restart here.
+`/usr/local/bin/sysc-compositor-session` runs `systemctl --user --wait start
+sysc-compositor.service` and then forces `sysc-compositor-shutdown.target`,
+so when the compositor exits the whole graphical session is torn down with it:
+the shell, the panels and Xwayland go, and the environment the compositor
+published is unset. A login cycle is the way in, not a service restart.
+
+**A drop-in deploys the build without sudo.** A user drop-in overrides
+`ExecStart`, so the staged build can run without touching
+`/usr/local/bin` and without a password. Three scripts are staged next to the
+build:
+
+```
+sh ~/.cache/sysc-compositor-gate-20261103/arm-touch-gate.sh      # writes the drop-in
+sh ~/.cache/sysc-compositor-gate-20261103/capture-touch-gate.sh  # runs the probe, records the finger
+sh ~/.cache/sysc-compositor-gate-20261103/disarm-touch-gate.sh    # removes the drop-in
+```
+
+`arm-touch-gate.sh` writes
+`~/.config/systemd/user/sysc-compositor.service.d/10-touch-gate.conf` with
+an `ExecStart=` override pointing at
+`~/.cache/sysc-compositor-gate-20261103/bin/sysc-compositor.touch`,
+reloads the user daemon and prints the unit's new `ExecStart`. It changes
+nothing that is running. The drop-in is **armed** on the laptop now;
+`disarm-touch-gate.sh` puts the installed build back, also without sudo, and
+ssh keeps working if the session dies.
+
+**The gate, step by step.** Log out of the graphical session and log back
+in; the staged build starts. Then:
+
+```
+sh ~/.cache/sysc-compositor-gate-20261103/capture-touch-gate.sh
+```
+
+It runs the probe against the session (`WAYLAND_DISPLAY=wayland-0`) and writes
+what the finger did to `touch-gate-capture.txt`. The probe maps a small
+200x150 window and takes the focus: **touch inside that window**. A finger
+anywhere else belongs to a client that has not asked for touch, and the
+compositor drops it with the reason `the client did not ask for touch`.
+
+### What was checked before the gate
+
+- The running old build advertises no touch. The probe against the live
+  session prints `touch-probe: seat capabilities=pointer|keyboard` and exits
+  3, so the evidence route's negative path works on the real session.
+- udev classifies the panel as a touchscreen:
+  `/dev/input/event4` has `ID_INPUT_TOUCHSCREEN=1`, `ID_INPUT_WIDTH_MM=309`,
+  `ID_INPUT_HEIGHT_MM=170` and
+  `ID_PATH=pci-0000:00:14.0-usb-0:6:1.0`, so libinput makes it a touch
+  device and the new build will advertise `WL_SEAT_CAPABILITY_TOUCH`. The
+  other two `ELAN Touchscreen UNKNOWN` devices (event5, event6) carry no
+  `ID_INPUT_TOUCHSCREEN` and no ABS axes; libinput ignores them.
+- The staged build runs on the laptop: a headless run of it reached
+  `WAYLAND_DISPLAY=wayland-1` with the owner's config, so the binary itself
+  is not broken. The libinput backend cannot be used for the same check,
+  because libseat cannot open a seat the live session already owns.
+- The panel's output is `eDP-1`, 1920x1080, scale 1, and the owner is in the
+  `input` group.
+- The compositor reads the owner's own config,
+  `~/.config/sysc-compositor/config.kdl` (461 lines, the Niri default). It
+  uses window-rule keys sysc has no counterpart for (`open-maximized`,
+  `draw-border-with-background`, `opacity`) and the unsupported match
+  property `match is-active=false`, so the compositor prints "config section
+  `window-rule` is accepted but not applied yet" at every start. The
+  installed build prints the same warnings today, so this is the
+  config-surface gap (open work item 4), not a gate failure. The rest of
+  that config parses: `default-column-width { proportion 0.5; }` is
+  supported, several `match` lines in one block are supported, and the
+  layer-rule applies.
 
 **How to see whether the gate passed.** `wayland-info` and `wlr-randr` both
 hang against the compositor's socket
@@ -283,13 +367,47 @@ flake.
 - There is no local nested compositor lane. CI lane 2 under vkms is the
   gate.
 
+## Merging to main when the gates pass
+
+The owner's decision on 2026-11-03: PR #89 and PR #91 stay draft until the
+physical gates pass. Nothing was merged. What was checked, so the next
+session does not check it again:
+
+- `main` is `origin/main` is `1b03199`; nothing was left unpushed.
+- PR #89 (pointer settings) and PR #91 (touch) are green on both CI lanes
+  and both `MERGEABLE`/`CLEAN` against `main`.
+- **Do not merge #91 alone.** `main` has no `internal/config/pointer.go`, no
+  `internal/wlr/libinput.go` and no `internal/wlr/pointer_settings.go`; those
+  are #89's work. A `main` build after #91 alone would still regress mouse
+  handedness, scroll factor and tap-to-click.
+- The merge mechanics, checked with `git merge-tree` (dry, no worktree
+  touched): #89 into `main` is clean and #91 into `main` is clean (`main` is
+  an ancestor of the touch branch), but the two together conflict, in either
+  order, in `internal/config/config.go`, `internal/server/config_reload.go`,
+  `internal/wlr/compositor.go`, `internal/wlr/input.go` and
+  `docs/plans/niri-parity-matrix.md` — plus `docs/README.md` and
+  `docs/plans/2026-11-03-compositor-audit.md` in the other order.
+- The gate branch `feat/laptop-touch-gate-20261103` already holds the
+  resolved union: its `internal/wlr/touch.go`, `internal/wlr/touch_map.go`,
+  `internal/touchprobe/probe.go`, `internal/cli/touchprobe.go` and
+  `internal/wlr/touch_probe_test.go` are byte-identical to #91's, and the
+  four shared files carry the pointer work and the touch work together.
+- **The union tree has never been through CI.** CI runs on pull requests and
+  on `main` only, and there is no run for the gate branch. Opening a pull
+  request from the gate branch is how CI gets to see the exact tree the
+  laptop runs.
+- Never merge `main` into a feature branch; cherry-pick instead.
+
 ## Open work, in order
 
-1. **The touch gate on the laptop** (`sysc-2227`, P2). The install is staged
-   with the probe in the binary; the owner runs the script and restarts the
-   session, then a finger has to reach a touch-aware client. The evidence
-   route is built: `sysc-compositor touch-probe` on the laptop's session, and
-   the journal's touch lines (see "How to see whether the gate passed").
+1. **The touch gate on the laptop** (`sysc-2227`, P2). The build is staged
+   and the no-sudo drop-in is armed, so the gate is: log out, log back in,
+   then `sh ~/.cache/sysc-compositor-gate-20261103/capture-touch-gate.sh`
+   and touch inside the probe's 200x150 window. The evidence route is built:
+   `sysc-compositor touch-probe` on the laptop's session, and the journal's
+   touch lines (see "How to see whether the gate passed" and "What was
+   checked before the gate"). The session's new build is the staged one
+   until `disarm-touch-gate.sh` is run.
 2. **The sizing family gate on the laptop** (`sysc-2228`, P1). The owner
    compares against Niri on the same hardware: maximise-column,
    maximise-window-to-edges, centre-column, centre-visible-columns,
@@ -330,7 +448,8 @@ flake.
    owner lifts the deferral. Accounts, pushes and upstream submissions are
    owner gates.
 7. PR #89, PR #91 and shell PR #612 stay draft until the physical touchpad
-   and touch gates and the packaging gate pass.
+   and touch gates and the packaging gate pass. What to do when they do is
+   written down in "Merging to main when the gates pass".
 
 ## Working notes
 
