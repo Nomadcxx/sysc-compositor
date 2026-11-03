@@ -99,12 +99,12 @@ func (w *Workspace) SwitchPresetColumnWidth(backwards bool) bool {
 			next = (index + 1) % len(presetColumnWidths)
 		}
 	} else {
-		next = presetIndex(presetColumnWidths, current, w.bounds.Width, backwards)
+		next = w.presetIndex(presetColumnWidths, current, w.bounds.Width, backwards)
 	}
 	column.presetWidth = true
 	column.presetWidthIdx = next
 	column.fullWidth = false
-	target := presetPixels(presetColumnWidths[next], w.bounds.Width)
+	target := w.proportionPixels(presetColumnWidths[next], w.bounds.Width)
 	column.width = target
 	if target == w.columnWidth {
 		column.width = 0
@@ -273,11 +273,10 @@ func (w *Workspace) SetWindowHeight(id uint64, change SizeChange) bool {
 	}
 	column := &w.columns[columnIndex]
 	tile := &column.tiles[tileIndex]
-	automatic := w.automaticTileHeight(columnIndex, tileIndex)
+	// Niri keeps the height it was given, even when it happens to match the
+	// automatic height, so that the other windows of the column keep their
+	// own share of the space.
 	tile.height = target
-	if target == automatic {
-		tile.height = 0
-	}
 	tile.maximized = false
 	tile.presetHeight = false
 	return true
@@ -318,23 +317,19 @@ func (w *Workspace) SwitchPresetWindowHeight(id uint64, backwards bool) bool {
 			next = (index + 1) % len(presetWindowHeights)
 		}
 	} else {
-		next = presetIndex(presetWindowHeights, current, w.bounds.Height, backwards)
+		next = w.presetIndex(presetWindowHeights, current, w.bounds.Height, backwards)
 	}
 	tile.presetHeight = true
 	tile.presetHeightIdx = next
 	tile.maximized = false
-	target := presetPixels(presetWindowHeights[next], w.bounds.Height)
-	automatic := w.automaticTileHeight(columnIndex, tileIndex)
+	target := w.proportionPixels(presetWindowHeights[next], w.bounds.Height)
 	tile.height = target
-	if target == automatic {
-		tile.height = 0
-	}
 	return true
 }
 
 // resolveSize turns a size change into a pixel size against the working size.
 func (w *Workspace) resolveSize(change SizeChange, current, working int) (int, bool) {
-	if working <= 0 {
+	if working <= 0 || working <= w.gap {
 		return 0, false
 	}
 	var target int
@@ -345,11 +340,14 @@ func (w *Workspace) resolveSize(change SizeChange, current, working int) (int, b
 			target = change.Fixed
 		}
 	} else {
-		proportion := change.Proportion
+		share := change.Proportion / 100
 		if change.Relative {
-			proportion = float64(current)/float64(working)*100 + change.Proportion
+			// Niri measures a relative change against the share of the
+			// working area that the column or the window already takes.
+			currentShare := (float64(current) + float64(w.gap)) / float64(working-w.gap)
+			share = currentShare + change.Proportion/100
 		}
-		target = presetPixels(proportion/100, working)
+		target = w.proportionPixels(share, working)
 	}
 	if target < 1 {
 		target = 1
@@ -364,26 +362,28 @@ func (w *Workspace) resolveSize(change SizeChange, current, working int) (int, b
 // preset yet: the first preset larger than the current size, or the last one
 // smaller than it, wrapping around. Niri allows one pixel of slack for
 // fractional scaling.
-func presetIndex(presets []float64, current, working int, backwards bool) int {
+func (w *Workspace) presetIndex(presets []float64, current, working int, backwards bool) int {
 	if backwards {
 		for index := len(presets) - 1; index >= 0; index-- {
-			if presetPixels(presets[index], working)+1 < current {
+			if w.proportionPixels(presets[index], working)+1 < current {
 				return index
 			}
 		}
 		return len(presets) - 1
 	}
 	for index, preset := range presets {
-		if current+1 < presetPixels(preset, working) {
+		if current+1 < w.proportionPixels(preset, working) {
 			return index
 		}
 	}
 	return 0
 }
 
-// presetPixels turns a share of the working area into pixels.
-func presetPixels(share float64, working int) int {
-	return int(math.Round(float64(working) * share))
+// proportionPixels turns a share of the working area into pixels, the way Niri
+// does: the share applies to the space the gap leaves, and the gap comes off
+// again.
+func (w *Workspace) proportionPixels(share float64, working int) int {
+	return int(math.Round((float64(working-w.gap) * share) - float64(w.gap)))
 }
 
 // focusedTile returns the focused column and the focused window inside it.

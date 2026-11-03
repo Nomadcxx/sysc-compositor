@@ -41,29 +41,45 @@ percentage arguments are resolved against the workspace bounds, and the presets 
 
 A size argument reads as Niri reads it: a leading `+` or `-` makes the change relative, a number
 with a `%` is a percentage of the working area, and a bare number is a pixel size. So `50%` sets
-half the working width, `-10%` takes ten points off it, and `400` sets 400 pixels.
+half the working width, `-10%` takes ten points off the share it already has, and `400` sets 400
+pixels.
 
 ### Deliberate differences
 
-- **Proportions are a plain share of the working area.** Niri computes a column width as
-  `(working_w - gap) * p - gap`, because its layout keeps the gap inside the column. sysc-compositor
-  keeps the gap outside, so the share is taken of the whole working width. The two agree to within
-  one gap.
 - **`set-column-width` with a fixed size gives the focused window that width**, as in Niri, where a
   fixed size applies to the active window of the column. The column follows the window.
 - **Setting a width clears the full-width flag, the preset index and the maximized window**, as
   Niri's `set_column_width` does.
 
+### The geometry, as Niri computes it
+
+Niri measures a share of the working area against the space the gap leaves and takes the gap off
+again, so a column that fills the working area keeps a gap on either side:
+
+```
+column width = (working_w - gap) * share - gap
+```
+
+The same formula gives the default column width, the preset widths and the window heights, so a
+column of proportion `0.5` in a 1920 pixel wide output with a gap of 5 is 953 pixels wide, and a
+column that fills the output is 1910 pixels wide with 5 pixels of margin on either side. The margin
+matters: the border and the shadow of a window are drawn around it, and a window that reaches the
+edge of the output has them cut off.
+
+A relative change is measured against the share the column or the window already takes, the way
+Niri measures it, so `-10%` takes ten points off the share rather than ten percent of the current
+size.
+
 ## The code
 
 - `internal/layout/sizing.go` — new. `SizeChange`, `ParseSizeChange`, the preset lists and the ten
-  `Workspace` methods above, with the helpers `resolveSize`, `presetIndex`, `presetPixels`,
+  `Workspace` methods above, with the helpers `resolveSize`, `presetIndex`, `proportionPixels`,
   `focusedTile` and `visibleColumns`.
 - `internal/layout/layout.go` — the column keeps `fullWidth`, `presetWidth` and `presetWidthIdx`;
   the window keeps `maximized`, `presetHeight` and `presetHeightIdx`. `columnWidthAt` returns the
-  full working width for a full-width or maximized column, `defaultTileHeight` gives a maximized
-  window the whole column height, `tileBaseY` pushes the other windows of a maximized column out
-  of the working area, and `placementAt` hides them.
+  working width less the gaps on either side for a full-width or maximized column,
+  `defaultTileHeight` gives a maximized window the whole column height, `tileBaseY` pushes the
+  other windows of a maximized column out of the working area, and `placementAt` hides them.
 - `internal/bind/bind.go` — the twelve new action names, their argument parsing and their entry in
   `IsSupportedAction`. `Action` carries the parsed `SizeChange`.
 - `internal/wm/model.go` — the wrappers that run an action on the focused output's active workspace
@@ -98,3 +114,6 @@ The compositor packages are covered by CI lane 2, which runs them under a virtua
 - `set-window-width`, `center-window`, `pick-window`, `pick-color` and the debug actions are still
   unimplemented, and the default config binds none of them.
 - The window height family does not save a height per window across a remap yet.
+- The bar of the shell and a fullscreen window: Niri lets a fullscreen window cover the whole
+  output and draws the bar over it. The shell has no way to learn that a window is fullscreen,
+  because the IPC window record has no `is_fullscreen` field yet.

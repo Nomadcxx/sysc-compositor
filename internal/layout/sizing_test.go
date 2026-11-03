@@ -49,17 +49,18 @@ func TestSetColumnWidthUsesTheWorkingWidth(t *testing.T) {
 	if !ok {
 		t.Fatal("Placement(3) missing")
 	}
-	if placement.Width != 600 {
-		t.Errorf("column width = %d, want 600", placement.Width)
+	if placement.Width != 576 {
+		t.Errorf("column width = %d, want 576", placement.Width)
 	}
 
-	// A relative change moves the width by that share of the working width.
+	// A relative change moves the width by that share of the space the gap
+	// leaves, the way Niri measures it.
 	if !ws.SetColumnWidth(SizeChange{Proportion: 10, Relative: true}) {
 		t.Fatal("SetColumnWidth(+10%) = false, want true")
 	}
 	placement, _ = ws.Placement(3)
-	if placement.Width != 720 {
-		t.Errorf("column width after +10%% = %d, want 720", placement.Width)
+	if placement.Width != 694 {
+		t.Errorf("column width after +10%% = %d, want 694", placement.Width)
 	}
 
 	// A fixed size is a size in pixels.
@@ -77,7 +78,7 @@ func TestSwitchPresetColumnWidthCyclesThePresets(t *testing.T) {
 	ws.AddWindow(1)
 	ws.AddWindow(2)
 
-	for _, want := range []int{600, 800, 400, 600} {
+	for _, want := range []int{576, 773, 379, 576} {
 		if !ws.SwitchPresetColumnWidth(false) {
 			t.Fatal("SwitchPresetColumnWidth = false, want true")
 		}
@@ -94,8 +95,8 @@ func TestSwitchPresetColumnWidthCyclesThePresets(t *testing.T) {
 		t.Fatal("SwitchPresetColumnWidth(back) = false, want true")
 	}
 	placement, _ := ws.Placement(2)
-	if placement.Width != 400 {
-		t.Errorf("preset column width after going back = %d, want 400", placement.Width)
+	if placement.Width != 379 {
+		t.Errorf("preset column width after going back = %d, want 379", placement.Width)
 	}
 }
 
@@ -108,8 +109,16 @@ func TestToggleMaximizeColumnFillsTheWidthAndRestoresIt(t *testing.T) {
 		t.Fatal("ToggleMaximizeColumn = false, want true")
 	}
 	placement, _ := ws.Placement(2)
-	if placement.Width != 1200 {
-		t.Errorf("maximized column width = %d, want 1200", placement.Width)
+	if placement.Width != 1168 {
+		t.Errorf("maximized column width = %d, want 1168", placement.Width)
+	}
+	// Niri keeps a gap on either side of a column that fills the working area,
+	// so the border and the shadow of the window stay visible.
+	if placement.X != 16 {
+		t.Errorf("maximized column x = %d, want 16", placement.X)
+	}
+	if placement.X+placement.Width != 1184 {
+		t.Errorf("maximized column right edge = %d, want 1184", placement.X+placement.Width)
 	}
 	if !ws.ToggleMaximizeColumn() {
 		t.Fatal("ToggleMaximizeColumn = false, want true")
@@ -138,8 +147,8 @@ func TestMaximizeWindowToEdgesFillsTheColumnAndHidesTheRest(t *testing.T) {
 	if !ok {
 		t.Fatal("Placement(1) missing")
 	}
-	if maximized.Width != 1200 {
-		t.Errorf("maximized window width = %d, want 1200", maximized.Width)
+	if maximized.Width != 1168 {
+		t.Errorf("maximized window width = %d, want 1168", maximized.Width)
 	}
 	if maximized.Height != 768 {
 		t.Errorf("maximized window height = %d, want 768", maximized.Height)
@@ -243,12 +252,12 @@ func TestSetWindowHeightSplitsTheColumn(t *testing.T) {
 		t.Fatal("SetWindowHeight(50%) = false, want true")
 	}
 	tall, _ := ws.Placement(1)
-	if tall.Height != 400 {
-		t.Errorf("window height = %d, want 400", tall.Height)
+	if tall.Height != 376 {
+		t.Errorf("window height = %d, want 376", tall.Height)
 	}
 	short, _ := ws.Placement(2)
-	if short.Height != 352 {
-		t.Errorf("the other window height = %d, want 352", short.Height)
+	if short.Height != 376 {
+		t.Errorf("the other window height = %d, want 376", short.Height)
 	}
 
 	if !ws.ResetWindowHeight(0) {
@@ -271,7 +280,7 @@ func TestSwitchPresetWindowHeightCyclesThePresets(t *testing.T) {
 		t.Fatal("ConsumeWindowIntoColumn = false, want true")
 	}
 
-	for _, want := range []int{400, 533, 267} {
+	for _, want := range []int{507, 245, 376} {
 		if !ws.SwitchPresetWindowHeight(0, false) {
 			t.Fatal("SwitchPresetWindowHeight = false, want true")
 		}
