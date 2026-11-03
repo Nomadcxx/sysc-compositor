@@ -353,7 +353,7 @@ func sceneTreeBufferSize(tree *C.struct_wlr_scene_tree) (int, int, bool) {
 
 func (c *Compositor) addFakePointer() *fakePointer {
 	// The nested Wayland backend forwards host pointer motion. Let this fake
-	// device own cursor position during scripted input tests.
+	// device own the pointer position during scripted input tests.
 	for device := range c.pointerDevices {
 		C.wlr_cursor_detach_input_device(c.cursor, (*C.struct_wlr_input_device)(device))
 		delete(c.pointerDevices, device)

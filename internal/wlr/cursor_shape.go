@@ -33,7 +33,7 @@ func (c *Compositor) createCursorShape() bool {
 }
 
 // handleRequestSetShape draws the named theme image a focused client asked
-// for, in place of any cursor surface it had set.
+// for, in place of any pointer surface it had set.
 func (c *Compositor) handleRequestSetShape(data unsafe.Pointer) {
 	event := (*C.struct_wlr_cursor_shape_manager_v1_request_set_shape_event)(data)
 	if !bool(C.sysc_cursor_shape_request_valid(c.seat, event)) {

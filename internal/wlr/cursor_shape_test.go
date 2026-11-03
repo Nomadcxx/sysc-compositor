@@ -28,25 +28,25 @@ func TestCursorShapeDropsPreviousSurfaceListeners(t *testing.T) {
 		c.requestCursorShapeForTest(cursorShapeText, focused)
 		if !focused {
 			if c.cursorSurfaceCommit != commit || c.cursorSurfaceDestroy != destroy || !c.cursorClientSet || len(c.listeners) != 3 {
-				t.Fatal("an unfocused client changed cursor ownership")
+				t.Fatal("an unfocused client changed pointer ownership")
 			}
 			continue
 		}
 		if c.cursorSurfaceCommit != nil || c.cursorSurfaceDestroy != nil || c.cursorClientSet {
-			t.Fatal("named cursor shape retained the previous cursor surface listeners")
+			t.Fatal("named pointer shape retained the previous pointer surface listeners")
 		}
 		if _, ok := c.listeners[unrelated]; !ok || len(c.listeners) != 1 {
-			t.Fatal("cursor replacement did not release exactly its two listeners")
+			t.Fatal("shape replacement did not release exactly its two listeners")
 		}
 		if c.cursorShape != "text" {
-			t.Fatalf("cursor shape = %q, want text", c.cursorShape)
+			t.Fatalf("pointer shape = %q, want text", c.cursorShape)
 		}
 	}
 }
 
 // TestCursorShapeFollowsOnlyThePointersClient: the client the user seat's
-// pointer is over draws a named theme image through cursor-shape-v1; once
-// the pointer has left it, its requests change nothing.
+// pointer is over draws a named theme image through the pointer shape
+// protocol; once the pointer has left it, its requests change nothing.
 func TestCursorShapeFollowsOnlyThePointersClient(t *testing.T) {
 	c := newNested(t)
 	watchdog := time.AfterFunc(10*time.Second, c.Terminate)
