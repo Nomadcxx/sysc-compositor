@@ -371,7 +371,7 @@ func TestStateResponseWire(t *testing.T) {
 	}{
 		{"Outputs", map[string]Output{"DP-1": output}, `{"Ok":{"Outputs":{"DP-1":{"name":"DP-1","make":"Dell Inc.","model":"AW3423DWF","serial":null,"physical_size":null,"modes":[],"current_mode":null,"is_custom_mode":false,"vrr_supported":false,"vrr_enabled":false,"logical":null}}}}`},
 		{"Workspaces", []Workspace{{ID: 7, Idx: 1, Output: stringPtr("DP-1"), IsActive: true, IsFocused: true}}, `{"Ok":{"Workspaces":[{"id":7,"idx":1,"name":null,"output":"DP-1","is_urgent":false,"is_active":true,"is_focused":true,"active_window_id":null}]}}`},
-		{"Windows", []Window{window}, `{"Ok":{"Windows":[{"id":9,"title":null,"app_id":null,"pid":null,"workspace_id":null,"is_focused":false,"is_floating":false,"is_urgent":false,"layout":{"pos_in_scrolling_layout":null,"tile_size":[0,0],"window_size":[0,0],"tile_pos_in_workspace_view":null,"window_offset_in_tile":[0,0]},"focus_timestamp":null}]}}`},
+		{"Windows", []Window{window}, `{"Ok":{"Windows":[{"id":9,"title":null,"app_id":null,"pid":null,"workspace_id":null,"is_focused":false,"is_floating":false,"is_urgent":false,"is_fullscreen":false,"layout":{"pos_in_scrolling_layout":null,"tile_size":[0,0],"window_size":[0,0],"tile_pos_in_workspace_view":null,"window_offset_in_tile":[0,0]},"focus_timestamp":null}]}}`},
 		{"Layers", []LayerSurface{{Namespace: "sysc-shell:bar", Output: "DP-1", Layer: LayerTop, KeyboardInteractivity: LayerKeyboardNone}}, `{"Ok":{"Layers":[{"namespace":"sysc-shell:bar","output":"DP-1","layer":"Top","keyboard_interactivity":"None"}]}}`},
 		{"FocusedOutput", (*Output)(nil), `{"Ok":{"FocusedOutput":null}}`},
 		{"OverviewState", OverviewState{IsOpen: true}, `{"Ok":{"OverviewState":{"is_open":true}}}`},
