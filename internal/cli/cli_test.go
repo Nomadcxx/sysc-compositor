@@ -523,8 +523,11 @@ func TestUsageLeadsWithSyscCompositorAndNamesTheNiriAlias(t *testing.T) {
 			t.Fatalf("%s: exit %d, want 2 (usage)", name, code)
 		}
 		out := stderr.String()
-		if !strings.Contains(out, "usage: sysc-compositor [--session] [-c CONFIG] | sysc-compositor validate [-c CONFIG] | sysc-compositor msg [--json] REQUEST\n") {
+		if !strings.Contains(out, "usage: sysc-compositor [--session] [-c CONFIG] | sysc-compositor validate [-c CONFIG] | sysc-compositor msg [--json] REQUEST") {
 			t.Errorf("%s usage %q does not lead with sysc-compositor", name, out)
+		}
+		if !strings.Contains(out, "sysc-compositor touch-probe") {
+			t.Errorf("%s usage %q does not name the touch-probe command", name, out)
 		}
 		alias := strings.Contains(out, "niri is a compatibility alias of sysc-compositor")
 		if alias {
