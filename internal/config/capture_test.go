@@ -24,7 +24,7 @@ window-rule { match app-id="^secret$" title="^share$"; block-out-from "screencas
 		{"ordinary", "private", CaptureScreen, false},
 		{"ordinary", "private", CaptureCast, false},
 	} {
-		if got := cfg.ResolveWindowRules(tc.app, tc.title).BlocksCapture(tc.target); got != tc.blocked {
+		if got := cfg.ResolveWindowRules(tc.app, tc.title, UnmappedWindowState(false)).BlocksCapture(tc.target); got != tc.blocked {
 			t.Errorf("%s/%s target %d blocked=%t, want %t", tc.app, tc.title, tc.target, got, tc.blocked)
 		}
 	}
@@ -32,7 +32,7 @@ window-rule { match app-id="^secret$" title="^share$"; block-out-from "screencas
 	if err != nil {
 		t.Fatal(err)
 	}
-	if clean.ResolveWindowRules("secret", "private").BlocksCapture(CaptureScreen) {
+	if clean.ResolveWindowRules("secret", "private", UnmappedWindowState(false)).BlocksCapture(CaptureScreen) {
 		t.Error("removed rule kept capture blocked")
 	}
 	for _, invalid := range []string{`"anything"`, `true`, `1`, `"screen-capture" "screencast"`} {

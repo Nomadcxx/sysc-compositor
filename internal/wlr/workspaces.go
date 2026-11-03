@@ -218,6 +218,9 @@ func (c *Compositor) SetWindowUrgent(id uint64, urgent bool) bool {
 		return false
 	}
 	c.notifyStateChanged()
+	// A rule that matches on the urgency has to be read again now that the
+	// urgency moved.
+	c.reapplyWindowRules()
 	return true
 }
 
@@ -226,6 +229,7 @@ func (c *Compositor) ToggleWindowUrgent(id uint64) bool {
 		return false
 	}
 	c.notifyStateChanged()
+	c.reapplyWindowRules()
 	return true
 }
 

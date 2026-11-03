@@ -122,8 +122,11 @@ func (c *Compositor) mapWindowWithRules(view *toplevelView, clientFullscreen boo
 	if c.model == nil || view == nil || view.toplevel == nil {
 		return
 	}
+	// The window is not on screen yet, so the rules are matched against the
+	// state of an unmapped window, the way Niri does.
 	result := config.ResolveWindowRules(c.windowRules,
-		cString(view.toplevel.app_id), cString(view.toplevel.title))
+		cString(view.toplevel.app_id), cString(view.toplevel.title),
+		config.UnmappedWindowState(c.atStartup))
 	view.appearance = result
 	output := c.model.Snapshot().FocusedOutput
 	if output == "" {
@@ -221,13 +224,21 @@ func columnDisplay(display config.ColumnDisplay) (layout.ColumnDisplay, bool) {
 	return layout.ColumnDisplayNormal, false
 }
 
+// reapplyWindowRules resolves the window rules again for every mapped view.
+// The rules that match on the window's state have to be read again when that
+// state moves, so the resolution reads the state of each window.
 func (c *Compositor) reapplyWindowRules() {
+	if c.model == nil {
+		return
+	}
+	snapshot := c.model.Snapshot()
 	for _, view := range c.views {
 		if view == nil || view.toplevel == nil {
 			continue
 		}
 		view.appearance = config.ResolveWindowRules(c.windowRules,
-			cString(view.toplevel.app_id), cString(view.toplevel.title))
+			cString(view.toplevel.app_id), cString(view.toplevel.title),
+			c.ruleState(view, snapshot))
 	}
 }
 
@@ -451,6 +462,9 @@ func (c *Compositor) SetWindowFloating(id uint64, floating bool) bool {
 		}
 		c.applyWorkspaceModel()
 		c.activateWorkspaceFocus()
+		// A rule that matches on the floating state has to be read again now
+		// that the window changed layer.
+		c.reapplyWindowRules()
 		return true
 	}
 	return false

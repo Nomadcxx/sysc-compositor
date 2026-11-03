@@ -58,10 +58,36 @@ type FloatingPosition struct {
 	RelativeTo RelativeTo
 }
 
+// RuleMatch is one match line of a window rule. The state properties are
+// compared against the window's state when the rule is resolved, the way
+// Niri does.
 type RuleMatch struct {
-	AppID       *regexp.Regexp
-	Title       *regexp.Regexp
-	Unsupported bool
+	AppID            *regexp.Regexp
+	Title            *regexp.Regexp
+	IsFocused        *bool
+	IsUrgent         *bool
+	IsActiveInColumn *bool
+	IsFloating       *bool
+	AtStartup        *bool
+	Unsupported      bool
+}
+
+// WindowState is the state a window rule is matched against. The fields carry
+// the meaning of Niri's match properties of the same name.
+type WindowState struct {
+	IsFocused        bool
+	IsUrgent         bool
+	IsActiveInColumn bool
+	IsFloating       bool
+	AtStartup        bool
+}
+
+// UnmappedWindowState is the state a window that is not on screen has. Niri
+// reads the rules of a window that is still unmapped that way: it is not
+// focused, not urgent, not floating, and it is the active window of its
+// column.
+func UnmappedWindowState(atStartup bool) WindowState {
+	return WindowState{IsActiveInColumn: true, AtStartup: atStartup}
 }
 
 type WindowRule struct {
@@ -121,14 +147,14 @@ type LayerMatch struct {
 	Unsupported bool
 }
 
-func (c *Config) ResolveWindowRules(appID, title string) WindowRuleResult {
-	return ResolveWindowRules(c.WindowRules, appID, title)
+func (c *Config) ResolveWindowRules(appID, title string, state WindowState) WindowRuleResult {
+	return ResolveWindowRules(c.WindowRules, appID, title, state)
 }
 
-func ResolveWindowRules(rules []WindowRule, appID, title string) WindowRuleResult {
+func ResolveWindowRules(rules []WindowRule, appID, title string, state WindowState) WindowRuleResult {
 	var result WindowRuleResult
 	for _, rule := range rules {
-		if !rule.matches(appID, title) {
+		if !rule.matches(appID, title, state) {
 			continue
 		}
 		applyRuleValue(&result.OpenOnOutput, rule.OpenOnOutput)
@@ -168,14 +194,14 @@ func (r WindowRuleResult) BlocksCapture(target CaptureTarget) bool {
 		(*r.BlockOutFrom == "screen-capture" || target == CaptureCast && *r.BlockOutFrom == "screencast")
 }
 
-func (r WindowRule) matches(appID, title string) bool {
+func (r WindowRule) matches(appID, title string, state WindowState) bool {
 	if hasUnsupportedWindowMatch(r.Matches) || hasUnsupportedWindowMatch(r.Excludes) {
 		return false
 	}
 	if len(r.Matches) != 0 {
 		matched := false
 		for _, ruleMatch := range r.Matches {
-			if ruleMatch.matches(appID, title) {
+			if ruleMatch.matches(appID, title, state) {
 				matched = true
 				break
 			}
@@ -185,16 +211,41 @@ func (r WindowRule) matches(appID, title string) bool {
 		}
 	}
 	for _, ruleMatch := range r.Excludes {
-		if ruleMatch.matches(appID, title) {
+		if ruleMatch.matches(appID, title, state) {
 			return false
 		}
 	}
 	return true
 }
 
-func (m RuleMatch) matches(appID, title string) bool {
-	return !m.Unsupported && (m.AppID == nil || m.AppID.MatchString(appID)) &&
-		(m.Title == nil || m.Title.MatchString(title))
+// matches reports whether the match line holds for the window. The state
+// properties are compared against the window's state.
+func (m RuleMatch) matches(appID, title string, state WindowState) bool {
+	if m.Unsupported {
+		return false
+	}
+	if m.AppID != nil && !m.AppID.MatchString(appID) {
+		return false
+	}
+	if m.Title != nil && !m.Title.MatchString(title) {
+		return false
+	}
+	if m.IsFocused != nil && *m.IsFocused != state.IsFocused {
+		return false
+	}
+	if m.IsUrgent != nil && *m.IsUrgent != state.IsUrgent {
+		return false
+	}
+	if m.IsActiveInColumn != nil && *m.IsActiveInColumn != state.IsActiveInColumn {
+		return false
+	}
+	if m.IsFloating != nil && *m.IsFloating != state.IsFloating {
+		return false
+	}
+	if m.AtStartup != nil && *m.AtStartup != state.AtStartup {
+		return false
+	}
+	return true
 }
 
 func hasUnsupportedWindowMatch(matches []RuleMatch) bool {
@@ -462,7 +513,24 @@ func parseWindowMatch(node *document.Node) (RuleMatch, error) {
 			continue
 		}
 		switch key {
-		case "is-active", "is-focused", "is-active-in-column", "is-floating", "is-window-cast-target", "is-urgent", "at-startup":
+		case "is-focused", "is-urgent", "is-active-in-column", "is-floating", "at-startup":
+			value, ok := property.Value.(bool)
+			if !ok {
+				return RuleMatch{}, fmt.Errorf("%s must be boolean", key)
+			}
+			switch key {
+			case "is-focused":
+				match.IsFocused = &value
+			case "is-urgent":
+				match.IsUrgent = &value
+			case "is-active-in-column":
+				match.IsActiveInColumn = &value
+			case "is-floating":
+				match.IsFloating = &value
+			case "at-startup":
+				match.AtStartup = &value
+			}
+		case "is-active", "is-window-cast-target":
 			if _, ok := property.Value.(bool); !ok {
 				return RuleMatch{}, fmt.Errorf("%s must be boolean", key)
 			}

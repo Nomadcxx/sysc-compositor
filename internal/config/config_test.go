@@ -353,7 +353,7 @@ func TestConfiguredLaptopNiriM8Values(t *testing.T) {
 			t.Errorf("laptop animation %d = %+v, want spring %+v", i, got, want)
 		}
 	}
-	appearance := cfg.ResolveWindowRules("test-app", "test-title")
+	appearance := cfg.ResolveWindowRules("test-app", "test-title", UnmappedWindowState(false))
 	if appearance.GeometryCornerRadius == nil || *appearance.GeometryCornerRadius != (CornerRadius{20, 20, 20, 20}) ||
 		appearance.ClipToGeometry == nil || !*appearance.ClipToGeometry {
 		t.Errorf("laptop window geometry appearance = %+v", appearance)
@@ -408,7 +408,7 @@ layer-rule {
 	if !reflect.DeepEqual(cfg.Workspaces, []WorkspaceConfig{{Name: "Work", OpenOnOutput: "DP-1"}}) {
 		t.Errorf("workspaces = %+v", cfg.Workspaces)
 	}
-	resolved := cfg.ResolveWindowRules("x-terminal-test", "open dialog")
+	resolved := cfg.ResolveWindowRules("x-terminal-test", "open dialog", UnmappedWindowState(false))
 	if resolved.OpenFloating == nil || *resolved.OpenFloating || resolved.OpenFullscreen == nil || !*resolved.OpenFullscreen ||
 		resolved.OpenOnWorkspace == nil || *resolved.OpenOnWorkspace != "Work" || resolved.OpenOnOutput == nil || *resolved.OpenOnOutput != "DP-1" {
 		t.Errorf("ordered window rule result = %+v", resolved)
@@ -417,7 +417,7 @@ layer-rule {
 		resolved.DefaultWindowHeight == nil || !resolved.DefaultWindowHeight.Fixed || resolved.DefaultWindowHeight.Value != 480 {
 		t.Errorf("default sizes = %+v, %+v", resolved.DefaultColumnWidth, resolved.DefaultWindowHeight)
 	}
-	if got := cfg.ResolveWindowRules("x-terminal-test", "hidden"); got.OpenFloating != nil {
+	if got := cfg.ResolveWindowRules("x-terminal-test", "hidden", UnmappedWindowState(false)); got.OpenFloating != nil {
 		t.Errorf("excluded window got rules = %+v", got)
 	}
 	if !cfg.ResolveLayerRules("sysc-shell-panel") || cfg.ResolveLayerRules("other") {
@@ -439,7 +439,7 @@ window-rule {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result := cfg.ResolveWindowRules("app", "title")
+	result := cfg.ResolveWindowRules("app", "title", UnmappedWindowState(false))
 	if result.DefaultColumnWidth == nil || result.DefaultColumnWidth.Value != 0 ||
 		result.DefaultWindowHeight == nil || result.DefaultWindowHeight.Value != 10000 {
 		t.Fatalf("clamped proportion rules = %+v", result)
@@ -627,7 +627,7 @@ window-rule {
 			t.Errorf("%s animation = %+v, want spring %+v", name, got[name], params)
 		}
 	}
-	if got := cfg.ResolveWindowRules("app", "title"); got.GeometryCornerRadius == nil || *got.GeometryCornerRadius != (CornerRadius{20, 20, 20, 20}) ||
+	if got := cfg.ResolveWindowRules("app", "title", UnmappedWindowState(false)); got.GeometryCornerRadius == nil || *got.GeometryCornerRadius != (CornerRadius{20, 20, 20, 20}) ||
 		got.ClipToGeometry == nil || !*got.ClipToGeometry {
 		t.Errorf("window appearance rule = %+v", got)
 	}
@@ -648,11 +648,11 @@ window-rule {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := cfg.ResolveWindowRules("other", "title"); got.GeometryCornerRadius == nil || *got.GeometryCornerRadius != (CornerRadius{1, 2, 3, 4}) ||
+	if got := cfg.ResolveWindowRules("other", "title", UnmappedWindowState(false)); got.GeometryCornerRadius == nil || *got.GeometryCornerRadius != (CornerRadius{1, 2, 3, 4}) ||
 		got.ClipToGeometry == nil || *got.ClipToGeometry {
 		t.Errorf("general window appearance = %+v", got)
 	}
-	if got := cfg.ResolveWindowRules("special", "title"); got.GeometryCornerRadius == nil || *got.GeometryCornerRadius != (CornerRadius{20, 20, 20, 20}) ||
+	if got := cfg.ResolveWindowRules("special", "title", UnmappedWindowState(false)); got.GeometryCornerRadius == nil || *got.GeometryCornerRadius != (CornerRadius{20, 20, 20, 20}) ||
 		got.ClipToGeometry == nil || !*got.ClipToGeometry {
 		t.Errorf("last matching window appearance = %+v", got)
 	}
@@ -1392,7 +1392,7 @@ window-rule {
 	if len(cfg.Warnings) != 0 {
 		t.Fatalf("the window rule keys of Niri still warn: %v", cfg.Warnings)
 	}
-	resolved := cfg.ResolveWindowRules("firefox", "page")
+	resolved := cfg.ResolveWindowRules("firefox", "page", UnmappedWindowState(false))
 	if resolved.OpenMaximized == nil || !*resolved.OpenMaximized {
 		t.Errorf("open-maximized = %+v, want true", resolved.OpenMaximized)
 	}
@@ -1415,7 +1415,7 @@ window-rule {
 	if position == nil || position.X != 100 || position.Y != 50 || position.RelativeTo != RelativeToBottomRight {
 		t.Errorf("default-floating-position = %+v, want x=100 y=50 relative to bottom-right", position)
 	}
-	if other := cfg.ResolveWindowRules("other", "page"); other.OpenMaximized != nil {
+	if other := cfg.ResolveWindowRules("other", "page", UnmappedWindowState(false)); other.OpenMaximized != nil {
 		t.Errorf("a window that does not match got rules = %+v", other)
 	}
 }
@@ -1432,6 +1432,101 @@ func TestNiriWindowRuleOpenKeysRejectBadValues(t *testing.T) {
 	} {
 		if _, err := Parse("bad-open-rules.kdl", []byte(src)); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("Parse(%q) error = %v, want containing %q", src, err, want)
+		}
+	}
+}
+
+func TestWindowRuleStatePropertiesAreParsed(t *testing.T) {
+	cfg, err := Parse("state-rules.kdl", []byte(`
+window-rule {
+    match is-focused=true
+    match is-urgent=true
+    match is-active-in-column=true
+    match is-floating=true
+    match at-startup=true
+    open-maximized true
+}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Warnings) != 0 {
+		t.Fatalf("the state match properties still warn: %v", cfg.Warnings)
+	}
+	if len(cfg.WindowRules) != 1 {
+		t.Fatalf("window rules = %d, want 1", len(cfg.WindowRules))
+	}
+	matches := cfg.WindowRules[0].Matches
+	if len(matches) != 5 {
+		t.Fatalf("match lines = %d, want 5", len(matches))
+	}
+	for i, want := range []struct {
+		name string
+		got  *bool
+	}{
+		{"is-focused", matches[0].IsFocused},
+		{"is-urgent", matches[1].IsUrgent},
+		{"is-active-in-column", matches[2].IsActiveInColumn},
+		{"is-floating", matches[3].IsFloating},
+		{"at-startup", matches[4].AtStartup},
+	} {
+		if want.got == nil {
+			t.Errorf("match line %d did not parse %s", i, want.name)
+			continue
+		}
+		if !*want.got {
+			t.Errorf("match line %d parsed %s = false, want true", i, want.name)
+		}
+	}
+}
+
+func TestWindowRuleStatePropertiesMatchTheWindowState(t *testing.T) {
+	for _, tc := range []struct {
+		match string
+		state WindowState
+		want  bool
+	}{
+		{"is-focused=true", WindowState{IsFocused: true}, true},
+		{"is-focused=true", WindowState{IsFocused: false}, false},
+		{"is-focused=false", WindowState{IsFocused: false}, true},
+		{"is-urgent=true", WindowState{IsUrgent: true}, true},
+		{"is-urgent=true", WindowState{IsUrgent: false}, false},
+		{"is-active-in-column=true", WindowState{IsActiveInColumn: true}, true},
+		{"is-active-in-column=true", WindowState{IsActiveInColumn: false}, false},
+		{"is-floating=true", WindowState{IsFloating: true}, true},
+		{"is-floating=true", WindowState{IsFloating: false}, false},
+		{"at-startup=true", WindowState{AtStartup: true}, true},
+		{"at-startup=true", WindowState{AtStartup: false}, false},
+	} {
+		src := "window-rule {\n    match " + tc.match + "\n    open-maximized true\n}\n"
+		cfg, err := Parse("state-rule.kdl", []byte(src))
+		if err != nil {
+			t.Fatalf("Parse(%q): %v", src, err)
+		}
+		if len(cfg.Warnings) != 0 {
+			t.Fatalf("Parse(%q) warned: %v", src, cfg.Warnings)
+		}
+		resolved := cfg.ResolveWindowRules("app", "title", tc.state)
+		got := resolved.OpenMaximized != nil && *resolved.OpenMaximized
+		if got != tc.want {
+			t.Errorf("match %s against %+v applied = %v, want %v", tc.match, tc.state, got, tc.want)
+		}
+	}
+}
+
+func TestWindowRuleUnsupportedMatchPropertiesWarnAndDropTheRule(t *testing.T) {
+	for _, property := range []string{"is-active=true", "is-window-cast-target=true"} {
+		src := "window-rule {\n    match " + property + "\n    open-maximized true\n}\n"
+		cfg, err := Parse("unsupported-rule.kdl", []byte(src))
+		if err != nil {
+			t.Fatalf("Parse(%q): %v", src, err)
+		}
+		if !slices.Contains(cfg.Warnings, "window-rule.match") {
+			t.Errorf("match %s did not warn: %v", property, cfg.Warnings)
+		}
+		resolved := cfg.ResolveWindowRules("app", "title", WindowState{IsActiveInColumn: true})
+		if resolved.OpenMaximized != nil {
+			t.Errorf("a rule with the unsupported match %s still applied: %+v", property, resolved.OpenMaximized)
 		}
 	}
 }
