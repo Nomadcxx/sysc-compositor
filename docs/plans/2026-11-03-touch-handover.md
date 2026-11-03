@@ -31,14 +31,16 @@ golden JSON; `1ac7ed4` feat(ipc) report `is_fullscreen`; `5232ebc` fix(layout)
 keep the gaps around a maximised column; `3effbcd` docs milestone; `aaf6b64`
 feat(layout) niri column width and window height actions.
 
-Three branches matter:
+Three branches matter. The **code** commits are listed; each branch also carries
+doc commits on top of them, which is why the tip is ahead of the last commit
+named here.
 
-| Branch | Head | What it is |
+| Branch | Code commits | What it is |
 |---|---|---|
 | `main` | `1b03199` | the merged sizing and bar work |
 | `feat/sysc-input-20261102` | `c082c44` | the input branch: PR #89, draft |
-| `feat/touch-input-20261103` | `b40bdce` | main plus the touch tranche and the evidence route: PR #91, draft |
-| `feat/laptop-touch-gate-20261103` | `4dca942` | the input branch plus the touch tranche and the evidence route: what the laptop runs |
+| `feat/touch-input-20261103` | `0b1a5e9`, `699a97e`, `db64bcc`, `6226600` | main plus the touch tranche and the evidence route: PR #91, draft |
+| `feat/laptop-touch-gate-20261103` | `02e3335`, `72ce0d6`, `59f135f`, `aec02f4` | the input branch plus the touch tranche and the evidence route: what the laptop runs |
 
 **`main` does not carry the pointing-device work.** The pointer settings
 (`internal/config/pointer.go`, `internal/wlr/pointer_settings.go`,
