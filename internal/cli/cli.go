@@ -108,18 +108,29 @@ func validateConfig(name string, args []string, env Env) int {
 		fmt.Fprintf(env.Stderr, "%s: config: %v\n", name, err)
 		return 1
 	}
+	reportConfigGaps(name, cfg, env.Stderr)
+	fmt.Fprintf(env.Stdout, "%s: configuration is valid: %s\n", name, path)
+	return 0
+}
+
+// reportConfigGaps says which parts of the config the compositor accepts but
+// does not apply. A bind whose action is not applied does nothing at all, so
+// without this the user presses the key, nothing happens and nothing explains
+// why.
+func reportConfigGaps(name string, cfg *config.Config, w io.Writer) {
+	if cfg == nil {
+		return
+	}
 	for _, section := range cfg.Warnings {
-		fmt.Fprintf(env.Stderr, "%s: warning: config section `%s` is accepted but not applied yet\n", name, section)
+		fmt.Fprintf(w, "%s: warning: config section `%s` is accepted but not applied yet\n", name, section)
 	}
 	if len(cfg.UnappliedActions) > 0 {
-		fmt.Fprintf(env.Stderr, "%s: warning: bind actions are accepted but not applied yet: %s\n",
+		fmt.Fprintf(w, "%s: warning: bind actions are accepted but not applied yet: %s\n",
 			name, strings.Join(cfg.UnappliedActions, ", "))
 	}
 	if len(cfg.NiriCommandBinds) > 0 {
-		fmt.Fprintf(env.Stderr, "%s: warning: these run `niri`, which is not part of sysc-compositor; use `sysc-compositor msg`: %s\n", name, strings.Join(cfg.NiriCommandBinds, ", "))
+		fmt.Fprintf(w, "%s: warning: these run `niri`, which is not part of sysc-compositor; use `sysc-compositor msg`: %s\n", name, strings.Join(cfg.NiriCommandBinds, ", "))
 	}
-	fmt.Fprintf(env.Stdout, "%s: configuration is valid: %s\n", name, path)
-	return 0
 }
 
 // run starts the compositor. A config that fails to load is reported and the
@@ -154,6 +165,7 @@ func run(name, configFlag string, sessionMode bool, env Env) int {
 		fmt.Fprintf(env.Stderr, "%s: config: %v; using the defaults\n", name, err)
 		loaded.Config = config.Default()
 	}
+	reportConfigGaps(name, loaded.Config, env.Stderr)
 	s, err := server.New(loaded, path, err != nil)
 	if err != nil {
 		fmt.Fprintf(env.Stderr, "%s: %v\n", name, err)

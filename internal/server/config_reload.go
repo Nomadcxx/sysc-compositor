@@ -3,6 +3,7 @@ package server
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -192,9 +193,7 @@ func (s *Server) applyConfigReload(sequence uint64, target reloadTarget, load co
 		return
 	}
 
-	if len(load.Config.NiriCommandBinds) > 0 {
-		fmt.Fprintf(os.Stderr, "sysc-compositor: warning: these run `niri`, which is not part of sysc-compositor; use `sysc-compositor msg`: %s\n", strings.Join(load.Config.NiriCommandBinds, ", "))
-	}
+	reportConfigGaps(load.Config, os.Stderr)
 	s.cfg = load.Config
 	s.configPath = load.Root
 	if target.explicit {
@@ -208,6 +207,27 @@ func (s *Server) applyConfigReload(sequence uint64, target reloadTarget, load co
 	s.reloadMu.Unlock()
 	s.updateConfigWatches(watched)
 	s.state.publishConfigLoaded(s.events, false)
+}
+
+// reportConfigGaps says which parts of the config the compositor accepts but
+// does not apply. A bind whose action is not applied does nothing at all, so
+// after a reload the user would otherwise press the key and see no result and
+// no explanation.
+func reportConfigGaps(cfg *config.Config, w io.Writer) {
+	if cfg == nil {
+		return
+	}
+	for _, section := range cfg.Warnings {
+		fmt.Fprintf(w, "sysc-compositor: warning: config section `%s` is accepted but not applied yet\n", section)
+	}
+	if len(cfg.UnappliedActions) > 0 {
+		fmt.Fprintf(w, "sysc-compositor: warning: bind actions are accepted but not applied yet, so these binds do nothing: %s\n",
+			strings.Join(cfg.UnappliedActions, ", "))
+	}
+	if len(cfg.NiriCommandBinds) > 0 {
+		fmt.Fprintf(w, "sysc-compositor: warning: these run `niri`, which is not part of sysc-compositor; use `sysc-compositor msg`: %s\n",
+			strings.Join(cfg.NiriCommandBinds, ", "))
+	}
 }
 
 func (s *Server) updateConfigWatches(watched []string) {

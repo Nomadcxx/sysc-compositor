@@ -13,6 +13,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/Nomadcxx/sysc-compositor/internal/config"
 	"github.com/Nomadcxx/sysc-compositor/internal/ipc"
 )
 
@@ -492,6 +493,25 @@ func TestValidateParsesConfigWithoutRunningStartup(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "bind actions are accepted but not applied yet: toggle-debug-tint\n") {
 		t.Errorf("validate warnings %q do not identify the unapplied bind action", stderr.String())
+	}
+}
+
+func TestReportConfigGapsNamesUnappliedActions(t *testing.T) {
+	cfg := &config.Config{
+		Warnings:         []string{"blur"},
+		UnappliedActions: []string{"maximize-column", "set-column-width"},
+		NiriCommandBinds: []string{"Mod+Z"},
+	}
+	var stderr bytes.Buffer
+	reportConfigGaps("sysc-compositor", cfg, &stderr)
+	for _, want := range []string{
+		"config section `blur` is accepted but not applied yet",
+		"bind actions are accepted but not applied yet: maximize-column, set-column-width",
+		"these run `niri`, which is not part of sysc-compositor",
+	} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Errorf("warning %q does not contain %q", stderr.String(), want)
+		}
 	}
 }
 

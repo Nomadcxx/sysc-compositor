@@ -60,6 +60,10 @@ func TestAnimateValuePreservesSameTargetAndRetargetsSample(t *testing.T) {
 	if retargeted == second || retargeted.target != 2 {
 		t.Fatalf("retargeted animation = %+v, want a new spring targeting 2", retargeted)
 	}
+	// The new spring starts from where the old one was at the instant of the
+	// retarget, so the old spring has to be sampled at that same instant.
+	// Sampling it a moment earlier drifts by the spring's acceleration and
+	// makes this test fail on a loaded machine.
 	elapsed := retargeted.started.Sub(started)
 	wantValue := oldSpring.ValueAt(elapsed)
 	wantVelocity := oldSpring.VelocityAt(elapsed)
