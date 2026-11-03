@@ -138,6 +138,11 @@ func hotkeyLines(binds []config.OverlayBind, hideNotBound bool, modKey bind.Modi
 			actions = append(actions, actionOf(b))
 		}
 	}
+	// A bind whose action is not applied does nothing at all, so listing it in
+	// the overlay would promise a result the compositor cannot give.
+	actions = slices.DeleteFunc(actions, func(a overlayAction) bool {
+		return !bind.IsSupportedAction(a.name)
+	})
 	if hideNotBound {
 		actions = slices.DeleteFunc(actions, func(a overlayAction) bool {
 			_, ok := bound(func(b config.OverlayBind) bool { return actionOf(b) == a })
