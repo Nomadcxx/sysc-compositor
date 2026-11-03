@@ -163,6 +163,7 @@ binds {
 
     Mod+F { maximize-column; }
     Mod+Shift+F { fullscreen-window; }
+    Ctrl+F { fullscreen-window; }
 
     Mod+M { maximize-window-to-edges; }
 

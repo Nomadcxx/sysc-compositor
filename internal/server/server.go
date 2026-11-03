@@ -367,6 +367,34 @@ func (s *Server) Run() error {
 						s.c.ConsumeOrExpelWindowRight(action.WindowID)
 					case "ToggleColumnTabbedDisplay":
 						s.c.ToggleColumnTabbedDisplay()
+					case "CenterColumn":
+						s.c.CenterColumn()
+					case "CenterVisibleColumns":
+						s.c.CenterVisibleColumns()
+					case "ExpandColumnToAvailableWidth":
+						s.c.ExpandColumnToAvailableWidth()
+					case "MaximizeColumn":
+						s.c.ToggleMaximizeColumn()
+					case "SwitchPresetColumnWidth":
+						s.c.SwitchPresetColumnWidth(false)
+					case "SwitchPresetColumnWidthBack":
+						s.c.SwitchPresetColumnWidth(true)
+					case "SetColumnWidth":
+						if action.Size != nil {
+							s.c.SetColumnWidth(layoutSizeChange(*action.Size))
+						}
+					case "MaximizeWindowToEdges":
+						s.c.MaximizeWindowToEdges(action.WindowID)
+					case "ResetWindowHeight":
+						s.c.ResetWindowHeight(action.WindowID)
+					case "SwitchPresetWindowHeight":
+						s.c.SwitchPresetWindowHeight(action.WindowID, false)
+					case "SwitchPresetWindowHeightBack":
+						s.c.SwitchPresetWindowHeight(action.WindowID, true)
+					case "SetWindowHeight":
+						if action.Size != nil {
+							s.c.SetWindowHeight(action.WindowID, layoutSizeChange(*action.Size))
+						}
 					case "SetColumnDisplay":
 						display := layout.ColumnDisplayNormal
 						if action.ColumnDisplay == "Tabbed" {

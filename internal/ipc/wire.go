@@ -249,6 +249,22 @@ type PositionChange struct {
 	Value float64
 }
 
+// SizeChangeKind is a niri-ipc size change variant.
+type SizeChangeKind string
+
+const (
+	SizeSetFixed         SizeChangeKind = "SetFixed"
+	SizeSetProportion    SizeChangeKind = "SetProportion"
+	SizeAdjustFixed      SizeChangeKind = "AdjustFixed"
+	SizeAdjustProportion SizeChangeKind = "AdjustProportion"
+)
+
+// SizeChange is a change to a column width or a window height.
+type SizeChange struct {
+	Kind  SizeChangeKind
+	Value float64
+}
+
 // Action is a decoded action. Only the fields of the actions built so far
 // are kept; every other action is known by Name alone.
 type Action struct {
@@ -268,11 +284,12 @@ type Action struct {
 	Output           string
 	Focus            *bool
 	X, Y             PositionChange
-	WriteToDisk      bool    // ScreenshotScreen, ScreenshotWindow
-	ShowPointer      bool    // Screenshot, ScreenshotScreen, ScreenshotWindow
-	Path             *string // ScreenshotScreen, ScreenshotWindow
-	CastOutput       *string // SetDynamicCastMonitor: nil means focused output
-	SessionID        uint64  // StopCast
+	Size             *SizeChange // SetColumnWidth, SetWindowHeight
+	WriteToDisk      bool        // ScreenshotScreen, ScreenshotWindow
+	ShowPointer      bool        // Screenshot, ScreenshotScreen, ScreenshotWindow
+	Path             *string     // ScreenshotScreen, ScreenshotWindow
+	CastOutput       *string     // SetDynamicCastMonitor: nil means focused output
+	SessionID        uint64      // StopCast
 }
 
 // DecodeRequest decodes one request line.
@@ -756,6 +773,44 @@ func decodeAction(raw json.RawMessage) (Action, error) {
 			return Action{}, ErrParse
 		}
 		a.SessionID = *f.SessionID
+	case "SetColumnWidth":
+		var f struct {
+			Change *json.RawMessage `json:"change"`
+		}
+		if err := strict(body, &f); err != nil || f.Change == nil {
+			return Action{}, ErrParse
+		}
+		change, err := decodeSizeChange(*f.Change)
+		if err != nil {
+			return Action{}, ErrParse
+		}
+		a.Size = &change
+	case "SetWindowHeight":
+		var f struct {
+			ID     *uint64          `json:"id"`
+			Change *json.RawMessage `json:"change"`
+		}
+		if err := strict(body, &f); err != nil || f.Change == nil {
+			return Action{}, ErrParse
+		}
+		change, err := decodeSizeChange(*f.Change)
+		if err != nil {
+			return Action{}, ErrParse
+		}
+		a.WindowID, a.Size = f.ID, &change
+	case "ResetWindowHeight", "MaximizeWindowToEdges", "SwitchPresetWindowHeight", "SwitchPresetWindowHeightBack":
+		var f struct {
+			ID *uint64 `json:"id"`
+		}
+		if err := strict(body, &f); err != nil {
+			return Action{}, ErrParse
+		}
+		a.WindowID = f.ID
+	case "CenterColumn", "CenterVisibleColumns", "SwitchPresetColumnWidth", "SwitchPresetColumnWidthBack",
+		"MaximizeColumn", "ExpandColumnToAvailableWidth":
+		if err := strict(body, &struct{}{}); err != nil {
+			return Action{}, ErrParse
+		}
 	case "MoveFloatingWindow":
 		var f struct {
 			ID *uint64          `json:"id"`
@@ -798,6 +853,33 @@ func decodePositionChange(raw json.RawMessage) (PositionChange, error) {
 	}
 	if err := json.Unmarshal(value, &change.Value); err != nil || math.IsNaN(change.Value) || math.IsInf(change.Value, 0) {
 		return PositionChange{}, ErrParse
+	}
+	return change, nil
+}
+
+func decodeSizeChange(raw json.RawMessage) (SizeChange, error) {
+	name, value, err := variant(raw)
+	if err != nil || bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+		return SizeChange{}, ErrParse
+	}
+	var change SizeChange
+	switch name {
+	case string(SizeSetFixed):
+		change.Kind = SizeSetFixed
+	case string(SizeSetProportion):
+		change.Kind = SizeSetProportion
+	case string(SizeAdjustFixed):
+		change.Kind = SizeAdjustFixed
+	case string(SizeAdjustProportion):
+		change.Kind = SizeAdjustProportion
+	default:
+		return SizeChange{}, ErrParse
+	}
+	if err := json.Unmarshal(value, &change.Value); err != nil || math.IsNaN(change.Value) || math.IsInf(change.Value, 0) {
+		return SizeChange{}, ErrParse
+	}
+	if change.Kind == SizeSetFixed || change.Kind == SizeAdjustFixed {
+		change.Value = math.Round(change.Value)
 	}
 	return change, nil
 }
@@ -1041,8 +1123,35 @@ func EncodeRequest(r Request) []byte {
 			X  any     `json:"x"`
 			Y  any     `json:"y"`
 		}{a.WindowID, positionChangeValue(a.X), positionChangeValue(a.Y)}
+	case "SetColumnWidth":
+		body = struct {
+			Change any `json:"change"`
+		}{sizeChangeValue(a.Size)}
+	case "SetWindowHeight":
+		body = struct {
+			ID     *uint64 `json:"id"`
+			Change any     `json:"change"`
+		}{a.WindowID, sizeChangeValue(a.Size)}
+	case "ResetWindowHeight", "MaximizeWindowToEdges", "SwitchPresetWindowHeight", "SwitchPresetWindowHeightBack":
+		body = struct {
+			ID *uint64 `json:"id"`
+		}{a.WindowID}
+	case "CenterColumn", "CenterVisibleColumns", "SwitchPresetColumnWidth", "SwitchPresetColumnWidthBack",
+		"MaximizeColumn", "ExpandColumnToAvailableWidth":
+		body = struct{}{}
 	}
 	return marshal(map[string]any{"Action": map[string]any{a.Name: body}})
+}
+
+func sizeChangeValue(change *SizeChange) any {
+	if change == nil {
+		return map[string]float64{string(SizeSetProportion): 0}
+	}
+	kind := change.Kind
+	if kind == "" {
+		kind = SizeSetProportion
+	}
+	return map[string]float64{string(kind): change.Value}
 }
 
 func positionChangeValue(change PositionChange) any {

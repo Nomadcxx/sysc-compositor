@@ -1401,6 +1401,126 @@ func (m *Model) SwitchFocusFloatingAndTiling() bool {
 	return m.activeStripAction((*layout.Workspace).SwitchFocusFloatingAndTiling)
 }
 
+// The column width and window height actions of Niri, on the focused output.
+func (m *Model) SetColumnWidth(change layout.SizeChange) bool {
+	return m.activeStripAction(func(workspace *layout.Workspace) bool {
+		return workspace.SetColumnWidth(change)
+	})
+}
+
+func (m *Model) SwitchPresetColumnWidth(backwards bool) bool {
+	return m.activeStripAction(func(workspace *layout.Workspace) bool {
+		return workspace.SwitchPresetColumnWidth(backwards)
+	})
+}
+
+func (m *Model) ToggleMaximizeColumn() bool {
+	return m.activeStripAction((*layout.Workspace).ToggleMaximizeColumn)
+}
+
+func (m *Model) ToggleMaximizeWindowToEdges() bool {
+	return m.activeStripAction(func(workspace *layout.Workspace) bool {
+		return workspace.ToggleMaximizeWindowToEdges(0)
+	})
+}
+
+func (m *Model) CenterColumn() bool {
+	return m.activeStripAction((*layout.Workspace).CenterColumn)
+}
+
+func (m *Model) CenterVisibleColumns() bool {
+	return m.activeStripAction((*layout.Workspace).CenterVisibleColumns)
+}
+
+func (m *Model) ExpandColumnToAvailableWidth() bool {
+	return m.activeStripAction((*layout.Workspace).ExpandColumnToAvailableWidth)
+}
+
+func (m *Model) SetWindowHeight(change layout.SizeChange) bool {
+	return m.activeStripAction(func(workspace *layout.Workspace) bool {
+		return workspace.SetWindowHeight(0, change)
+	})
+}
+
+func (m *Model) ResetWindowHeight() bool {
+	return m.activeStripAction(func(workspace *layout.Workspace) bool {
+		return workspace.ResetWindowHeight(0)
+	})
+}
+
+func (m *Model) SwitchPresetWindowHeight(backwards bool) bool {
+	return m.activeStripAction(func(workspace *layout.Workspace) bool {
+		return workspace.SwitchPresetWindowHeight(0, backwards)
+	})
+}
+
+// SetWindowHeightFor sets the height of a window, wherever it sits. The
+// window id of zero means the focused window.
+func (m *Model) SetWindowHeightFor(id uint64, change layout.SizeChange) bool {
+	return m.windowStripAction(id, func(workspace *layout.Workspace, windowID uint64) bool {
+		return workspace.SetWindowHeight(windowID, change)
+	})
+}
+
+// ResetWindowHeightFor gives a window its automatic height back. The window id
+// of zero means the focused window.
+func (m *Model) ResetWindowHeightFor(id uint64) bool {
+	return m.windowStripAction(id, func(workspace *layout.Workspace, windowID uint64) bool {
+		return workspace.ResetWindowHeight(windowID)
+	})
+}
+
+// SwitchPresetWindowHeightFor cycles a window through the preset heights. The
+// window id of zero means the focused window.
+func (m *Model) SwitchPresetWindowHeightFor(id uint64, backwards bool) bool {
+	return m.windowStripAction(id, func(workspace *layout.Workspace, windowID uint64) bool {
+		return workspace.SwitchPresetWindowHeight(windowID, backwards)
+	})
+}
+
+// ToggleMaximizeWindowToEdgesFor maximizes a window to the edges of its
+// column. The window id of zero means the focused window.
+func (m *Model) ToggleMaximizeWindowToEdgesFor(id uint64) bool {
+	return m.windowStripAction(id, func(workspace *layout.Workspace, windowID uint64) bool {
+		return workspace.ToggleMaximizeWindowToEdges(windowID)
+	})
+}
+
+// windowStripAction runs an action on the workspace that holds a window. The
+// window id of zero means the focused output's active workspace.
+func (m *Model) windowStripAction(id uint64, action func(*layout.Workspace, uint64) bool) bool {
+	if id == 0 {
+		out := m.outputs[m.focusedOutput]
+		if out == nil || len(out.workspaces) == 0 {
+			return false
+		}
+		changed := action(out.workspaces[out.active].strip, 0)
+		if changed {
+			m.clearFocusedUrgency()
+		}
+		return changed
+	}
+	state, ok := m.windows[id]
+	if !ok {
+		return false
+	}
+	out := m.outputs[state.output]
+	if out == nil {
+		return false
+	}
+	for _, workspace := range out.workspaces {
+		if workspace.id != state.workspaceID {
+			continue
+		}
+		changed := action(workspace.strip, id)
+		if changed {
+			m.clearFocusedUrgency()
+		}
+		return changed
+	}
+	return false
+}
+
 func (m *Model) activeStripAction(action func(*layout.Workspace) bool) bool {
 	out := m.outputs[m.focusedOutput]
 	if out == nil || len(out.workspaces) == 0 {
