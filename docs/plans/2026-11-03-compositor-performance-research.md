@@ -1,6 +1,7 @@
 # Compositor performance research: sysc-compositor against Niri, Hyprland and Mango
 
 **Kind:** plan · **Date:** 2026-11-03 · **Status:** written, not commissioned
+**Tracker:** `sysc-2230` · **Pull request:** #92
 
 > This is a cross-cutting workstream plan, not a milestone plan. The standing rule in `docs/README.md`
 > says plans are written when a milestone starts; this work belongs to no single milestone and gates on
@@ -440,6 +441,7 @@ Stated up front so the findings cannot drift past it.
 | The instrumentation | sysc-compositor, default-off, in `internal/perf` and `internal/wlr/perf.go` |
 | The findings report | `docs/plans/<date>-compositor-performance-findings.md`, kind *report* |
 | The fix list | beads under the `sysc-1133` ledger, in the `sysc-shell` database |
+| The tracker bead | `sysc-2230`, depending on the `sysc-1133` ledger |
 | The raw measurements | committed with the findings report, so every number in it can be recomputed |
 
 ## 14. Related work
