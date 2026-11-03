@@ -1485,6 +1485,8 @@ func (c *Compositor) handleNewToplevel(data unsafe.Pointer) {
 		if c.model != nil {
 			c.model.RemoveWindow(view.id)
 			c.applyWorkspaceModel()
+			// The workspace may have a different active window now.
+			c.reapplyWindowRules()
 		}
 		c.switcherWindowGone(view.id)
 		c.releaseView(view)
@@ -1739,6 +1741,8 @@ func (c *Compositor) handleToplevelDestroy(view *toplevelView) {
 	}
 	if c.model != nil {
 		c.model.DestroyWindow(view.id)
+		// The workspace may have a different active window now.
+		c.reapplyWindowRules()
 	}
 	view.mapped = false
 	c.dropOverviewSurfaceListeners(view, nil)

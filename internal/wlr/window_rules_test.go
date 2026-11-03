@@ -271,6 +271,64 @@ func TestWindowRuleStartupTimerEndsTheStartupWindow(t *testing.T) {
 	}
 }
 
+// TestWindowRuleIsActiveAppliesToTheActiveWindow: Niri's is-active is the
+// window that has the active border. A window that opens is not active yet,
+// so the rule does not change how it opens; it applies once the window is the
+// active window of its workspace.
+func TestWindowRuleIsActiveAppliesToTheActiveWindow(t *testing.T) {
+	c := newNested(t)
+	active := true
+	openMaximized := true
+	c.windowRules = []config.WindowRule{{
+		Matches:       []config.RuleMatch{{IsActive: &active}},
+		OpenMaximized: &openMaximized,
+	}}
+	c.viewMapped = func(view *toplevelView) {
+		window, ok := findWindowSnapshot(c.WorkspaceSnapshot().Windows, view.id)
+		if !ok {
+			t.Errorf("mapped window %d missing from the workspace snapshot", view.id)
+			c.Terminate()
+			return
+		}
+		bounds := c.layoutBox()
+		if maximized := bounds.w - 2*16; window.Tile.Width == maximized {
+			t.Errorf("the active window rule changed how the window opened")
+		}
+		if view.appearance.OpenMaximized == nil {
+			t.Errorf("the active window rule did not apply to the active window")
+		}
+		c.Terminate()
+	}
+	runClient(t, c, []string{"weston-terminal"}, nil, nil)
+}
+
+// TestWindowRuleIsWindowCastTargetIsNeverTrue: the compositor has no window
+// screencast protocol, so no window is the target of one.
+func TestWindowRuleIsWindowCastTargetIsNeverTrue(t *testing.T) {
+	c := newNested(t)
+	notTarget := false
+	openMaximized := true
+	c.windowRules = []config.WindowRule{{
+		Matches:       []config.RuleMatch{{IsWindowCastTarget: &notTarget}},
+		OpenMaximized: &openMaximized,
+	}}
+	c.viewMapped = func(view *toplevelView) {
+		window, ok := findWindowSnapshot(c.WorkspaceSnapshot().Windows, view.id)
+		if !ok {
+			t.Errorf("mapped window %d missing from the workspace snapshot", view.id)
+			c.Terminate()
+			return
+		}
+		bounds := c.layoutBox()
+		want := bounds.w - 2*16
+		if window.Tile.Width != want {
+			t.Errorf("tile width = %d, want the maximized width %d", window.Tile.Width, want)
+		}
+		c.Terminate()
+	}
+	runClient(t, c, []string{"weston-terminal"}, nil, nil)
+}
+
 // TestWindowRuleMinWidthAmendsTheSizeHints: the window rule's min-width
 // raises the minimum the window gets, the way Niri's min-width does.
 func TestWindowRuleMinWidthAmendsTheSizeHints(t *testing.T) {
