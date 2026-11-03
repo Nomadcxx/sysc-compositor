@@ -89,6 +89,7 @@ type Input struct {
 	Pointers
 	ModKey, ModKeyNested string
 	Tablet               Tablet
+	Touch                Touch
 }
 
 // Tablet is input.tablet, Niri's niri-config/src/input.rs Tablet.
@@ -96,6 +97,13 @@ type Tablet struct {
 	Off                bool
 	MapToOutput        string
 	MapToFocusedOutput bool
+}
+
+// Touch is input.touch, Niri's niri-config/src/input.rs Touch. Niri has no
+// map-to-focused-output for touch: a touchscreen is bound to one output.
+type Touch struct {
+	Off         bool
+	MapToOutput string
 }
 
 type SwitchEvents struct {
@@ -474,7 +482,7 @@ func (c *Config) environment(n *document.Node) error {
 	return nil
 }
 
-// input decodes keyboard, tablet and pointing-device settings.
+// input decodes keyboard, tablet, pointing-device and touch settings.
 func (c *Config) input(n *document.Node) error {
 	if len(n.Arguments) != 0 || len(n.Properties) != 0 {
 		return fmt.Errorf("takes child nodes only")
@@ -523,6 +531,12 @@ func (c *Config) input(n *document.Node) error {
 		if nodeName(child) == "tablet" {
 			if err := c.tablet(child); err != nil {
 				return fmt.Errorf("tablet: %w", err)
+			}
+			continue
+		}
+		if nodeName(child) == "touch" {
+			if err := c.touch(child); err != nil {
+				return fmt.Errorf("touch: %w", err)
 			}
 			continue
 		}
@@ -582,6 +596,42 @@ func (c *Config) tablet(n *document.Node) error {
 			}
 			if err == nil {
 				c.addWarning("input.tablet." + name)
+			}
+		default:
+			err = fmt.Errorf("unknown node `%s`", name)
+		}
+		if err != nil {
+			return fmt.Errorf("%s: %w", nodeName(child), err)
+		}
+	}
+	return nil
+}
+
+// touch decodes input.touch. calibration-matrix is a libinput device
+// setting, which no device class applies yet.
+func (c *Config) touch(n *document.Node) error {
+	for _, child := range n.Children {
+		var err error
+		switch name := nodeName(child); name {
+		case "off":
+			if err = noValue(child); err == nil {
+				c.Input.Touch.Off = true
+			}
+		case "map-to-output":
+			var value []string
+			if value, err = stringArgs(child, 1, 1); err == nil {
+				c.Input.Touch.MapToOutput = value[0]
+			}
+		case "calibration-matrix":
+			for _, arg := range child.Arguments {
+				switch arg.Value.(type) {
+				case int64, float64:
+				default:
+					err = fmt.Errorf("calibration-matrix: argument %v is not a number", arg.Value)
+				}
+			}
+			if err == nil {
+				c.addWarning("input.touch." + name)
 			}
 		default:
 			err = fmt.Errorf("unknown node `%s`", name)

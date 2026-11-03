@@ -173,6 +173,9 @@ type Compositor struct {
 	tabletPads     map[unsafe.Pointer]*tabletPad
 	activeTablet   *tablet
 	tabletConfig   config.Tablet
+	touchDevices   map[unsafe.Pointer]*touchDevice
+	touchPoints    map[int32]*touchPoint
+	touchConfig    config.Touch
 	// syncobj is nil where the renderer or backend cannot take timelines.
 	syncobj *C.struct_wlr_linux_drm_syncobj_manager_v1
 
@@ -374,6 +377,7 @@ type Options struct {
 	Blur         config.Blur
 	Tablet       config.Tablet
 	Pointers     config.Pointers
+	Touch        config.Touch
 	PreferNoCSD  bool
 	// ScreenshotPath is the screenshot-path pattern, nil for clipboard only.
 	ScreenshotPath *string
@@ -424,6 +428,7 @@ func NewWith(opts Options) (*Compositor, error) {
 	c.overviewConfig = opts.Overview
 	c.tabletConfig = opts.Tablet
 	c.pointers = opts.Pointers
+	c.touchConfig = opts.Touch
 	c.animationConfig = opts.Animations
 	c.blurConfig = opts.Blur
 	c.screenshotPattern = opts.ScreenshotPath
@@ -475,6 +480,8 @@ func NewWith(opts Options) (*Compositor, error) {
 	c.tablets = map[unsafe.Pointer]*tablet{}
 	c.tabletTools = map[*C.struct_wlr_tablet_tool]*tabletTool{}
 	c.tabletPads = map[unsafe.Pointer]*tabletPad{}
+	c.touchDevices = map[unsafe.Pointer]*touchDevice{}
+	c.touchPoints = map[int32]*touchPoint{}
 	c.consumedPointerButtons = map[uint32]bool{}
 
 	c.backend = C.wlr_backend_autocreate(c.loop, &c.session)
@@ -705,6 +712,7 @@ func (c *Compositor) Reconfigure(opts Options) error {
 	c.overviewConfig = opts.Overview
 	c.setTabletConfig(opts.Tablet)
 	c.setPointerConfig(opts.Pointers)
+	c.setTouchConfig(opts.Touch)
 	c.animationConfig = opts.Animations
 	c.screenshotPattern = opts.ScreenshotPath
 	c.configureSwitcher(*opts.RecentWindows)
@@ -899,6 +907,8 @@ func (c *Compositor) Destroy() {
 	c.virtualKeyboards = nil
 	c.virtualPointers = nil
 	c.inputDestroyListeners = nil
+	c.touchDevices = nil
+	c.touchPoints = nil
 	c.destroyInjectedSeats()
 	c.destroyKeyboardGroup()
 	if c.cursor != nil {
