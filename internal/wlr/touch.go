@@ -94,8 +94,7 @@ func (c *Compositor) removeTouch(device unsafe.Pointer) {
 	if touch == nil {
 		return
 	}
-	C.wlr_seat_touch_notify_cancel(c.seat, nil)
-	c.releaseTouchPoints()
+	c.endTouchPoints(nowMsec())
 	for _, listener := range touch.listeners {
 		c.drop(listener)
 	}
@@ -233,8 +232,8 @@ func (c *Compositor) handleTouchUp(data unsafe.Pointer) {
 // handleTouchCancel ends every finger, as a lost grab or a device going away
 // does.
 func (c *Compositor) handleTouchCancel(data unsafe.Pointer) {
-	C.wlr_seat_touch_notify_cancel(c.seat, nil)
-	c.releaseTouchPoints()
+	event := (*C.struct_wlr_touch_cancel_event)(data)
+	c.endTouchPoints(event.time_msec)
 }
 
 // handleTouchFrame ends a frame of touch events.
@@ -278,12 +277,22 @@ func (c *Compositor) releaseTouchPoints() {
 	}
 }
 
+// endTouchPoints lifts every finger off the glass. wlroots 0.20's
+// wlr_seat_touch_notify_cancel wants a seat client and faults on a nil one,
+// and it leaves the points in place anyway, so each finger is ended on its
+// own.
+func (c *Compositor) endTouchPoints(timeMsec C.uint32_t) {
+	for id := range c.touchPoints {
+		C.wlr_seat_touch_notify_up(c.seat, timeMsec, C.int32_t(id))
+	}
+	c.releaseTouchPoints()
+}
+
 // setTouchConfig applies input.touch. Turning touch off ends every finger.
 func (c *Compositor) setTouchConfig(cfg config.Touch) {
 	c.touchConfig = cfg
 	if cfg.Off {
-		C.wlr_seat_touch_notify_cancel(c.seat, nil)
-		c.releaseTouchPoints()
+		c.endTouchPoints(nowMsec())
 	}
 	c.refreshCapabilities()
 }
