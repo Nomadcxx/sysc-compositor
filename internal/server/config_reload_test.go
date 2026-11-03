@@ -185,6 +185,36 @@ func TestReportConfigGapsNamesUnappliedActions(t *testing.T) {
 	}
 }
 
+func TestWorkspaceLayoutReachesTheModelOptions(t *testing.T) {
+	gaps := 8
+	proportion := 0.75
+	cfg := &config.Config{
+		Workspaces: []config.WorkspaceConfig{{
+			Name: "wide",
+			Layout: &config.WorkspaceLayout{
+				Gaps: &gaps, ColumnWidthProportion: &proportion,
+			},
+		}},
+	}
+	options := compositorOptions(cfg, nil)
+	if len(options.Workspaces) != 1 {
+		t.Fatalf("workspaces = %+v, want one", options.Workspaces)
+	}
+	workspace := options.Workspaces[0]
+	if workspace.Name != "wide" {
+		t.Fatalf("the workspace name = %q, want wide", workspace.Name)
+	}
+	if workspace.Layout == nil {
+		t.Fatal("the workspace has no layout")
+	}
+	if workspace.Layout.Gaps == nil || *workspace.Layout.Gaps != 8 {
+		t.Errorf("the gaps = %+v, want 8", workspace.Layout.Gaps)
+	}
+	if workspace.Layout.ColumnWidthProportion == nil || *workspace.Layout.ColumnWidthProportion != 0.75 {
+		t.Errorf("the column width proportion = %+v, want 0.75", workspace.Layout.ColumnWidthProportion)
+	}
+}
+
 func newConfigReloadTestServer(t *testing.T, loaded config.LoadResult) *Server {
 	t.Helper()
 	return newConfigReloadTestServerAt(t, loaded, config.Path{Named: loaded.Root})

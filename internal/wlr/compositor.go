@@ -746,10 +746,7 @@ func (c *Compositor) Reconfigure(opts Options) error {
 	if c.dndScroll != nil {
 		c.stopDndEdgeScroll(c.dndScroll)
 	}
-	workspaces := make([]wm.WorkspaceConfig, len(opts.Workspaces))
-	for i, workspace := range opts.Workspaces {
-		workspaces[i] = wm.WorkspaceConfig{Name: workspace.Name, OpenOnOutput: workspace.OpenOnOutput}
-	}
+	workspaces := slices.Clone(opts.Workspaces)
 	c.model.SetWorkspaceConfig(workspaces)
 	c.reapplyWindowRules()
 	c.reapplyLayerRules()

@@ -12,6 +12,15 @@ import (
 type WorkspaceConfig struct {
 	Name         string
 	OpenOnOutput string
+	Layout       *WorkspaceLayout
+}
+
+// WorkspaceLayout holds the layout overrides a workspace may set. A nil
+// field means the workspace keeps the value of its output.
+type WorkspaceLayout struct {
+	Gaps                  *int
+	ColumnWidthProportion *float64
+	FixedColumnWidth      *int
 }
 
 type PresetSize struct {
@@ -353,13 +362,55 @@ func (c *Config) workspace(node *document.Node) error {
 			}
 			workspace.OpenOnOutput = value[0]
 		case "layout":
-			c.addWarning("workspace.layout")
+			layout, err := c.workspaceLayout(child)
+			if err != nil {
+				return err
+			}
+			workspace.Layout = layout
 		default:
 			return fmt.Errorf("unexpected workspace child `%s`", nodeName(child))
 		}
 	}
 	c.Workspaces = append(c.Workspaces, workspace)
 	return nil
+}
+
+// workspaceLayout parses the layout part of a workspace. Niri merges it over
+// the layout of the output, so only the keys it sets override the output's.
+func (c *Config) workspaceLayout(node *document.Node) (*WorkspaceLayout, error) {
+	layout := &WorkspaceLayout{}
+	for _, child := range node.Children {
+		switch nodeName(child) {
+		case "gaps":
+			value, err := intArg(child, 0, 1<<16-1)
+			if err != nil {
+				return nil, fmt.Errorf("gaps: %w", err)
+			}
+			layout.Gaps = &value
+		case "default-column-width":
+			for _, width := range child.Children {
+				switch nodeName(width) {
+				case "proportion":
+					value, err := floatArg(width, 0, 100)
+					if err != nil {
+						return nil, fmt.Errorf("default-column-width: %w", err)
+					}
+					layout.ColumnWidthProportion = &value
+					layout.FixedColumnWidth = nil
+				case "fixed":
+					value, err := intArg(width, 1, 1<<16-1)
+					if err != nil {
+						return nil, fmt.Errorf("default-column-width: %w", err)
+					}
+					layout.FixedColumnWidth = &value
+					layout.ColumnWidthProportion = nil
+				}
+			}
+		default:
+			c.addWarning("workspace.layout." + nodeName(child))
+		}
+	}
+	return layout, nil
 }
 
 func (c *Config) windowRule(node *document.Node) error {
