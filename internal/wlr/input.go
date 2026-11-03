@@ -93,7 +93,10 @@ static void sysc_seat_keyboard_focus(struct wlr_seat *seat,
 import "C"
 
 import (
+	"fmt"
 	"math"
+	"os"
+	"strings"
 	"time"
 	"unsafe"
 
@@ -1776,8 +1779,31 @@ func (c *Compositor) refreshCapabilities() {
 	if !c.touchConfig.Off && len(c.touchDevices) > 0 {
 		caps |= C.WL_SEAT_CAPABILITY_TOUCH
 	}
+	if int(caps) != c.capabilities {
+		c.capabilities = int(caps)
+		fmt.Fprintf(os.Stderr, "sysc-compositor: seat capabilities: %s\n", seatCapabilityNames(int(caps)))
+	}
 	C.wlr_seat_set_capabilities(c.seat, caps)
-	c.capabilities = int(caps)
+}
+
+// seatCapabilityNames spells the seat's capability bits out, in the order
+// the protocol numbers them. The log says what the seat offers, which is
+// otherwise nowhere to be seen.
+func seatCapabilityNames(caps int) string {
+	names := []string{}
+	if caps&int(C.WL_SEAT_CAPABILITY_POINTER) != 0 {
+		names = append(names, "pointer")
+	}
+	if caps&int(C.WL_SEAT_CAPABILITY_KEYBOARD) != 0 {
+		names = append(names, "keyboard")
+	}
+	if caps&int(C.WL_SEAT_CAPABILITY_TOUCH) != 0 {
+		names = append(names, "touch")
+	}
+	if len(names) == 0 {
+		return "none"
+	}
+	return strings.Join(names, "|")
 }
 
 // SeatCapabilities reports the capability bitmask the seat advertises. A

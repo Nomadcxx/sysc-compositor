@@ -144,6 +144,9 @@ error, so `map-to-focused-output` — which is a tablet node, not a touch node �
 - `internal/server/config_reload.go` — the touch config reaches the compositor on reload.
 - `internal/wlr/testclient/toplevel.go` — the test client can bind `wl_touch` and report what it
   received. It does not bind automatically, so a test can have a client that never asks.
+- `internal/touchprobe/probe.go` — new. The probe: a small Wayland client that asks the seat for
+  touch and prints what it receives.
+- `internal/cli/touchprobe.go` — new. The `sysc-compositor touch-probe` command that runs it.
 
 ## The tests
 
@@ -156,14 +159,52 @@ error, so `map-to-focused-output` — which is a tablet node, not a touch node �
   `TestTouchOffKeepsTheSeatSilent` and `TestTouchReachesNothingWhileTheSessionIsLocked`: a finger
   reaches the client that asked for touch and no other, no finger reaches anything while the
   session is locked, and `input.touch off` keeps the seat silent.
+- `internal/wlr/touch_probe_test.go` — `TestTouchProbeSeesTheFinger`: the probe client, the same
+  client the laptop gate uses, sees the finger the compositor sends.
+- `internal/touchprobe/probe_test.go` — `TestCapabilityNames`, `TestSummaryCountsTheFinger` and
+  `TestHasTouchCapability`: the probe's own reporting, pure Go, no compositor.
 
 The compositor packages are covered by CI lane 2, which runs them under a virtual KMS.
+
+## The evidence route
+
+The physical gate needs evidence, and the ordinary tools cannot give it:
+`wayland-info` and `wlr-randr` hang against the compositor's socket and print nothing, the seat's
+capabilities live in `internal/wlr` only and are not exposed over the IPC, and the compositor did
+not log them. So the gate has its own route, built in two halves.
+
+**The compositor side logs what it does.** `internal/wlr/touch.go` writes a line to stderr — the
+journal — when a touch device arrives or goes, and for every finger: whether it was delivered to a
+client or dropped, and why it was dropped (`input.touch is off`, `the session is locked`, `a modal
+surface is open`, `no surface under the finger`, `the client did not ask for touch`).
+`internal/wlr/input.go` logs the seat's capabilities whenever they change, spelled out as
+`pointer|keyboard|touch`.
+
+**The client side asks for touch and reports it.** `internal/touchprobe` is a small Wayland client
+that binds `wl_seat.get_touch` — only when the seat advertises the capability, since asking
+without it is a protocol error — maps a toplevel so a finger has a surface to land on, and prints
+every event. `sysc-compositor touch-probe` runs it:
+
+```
+sysc-compositor touch-probe [--display NAME] [--timeout DURATION] [--no-window]
+```
+
+It exits 0 when a finger arrived, 1 when the run ended with no finger, 2 on a usage error, 3 when
+the seat does not advertise touch, and 4 when the probe could not run at all. The lines it prints
+are stable: `touch-probe: seat capabilities=pointer|keyboard|touch`, `touch-probe: touch bound`,
+`touch-probe: window mapped`, `touch-probe: down id=1 x=… y=… surface=probe`, and a summary line
+with the counts.
+
+The probe is the same client the CI lane-2 test runs against a nested compositor, so the route is
+proved before it is used on the laptop.
 
 ## What is still open
 
 - The laptop gate: the touchscreen on the archThink has to answer. The ELAN panel reports
   `ID_INPUT_TOUCHSCREEN=1` on event4, so the device must now reach the compositor as a touch
-  device; the owner has to confirm that a finger lands where it lands under Niri.
+  device; the owner has to confirm that a finger lands where it lands under Niri. The probe above
+  is how the finger is seen: `sysc-compositor touch-probe` prints the seat's capabilities and every
+  event, and the journal says what the compositor did with it.
 - Multi-finger gestures are not implemented. Each finger is tracked separately and delivered
   correctly, but pinch, rotate and swipe are Niri's gestures, not this milestone's.
 - Touch does not drive the compositor's own UI yet — the overview, the switcher and the colour

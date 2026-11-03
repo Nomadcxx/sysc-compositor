@@ -41,6 +41,8 @@ static void sysc_touch_output_box(struct wlr_output_layout *layout, struct wlr_o
 import "C"
 
 import (
+	"fmt"
+	"os"
 	"unsafe"
 
 	"github.com/Nomadcxx/sysc-compositor/internal/config"
@@ -84,7 +86,16 @@ func (c *Compositor) addTouch(device *C.struct_wlr_input_device) bool {
 	}
 	c.keep(t.listeners...)
 	c.touchDevices[unsafe.Pointer(device)] = t
+	fmt.Fprintf(os.Stderr, "sysc-compositor: touch device added: %s\n", touchDeviceName(device))
 	return true
+}
+
+// touchDeviceName is the name the device reports, for the log.
+func touchDeviceName(device *C.struct_wlr_input_device) string {
+	if device == nil || device.name == nil {
+		return "unknown"
+	}
+	return C.GoString(device.name)
 }
 
 // removeTouch takes a touch screen off the seat. Every finger on the glass
@@ -94,6 +105,7 @@ func (c *Compositor) removeTouch(device unsafe.Pointer) {
 	if touch == nil {
 		return
 	}
+	fmt.Fprintf(os.Stderr, "sysc-compositor: touch device removed: %s\n", touchDeviceName(touch.device))
 	c.endTouchPoints(nowMsec())
 	for _, listener := range touch.listeners {
 		c.drop(listener)
@@ -168,17 +180,28 @@ func (c *Compositor) handleTouchDown(data unsafe.Pointer) {
 	if c.touchDevices[unsafe.Pointer(&touch.base)] == nil {
 		return
 	}
-	if c.touchConfig.Off || c.sessionLocked || c.modalUIOpen() {
+	if c.touchConfig.Off {
+		fmt.Fprintf(os.Stderr, "sysc-compositor: touch down dropped: input.touch is off\n")
+		return
+	}
+	if c.sessionLocked {
+		fmt.Fprintf(os.Stderr, "sysc-compositor: touch down dropped: the session is locked\n")
+		return
+	}
+	if c.modalUIOpen() {
+		fmt.Fprintf(os.Stderr, "sysc-compositor: touch down dropped: a modal surface is open\n")
 		return
 	}
 	lx, ly := c.touchLayoutPoint(touch, float64(event.x), float64(event.y))
 	surface, sx, sy := c.surfaceAt(lx, ly)
 	if surface == nil {
+		fmt.Fprintf(os.Stderr, "sysc-compositor: touch down dropped: no surface under the finger\n")
 		return
 	}
 	if !bool(C.wlr_surface_accepts_touch(surface, c.seat)) {
 		// The client did not ask for touch. Niri would deliver it anyway;
 		// sysc drops it rather than emulating a mouse.
+		fmt.Fprintf(os.Stderr, "sysc-compositor: touch down dropped: the client did not ask for touch\n")
 		return
 	}
 	point := &touchPoint{
@@ -195,6 +218,7 @@ func (c *Compositor) handleTouchDown(data unsafe.Pointer) {
 	// The touch takes the pointer's focus, as Niri and Mango do.
 	C.wlr_seat_pointer_notify_clear_focus(c.seat)
 	C.wlr_seat_touch_notify_down(c.seat, surface, event.time_msec, event.touch_id, sx, sy)
+	fmt.Fprintf(os.Stderr, "sysc-compositor: touch down id=%d delivered to the client\n", int32(event.touch_id))
 	// Touching a window focuses it, as Niri does.
 	if view := c.viewForSurface(surface); view != nil {
 		c.focusView(view)
@@ -226,6 +250,7 @@ func (c *Compositor) handleTouchUp(data unsafe.Pointer) {
 		return
 	}
 	C.wlr_seat_touch_notify_up(c.seat, event.time_msec, event.touch_id)
+	fmt.Fprintf(os.Stderr, "sysc-compositor: touch up id=%d\n", int32(event.touch_id))
 	c.dropTouchPoint(int32(event.touch_id))
 }
 
