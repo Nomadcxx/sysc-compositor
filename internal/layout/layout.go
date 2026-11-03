@@ -1443,7 +1443,9 @@ func (w *Workspace) columnStart(index int) int {
 func (w *Workspace) columnWidthAt(index int) int {
 	column := w.columns[index]
 	if column.fullWidth || column.hasMaximizedTile() {
-		return max(w.bounds.Width, columnMinWidth(&column))
+		// Niri keeps a gap on either side of a column that fills the working
+		// area, so the border and the shadow of the window stay visible.
+		return max(w.bounds.Width-2*w.gap, columnMinWidth(&column))
 	}
 	width := w.columnWidth
 	if column.width > 0 {
