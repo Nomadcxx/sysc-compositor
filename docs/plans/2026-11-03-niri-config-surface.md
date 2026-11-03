@@ -3,8 +3,8 @@
 - Date: 2026-11-03
 - Bead: `sysc-2231`
 - Branch: `feat/config-surface-20261103`
-- Status: slices 1 and 2 landed on 2026-11-03 (commits `3bd4e41` and
-  `79b939d`, draft PR #94). Slices 3 to 6 are not started.
+- Status: slices 1, 2 and 3 landed on 2026-11-03 (commits `3bd4e41`,
+  `79b939d` and `99a6c7e`, draft PR #94). Slices 4 to 6 are not started.
 - Reference: niri v26.04 in `/home/nomadx/references/niri`
   (`niri-config/src/window_rule.rs`, `layer_rule.rs`, `workspace.rs`, `layout.rs`,
   `docs/wiki/Configuration:-Window-Rules.md`, `Configuration:-Layer-Rules.md`,
@@ -70,6 +70,8 @@ wallpaper engine, no notification server, no tray.
 | `default-column-display` | `rules.go` | `mapWindowWithRules` → `model.SetColumnDisplayFor` | slice 1; `normal` or `tabbed` |
 | `default-floating-position` | `rules.go` `parseFloatingPosition` | `mapWindowWithRules` → `model.SetFloatingPositionFor` | slice 1; `x`, `y`, `relative-to` |
 | `match is-focused`, `is-urgent`, `is-active-in-column`, `is-floating`, `at-startup` | `rules.go` `parseWindowMatch` | `internal/wlr/window_rules.go` `ruleState` → `ResolveWindowRules` | slice 2; the rules are matched against the state of the window they apply to |
+| `match is-active` | `rules.go` `parseWindowMatch` | `internal/wlr/window_rules.go` `ruleState` | slice 3; the active window of every workspace on the focused output |
+| `match is-window-cast-target` | `rules.go` `parseWindowMatch` | `internal/wlr/window_rules.go` `ruleState` | slice 3; the compositor has no window screencast protocol, so no window is ever the target |
 
 ### 2.2 `window-rule` — the keys sysc has no counterpart for
 
@@ -84,16 +86,13 @@ wallpaper engine, no notification server, no tray.
 | `variable-refresh-rate` | the output runs at a variable refresh rate | output-level, needs the wlroots commit path | 6 |
 | `baba-is-float`, `tiled-state` | the Baba Is You game's quirks | niche, not for this tranche | 6 |
 
-### 2.3 `window-rule` — the match properties sysc cannot evaluate
+### 2.3 `window-rule` — the match properties
 
-Slice 2 took five of them out of this table: `is-focused`, `is-floating`,
-`is-urgent`, `is-active-in-column` and `at-startup` are parsed and evaluated
-now (see 2.1). What is left needs state sysc does not keep:
-
-| property | Niri's meaning | the state sysc would need | slice |
-|---|---|---|---|
-| `is-active` | every workspace on the focused monitor has one active window | sysc only models one focused window; the active window per workspace does not exist yet | 3 |
-| `is-window-cast-target` | the window is the target of an individual screencast | sysc knows about screencasts but does not track the target window | 3 |
+Slices 2 and 3 took every match property Niri has out of this table:
+`is-focused`, `is-urgent`, `is-active-in-column`, `is-floating`,
+`at-startup`, `is-active` and `is-window-cast-target` are parsed and
+evaluated now (see 2.1). No window rule warns about a match property any
+more, and an unknown match property is a hard error.
 
 ### 2.4 `layer-rule`
 
@@ -187,7 +186,26 @@ shipped:
 ### Slice 3 — the match properties that need a new state
 
 `is-active` (one active window per workspace on the focused monitor) and
-`is-window-cast-target`. Both need state sysc does not keep yet.
+`is-window-cast-target`.
+
+**Landed on 2026-11-03** (commit `99a6c7e`, draft PR #94). What actually
+shipped:
+
+- Niri's `is-active` is the window that has the active border: every
+  workspace on the focused monitor has one active window. The model's
+  snapshot carries the active window of every workspace
+  (`WorkspaceSnapshot.ActiveWindowID`), so `ruleState` compares it with the
+  focused output.
+- The rules are read again when the focused output moves
+  (`setActiveOutputName`) and when a window leaves its workspace (the unmap
+  and destroy paths), because both change which windows are active.
+- Niri's `is-window-cast-target` is the window an ongoing window screencast
+  shows. The compositor has no window screencast protocol, so no window is
+  ever the target of one: the property is evaluated, and it is always false.
+- With this, every match property Niri has is parsed and evaluated. The
+  `Unsupported` flag in `RuleMatch` stays as the guard for a property that
+  cannot be evaluated yet, but nothing sets it now; an unknown match
+  property is a hard error.
 
 ### Slice 4 — `workspace.layout` and the missing `layout` keys
 
@@ -231,7 +249,9 @@ rejected with a clear message rather than accepted and ignored.
   `TestNiriWindowRuleOpenKeysRejectBadValues`. Slice 2 added
   `TestWindowRuleStatePropertiesAreParsed`,
   `TestWindowRuleStatePropertiesMatchTheWindowState` and
-  `TestWindowRuleUnsupportedMatchPropertiesWarnAndDropTheRule`.
+  `TestWindowRuleUnsupportedMatchPropertiesWarnAndDropTheRule`. Slice 3
+  replaced the last one with `TestWindowRuleActiveAndCastTargetPropertiesAreParsed`
+  and `TestWindowRuleUnknownMatchPropertyIsRejected`.
 - `internal/layout` and `internal/wm`: one test per set-variant, next to the
   toggle tests. Slice 1 added `TestMaximizeColumnFillsTheWorkingWidth`,
   `TestMaximizeWindowToEdgesFillsTheColumnHeight`,
@@ -249,7 +269,9 @@ rejected with a clear message rather than accepted and ignored.
   `TestWindowRuleIsFocusedDoesNotMatchAWindowThatOpens`,
   `TestWindowRuleIsUrgentAppliesWhenTheWindowBecomesUrgent`,
   `TestWindowRuleAtStartupMatchesInsideTheStartupWindow` and
-  `TestWindowRuleStartupTimerEndsTheStartupWindow`.
+  `TestWindowRuleStartupTimerEndsTheStartupWindow`. Slice 3 added
+  `TestWindowRuleIsActiveAppliesToTheActiveWindow` and
+  `TestWindowRuleIsWindowCastTargetIsNeverTrue`.
 - `internal/cli`: `validate` on a config that uses the new keys must print no
   warning. Slice 1 covered this in the config test instead: a config that
   uses the new keys parses without a warning.
