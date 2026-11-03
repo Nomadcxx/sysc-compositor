@@ -244,14 +244,19 @@ type Compositor struct {
 	keyboardRepeatToken     uintptr
 	keyboardRepeatBinding   bind.Binding
 	keyboardRepeatInterval  int
-	inputDestroyListeners   map[unsafe.Pointer]*Listener
-	modifiers               uint32
-	focusedView             *toplevelView
-	onDemandLayerFocus      *layerSurface
-	pointerGrab             *pointerGrab
-	grabView                *toplevelView
-	grabButton              uint32
-	pressedPointerButtons   map[uint32]bool
+	// atStartup is true during the compositor's first minute. Niri's
+	// at-startup window rules match while it holds.
+	atStartup             bool
+	startupTimerSource    *C.struct_wl_event_source
+	startupTimerToken     uintptr
+	inputDestroyListeners map[unsafe.Pointer]*Listener
+	modifiers             uint32
+	focusedView           *toplevelView
+	onDemandLayerFocus    *layerSurface
+	pointerGrab           *pointerGrab
+	grabView              *toplevelView
+	grabButton            uint32
+	pressedPointerButtons map[uint32]bool
 	// pointerBinds is the scroll and mouse bind state (pointer_binds.go).
 	pointerBinds           pointerBindState
 	pointerSerialButtons   map[uint32]uint32
@@ -434,6 +439,7 @@ func NewWith(opts Options) (*Compositor, error) {
 	c.layoutOptions = *opts.Layout
 	c.cursorTheme, c.cursorSize = opts.CursorTheme, opts.CursorSize
 	c.keyboardConfig = opts.Keyboard
+	c.atStartup = true
 
 	c.display = C.wl_display_create()
 	if c.display == nil {
@@ -447,6 +453,7 @@ func NewWith(opts Options) (*Compositor, error) {
 	c.socketName = C.GoString(name)
 
 	c.loop = C.wl_display_get_event_loop(c.display)
+	c.armStartupTimer()
 	c.listeners = map[*Listener]struct{}{}
 	c.sceneOutputs = map[unsafe.Pointer]*C.struct_wlr_scene_output{}
 	c.mapped = map[unsafe.Pointer]bool{}
@@ -832,6 +839,7 @@ func (c *Compositor) Destroy() {
 	c.destroyCapturePrivacy()
 	c.destroyVirtualInputGuard()
 	c.stopKeyboardRepeat()
+	c.stopStartupTimer()
 	if c.focusTimer != nil {
 		c.focusTimer.Stop()
 		c.focusTimer = nil

@@ -1170,6 +1170,9 @@ func (c *Compositor) focusView(view *toplevelView) {
 		c.notifyWindowStateChanged()
 	}
 	c.syncFocusRings()
+	// A rule that matches on the focus has to be read again now that the
+	// focus moved.
+	c.reapplyWindowRules()
 }
 
 func (c *Compositor) focusSurfaceAtCursor() {
