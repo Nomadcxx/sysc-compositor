@@ -72,6 +72,7 @@ executed until the owner schedules the milestone they belong to.
 | [plans/2026-11-02-input-devices.md](plans/2026-11-02-input-devices.md) | plan | Tranche 2, compositor side: six tasks. The shell side is sysc-shell's gitignored `2026-11-02-sysc-compositor-native-support.md`. |
 | [plans/2026-11-02-packaging-design.md](plans/2026-11-02-packaging-design.md) | design | Tranche 3 (`sysc-2200`). One `/usr` install layout from the Makefile, versioned releases with a vendor tarball, and the AUR, Debian 14/sid, Fedora 44 COPR, openSUSE OBS (with SceneFX), Void, Gentoo and a Nix flake. Accounts and publishing are owner gates. |
 | [plans/2026-11-02-packaging.md](plans/2026-11-02-packaging.md) | plan | Tranche 3: eight tasks, each format proved by a shared smoke check in a clean container. |
+| [plans/2026-11-03-first-login-crash-record.md](plans/2026-11-03-first-login-crash-record.md) | record | `sysc-2226`: the first-login compositor abort on the laptop (a wlroots commit-listener assertion), its proven cause, the two-line fix, the regression test and the staged rollout on archThink. |
 
 ## Reference sources (pinned)
 

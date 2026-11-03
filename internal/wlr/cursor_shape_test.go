@@ -1,6 +1,7 @@
 package wlr
 
 import (
+	"runtime"
 	"testing"
 	"time"
 
@@ -11,6 +12,37 @@ const (
 	cursorShapeText = 9  // wp_cursor_shape_device_v1.shape.text
 	cursorShapeMove = 13 // wp_cursor_shape_device_v1.shape.move
 )
+
+func TestCursorShapeDropsPreviousSurfaceListeners(t *testing.T) {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	for _, focused := range []bool{false, true} {
+		commit, destroy, unrelated := &Listener{}, &Listener{}, &Listener{}
+		c := &Compositor{
+			cursorSurfaceCommit:  commit,
+			cursorSurfaceDestroy: destroy,
+			cursorClientSet:      true,
+			pointerGrab:          &pointerGrab{}, // Keep drawing with the active grab.
+			listeners:            map[*Listener]struct{}{commit: {}, destroy: {}, unrelated: {}},
+		}
+		c.requestCursorShapeForTest(cursorShapeText, focused)
+		if !focused {
+			if c.cursorSurfaceCommit != commit || c.cursorSurfaceDestroy != destroy || !c.cursorClientSet || len(c.listeners) != 3 {
+				t.Fatal("an unfocused client changed cursor ownership")
+			}
+			continue
+		}
+		if c.cursorSurfaceCommit != nil || c.cursorSurfaceDestroy != nil || c.cursorClientSet {
+			t.Fatal("named cursor shape retained the previous cursor surface listeners")
+		}
+		if _, ok := c.listeners[unrelated]; !ok || len(c.listeners) != 1 {
+			t.Fatal("cursor replacement did not release exactly its two listeners")
+		}
+		if c.cursorShape != "text" {
+			t.Fatalf("cursor shape = %q, want text", c.cursorShape)
+		}
+	}
+}
 
 // TestCursorShapeFollowsOnlyThePointersClient: the client the user seat's
 // pointer is over draws a named theme image through cursor-shape-v1; once
