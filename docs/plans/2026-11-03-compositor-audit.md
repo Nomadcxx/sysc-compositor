@@ -87,6 +87,18 @@ The same applies to config **sections**. `workspace.layout`, `window-rule`, `win
 contains a `window-rule` block that opens a Firefox picture-in-picture window floating; it does
 nothing today.
 
+> **Correction, 2026-11-03 (after the touch tranche).** The paragraph above is wrong about
+> `window-rule` and `layer-rule`, and it was checked rather than believed.
+> `sysc-compositor validate -c internal/config/default-config.kdl` prints **no warning** for the
+> shipped default, and the Firefox picture-in-picture rule **is applied**: `internal/wlr/windows.go`
+> resolves the rules when a window maps, and `open-floating` puts that window in the floating layer.
+> The warning names are per unsupported **sub-key**, not per section: a config with
+> `workspace { layout { gaps 8 } }` and `window-rule { match is-active=true }` warns exactly
+> `workspace.layout` and `window-rule.match`, and a `layer-rule` with `place-within-backdrop` warns
+> nothing and is applied (`internal/wlr/layer.go`).
+> What is genuinely accepted and ignored is `workspace.layout`, Niri's per-workspace layout
+> override. The rest of the gap is the Niri keys sysc has no counterpart for, which warn.
+
 ## 3. The silence was the bug
 
 The bind path was silent where the IPC path is honest:
@@ -196,8 +208,13 @@ The one leak was the named-shape path, and it is fixed and merged. No other list
    shipped default config leaves no accepted-but-unapplied action.
 2. **Config sections that are parsed and ignored** — `window-rule` and `layer-rule` effects, and
    `workspace.layout`. The `window-rule` block in the shipped default config is dead today.
+   **Corrected 2026-11-03**: `window-rule` and `layer-rule` are applied for the keys sysc supports
+   (see the correction above); the shipped default's picture-in-picture rule is live. What remains
+   is `workspace.layout` and the Niri keys with no counterpart, which warn.
 3. **Touchscreen input** — `sysc-2227`. The compositor skips touch devices and never advertises
-   `WL_SEAT_CAPABILITY_TOUCH`.
+   `WL_SEAT_CAPABILITY_TOUCH`. **Done on 2026-11-03** — the touch tranche is on PR #91, and the
+   evidence route for the gate is built (`sysc-compositor touch-probe` plus the compositor's touch
+   log lines); the physical laptop gate is the owner's.
 4. **The two known flakes** — the portal colour picker and the overview scroll fixture
    (`sysc-2219`). Both need the nested `compositor` lane under `vkms` to hunt properly.
 5. **The physical touchpad and packaging gates** still hold PR #89 and the shell's PR #612 in

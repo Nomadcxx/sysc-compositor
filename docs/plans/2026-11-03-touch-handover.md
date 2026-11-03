@@ -296,10 +296,31 @@ flake.
 3. **Bar auto-hide** (`sysc-2229`, P1). PR #616 needs a look on the laptop
    once a shell build carrying it is installed; the release path is the shell
    repo's business.
-4. **Ignored config sections**: `workspace.layout`, `window-rule`,
-   `window-rule.match`, `layer-rule` and `layer-rule.match` are accepted and
-   ignored. The shipped default's Firefox picture-in-picture rule does
-   nothing. This is the next executable code item.
+4. **The config surface that is really not applied.** The handover's earlier
+   claim was wrong and was checked on 2026-11-03: sysc does **not** ignore
+   `window-rule` and `layer-rule` as a whole. `validate` warns per unsupported
+   **sub-key**, and the compositor applies the supported ones. `window-rule`
+   supports `match`/`exclude` (on `app-id` and `title`), `open-on-output`,
+   `open-on-workspace`, `open-floating`, `open-fullscreen`,
+   `default-column-width`, `default-window-height`, `geometry-corner-radius`,
+   `clip-to-geometry` and `block-out-from`; `layer-rule` supports
+   `match`/`exclude` (on `namespace`) and `place-within-backdrop`. The shipped
+   default's Firefox picture-in-picture rule is applied: the rules resolve when
+   a window maps (`internal/wlr/windows.go`), so the rule opens that window
+   floating. `validate -c internal/config/default-config.kdl` prints no warning
+   at all.
+   What is accepted and ignored is `workspace.layout`, Niri's per-workspace
+   layout override — the only whole section that warns and does nothing. The
+   rest of the gap is the Niri keys sysc has no counterpart for
+   (`open-maximized`, `open-maximized-to-edges`, `open-focused`, `min`/`max`
+   `width`/`height`, `focus-ring`, `border`, `shadow`, `opacity`,
+   `default-column-display`, `default-floating-position`, `scroll-factor`,
+   `background-effect`, `popups`, `variable-refresh-rate` and more) and the
+   unsupported match properties (`is-active`, `is-focused`,
+   `is-active-in-column`, `is-floating`, `is-window-cast-target`, `is-urgent`,
+   `at-startup`, plus `layer-rule.match`'s `at-startup` and `layer`). Those
+   warn, so the user is told. A tranche here is milestone-sized and wants its
+   own plan, the way the touch tranche did.
 5. **The two flakes**: the portal colour picker under vkms, and the overview
    scroll fixture (`sysc-2219`).
 6. **Packaging** (`sysc-2200` plus the children `sysc-2201`–`2213`) once the
