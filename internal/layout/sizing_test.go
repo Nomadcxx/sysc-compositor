@@ -290,3 +290,116 @@ func TestSwitchPresetWindowHeightCyclesThePresets(t *testing.T) {
 		}
 	}
 }
+
+func TestMaximizeColumnFillsTheWorkingWidth(t *testing.T) {
+	ws := NewWorkspace(Bounds{Width: 1200, Height: 800}, 400, 16)
+	ws.AddWindow(1)
+	ws.AddWindow(2)
+
+	if !ws.MaximizeColumn(2) {
+		t.Fatal("MaximizeColumn(2) = false, want true")
+	}
+	placement, ok := ws.Placement(2)
+	if !ok {
+		t.Fatal("Placement(2) missing")
+	}
+	if placement.Width != 1168 {
+		t.Errorf("maximized column width = %d, want 1168", placement.Width)
+	}
+	if ws.MaximizeColumn(2) {
+		t.Error("MaximizeColumn(2) = true on an already maximized column, want false")
+	}
+}
+
+func TestMaximizeWindowToEdgesFillsTheColumnHeight(t *testing.T) {
+	ws := NewWorkspace(Bounds{Width: 1200, Height: 800}, 400, 16)
+	ws.AddWindow(1)
+	ws.AddWindow(2)
+	if !ws.FocusColumn(0) {
+		t.Fatal("FocusColumn(0) = false, want true")
+	}
+	if !ws.ConsumeWindowIntoColumn() {
+		t.Fatal("ConsumeWindowIntoColumn = false, want true")
+	}
+
+	if !ws.MaximizeWindowToEdges(1) {
+		t.Fatal("MaximizeWindowToEdges(1) = false, want true")
+	}
+	placement, _ := ws.Placement(1)
+	if placement.Height != 768 {
+		t.Errorf("maximized window height = %d, want 768", placement.Height)
+	}
+	if placement.Width != 1168 {
+		t.Errorf("maximized window width = %d, want 1168", placement.Width)
+	}
+	other, _ := ws.Placement(2)
+	if other.Y != 800 {
+		t.Errorf("window behind the maximized one = %d, want it pushed out of the working area", other.Y)
+	}
+}
+
+func TestSetColumnDisplayForSetsTheColumnOfTheWindow(t *testing.T) {
+	ws := NewWorkspace(Bounds{Width: 1200, Height: 800}, 400, 16)
+	ws.AddWindow(1)
+	ws.AddWindow(2)
+
+	if !ws.SetColumnDisplayFor(2, ColumnDisplayTabbed) {
+		t.Fatal("SetColumnDisplayFor(2, tabbed) = false, want true")
+	}
+	placement, _ := ws.Placement(2)
+	if placement.Display != ColumnDisplayTabbed {
+		t.Errorf("column display = %v, want tabbed", placement.Display)
+	}
+	other, _ := ws.Placement(1)
+	if other.Display != ColumnDisplayNormal {
+		t.Errorf("other column display = %v, want normal", other.Display)
+	}
+}
+
+func TestSetFloatingPositionPlacesTheWindow(t *testing.T) {
+	ws := NewWorkspace(Bounds{Width: 1200, Height: 800}, 400, 16)
+	ws.AddWindow(1)
+	if !ws.SetWindowFloating(1, true, Bounds{}) {
+		t.Fatal("SetWindowFloating = false, want true")
+	}
+	placement, _ := ws.Placement(1)
+	if placement.Width != 400 || placement.Height != 768 {
+		t.Fatalf("floating window size = %dx%d, want 400x768", placement.Width, placement.Height)
+	}
+
+	for _, tc := range []struct {
+		position FloatingPosition
+		wantX    int
+		wantY    int
+	}{
+		{position: FloatingPosition{X: 100, Y: 50, RelativeTo: RelativeToTopLeft}, wantX: 100, wantY: 50},
+		{position: FloatingPosition{X: 100, Y: 10, RelativeTo: RelativeToBottomRight}, wantX: 700, wantY: 22},
+		{position: FloatingPosition{X: 100, Y: 10, RelativeTo: RelativeToTop}, wantX: 500, wantY: 10},
+		{position: FloatingPosition{X: 100, Y: 10, RelativeTo: RelativeToLeft}, wantX: 100, wantY: 26},
+	} {
+		if !ws.SetFloatingPosition(1, tc.position) {
+			t.Fatalf("SetFloatingPosition(%+v) = false, want true", tc.position)
+		}
+		placement, _ := ws.Placement(1)
+		if placement.X != tc.wantX || placement.Y != tc.wantY {
+			t.Errorf("floating position for %+v = (%d,%d), want (%d,%d)",
+				tc.position, placement.X, placement.Y, tc.wantX, tc.wantY)
+		}
+	}
+}
+
+func TestSetFloatingPositionKeepsThePositionForALaterFloat(t *testing.T) {
+	ws := NewWorkspace(Bounds{Width: 1200, Height: 800}, 400, 16)
+	ws.AddWindow(1)
+
+	if !ws.SetFloatingPosition(1, FloatingPosition{X: 120, Y: 60, RelativeTo: RelativeToTopLeft}) {
+		t.Fatal("SetFloatingPosition = false, want true")
+	}
+	if !ws.SetWindowFloating(1, true, Bounds{}) {
+		t.Fatal("SetWindowFloating = false, want true")
+	}
+	placement, _ := ws.Placement(1)
+	if placement.X != 120 || placement.Y != 60 {
+		t.Errorf("floating position = (%d,%d), want (120,60)", placement.X, placement.Y)
+	}
+}

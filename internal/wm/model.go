@@ -1486,6 +1486,38 @@ func (m *Model) ToggleMaximizeWindowToEdgesFor(id uint64) bool {
 	})
 }
 
+// MaximizeColumnFor makes the column that holds a window take the whole
+// working width, the way Niri's open-maximized does.
+func (m *Model) MaximizeColumnFor(id uint64) bool {
+	return m.windowStripAction(id, func(workspace *layout.Workspace, windowID uint64) bool {
+		return workspace.MaximizeColumn(windowID)
+	})
+}
+
+// MaximizeWindowToEdgesFor maximizes a window to the edges of the working
+// area, the way Niri's open-maximized-to-edges does.
+func (m *Model) MaximizeWindowToEdgesFor(id uint64) bool {
+	return m.windowStripAction(id, func(workspace *layout.Workspace, windowID uint64) bool {
+		return workspace.MaximizeWindowToEdges(windowID)
+	})
+}
+
+// SetColumnDisplayFor sets the display mode of the column that holds a
+// window, the way Niri's default-column-display does.
+func (m *Model) SetColumnDisplayFor(id uint64, display layout.ColumnDisplay) bool {
+	return m.windowStripAction(id, func(workspace *layout.Workspace, windowID uint64) bool {
+		return workspace.SetColumnDisplayFor(windowID, display)
+	})
+}
+
+// SetFloatingPositionFor puts a window at a position inside the working area,
+// the way Niri's default-floating-position does.
+func (m *Model) SetFloatingPositionFor(id uint64, position layout.FloatingPosition) bool {
+	return m.windowStripAction(id, func(workspace *layout.Workspace, windowID uint64) bool {
+		return workspace.SetFloatingPosition(windowID, position)
+	})
+}
+
 // windowStripAction runs an action on the workspace that holds a window. The
 // window id of zero means the focused output's active workspace.
 func (m *Model) windowStripAction(id uint64, action func(*layout.Workspace, uint64) bool) bool {

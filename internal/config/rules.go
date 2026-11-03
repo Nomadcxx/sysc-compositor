@@ -27,6 +27,37 @@ func (p PresetSize) Resolve(available int) int {
 	return int(math.Round(float64(available) * p.Value))
 }
 
+// ColumnDisplay is the way the windows of a column are stacked.
+type ColumnDisplay string
+
+const (
+	ColumnDisplayNormal ColumnDisplay = "normal"
+	ColumnDisplayTabbed ColumnDisplay = "tabbed"
+)
+
+// RelativeTo names the corner or edge a floating position is measured from.
+// The names are the ones Niri uses.
+type RelativeTo string
+
+const (
+	RelativeToTopLeft     RelativeTo = "top-left"
+	RelativeToTopRight    RelativeTo = "top-right"
+	RelativeToBottomLeft  RelativeTo = "bottom-left"
+	RelativeToBottomRight RelativeTo = "bottom-right"
+	RelativeToTop         RelativeTo = "top"
+	RelativeToBottom      RelativeTo = "bottom"
+	RelativeToLeft        RelativeTo = "left"
+	RelativeToRight       RelativeTo = "right"
+)
+
+// FloatingPosition is where a floating window opens, measured from one of the
+// working area's corners or edges.
+type FloatingPosition struct {
+	X          int
+	Y          int
+	RelativeTo RelativeTo
+}
+
 type RuleMatch struct {
 	AppID       *regexp.Regexp
 	Title       *regexp.Regexp
@@ -41,10 +72,20 @@ type WindowRule struct {
 	OpenOnWorkspace      *string
 	OpenFloating         *bool
 	OpenFullscreen       *bool
+	OpenMaximized        *bool
+	OpenMaximizedToEdges *bool
+	OpenFocused          *bool
 	DefaultColumnWidth   *PresetSize
 	DefaultWindowHeight  *PresetSize
 	GeometryCornerRadius *CornerRadius
 	ClipToGeometry       *bool
+	MinWidth             *int
+	MaxWidth             *int
+	MinHeight            *int
+	MaxHeight            *int
+	DefaultColumnDisplay *ColumnDisplay
+	// DefaultFloatingPosition is where a floating window opens.
+	DefaultFloatingPosition *FloatingPosition
 }
 
 type WindowRuleResult struct {
@@ -53,10 +94,20 @@ type WindowRuleResult struct {
 	OpenOnWorkspace      *string
 	OpenFloating         *bool
 	OpenFullscreen       *bool
+	OpenMaximized        *bool
+	OpenMaximizedToEdges *bool
+	OpenFocused          *bool
 	DefaultColumnWidth   *PresetSize
 	DefaultWindowHeight  *PresetSize
 	GeometryCornerRadius *CornerRadius
 	ClipToGeometry       *bool
+	MinWidth             *int
+	MaxWidth             *int
+	MinHeight            *int
+	MaxHeight            *int
+	DefaultColumnDisplay *ColumnDisplay
+	// DefaultFloatingPosition is where a floating window opens.
+	DefaultFloatingPosition *FloatingPosition
 }
 
 type LayerRule struct {
@@ -84,11 +135,20 @@ func ResolveWindowRules(rules []WindowRule, appID, title string) WindowRuleResul
 		applyRuleValue(&result.OpenOnWorkspace, rule.OpenOnWorkspace)
 		applyRuleValue(&result.OpenFloating, rule.OpenFloating)
 		applyRuleValue(&result.OpenFullscreen, rule.OpenFullscreen)
+		applyRuleValue(&result.OpenMaximized, rule.OpenMaximized)
+		applyRuleValue(&result.OpenMaximizedToEdges, rule.OpenMaximizedToEdges)
+		applyRuleValue(&result.OpenFocused, rule.OpenFocused)
 		applyRuleValue(&result.DefaultColumnWidth, rule.DefaultColumnWidth)
 		applyRuleValue(&result.DefaultWindowHeight, rule.DefaultWindowHeight)
 		applyRuleValue(&result.GeometryCornerRadius, rule.GeometryCornerRadius)
 		applyRuleValue(&result.ClipToGeometry, rule.ClipToGeometry)
 		applyRuleValue(&result.BlockOutFrom, rule.BlockOutFrom)
+		applyRuleValue(&result.MinWidth, rule.MinWidth)
+		applyRuleValue(&result.MaxWidth, rule.MaxWidth)
+		applyRuleValue(&result.MinHeight, rule.MinHeight)
+		applyRuleValue(&result.MaxHeight, rule.MaxHeight)
+		applyRuleValue(&result.DefaultColumnDisplay, rule.DefaultColumnDisplay)
+		applyRuleValue(&result.DefaultFloatingPosition, rule.DefaultFloatingPosition)
 	}
 	return result
 }
@@ -264,15 +324,54 @@ func (c *Config) windowRule(node *document.Node) error {
 					rule.OpenOnWorkspace = &value[0]
 				}
 			}
-		case "open-floating", "open-fullscreen":
+		case "open-floating", "open-fullscreen", "open-maximized", "open-maximized-to-edges", "open-focused":
 			var value bool
 			value, err = boolArg(child)
 			if err == nil {
-				if nodeName(child) == "open-floating" {
+				switch nodeName(child) {
+				case "open-floating":
 					rule.OpenFloating = &value
-				} else {
+				case "open-fullscreen":
 					rule.OpenFullscreen = &value
+				case "open-maximized":
+					rule.OpenMaximized = &value
+				case "open-maximized-to-edges":
+					rule.OpenMaximizedToEdges = &value
+				case "open-focused":
+					rule.OpenFocused = &value
 				}
+			}
+		case "min-width", "max-width", "min-height", "max-height":
+			var value int
+			value, err = intArg(child, 0, 65535)
+			if err == nil {
+				switch nodeName(child) {
+				case "min-width":
+					rule.MinWidth = &value
+				case "max-width":
+					rule.MaxWidth = &value
+				case "min-height":
+					rule.MinHeight = &value
+				case "max-height":
+					rule.MaxHeight = &value
+				}
+			}
+		case "default-column-display":
+			var value []string
+			value, err = stringArgs(child, 1, 1)
+			if err == nil {
+				display := ColumnDisplay(value[0])
+				if display != ColumnDisplayNormal && display != ColumnDisplayTabbed {
+					err = fmt.Errorf("expected normal or tabbed")
+				} else {
+					rule.DefaultColumnDisplay = &display
+				}
+			}
+		case "default-floating-position":
+			var value FloatingPosition
+			value, err = parseFloatingPosition(child)
+			if err == nil {
+				rule.DefaultFloatingPosition = &value
 			}
 		case "default-column-width", "default-window-height":
 			var value PresetSize
@@ -373,6 +472,48 @@ func parseWindowMatch(node *document.Node) (RuleMatch, error) {
 		}
 	}
 	return match, nil
+}
+
+// parseFloatingPosition reads the position a floating window opens at. The
+// position is measured from the corner or the edge that relative-to names.
+func parseFloatingPosition(node *document.Node) (FloatingPosition, error) {
+	if len(node.Arguments) != 0 || len(node.Children) != 0 {
+		return FloatingPosition{}, fmt.Errorf("default-floating-position takes properties only")
+	}
+	position := FloatingPosition{RelativeTo: RelativeToTopLeft}
+	for key, property := range node.Properties {
+		switch key {
+		case "x", "y":
+			value, ok := numericValue(property.Value)
+			if !ok {
+				return FloatingPosition{}, fmt.Errorf("%s must be a number", key)
+			}
+			if value < -65535 || value > 65535 {
+				return FloatingPosition{}, fmt.Errorf("%s must be from -65535 to 65535", key)
+			}
+			if key == "x" {
+				position.X = int(math.Round(value))
+			} else {
+				position.Y = int(math.Round(value))
+			}
+		case "relative-to":
+			text, ok := property.Value.(string)
+			if !ok {
+				return FloatingPosition{}, fmt.Errorf("relative-to must be a string")
+			}
+			relative := RelativeTo(text)
+			switch relative {
+			case RelativeToTopLeft, RelativeToTopRight, RelativeToBottomLeft, RelativeToBottomRight,
+				RelativeToTop, RelativeToBottom, RelativeToLeft, RelativeToRight:
+				position.RelativeTo = relative
+			default:
+				return FloatingPosition{}, fmt.Errorf("relative-to must be one of top-left, top-right, bottom-left, bottom-right, top, bottom, left, right")
+			}
+		default:
+			return FloatingPosition{}, fmt.Errorf("unexpected default-floating-position property `%s`", key)
+		}
+	}
+	return position, nil
 }
 
 func (c *Config) layerRule(node *document.Node) error {

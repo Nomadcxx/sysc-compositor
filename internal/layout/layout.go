@@ -22,6 +22,53 @@ type PositionChange struct {
 	Value float64
 }
 
+// RelativeTo names the corner or edge a floating position is measured from.
+// The names are the ones Niri uses.
+type RelativeTo string
+
+const (
+	RelativeToTopLeft     RelativeTo = "top-left"
+	RelativeToTopRight    RelativeTo = "top-right"
+	RelativeToBottomLeft  RelativeTo = "bottom-left"
+	RelativeToBottomRight RelativeTo = "bottom-right"
+	RelativeToTop         RelativeTo = "top"
+	RelativeToBottom      RelativeTo = "bottom"
+	RelativeToLeft        RelativeTo = "left"
+	RelativeToRight       RelativeTo = "right"
+)
+
+// FloatingPosition is a floating window's position inside the working area,
+// measured from one of the working area's corners or edges.
+type FloatingPosition struct {
+	X          int
+	Y          int
+	RelativeTo RelativeTo
+}
+
+// resolve turns the position into the top-left corner of a window of the
+// given size inside the working area, the way Niri places a floating window
+// that has no position of its own.
+func (p FloatingPosition) resolve(area Bounds, width, height int) (int, int) {
+	x, y := p.X, p.Y
+	switch p.RelativeTo {
+	case RelativeToTopRight, RelativeToBottomRight, RelativeToRight:
+		x = area.Width - width - x
+	}
+	switch p.RelativeTo {
+	case RelativeToBottomLeft, RelativeToBottomRight, RelativeToBottom:
+		y = area.Height - height - y
+	}
+	switch p.RelativeTo {
+	case RelativeToTop, RelativeToBottom:
+		x += area.Width/2 - width/2
+	}
+	switch p.RelativeTo {
+	case RelativeToLeft, RelativeToRight:
+		y += area.Height/2 - height/2
+	}
+	return area.X + x, area.Y + y
+}
+
 // ColumnDisplay controls whether a column's windows are tiled vertically or
 // share one tile with only the active window visible.
 type ColumnDisplay uint8
