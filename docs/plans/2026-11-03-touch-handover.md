@@ -37,8 +37,8 @@ Three branches matter:
 |---|---|---|
 | `main` | `1b03199` | the merged sizing and bar work |
 | `feat/sysc-input-20261102` | `c082c44` | the input branch: PR #89, draft |
-| `feat/touch-input-20261103` | `efe541e` | main plus the touch tranche and the evidence route: PR #91, draft |
-| `feat/laptop-touch-gate-20261103` | `a71ca89` | the input branch plus the touch tranche and the evidence route: what the laptop runs |
+| `feat/touch-input-20261103` | `b40bdce` | main plus the touch tranche and the evidence route: PR #91, draft |
+| `feat/laptop-touch-gate-20261103` | `4dca942` | the input branch plus the touch tranche and the evidence route: what the laptop runs |
 
 **`main` does not carry the pointing-device work.** The pointer settings
 (`internal/config/pointer.go`, `internal/wlr/pointer_settings.go`,
@@ -60,7 +60,11 @@ gains the touch sentence.
 
 Open PRs: **#91** (touch, draft), **#89** (input, draft), **#92** (the
 performance research plan, draft, not ours). #89 and #91 stay draft until the
-physical gates pass.
+physical gates pass. PR #91 carries the touch tranche (`0b1a5e9`, `699a97e`,
+`db64bcc`) and then the evidence route (`6226600`, "feat(input): add the touch
+evidence route"), with its docs commits after it; the gate branch carries the
+same work under its own hashes, because the two branches have different
+ancestors.
 
 ### sysc-shell (/home/nomadx/sysc-shell)
 
@@ -145,8 +149,10 @@ rejected here, as it is in Niri.
 - `internal/touchprobe/probe_test.go`, `TestCapabilityNames`,
   `TestSummaryCountsTheFinger` and `TestHasTouchCapability` — lane 1, pure.
 
-CI run `41588290485` is green on both lanes, and all five touch tests ran and
-passed.
+CI run `41604096155` is green on both lanes: lane 1 `check` and lane 2
+`compositor` under vkms. Every touch test ran and passed, including
+`TestTouchProbeSeesTheFinger`, which is the evidence route. The earlier run
+`41588290485` was green for the tranche alone.
 
 ## The laptop (archThink)
 
