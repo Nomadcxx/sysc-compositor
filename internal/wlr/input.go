@@ -1520,7 +1520,9 @@ func (c *Compositor) handleNewToplevel(data unsafe.Pointer) {
 		newlyMapped := !view.mapped
 		view.mapped = true
 		if newlyMapped {
+			var previousFocus uint64
 			if c.model != nil {
+				previousFocus, _ = c.model.ActiveWindow()
 				clientFullscreen := bool(toplevel.current.fullscreen) || bool(toplevel.requested.fullscreen)
 				if !view.rulesApplied {
 					c.mapWindowWithRules(view, clientFullscreen)
@@ -1534,8 +1536,15 @@ func (c *Compositor) handleNewToplevel(data unsafe.Pointer) {
 				}
 			}
 			// Niri activates newly mapped windows (ActivateWindow::Smart); its
-			// dialog and activation-token heuristics come with M5.
-			c.focusView(view)
+			// dialog and activation-token heuristics come with M5. A rule with
+			// open-focused false keeps the focus where it is.
+			if c.opensFocused(view) {
+				c.focusView(view)
+			} else if previousFocus != 0 && previousFocus != view.id {
+				// The new window took the model's focus when it mapped, so the
+				// window that had it gets it back.
+				c.model.FocusWindow(previousFocus)
+			}
 		}
 		if c.syncWorkspaceWindowSizeHints(view) {
 			c.applyWorkspaceModel()

@@ -54,6 +54,94 @@ var presetColumnWidths = []float64{1.0 / 3.0, 0.5, 2.0 / 3.0}
 // of the working height.
 var presetWindowHeights = []float64{1.0 / 3.0, 0.5, 2.0 / 3.0}
 
+// MaximizeColumn makes the column that holds a window take the whole working
+// width, the way Niri's open-maximized does. The window id of zero means the
+// focused window.
+func (w *Workspace) MaximizeColumn(id uint64) bool {
+	columnIndex, _, ok := w.windowTile(id)
+	if !ok {
+		return false
+	}
+	column := &w.columns[columnIndex]
+	if column.fullWidth {
+		return false
+	}
+	column.fullWidth = true
+	column.presetWidth = false
+	w.revealFocused()
+	return true
+}
+
+// MaximizeWindowToEdges makes a window fill the height of its column and its
+// column the whole working width, the way Niri's open-maximized-to-edges
+// does. The window id of zero means the focused window.
+func (w *Workspace) MaximizeWindowToEdges(id uint64) bool {
+	columnIndex, tileIndex, ok := w.windowTile(id)
+	if !ok {
+		return false
+	}
+	column := &w.columns[columnIndex]
+	tile := &column.tiles[tileIndex]
+	if tile.maximized {
+		return false
+	}
+	tile.maximized = true
+	column.presetWidth = false
+	w.revealFocused()
+	return true
+}
+
+// SetColumnDisplayFor sets the display mode of the column that holds a
+// window, the way Niri's default-column-display does. The window id of zero
+// means the focused window.
+func (w *Workspace) SetColumnDisplayFor(id uint64, display ColumnDisplay) bool {
+	columnIndex, _, ok := w.windowTile(id)
+	if !ok || display > ColumnDisplayTabbed {
+		return false
+	}
+	column := &w.columns[columnIndex]
+	if column.display == display {
+		return false
+	}
+	column.display = display
+	return true
+}
+
+// SetFloatingPosition puts a window at a position inside the working area,
+// the way Niri's default-floating-position does. A window that is not
+// floating yet keeps the position for the day it floats.
+func (w *Workspace) SetFloatingPosition(id uint64, position FloatingPosition) bool {
+	floatIndex := w.floatingIndexOf(id)
+	var tile *tileState
+	var bounds Bounds
+	if floatIndex >= 0 {
+		bounds = w.floating[floatIndex].bounds
+		tile = &w.floating[floatIndex].tile
+	} else {
+		columnIndex, tileIndex, ok := w.locationOf(id)
+		if !ok {
+			return false
+		}
+		tile = &w.columns[columnIndex].tiles[tileIndex]
+		if tile.hasFloatingBounds {
+			bounds = tile.floatingBounds
+		} else {
+			placement := w.placementAt(columnIndex, tileIndex)
+			bounds.Width, bounds.Height = placement.Width, placement.Height
+		}
+	}
+	x, y := position.resolve(w.bounds, bounds.Width, bounds.Height)
+	bounds.X, bounds.Y = x, y
+	if floatIndex >= 0 {
+		return w.SetFloatingGeometry(id, bounds)
+	}
+	if tile.hasFloatingBounds && tile.floatingBounds == bounds {
+		return false
+	}
+	tile.floatingBounds, tile.hasFloatingBounds = bounds, true
+	return true
+}
+
 // SetColumnWidth sets the focused column's width, the way Niri's
 // set-column-width does.
 func (w *Workspace) SetColumnWidth(change SizeChange) bool {

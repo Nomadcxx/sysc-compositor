@@ -538,10 +538,42 @@ func (c *Compositor) syncWorkspaceWindowSizeHints(view *toplevelView) bool {
 	if c.model == nil || view == nil || view.toplevel == nil || !view.mapped {
 		return false
 	}
+	minWidth, maxWidth, minHeight, maxHeight := c.windowSizeHints(view)
+	return c.model.SetWindowSizeHints(view.id, minWidth, maxWidth, minHeight, maxHeight)
+}
+
+// windowSizeHints amends the client's size hints with the window rule's
+// limits, the way Niri's min-width, max-width, min-height and max-height do:
+// a rule can only raise the client's minimum and lower the client's maximum,
+// and it gives a window without a maximum the rule's maximum.
+func (c *Compositor) windowSizeHints(view *toplevelView) (int, int, int, int) {
 	current := view.toplevel.current
-	return c.model.SetWindowSizeHints(view.id,
-		int(current.min_width), int(current.max_width),
-		int(current.min_height), int(current.max_height))
+	minWidth, maxWidth := int(current.min_width), int(current.max_width)
+	minHeight, maxHeight := int(current.min_height), int(current.max_height)
+	appearance := view.appearance
+	if appearance.MinWidth != nil {
+		minWidth = max(minWidth, *appearance.MinWidth)
+	}
+	if appearance.MinHeight != nil {
+		minHeight = max(minHeight, *appearance.MinHeight)
+	}
+	if appearance.MaxWidth != nil {
+		switch {
+		case maxWidth == 0:
+			maxWidth = *appearance.MaxWidth
+		case *appearance.MaxWidth > 0:
+			maxWidth = min(maxWidth, *appearance.MaxWidth)
+		}
+	}
+	if appearance.MaxHeight != nil {
+		switch {
+		case maxHeight == 0:
+			maxHeight = *appearance.MaxHeight
+		case *appearance.MaxHeight > 0:
+			maxHeight = min(maxHeight, *appearance.MaxHeight)
+		}
+	}
+	return minWidth, maxWidth, minHeight, maxHeight
 }
 
 func (c *Compositor) activateWorkspaceFocus() {

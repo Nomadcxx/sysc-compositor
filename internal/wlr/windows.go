@@ -188,6 +188,37 @@ func (c *Compositor) mapWindowWithRules(view *toplevelView, clientFullscreen boo
 			break
 		}
 	}
+	// The maximized rules come after the default sizes, so that a maximized
+	// column keeps the whole working width.
+	if result.OpenMaximized != nil && *result.OpenMaximized {
+		c.model.MaximizeColumnFor(view.id)
+	}
+	if result.OpenMaximizedToEdges != nil && *result.OpenMaximizedToEdges {
+		c.model.MaximizeWindowToEdgesFor(view.id)
+	}
+	if result.DefaultColumnDisplay != nil {
+		if display, ok := columnDisplay(*result.DefaultColumnDisplay); ok {
+			c.model.SetColumnDisplayFor(view.id, display)
+		}
+	}
+	if result.DefaultFloatingPosition != nil {
+		c.model.SetFloatingPositionFor(view.id, layout.FloatingPosition{
+			X:          result.DefaultFloatingPosition.X,
+			Y:          result.DefaultFloatingPosition.Y,
+			RelativeTo: layout.RelativeTo(result.DefaultFloatingPosition.RelativeTo),
+		})
+	}
+}
+
+// columnDisplay maps the config's column display name to the layout's.
+func columnDisplay(display config.ColumnDisplay) (layout.ColumnDisplay, bool) {
+	switch display {
+	case config.ColumnDisplayNormal:
+		return layout.ColumnDisplayNormal, true
+	case config.ColumnDisplayTabbed:
+		return layout.ColumnDisplayTabbed, true
+	}
+	return layout.ColumnDisplayNormal, false
 }
 
 func (c *Compositor) reapplyWindowRules() {
@@ -216,6 +247,18 @@ func (c *Compositor) keyboardFocusedView() *toplevelView {
 		return nil
 	}
 	return c.viewForSurface(c.seat.keyboard_state.focused_surface)
+}
+
+// opensFocused reports whether a newly mapped window takes the focus. A rule
+// with open-focused false leaves the focus where it is.
+func (c *Compositor) opensFocused(view *toplevelView) bool {
+	if view == nil {
+		return true
+	}
+	if focused := view.appearance.OpenFocused; focused != nil && !*focused {
+		return false
+	}
+	return true
 }
 
 // recordWindowFocus stamps a newly focused window. A window focused before
