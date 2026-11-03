@@ -13,7 +13,7 @@ Legend: `[ ]` missing · `[~]` partial · `[x]` done.
 | Version | [x] | M2 — `sysc-compositor <version> (niri-ipc 26.4.0)` |
 | Outputs | [x] | M3 — wlroots output snapshots |
 | Workspaces | [x] | M3/M5/M6 — stable per-output IDs, names, active plus trailing empty workspace, dynamic indices |
-| Windows | [x] | M4 — mapped toplevels with stable IDs and logical geometry; M12 retires IDs on unmap and issues fresh IDs on remap while retaining placement (`TestWindowRemapRetiresItsPublicID`); offscreen centers fall back to the focused output |
+| Windows | [x] | M4 — mapped toplevels with stable IDs and logical geometry; M12 retires IDs on unmap and issues fresh IDs on remap while retaining placement (`TestWindowRemapRetiresItsPublicID`); offscreen centers fall back to the focused output; the record carries an `is_fullscreen` flag, which Niri 26.04 does not send, so a shell can step aside for a fullscreen window |
 | Layers | [x] | M3 — mapped layer-shell surfaces |
 | KeyboardLayouts | [x] | M9 — configured XKB names and active index; `SwitchLayout` updates the active layout |
 | FocusedOutput | [x] | M3/M6 — active output follows keyboard focus; first connected output is the initial and disconnect fallback; monitor focus warps the pointer to output center |

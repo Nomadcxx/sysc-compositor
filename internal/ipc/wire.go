@@ -88,14 +88,17 @@ type Workspace struct {
 }
 
 type Window struct {
-	ID             uint64       `json:"id"`
-	Title          *string      `json:"title"`
-	AppID          *string      `json:"app_id"`
-	PID            *int32       `json:"pid"`
-	WorkspaceID    *uint64      `json:"workspace_id"`
-	IsFocused      bool         `json:"is_focused"`
-	IsFloating     bool         `json:"is_floating"`
-	IsUrgent       bool         `json:"is_urgent"`
+	ID          uint64  `json:"id"`
+	Title       *string `json:"title"`
+	AppID       *string `json:"app_id"`
+	PID         *int32  `json:"pid"`
+	WorkspaceID *uint64 `json:"workspace_id"`
+	IsFocused   bool    `json:"is_focused"`
+	IsFloating  bool    `json:"is_floating"`
+	IsUrgent    bool    `json:"is_urgent"`
+	// IsFullscreen reports that the window asked for the whole output. A
+	// shell can use it to get out of the way of a fullscreen window.
+	IsFullscreen   bool         `json:"is_fullscreen"`
 	Layout         WindowLayout `json:"layout"`
 	FocusTimestamp *Timestamp   `json:"focus_timestamp"`
 }
