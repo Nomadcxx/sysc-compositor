@@ -1037,6 +1037,30 @@ func (c *Compositor) executeBindAction(action bind.Action) {
 		changed, focus = c.model.MoveColumnToWorkspaceDown(action.Focus), action.Focus
 	case bind.ActionMoveColumnToWorkspaceUp:
 		changed, focus = c.model.MoveColumnToWorkspaceUp(action.Focus), action.Focus
+	case bind.ActionSetColumnWidth:
+		changed = c.model.SetColumnWidth(action.Size)
+	case bind.ActionSwitchPresetColumnWidth:
+		changed = c.model.SwitchPresetColumnWidth(false)
+	case bind.ActionSwitchPresetColumnWidthBack:
+		changed = c.model.SwitchPresetColumnWidth(true)
+	case bind.ActionMaximizeColumn:
+		changed = c.model.ToggleMaximizeColumn()
+	case bind.ActionMaximizeWindowToEdges:
+		changed = c.model.ToggleMaximizeWindowToEdges()
+	case bind.ActionCenterColumn:
+		changed = c.model.CenterColumn()
+	case bind.ActionCenterVisibleColumns:
+		changed = c.model.CenterVisibleColumns()
+	case bind.ActionExpandColumnToAvailableWidth:
+		changed = c.model.ExpandColumnToAvailableWidth()
+	case bind.ActionSetWindowHeight:
+		changed = c.model.SetWindowHeight(action.Size)
+	case bind.ActionResetWindowHeight:
+		changed = c.model.ResetWindowHeight()
+	case bind.ActionSwitchPresetWindowHeight:
+		changed = c.model.SwitchPresetWindowHeight(false)
+	case bind.ActionSwitchPresetWindowHeightBack:
+		changed = c.model.SwitchPresetWindowHeight(true)
 	}
 	if changed {
 		c.applyWorkspaceModel()

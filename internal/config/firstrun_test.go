@@ -259,11 +259,11 @@ func TestShippedDefaultConfigIsValid(t *testing.T) {
 	if len(cfg.Warnings) != 0 {
 		t.Fatalf("warnings: %v", cfg.Warnings)
 	}
-	allowed := []string{"switch-preset-column-width", "switch-preset-column-width-back", "switch-preset-window-height", "switch-preset-window-height-back", "set-column-width", "set-window-width", "set-window-height", "reset-window-height", "maximize-column", "maximize-window-to-edges", "expand-column-to-available-width", "center-column", "center-window", "center-visible-columns", "do-screen-transition", "toggle-debug-tint", "debug-toggle-opaque-regions", "debug-toggle-damage", "toggle-window-rule-opacity", "pick-window", "pick-color"}
-	for _, action := range cfg.UnappliedActions {
-		if !slices.Contains(allowed, action) {
-			t.Errorf("new unapplied action %s", action)
-		}
+	// Every bind in the shipped default has to be one the compositor applies:
+	// a bind whose action is not applied does nothing at all, and the user
+	// never learns why.
+	if len(cfg.UnappliedActions) != 0 {
+		t.Errorf("the shipped default binds actions the compositor does not apply: %v", cfg.UnappliedActions)
 	}
 	text := strings.ToLower(string(DefaultConfigKDL))
 	if strings.Contains(text, "niri") || strings.Contains(text, "spawn-at-startup") || strings.Contains(text, "spawn-sh-at-startup") {

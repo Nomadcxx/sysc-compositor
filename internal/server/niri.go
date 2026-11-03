@@ -416,6 +416,11 @@ func (h niriHandler) action(a ipc.Action) (ipc.Reply, func()) {
 		"MoveWindowToWorkspaceDown", "MoveWindowToWorkspaceUp", "MoveColumnToWorkspaceDown", "MoveColumnToWorkspaceUp",
 		"ToggleWindowUrgent", "SetWindowUrgent", "UnsetWindowUrgent":
 		return h.windowAction(a, 0)
+	case "CenterColumn", "CenterVisibleColumns", "ExpandColumnToAvailableWidth", "MaximizeColumn",
+		"SwitchPresetColumnWidth", "SwitchPresetColumnWidthBack", "SetColumnWidth",
+		"MaximizeWindowToEdges", "ResetWindowHeight", "SwitchPresetWindowHeight", "SwitchPresetWindowHeightBack",
+		"SetWindowHeight":
+		return h.windowAction(a, 0)
 	case "FocusWorkspace", "MoveWindowToWorkspace", "MoveColumnToWorkspace":
 		target, ok := focusWorkspaceTarget(h.currentState(), a.Workspace)
 		if !ok {

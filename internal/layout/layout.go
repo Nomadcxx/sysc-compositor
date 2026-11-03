@@ -275,6 +275,11 @@ type tileState struct {
 	yOffset              int
 	floatingBounds       Bounds
 	hasFloatingBounds    bool
+	// maximized makes the window fill the height of its column.
+	maximized bool
+	// presetHeight remembers the preset window height in use.
+	presetHeight    bool
+	presetHeightIdx int
 }
 
 type columnState struct {
@@ -282,6 +287,33 @@ type columnState struct {
 	active  int
 	display ColumnDisplay
 	width   int
+	// fullWidth makes the column take the whole working width.
+	fullWidth bool
+	// presetWidth remembers the preset column width in use.
+	presetWidth    bool
+	presetWidthIdx int
+}
+
+// hasMaximizedTile reports whether the column holds a window that is
+// maximized to the edges.
+func (c *columnState) hasMaximizedTile() bool {
+	for _, tile := range c.tiles {
+		if tile.maximized {
+			return true
+		}
+	}
+	return false
+}
+
+// hiddenByMaximizedTile reports whether a tile sits behind the window that is
+// maximized to the edges of its column.
+func (c *columnState) hiddenByMaximizedTile(tileIndex int) bool {
+	for index, tile := range c.tiles {
+		if tile.maximized {
+			return index != tileIndex
+		}
+	}
+	return false
 }
 
 type floatingState struct {
@@ -1339,8 +1371,9 @@ func (w *Workspace) placementAt(columnIndex, tileIndex int) Placement {
 	tile := column.tiles[tileIndex]
 	return Placement{
 		ID: tile.id, Column: uint32(columnIndex), Tile: uint32(tileIndex),
-		Active:  tileIndex == column.active,
-		Visible: column.display != ColumnDisplayTabbed || tileIndex == column.active,
+		Active: tileIndex == column.active,
+		Visible: (column.display != ColumnDisplayTabbed || tileIndex == column.active) &&
+			!column.hiddenByMaximizedTile(tileIndex),
 		Display: column.display,
 		X:       w.bounds.X + w.columnStart(columnIndex) - w.viewOffset,
 		Y:       w.tileBaseY(columnIndex, tileIndex) + tile.yOffset,
@@ -1409,6 +1442,9 @@ func (w *Workspace) columnStart(index int) int {
 
 func (w *Workspace) columnWidthAt(index int) int {
 	column := w.columns[index]
+	if column.fullWidth || column.hasMaximizedTile() {
+		return max(w.bounds.Width, columnMinWidth(&column))
+	}
 	width := w.columnWidth
 	if column.width > 0 {
 		width = column.width
@@ -1448,6 +1484,17 @@ func (w *Workspace) defaultTileHeight(columnIndex, tileIndex int) int {
 	if column.tiles[tileIndex].height > 0 {
 		return column.tiles[tileIndex].height
 	}
+	if column.tiles[tileIndex].maximized {
+		return w.defaultWindowHeight()
+	}
+	return w.automaticTileHeight(columnIndex, tileIndex)
+}
+
+// automaticTileHeight is the height a tile gets when it has no height of its
+// own: the whole column for a single window, the rest of the column shared
+// between the windows that have no height of their own.
+func (w *Workspace) automaticTileHeight(columnIndex, tileIndex int) int {
+	column := w.columns[columnIndex]
 	if column.display == ColumnDisplayTabbed || len(column.tiles) == 1 {
 		return w.defaultWindowHeight()
 	}
@@ -1476,6 +1523,16 @@ func (w *Workspace) tileBaseY(columnIndex, tileIndex int) int {
 	column := w.columns[columnIndex]
 	if column.display == ColumnDisplayTabbed {
 		return base
+	}
+	for index, tile := range column.tiles {
+		if tile.maximized {
+			if index == tileIndex {
+				return base
+			}
+			// The other windows of a maximized column are pushed out of the
+			// working area.
+			return base + w.defaultWindowHeight() + w.gap
+		}
 	}
 	for previous := 0; previous < tileIndex; previous++ {
 		base += w.windowHeightAt(columnIndex, previous) + w.gap

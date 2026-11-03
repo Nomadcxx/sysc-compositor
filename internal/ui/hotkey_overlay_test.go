@@ -82,6 +82,8 @@ binds {
 		{"", "Switch Workspace Up"},
 		{"Super + Ctrl + Page_Down", "Move Window to Workspace Down"},
 		{"", "Move Column to Workspace Up"},
+		{"Super + R", "Switch Preset Column Widths"},
+		{"", "Maximize Column"},
 		{"", "Consume or Expel Window Left"},
 		{"", "Consume or Expel Window Right"},
 		{"", "Move Window Between Floating and Tiling"},
@@ -106,16 +108,21 @@ binds {
 }
 
 func TestHotkeyOverlaySkipsActionsTheCompositorDoesNotApply(t *testing.T) {
-	lines := overlayLines(t, `
-binds {
-    Mod+R { switch-preset-column-width; }
-    Mod+F { maximize-column; }
-    Mod+Q { close-window; }
-}
-`, false)
+	title := "Something The Compositor Does Not Apply"
+	binds := []config.OverlayBind{
+		{
+			Chord:  bind.Chord{Key: "x", Modifiers: bind.Modifiers(bind.ModifierSuper), UsesMod: true},
+			Action: "switch-preset-window-width",
+			Title:  &title,
+		},
+		{
+			Chord:  bind.Chord{Key: "q", Modifiers: bind.Modifiers(bind.ModifierSuper), UsesMod: true},
+			Action: bind.ActionCloseWindow,
+		},
+	}
+	lines := HotkeyLines(binds, false, bind.ModifierSuper, func(k string) string { return k })
 	for _, l := range lines {
-		switch l.Action {
-		case "Switch Preset Column Widths", "Maximize Column":
+		if l.Action == title {
 			t.Errorf("overlay lists %q, which the compositor does not apply", l.Action)
 		}
 	}

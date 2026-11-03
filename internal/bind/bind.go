@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Nomadcxx/sysc-compositor/internal/layout"
 )
 
 type Modifier uint8
@@ -64,6 +66,8 @@ type Action struct {
 	Backward  bool
 	MRUScope  string
 	MRUFilter string
+	// Size is the size argument of set-column-width and set-window-height.
+	Size layout.SizeChange
 }
 
 type Binding struct {
@@ -164,6 +168,22 @@ const (
 	ActionFocusMonitorDown               = "focus-monitor-down"
 	ActionFocusMonitorPrevious           = "focus-monitor-previous"
 	ActionFocusMonitorNext               = "focus-monitor-next"
+)
+
+// The column width and window height actions of Niri.
+const (
+	ActionSetColumnWidth               = "set-column-width"
+	ActionSwitchPresetColumnWidth      = "switch-preset-column-width"
+	ActionSwitchPresetColumnWidthBack  = "switch-preset-column-width-back"
+	ActionMaximizeColumn               = "maximize-column"
+	ActionMaximizeWindowToEdges        = "maximize-window-to-edges"
+	ActionCenterColumn                 = "center-column"
+	ActionCenterVisibleColumns         = "center-visible-columns"
+	ActionExpandColumnToAvailableWidth = "expand-column-to-available-width"
+	ActionSetWindowHeight              = "set-window-height"
+	ActionResetWindowHeight            = "reset-window-height"
+	ActionSwitchPresetWindowHeight     = "switch-preset-window-height"
+	ActionSwitchPresetWindowHeightBack = "switch-preset-window-height-back"
 )
 
 // M15 part 1: Niri's remaining navigation and workspace actions.
@@ -449,6 +469,25 @@ func ParseAction(name string, args []string) (Action, bool, error) {
 		}
 		action.ColumnDisplay = args[0]
 		return action, true, nil
+	case ActionSetColumnWidth, ActionSetWindowHeight:
+		if len(args) != 1 {
+			return Action{}, true, fmt.Errorf("%s takes one size", name)
+		}
+		size, err := layout.ParseSizeChange(args[0])
+		if err != nil {
+			return Action{}, true, fmt.Errorf("%s: %w", name, err)
+		}
+		action.Size = size
+		return action, true, nil
+	case ActionSwitchPresetColumnWidth, ActionSwitchPresetColumnWidthBack,
+		ActionMaximizeColumn, ActionMaximizeWindowToEdges, ActionCenterColumn,
+		ActionCenterVisibleColumns, ActionExpandColumnToAvailableWidth,
+		ActionResetWindowHeight, ActionSwitchPresetWindowHeight,
+		ActionSwitchPresetWindowHeightBack:
+		if len(args) != 0 {
+			return Action{}, true, fmt.Errorf("%s takes no arguments", name)
+		}
+		return action, true, nil
 	default:
 		return action, false, nil
 	}
@@ -506,7 +545,7 @@ func IsSupportedAction(name string) bool {
 		ActionMoveWorkspaceToMonitorPrevious, ActionMoveWorkspaceToMonitorNext,
 		ActionFocusMonitorLeft, ActionFocusMonitorRight, ActionFocusMonitorUp,
 		ActionFocusMonitorDown, ActionFocusMonitorPrevious, ActionFocusMonitorNext,
-		ActionFocusWorkspaceDown, ActionFocusWorkspaceUp, ActionFocusWorkspacePrevious, ActionMoveWorkspaceDown, ActionMoveWorkspaceUp, ActionFocusColumnRightOrFirst, ActionFocusColumnLeftOrLast, ActionFocusWindowOrMonitorUp, ActionFocusWindowOrMonitorDown, ActionFocusColumnOrMonitorLeft, ActionFocusColumnOrMonitorRight, ActionFocusWindowDownOrColumnLeft, ActionFocusWindowDownOrColumnRight, ActionFocusWindowUpOrColumnLeft, ActionFocusWindowUpOrColumnRight, ActionFocusWindowOrWorkspaceDown, ActionFocusWindowOrWorkspaceUp, ActionFocusWindowTop, ActionFocusWindowBottom, ActionFocusWindowDownOrTop, ActionFocusWindowUpOrBottom, ActionMoveColumnLeftOrToMonitorLeft, ActionMoveColumnRightOrToMonitorRight, ActionMoveWindowDownOrToWorkspaceDown, ActionMoveWindowUpOrToWorkspaceUp, ActionSwapWindowLeft, ActionSwapWindowRight, ActionFocusColumn, ActionMoveColumnToIndex, ActionMoveWorkspaceToIndex:
+		ActionFocusWorkspaceDown, ActionFocusWorkspaceUp, ActionFocusWorkspacePrevious, ActionMoveWorkspaceDown, ActionMoveWorkspaceUp, ActionFocusColumnRightOrFirst, ActionFocusColumnLeftOrLast, ActionFocusWindowOrMonitorUp, ActionFocusWindowOrMonitorDown, ActionFocusColumnOrMonitorLeft, ActionFocusColumnOrMonitorRight, ActionFocusWindowDownOrColumnLeft, ActionFocusWindowDownOrColumnRight, ActionFocusWindowUpOrColumnLeft, ActionFocusWindowUpOrColumnRight, ActionFocusWindowOrWorkspaceDown, ActionFocusWindowOrWorkspaceUp, ActionFocusWindowTop, ActionFocusWindowBottom, ActionFocusWindowDownOrTop, ActionFocusWindowUpOrBottom, ActionMoveColumnLeftOrToMonitorLeft, ActionMoveColumnRightOrToMonitorRight, ActionMoveWindowDownOrToWorkspaceDown, ActionMoveWindowUpOrToWorkspaceUp, ActionSwapWindowLeft, ActionSwapWindowRight, ActionFocusColumn, ActionMoveColumnToIndex, ActionMoveWorkspaceToIndex, ActionSetColumnWidth, ActionSwitchPresetColumnWidth, ActionSwitchPresetColumnWidthBack, ActionMaximizeColumn, ActionMaximizeWindowToEdges, ActionCenterColumn, ActionCenterVisibleColumns, ActionExpandColumnToAvailableWidth, ActionSetWindowHeight, ActionResetWindowHeight, ActionSwitchPresetWindowHeight, ActionSwitchPresetWindowHeightBack:
 		return true
 	default:
 		return false
