@@ -82,8 +82,6 @@ binds {
 		{"", "Switch Workspace Up"},
 		{"Super + Ctrl + Page_Down", "Move Window to Workspace Down"},
 		{"", "Move Column to Workspace Up"},
-		{"Super + R", "Switch Preset Column Widths"},
-		{"", "Maximize Column"},
 		{"", "Consume or Expel Window Left"},
 		{"", "Consume or Expel Window Right"},
 		{"", "Move Window Between Floating and Tiling"},
@@ -104,6 +102,25 @@ binds {
 	only := overlayLines(t, "hotkey-overlay { hide-not-bound; }\nbinds {\nCtrl+Alt+Delete { quit skip-confirmation=true; }\n}\n", true)
 	if len(only) != 1 || only[0] != (HotkeyLine{"Ctrl + Alt + Delete", "Exit sysc-compositor"}) {
 		t.Errorf("hide-not-bound with only quit skip-confirmation bound = %+v", only)
+	}
+}
+
+func TestHotkeyOverlaySkipsActionsTheCompositorDoesNotApply(t *testing.T) {
+	lines := overlayLines(t, `
+binds {
+    Mod+R { switch-preset-column-width; }
+    Mod+F { maximize-column; }
+    Mod+Q { close-window; }
+}
+`, false)
+	for _, l := range lines {
+		switch l.Action {
+		case "Switch Preset Column Widths", "Maximize Column":
+			t.Errorf("overlay lists %q, which the compositor does not apply", l.Action)
+		}
+	}
+	if got := lineFor(lines, "Close Focused Window"); got != " Super + Q : Close Focused Window" {
+		t.Errorf("close-window row = %q, want it kept", got)
 	}
 }
 
