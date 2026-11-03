@@ -549,6 +549,8 @@ type Probe struct {
 
 	arrived     chan struct{}
 	arrivedOnce sync.Once
+	stroke      chan struct{}
+	strokeOnce  sync.Once
 	stopOnce    sync.Once
 	stop        chan struct{}
 	done        chan struct{}
@@ -589,6 +591,7 @@ func Start(opts Options) (*Probe, error) {
 		out:     opts.Out,
 		timeout: opts.Timeout,
 		arrived: make(chan struct{}),
+		stroke:  make(chan struct{}),
 		stop:    make(chan struct{}),
 		done:    make(chan struct{}),
 	}
@@ -616,6 +619,14 @@ func (p *Probe) Stop() {
 
 // Arrived is closed when the first finger goes down.
 func (p *Probe) Arrived() <-chan struct{} { return p.arrived }
+
+// Stroke is closed when a finger that went down has lifted again. A gate that
+// wants the whole stroke, down and up, waits on this one.
+func (p *Probe) Stroke() <-chan struct{} { return p.stroke }
+
+// Done is closed when the probe's connection has ended, whether because it was
+// stopped or because the wait ran out.
+func (p *Probe) Done() <-chan struct{} { return p.done }
 
 // Wait waits for the probe to finish, and reports why it stopped.
 func (p *Probe) Wait() error {
@@ -749,6 +760,9 @@ func (p *Probe) drain() {
 	}
 	if result.Downs > 0 {
 		p.arrivedOnce.Do(func() { close(p.arrived) })
+	}
+	if result.Downs > 0 && result.Ups > 0 {
+		p.strokeOnce.Do(func() { close(p.stroke) })
 	}
 }
 

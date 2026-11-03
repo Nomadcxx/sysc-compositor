@@ -82,7 +82,7 @@ func parseRunOptions(args []string) (runOptions, error) {
 
 // usage describes the installed sysc-compositor command.
 func usage(name string, env Env, problem string) int {
-	fmt.Fprintf(env.Stderr, "%s: %s\nusage: sysc-compositor [--session] [-c CONFIG] | sysc-compositor validate [-c CONFIG] | sysc-compositor msg [--json] REQUEST | sysc-compositor touch-probe [--display NAME] [--timeout DURATION] [--no-window]\n", name, problem)
+	fmt.Fprintf(env.Stderr, "%s: %s\nusage: sysc-compositor [--session] [-c CONFIG] | sysc-compositor validate [-c CONFIG] | sysc-compositor msg [--json] REQUEST | sysc-compositor touch-probe [--display NAME] [--timeout DURATION] [--no-window] [--until-stroke]\n", name, problem)
 	return 2
 }
 
