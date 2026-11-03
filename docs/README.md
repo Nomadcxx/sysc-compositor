@@ -25,6 +25,7 @@ executed until the owner schedules the milestone they belong to.
 | [plans/2026-10-02-m0-nested-tinywl.md](plans/2026-10-02-m0-nested-tinywl.md) | plan | M0, the first code in this repository: nested tinywl, one seat plus cursor. |
 | [plans/2026-10-02-sysc-launch.md](plans/2026-10-02-sysc-launch.md) | plan | Sibling workstream L0, executed in `/home/nomadx/sysc-launch`, not here. |
 | [plans/niri-parity-matrix.md](plans/niri-parity-matrix.md) | checklist | Remaining niri IPC and config parity. Fill this rather than expanding the design. |
+| [plans/2026-11-03-handover.md](plans/2026-11-03-handover.md) | handover | The state after the sizing milestone and the bar work: the commit map on `main` and on the input branch, the laptop build and its rollback, the audits, the owner decisions in force (the attribution guard, the cherry-pick rule, the bar parity choice, the packaging deferral) and the open work in order. |
 | [plans/2026-10-28-release-readiness.md](plans/2026-10-28-release-readiness.md) | assessment | Release gates after capture and virtual input: remaining M12, M13–M15, session integration and hardware acceptance. |
 | [third_party/godbus/SYSC.md](../third_party/godbus/SYSC.md) | dependency note | Scoped v5.2.2 descriptor backport, provenance, regression command and removal check. |
 | [plans/2026-10-15-tier3-session-domain-design.md](plans/2026-10-15-tier3-session-domain-design.md) | design | **Transferred from sysc-shell 2026-10-15.** Multi-seat input model, agent seat with compositor-enforced Stop, browser remote access. |
