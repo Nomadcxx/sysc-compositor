@@ -3,6 +3,8 @@
 - Date: 2026-11-03
 - Bead: `sysc-2231`
 - Branch: `feat/config-surface-20261103`
+- Status: slice 1 landed on 2026-11-03 (commit `3bd4e41`, draft PR #94). Slices
+  2 to 6 are not started.
 - Reference: niri v26.04 in `/home/nomadx/references/niri`
   (`niri-config/src/window_rule.rs`, `layer_rule.rs`, `workspace.rs`, `layout.rs`,
   `docs/wiki/Configuration:-Window-Rules.md`, `Configuration:-Layer-Rules.md`,
@@ -61,17 +63,17 @@ wallpaper engine, no notification server, no tray.
 | `geometry-corner-radius` | `rules.go` `parseCornerRadius` | `internal/wlr/appearance.go` | |
 | `clip-to-geometry` | `rules.go` | `internal/wlr/appearance.go` | |
 | `block-out-from` | `rules.go` | `internal/wlr/capture_privacy.go` | `screen-capture` or `screencast` |
+| `open-maximized` | `rules.go` | `internal/wlr/windows.go` `mapWindowWithRules` → `model.MaximizeColumnFor` | slice 1 |
+| `open-maximized-to-edges` | `rules.go` | `mapWindowWithRules` → `model.MaximizeWindowToEdgesFor` | slice 1 |
+| `open-focused` | `rules.go` | `internal/wlr/input.go` (the map path) | slice 1; `false` keeps the focus |
+| `min-width`, `max-width`, `min-height`, `max-height` | `rules.go` | `internal/wlr/workspaces.go` `windowSizeHints` | slice 1; amend the client's hints |
+| `default-column-display` | `rules.go` | `mapWindowWithRules` → `model.SetColumnDisplayFor` | slice 1; `normal` or `tabbed` |
+| `default-floating-position` | `rules.go` `parseFloatingPosition` | `mapWindowWithRules` → `model.SetFloatingPositionFor` | slice 1; `x`, `y`, `relative-to` |
 
 ### 2.2 `window-rule` — the keys sysc has no counterpart for
 
 | Niri key | Niri's meaning | what sysc needs | slice |
 |---|---|---|---|
-| `open-maximized` | the window opens in a column that fills the working width | a set-variant of the layout's maximize-column, keyed by window | 1 |
-| `open-maximized-to-edges` | the window opens maximized to the edges of the working area | a set-variant of maximize-window-to-edges, keyed by window | 1 |
-| `open-focused` | the window takes (or does not take) the keyboard focus when it opens | the map path's unconditional focus needs a rule override | 1 |
-| `min-width`, `max-width`, `min-height`, `max-height` | amend the window's size hints | the client's hints are applied in `syncWorkspaceWindowSizeHints`; the rule has to clamp them | 1 |
-| `default-column-display` | `normal` or `tabbed` for the column the window creates | `model.SetColumnDisplay` exists but only for the focused column | 1 |
-| `default-floating-position` | where a floating window opens, relative to a corner or a side | the floating position has to come from the rule instead of the centre | 1 |
 | `scroll-factor` | a scroll factor for the events sent to that window | the scroll path has to look up the window under the pointer | 4 |
 | `opacity` | the window is drawn with an alpha | per-window alpha in the renderer | 5 |
 | `border`, `focus-ring`, `shadow`, `tab-indicator` | per-window decoration overrides | the decoration code reads one global `layoutOptions` | 5 |
@@ -128,22 +130,33 @@ tests and no longer warn.
 `min-width`/`max-width`/`min-height`/`max-height`,
 `default-column-display`, `default-floating-position`.
 
-- The layout gains set-variants: `SetColumnFullWidth(id, bool)` and
-  `SetWindowMaximized(id, bool)` in `internal/layout`, wrapped by the model
-  as `SetColumnMaximizedFor(id, bool)` and
-  `SetWindowMaximizedToEdgesFor(id, bool)`. The toggles stay as they are.
+**Landed on 2026-11-03** (commit `3bd4e41`, draft PR #94). What actually
+shipped, against the sketch below:
+
+- The layout gained set-variants, named for what they do rather than for the
+  toggle they replace: `MaximizeColumn(id)`, `MaximizeWindowToEdges(id)`,
+  `SetColumnDisplayFor(id, display)` and `SetFloatingPosition(id, position)`
+  in `internal/layout`, wrapped by the model as `MaximizeColumnFor`,
+  `MaximizeWindowToEdgesFor`, `SetColumnDisplayFor` and
+  `SetFloatingPositionFor`. The toggles stay as they are.
 - `open-focused` changes the map path in `internal/wlr/input.go`, where a new
   window is focused unconditionally ("Niri activates newly mapped windows").
   A rule with `open-focused false` keeps the focus where it was; `true`
-  focuses the new window even when the client did not ask for it.
-- The size hints are clamped in `syncWorkspaceWindowSizeHints`: the rule's
-  minimum raises the client's minimum, the rule's maximum lowers the client's
-  maximum.
+  focuses the new window even when the client did not ask for it. Because the
+  layout focuses the new column when the window is added, the map path takes
+  the focused window before the map and gives it back when the rule says the
+  new window should not have the focus.
+- The size hints are amended in `syncWorkspaceWindowSizeHints` through the new
+  `windowSizeHints(view)` helper: the rule's minimum raises the client's
+  minimum, the rule's maximum lowers the client's maximum, and a rule's
+  maximum replaces an absent client maximum (Niri's rule).
 - `default-column-display` applies the display mode to the column the window
   created, not to the focused column.
 - `default-floating-position` positions a floating window relative to the
   working area (top-left, top-right, bottom-left, bottom-right, top, bottom,
-  left, right), the way Niri does.
+  left, right), with Niri's maths: a corner offsets from the corner, a side
+  centres the window on that side. A window that is tiled when the rule
+  applies keeps the position for the day it floats.
 
 ### Slice 2 — the match properties that can be read when a window maps
 
@@ -195,14 +208,25 @@ rejected with a clear message rather than accepted and ignored.
 
 - `internal/config`: one test per key that it parses and lands in the
   resolved rule result, and one test that an unsupported match property still
-  drops the rule and still warns.
+  drops the rule and still warns. Slice 1 added
+  `TestNiriWindowRuleOpenKeysAreParsedAndResolved` and
+  `TestNiriWindowRuleOpenKeysRejectBadValues`.
 - `internal/layout` and `internal/wm`: one test per set-variant, next to the
-  toggle tests.
+  toggle tests. Slice 1 added `TestMaximizeColumnFillsTheWorkingWidth`,
+  `TestMaximizeWindowToEdgesFillsTheColumnHeight`,
+  `TestSetColumnDisplayForSetsTheColumnOfTheWindow`,
+  `TestSetFloatingPositionPlacesTheWindow` and
+  `TestSetFloatingPositionKeepsThePositionForALaterFloat`.
 - `internal/wlr`: one test per key that the compositor applies it, next to the
   existing rule tests. These need a compositor, so they run in CI lane 2
-  under vkms, not locally.
+  under vkms, not locally. Slice 1 added `internal/wlr/window_rules_test.go`
+  with `TestWindowRuleOpenMaximizedFillsTheWorkingWidth`,
+  `TestWindowRuleOpenMaximizedToEdgesFillsTheColumn`,
+  `TestWindowRuleOpenFocusedFalseKeepsTheFocus` and
+  `TestWindowRuleMinWidthAmendsTheSizeHints`.
 - `internal/cli`: `validate` on a config that uses the new keys must print no
-  warning.
+  warning. Slice 1 covered this in the config test instead: a config that
+  uses the new keys parses without a warning.
 
 ## 6. Docs
 
