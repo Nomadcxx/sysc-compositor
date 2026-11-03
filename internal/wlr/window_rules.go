@@ -22,6 +22,20 @@ func (c *Compositor) ruleState(view *toplevelView, snapshot wm.Snapshot) config.
 		state.IsActiveInColumn = window.Tile.Active
 		break
 	}
+	// Niri's is-active is the window that has the active border: every
+	// workspace on the focused monitor has one.
+	for _, workspace := range snapshot.Workspaces {
+		if workspace.Output != snapshot.FocusedOutput || workspace.ActiveWindowID == nil {
+			continue
+		}
+		if *workspace.ActiveWindowID == view.id {
+			state.IsActive = true
+			break
+		}
+	}
+	// Niri's is-window-cast-target is the window that an ongoing window
+	// screencast shows. The compositor has no window screencast protocol, so
+	// no window is ever the target of one.
 	if focused := c.keyboardFocusedView(); focused != nil && focused.id == view.id {
 		state.IsFocused = true
 	}

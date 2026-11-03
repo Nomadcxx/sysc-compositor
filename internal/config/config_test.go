@@ -1514,19 +1514,42 @@ func TestWindowRuleStatePropertiesMatchTheWindowState(t *testing.T) {
 	}
 }
 
-func TestWindowRuleUnsupportedMatchPropertiesWarnAndDropTheRule(t *testing.T) {
-	for _, property := range []string{"is-active=true", "is-window-cast-target=true"} {
-		src := "window-rule {\n    match " + property + "\n    open-maximized true\n}\n"
-		cfg, err := Parse("unsupported-rule.kdl", []byte(src))
-		if err != nil {
-			t.Fatalf("Parse(%q): %v", src, err)
-		}
-		if !slices.Contains(cfg.Warnings, "window-rule.match") {
-			t.Errorf("match %s did not warn: %v", property, cfg.Warnings)
-		}
-		resolved := cfg.ResolveWindowRules("app", "title", WindowState{IsActiveInColumn: true})
-		if resolved.OpenMaximized != nil {
-			t.Errorf("a rule with the unsupported match %s still applied: %+v", property, resolved.OpenMaximized)
-		}
+func TestWindowRuleActiveAndCastTargetPropertiesAreParsed(t *testing.T) {
+	cfg, err := Parse("active-rule.kdl", []byte(`
+window-rule {
+    match is-active=true
+    open-maximized true
+}
+window-rule {
+    match is-window-cast-target=false
+    open-floating true
+}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Warnings) != 0 {
+		t.Fatalf("the active and cast target match properties still warn: %v", cfg.Warnings)
+	}
+	active := cfg.ResolveWindowRules("app", "title", WindowState{IsActive: true, IsActiveInColumn: true})
+	if active.OpenMaximized == nil {
+		t.Errorf("the active window rule did not apply to an active window")
+	}
+	if active.OpenFloating == nil {
+		t.Errorf("the cast target rule did not apply to a window that is not a cast target")
+	}
+	other := cfg.ResolveWindowRules("app", "title", WindowState{IsActiveInColumn: true})
+	if other.OpenMaximized != nil {
+		t.Errorf("the active window rule applied to a window that is not active: %+v", other.OpenMaximized)
+	}
+	if other.OpenFloating == nil {
+		t.Errorf("the cast target rule did not apply to a window that is not a cast target")
+	}
+}
+
+func TestWindowRuleUnknownMatchPropertyIsRejected(t *testing.T) {
+	src := `window-rule { match is-unknown=true; }`
+	if _, err := Parse("bad-match.kdl", []byte(src)); err == nil || !strings.Contains(err.Error(), "unexpected match property") {
+		t.Errorf("Parse(%q) error = %v, want an unknown match property error", src, err)
 	}
 }

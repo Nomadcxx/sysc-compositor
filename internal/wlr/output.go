@@ -294,6 +294,9 @@ func (c *Compositor) setActiveOutputName(focused string) {
 	c.activeOutputName = name
 	c.notifyFocusedOutputChanged()
 	c.syncFocusRings()
+	// A rule that matches on the active window has to be read again now that
+	// the focused output changed: the active windows are the ones on it.
+	c.reapplyWindowRules()
 }
 
 // OutputSnapshot copies the enabled outputs into plain Go values. Call it on

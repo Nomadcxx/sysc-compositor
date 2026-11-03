@@ -62,30 +62,34 @@ type FloatingPosition struct {
 // compared against the window's state when the rule is resolved, the way
 // Niri does.
 type RuleMatch struct {
-	AppID            *regexp.Regexp
-	Title            *regexp.Regexp
-	IsFocused        *bool
-	IsUrgent         *bool
-	IsActiveInColumn *bool
-	IsFloating       *bool
-	AtStartup        *bool
-	Unsupported      bool
+	AppID              *regexp.Regexp
+	Title              *regexp.Regexp
+	IsFocused          *bool
+	IsUrgent           *bool
+	IsActive           *bool
+	IsActiveInColumn   *bool
+	IsFloating         *bool
+	IsWindowCastTarget *bool
+	AtStartup          *bool
+	Unsupported        bool
 }
 
 // WindowState is the state a window rule is matched against. The fields carry
 // the meaning of Niri's match properties of the same name.
 type WindowState struct {
-	IsFocused        bool
-	IsUrgent         bool
-	IsActiveInColumn bool
-	IsFloating       bool
-	AtStartup        bool
+	IsFocused          bool
+	IsUrgent           bool
+	IsActive           bool
+	IsActiveInColumn   bool
+	IsFloating         bool
+	IsWindowCastTarget bool
+	AtStartup          bool
 }
 
 // UnmappedWindowState is the state a window that is not on screen has. Niri
 // reads the rules of a window that is still unmapped that way: it is not
-// focused, not urgent, not floating, and it is the active window of its
-// column.
+// focused, not urgent, not floating, not active, not the target of a window
+// screencast, and it is the active window of its column.
 func UnmappedWindowState(atStartup bool) WindowState {
 	return WindowState{IsActiveInColumn: true, AtStartup: atStartup}
 }
@@ -236,10 +240,16 @@ func (m RuleMatch) matches(appID, title string, state WindowState) bool {
 	if m.IsUrgent != nil && *m.IsUrgent != state.IsUrgent {
 		return false
 	}
+	if m.IsActive != nil && *m.IsActive != state.IsActive {
+		return false
+	}
 	if m.IsActiveInColumn != nil && *m.IsActiveInColumn != state.IsActiveInColumn {
 		return false
 	}
 	if m.IsFloating != nil && *m.IsFloating != state.IsFloating {
+		return false
+	}
+	if m.IsWindowCastTarget != nil && *m.IsWindowCastTarget != state.IsWindowCastTarget {
 		return false
 	}
 	if m.AtStartup != nil && *m.AtStartup != state.AtStartup {
@@ -513,7 +523,7 @@ func parseWindowMatch(node *document.Node) (RuleMatch, error) {
 			continue
 		}
 		switch key {
-		case "is-focused", "is-urgent", "is-active-in-column", "is-floating", "at-startup":
+		case "is-focused", "is-urgent", "is-active", "is-active-in-column", "is-floating", "is-window-cast-target", "at-startup":
 			value, ok := property.Value.(bool)
 			if !ok {
 				return RuleMatch{}, fmt.Errorf("%s must be boolean", key)
@@ -523,18 +533,17 @@ func parseWindowMatch(node *document.Node) (RuleMatch, error) {
 				match.IsFocused = &value
 			case "is-urgent":
 				match.IsUrgent = &value
+			case "is-active":
+				match.IsActive = &value
 			case "is-active-in-column":
 				match.IsActiveInColumn = &value
 			case "is-floating":
 				match.IsFloating = &value
+			case "is-window-cast-target":
+				match.IsWindowCastTarget = &value
 			case "at-startup":
 				match.AtStartup = &value
 			}
-		case "is-active", "is-window-cast-target":
-			if _, ok := property.Value.(bool); !ok {
-				return RuleMatch{}, fmt.Errorf("%s must be boolean", key)
-			}
-			match.Unsupported = true
 		default:
 			return RuleMatch{}, fmt.Errorf("unexpected match property `%s`", key)
 		}
