@@ -51,6 +51,16 @@ must not be confused with this one:
 - `/var/tmp/sysc-first-login-crash-20261103.log`, cited by the bead description,
   does not exist on archThink. The journal is the evidence.
 
+### No other crash signature
+
+Across every boot in archThink's journal there are exactly two occurrences of
+this assertion, the two aborts above, and no other sysc-compositor abort,
+segfault or panic. The only other failure-looking entries in the unit's history
+are the two seat failures listed above (the stale `BindsTo=niri.service` unit on
+2026-11-02 13:25:47 and 2026-11-03 00:41:56). An xwayland-satellite panic at
+2026-10-05 04:44:48 is not a compositor crash: niri logged "quitting after
+confirming exit dialog" in the same second.
+
 ## Root cause
 
 `internal/wlr/input.go:1559` `handleRequestSetCursor` gives the focused client
