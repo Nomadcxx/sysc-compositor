@@ -175,15 +175,16 @@ observation that the deployed compositor does not use the touchscreen.
 **The staged install.** The gate directory is
 `~/.cache/sysc-compositor-gate-20261103/` and now holds:
 
-- `bin/sysc-compositor.touch` — the new build, 17478904 bytes, sha256
-  `a8b2293e0d07e35a3e7b69417d45fabc9cde58957a1da54d77ca1f500dca45e3`. It was
-  built on archPC from `feat/laptop-touch-gate-20261103` at `aec02f4` and
-  copied over. It carries the touch tranche **and** the `touch-probe` evidence
-  route; the earlier staged build (17385096 bytes, sha256
-  `86a6b52918464d3bc51f68050f5745cf12f3acb7f4a759d60e8a84e57e036bb5`) had
-  the touch tranche alone and was replaced. The commits after `aec02f4`
-  (`4dca942`, `a70a96b`) change a test and this document only, so the staged
-  build is the same code as the branch head.
+- `bin/sysc-compositor.touch` — the new build, 17478872 bytes, sha256
+  `c6c9e6a810d0e27613459fdb59706c5ae185aff07e93968fbb71d0870f58b11f`. It was
+  built on archPC from `feat/laptop-touch-gate-20261103` at `84dc7a0` and
+  copied over; its version string reads `84dc7a0+dirty` because the checkout
+  carries the untracked `.commandcode/` directory. It carries the touch tranche
+  **and** the `touch-probe` evidence route. Two earlier staged builds were
+  replaced: the touch tranche alone (17385096 bytes, sha256
+  `86a6b52918464d3bc51f68050f5745cf12f3acb7f4a759d60e8a84e57e036bb5`) and the
+  tranche plus the probe built from a dirty tree (17478904 bytes, sha256
+  `a8b2293e0d07e35a3e7b69417d45fabc9cde58957a1da54d77ca1f500dca45e3`).
 - `install-touch-compositor.sh` — the installer, following the pattern of
   `install-gapfix-compositor.sh`: it refuses to run as root, refuses to run
   anywhere but archThink, refuses to run twice, backs the current binary up
