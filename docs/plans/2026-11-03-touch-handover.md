@@ -37,8 +37,8 @@ Three branches matter:
 |---|---|---|
 | `main` | `1b03199` | the merged sizing and bar work |
 | `feat/sysc-input-20261102` | `c082c44` | the input branch: PR #89, draft |
-| `feat/touch-input-20261103` | `db64bcc` | main plus the touch tranche: PR #91, draft |
-| `feat/laptop-touch-gate-20261103` | `aec02f4` | the input branch plus the touch tranche and the evidence route: what the laptop runs |
+| `feat/touch-input-20261103` | `efe541e` | main plus the touch tranche and the evidence route: PR #91, draft |
+| `feat/laptop-touch-gate-20261103` | `a71ca89` | the input branch plus the touch tranche and the evidence route: what the laptop runs |
 
 **`main` does not carry the pointing-device work.** The pointer settings
 (`internal/config/pointer.go`, `internal/wlr/pointer_settings.go`,
