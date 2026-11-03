@@ -38,7 +38,7 @@ Three branches matter:
 | `main` | `1b03199` | the merged sizing and bar work |
 | `feat/sysc-input-20261102` | `c082c44` | the input branch: PR #89, draft |
 | `feat/touch-input-20261103` | `db64bcc` | main plus the touch tranche: PR #91, draft |
-| `feat/laptop-touch-gate-20261103` | `59f135f` | the input branch plus the touch tranche: what the laptop runs |
+| `feat/laptop-touch-gate-20261103` | `aec02f4` | the input branch plus the touch tranche and the evidence route: what the laptop runs |
 
 **`main` does not carry the pointing-device work.** The pointer settings
 (`internal/config/pointer.go`, `internal/wlr/pointer_settings.go`,
@@ -47,7 +47,9 @@ Three branches matter:
 handedness, scroll factor and tap-to-click on the laptop, so a laptop build
 always comes from the input branch. The gate branch
 `feat/laptop-touch-gate-20261103` is the input branch with the three touch
-commits cherry-picked on top (`02e3335`, `72ce0d6`, `59f135f`). The
+commits cherry-picked on top (`02e3335`, `72ce0d6`, `59f135f`) and the
+evidence route on top of those (`aec02f4`, "feat(input): add the touch
+evidence route"). The
 cherry-picks needed five conflicts, all resolved by keeping both sides: the
 POINTER case in `internal/wlr/input.go` keeps `c.applyPointerSettings(device)`
 and gains the TOUCH case; `internal/server/config_reload.go` keeps
