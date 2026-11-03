@@ -11,12 +11,15 @@ The touchscreen now works in the compositor. `sysc-2227` is implemented,
 tested, documented and pushed: the compositor handles a touch device itself,
 advertises the seat's touch capability, and delivers a finger to the client
 that asked for touch, as Niri does. The tranche is on draft PR #91 with green
-CI on both lanes. The physical gate on the archThink is staged but **not yet
-run**: the install script and the new binary are on the laptop, the owner has
-to run the script because sudo needs a password, and the new binary only
-takes effect at a session restart. The sizing family (`sysc-2228`) and the bar
-auto-hide (`sysc-2229`) gates are still the owner's to run on the same
-machine. The packaging tranche stays deferred.
+CI on both lanes. **The evidence route the gate needs now exists**: a
+`sysc-compositor touch-probe` client that asks the seat for touch and prints
+every event it receives, plus the compositor's own log lines for the seat's
+capabilities and for every finger. The physical gate on the archThink is
+staged but **not yet run**: the install script and the new binary are on the
+laptop, the owner has to run the script because sudo needs a password, and the
+new binary only takes effect at a session restart. The sizing family
+(`sysc-2228`) and the bar auto-hide (`sysc-2229`) gates are still the owner's
+to run on the same machine. The packaging tranche stays deferred.
 
 ## Repositories and their state
 
@@ -98,6 +101,13 @@ The rules, all of them:
   picker, the screenshot UI, the exit dialog), a destroyed surface and a
   destroyed device each end the touch.
 
+**The evidence route** is a second piece of work on top of the tranche:
+`internal/touchprobe` (a self-contained Wayland client), the
+`sysc-compositor touch-probe` command that runs it, the compositor's log
+lines for the seat's capabilities and for every finger, and the lane-2 test
+that proves the probe against a nested compositor. See "How to see whether the
+gate passed" below.
+
 ### One wlroots caveat worth writing down
 
 `wlr_seat_touch_notify_cancel(seat, NULL)` is a NULL dereference in wlroots
@@ -127,6 +137,11 @@ rejected here, as it is in Niri.
   The test client gained a `wl_touch` listener and a `BindTouch` call
   (`internal/wlr/testclient/toplevel.go`); the touch is **not** bound
   automatically, so a test can have a client that never asks for touch.
+- `internal/wlr/touch_probe_test.go`, `TestTouchProbeSeesTheFinger` — lane 2,
+  under vkms. The probe client — the same one the laptop gate uses — sees the
+  finger the compositor sends.
+- `internal/touchprobe/probe_test.go`, `TestCapabilityNames`,
+  `TestSummaryCountsTheFinger` and `TestHasTouchCapability` — lane 1, pure.
 
 CI run `41588290485` is green on both lanes, and all five touch tests ran and
 passed.
@@ -150,9 +165,13 @@ observation that the deployed compositor does not use the touchscreen.
 **The staged install.** The gate directory is
 `~/.cache/sysc-compositor-gate-20261103/` and now holds:
 
-- `bin/sysc-compositor.touch` — the new build, 17385096 bytes, sha256
-  `86a6b52918464d3bc51f68050f5745cf12f3acb7f4a759d60e8a84e57e036bb5`. It was
-  built on archPC from `feat/laptop-touch-gate-20261103` and copied over.
+- `bin/sysc-compositor.touch` — the new build, 17478904 bytes, sha256
+  `a8b2293e0d07e35a3e7b69417d45fabc9cde58957a1da54d77ca1f500dca45e3`. It was
+  built on archPC from `feat/laptop-touch-gate-20261103` and copied over. It
+  carries the touch tranche **and** the `touch-probe` evidence route; the
+  earlier staged build (17385096 bytes, sha256
+  `86a6b52918464d3bc51f68050f5745cf12f3acb7f4a759d60e8a84e57e036bb5`) had
+  the touch tranche alone and was replaced.
 - `install-touch-compositor.sh` — the installer, following the pattern of
   `install-gapfix-compositor.sh`: it refuses to run as root, refuses to run
   anywhere but archThink, refuses to run twice, backs the current binary up
@@ -175,12 +194,36 @@ so restarting it is disruptive. The running session (pid 1021, started
 **How to see whether the gate passed.** `wayland-info` and `wlr-randr` both
 hang against the compositor's socket
 `/run/user/1000/sysc-compositor.wayland-0.1021.sock` and print nothing, so
-they cannot be used as evidence. The seat's capabilities are not exposed over
-the IPC (`SeatCapabilities` lives in `internal/wlr` only) and the compositor
-does not log them at startup. A future gate needs another route: a small
-client that binds `wl_seat.get_touch` and reports what it receives, or a log
-line in the compositor. That is the first thing to build when the gate is
-picked up again.
+they cannot be used as evidence. The route that works is built now, in two
+halves.
+
+*The compositor logs what it does.* The journal carries a line for every
+change of the seat's capabilities (`sysc-compositor: seat capabilities:
+pointer|keyboard|touch`), a line when a touch device arrives or goes, and a
+line for every finger: `sysc-compositor: touch down id=1 delivered to the
+client`, or why it was dropped (`input.touch is off`, `the session is locked`,
+`a modal surface is open`, `no surface under the finger`, `the client did not
+ask for touch`), and `touch up id=1`.
+
+*The client asks for touch and reports it.* The new binary carries
+`sysc-compositor touch-probe`: a small Wayland client that binds
+`wl_seat.get_touch`, maps a window so a finger has a surface to land on, and
+prints every event.
+
+```
+sysc-compositor touch-probe --timeout 60s
+```
+
+It exits 0 when a finger arrived, 1 when the run ended with no finger, 3 when
+the seat does not advertise touch, and 4 when the probe could not run. The
+lines are stable: `touch-probe: seat capabilities=pointer|keyboard|touch`,
+`touch-probe: touch bound`, `touch-probe: down id=1 x=… y=… surface=probe`,
+and a summary with the counts. The probe maps a window, so the owner runs it
+on the laptop's session where the finger is.
+
+The same client is proved in CI lane 2 against a nested compositor
+(`TestTouchProbeSeesTheFinger`), so the route is known to work before the
+laptop is touched.
 
 **Other laptop notes.** The systemd user unit is a system file at
 `/usr/lib/systemd/user/sysc-compositor.service`; a user drop-in under
@@ -229,10 +272,11 @@ flake.
 
 ## Open work, in order
 
-1. **The touch gate on the laptop** (`sysc-2227`, P2). The install is staged;
-   the owner runs the script and restarts the session, then a finger has to
-   reach a touch-aware client. The evidence route has to be built first
-   (see "How to see whether the gate passed").
+1. **The touch gate on the laptop** (`sysc-2227`, P2). The install is staged
+   with the probe in the binary; the owner runs the script and restarts the
+   session, then a finger has to reach a touch-aware client. The evidence
+   route is built: `sysc-compositor touch-probe` on the laptop's session, and
+   the journal's touch lines (see "How to see whether the gate passed").
 2. **The sizing family gate on the laptop** (`sysc-2228`, P1). The owner
    compares against Niri on the same hardware: maximise-column,
    maximise-window-to-edges, centre-column, centre-visible-columns,
