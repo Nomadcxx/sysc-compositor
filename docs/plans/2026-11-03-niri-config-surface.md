@@ -3,8 +3,8 @@
 - Date: 2026-11-03
 - Bead: `sysc-2231`
 - Branch: `feat/config-surface-20261103`
-- Status: slice 1 landed on 2026-11-03 (commit `3bd4e41`, draft PR #94). Slices
-  2 to 6 are not started.
+- Status: slices 1 and 2 landed on 2026-11-03 (commits `3bd4e41` and
+  `79b939d`, draft PR #94). Slices 3 to 6 are not started.
 - Reference: niri v26.04 in `/home/nomadx/references/niri`
   (`niri-config/src/window_rule.rs`, `layer_rule.rs`, `workspace.rs`, `layout.rs`,
   `docs/wiki/Configuration:-Window-Rules.md`, `Configuration:-Layer-Rules.md`,
@@ -69,6 +69,7 @@ wallpaper engine, no notification server, no tray.
 | `min-width`, `max-width`, `min-height`, `max-height` | `rules.go` | `internal/wlr/workspaces.go` `windowSizeHints` | slice 1; amend the client's hints |
 | `default-column-display` | `rules.go` | `mapWindowWithRules` → `model.SetColumnDisplayFor` | slice 1; `normal` or `tabbed` |
 | `default-floating-position` | `rules.go` `parseFloatingPosition` | `mapWindowWithRules` → `model.SetFloatingPositionFor` | slice 1; `x`, `y`, `relative-to` |
+| `match is-focused`, `is-urgent`, `is-active-in-column`, `is-floating`, `at-startup` | `rules.go` `parseWindowMatch` | `internal/wlr/window_rules.go` `ruleState` → `ResolveWindowRules` | slice 2; the rules are matched against the state of the window they apply to |
 
 ### 2.2 `window-rule` — the keys sysc has no counterpart for
 
@@ -85,13 +86,12 @@ wallpaper engine, no notification server, no tray.
 
 ### 2.3 `window-rule` — the match properties sysc cannot evaluate
 
+Slice 2 took five of them out of this table: `is-focused`, `is-floating`,
+`is-urgent`, `is-active-in-column` and `at-startup` are parsed and evaluated
+now (see 2.1). What is left needs state sysc does not keep:
+
 | property | Niri's meaning | the state sysc would need | slice |
 |---|---|---|---|
-| `is-focused` | the one window with the keyboard focus | the model has exactly one focused window, but the rule has to be re-read whenever the focus moves | 2 |
-| `is-floating` | matches floating windows; Niri applies it only after the window is open | the tile's floating state, read right after the window opens | 2 |
-| `is-urgent` | the window asked for attention | the model already carries the urgency (`model.SetWindowUrgent`) | 2 |
-| `is-active-in-column` | the window last focused in its column; true while the window opens | the column's active tile, read right after the window opens | 2 |
-| `at-startup` | matches during the first 60 seconds after the compositor started | the compositor's start time | 2 |
 | `is-active` | every workspace on the focused monitor has one active window | sysc only models one focused window; the active window per workspace does not exist yet | 3 |
 | `is-window-cast-target` | the window is the target of an individual screencast | sysc knows about screencasts but does not track the target window | 3 |
 
@@ -162,9 +162,27 @@ shipped, against the sketch below:
 
 `is-focused`, `is-floating`, `is-urgent`, `is-active-in-column`, `at-startup`.
 
-These need the resolved rule to be evaluated against the window's state at
-map time, and the rules that depend on that state to be re-read when the
-state moves (a window that becomes urgent, a column that changes focus).
+**Landed on 2026-11-03** (commit `79b939d`, draft PR #94). What actually
+shipped:
+
+- The rules are matched against the state of the window they apply to, the way
+  Niri does. `internal/config/rules.go` gained a `WindowState` and
+  `UnmappedWindowState(atStartup)`: a window that is not on screen yet is not
+  focused, not urgent and not floating, and it is the active window of its
+  column. That is what Niri reads for a window that is still unmapped, so
+  `match is-active-in-column=true` applies to a window that opens and
+  `match is-focused=true` does not.
+- `internal/wlr/window_rules.go` reads the state of a mapped window: the
+  urgency and the floating state from the model's snapshot, the focus from the
+  seat, and the startup flag from the compositor.
+- The rules are read again when the state moves: `focusView`, `SetWindowUrgent`,
+  `ToggleWindowUrgent` and `SetWindowFloating` call `reapplyWindowRules`, which
+  resolves the rules for every view against the current state.
+- The startup window is a clock of its own: `internal/wlr/startup.go` arms a
+  timer for the first sixty seconds and ends the window when it runs out, so
+  an `at-startup` rule stops matching and the rules are read again.
+- `is-active` and `is-window-cast-target` still warn `window-rule.match` and
+  still drop the whole rule: they need the state of slice 3.
 
 ### Slice 3 — the match properties that need a new state
 
@@ -210,7 +228,10 @@ rejected with a clear message rather than accepted and ignored.
   resolved rule result, and one test that an unsupported match property still
   drops the rule and still warns. Slice 1 added
   `TestNiriWindowRuleOpenKeysAreParsedAndResolved` and
-  `TestNiriWindowRuleOpenKeysRejectBadValues`.
+  `TestNiriWindowRuleOpenKeysRejectBadValues`. Slice 2 added
+  `TestWindowRuleStatePropertiesAreParsed`,
+  `TestWindowRuleStatePropertiesMatchTheWindowState` and
+  `TestWindowRuleUnsupportedMatchPropertiesWarnAndDropTheRule`.
 - `internal/layout` and `internal/wm`: one test per set-variant, next to the
   toggle tests. Slice 1 added `TestMaximizeColumnFillsTheWorkingWidth`,
   `TestMaximizeWindowToEdgesFillsTheColumnHeight`,
@@ -223,7 +244,12 @@ rejected with a clear message rather than accepted and ignored.
   with `TestWindowRuleOpenMaximizedFillsTheWorkingWidth`,
   `TestWindowRuleOpenMaximizedToEdgesFillsTheColumn`,
   `TestWindowRuleOpenFocusedFalseKeepsTheFocus` and
-  `TestWindowRuleMinWidthAmendsTheSizeHints`.
+  `TestWindowRuleMinWidthAmendsTheSizeHints`. Slice 2 added
+  `TestWindowRuleIsActiveInColumnMatchesTheWindowThatOpens`,
+  `TestWindowRuleIsFocusedDoesNotMatchAWindowThatOpens`,
+  `TestWindowRuleIsUrgentAppliesWhenTheWindowBecomesUrgent`,
+  `TestWindowRuleAtStartupMatchesInsideTheStartupWindow` and
+  `TestWindowRuleStartupTimerEndsTheStartupWindow`.
 - `internal/cli`: `validate` on a config that uses the new keys must print no
   warning. Slice 1 covered this in the config test instead: a config that
   uses the new keys parses without a warning.
