@@ -163,7 +163,7 @@ func (w *Workspace) SetWindowFloating(id uint64, floating bool, bounds Bounds) b
 	} else {
 		w.columns = append(w.columns, columnState{})
 		copy(w.columns[columnIndex+1:], w.columns[columnIndex:])
-		w.columns[columnIndex] = columnState{tiles: []tileState{f.tile}, width: f.columnWidth}
+		w.columns[columnIndex] = columnState{tiles: []tileState{f.tile}, display: w.defaultDisplay, width: f.columnWidth}
 		if w.focused >= columnIndex {
 			w.focused++
 		}
@@ -374,18 +374,27 @@ type floatingState struct {
 // Workspace is one horizontal strip of columns. A column can contain multiple
 // windows; focus is a column and an active window within that column.
 type Workspace struct {
-	bounds       Bounds
-	columnWidth  int
-	gap          int
-	columns      []columnState
-	floating     []floatingState
-	focused      int
-	focusedFloat uint64
-	activeFloat  uint64
-	viewOffset   int
+	bounds              Bounds
+	columnWidth         int
+	gap                 int
+	columns             []columnState
+	floating            []floatingState
+	focused             int
+	focusedFloat        uint64
+	activeFloat         uint64
+	viewOffset          int
+	presetColumnWidths  []PresetSize
+	presetWindowHeights []PresetSize
+	defaultDisplay      ColumnDisplay
 }
 
 const directionalMovePixels = 50
+
+// SetDefaultColumnDisplay sets the display mode that new columns start in.
+// Columns that already exist keep their display.
+func (w *Workspace) SetDefaultColumnDisplay(display ColumnDisplay) {
+	w.defaultDisplay = display
+}
 
 // NewWorkspace creates an empty workspace with fixed column width and gap.
 func NewWorkspace(bounds Bounds, columnWidth, gap int) *Workspace {
@@ -431,7 +440,7 @@ func (w *Workspace) AddWindow(id uint64) {
 	}
 	w.columns = append(w.columns, columnState{})
 	copy(w.columns[idx+1:], w.columns[idx:])
-	w.columns[idx] = columnState{tiles: []tileState{{id: id}}}
+	w.columns[idx] = columnState{tiles: []tileState{{id: id}}, display: w.defaultDisplay}
 	w.focused = idx
 	w.focusedFloat = 0
 	w.revealFocused()
@@ -656,7 +665,7 @@ func (w *Workspace) MoveWindowToPosition(target *Workspace, id uint64, position 
 		return true
 	}
 	index := min(max(position.Column, 0), len(target.columns))
-	column := columnState{tiles: []tileState{tile}, width: columnWidth}
+	column := columnState{tiles: []tileState{tile}, display: target.defaultDisplay, width: columnWidth}
 	target.columns = append(target.columns, columnState{})
 	copy(target.columns[index+1:], target.columns[index:])
 	target.columns[index] = column
@@ -1013,7 +1022,7 @@ func (w *Workspace) ExpelWindowFromColumn() bool {
 	idx := w.focused + 1
 	w.columns = append(w.columns, columnState{})
 	copy(w.columns[idx+1:], w.columns[idx:])
-	w.columns[idx] = columnState{tiles: []tileState{tile}}
+	w.columns[idx] = columnState{tiles: []tileState{tile}, display: w.defaultDisplay}
 	w.revealFocused()
 	return true
 }
@@ -1083,7 +1092,7 @@ func (w *Workspace) consumeOrExpelWindow(id *uint64, direction int) bool {
 	}
 	w.columns = append(w.columns, columnState{})
 	copy(w.columns[insertAt+1:], w.columns[insertAt:])
-	w.columns[insertAt] = columnState{tiles: []tileState{tile}, width: width}
+	w.columns[insertAt] = columnState{tiles: []tileState{tile}, display: w.defaultDisplay, width: width}
 	if wasActive {
 		w.focused = insertAt
 		w.focusedFloat = 0

@@ -129,6 +129,7 @@ import (
 	"github.com/Nomadcxx/sysc-compositor/internal/a11y"
 	"github.com/Nomadcxx/sysc-compositor/internal/bind"
 	"github.com/Nomadcxx/sysc-compositor/internal/config"
+	"github.com/Nomadcxx/sysc-compositor/internal/layout"
 	"github.com/Nomadcxx/sysc-compositor/internal/wm"
 )
 
@@ -402,6 +403,9 @@ type LayoutOptions struct {
 	Gaps                  int
 	ColumnWidthProportion float64
 	FixedColumnWidth      int
+	PresetColumnWidths    []layout.PresetSize
+	PresetWindowHeights   []layout.PresetSize
+	DefaultColumnDisplay  layout.ColumnDisplay
 	InsertHint            config.InsertHint
 	FocusRing             config.FocusRing
 	Shadow                config.Shadow
@@ -449,6 +453,8 @@ func NewWith(opts Options) (*Compositor, error) {
 	c.windowRules = slices.Clone(opts.WindowRules)
 	c.layerRules = slices.Clone(opts.LayerRules)
 	c.layoutOptions = *opts.Layout
+	c.model.SetPresetSizes(opts.Layout.PresetColumnWidths, opts.Layout.PresetWindowHeights)
+	c.model.SetDefaultColumnDisplay(opts.Layout.DefaultColumnDisplay)
 	c.cursorTheme, c.cursorSize = opts.CursorTheme, opts.CursorSize
 	c.keyboardConfig = opts.Keyboard
 	c.atStartup = true
@@ -719,6 +725,8 @@ func (c *Compositor) Reconfigure(opts Options) error {
 		c.bindings[i].Chord = c.bindings[i].Chord.ResolveMod(c.modKey)
 	}
 	c.layoutOptions = *opts.Layout
+	c.model.SetPresetSizes(opts.Layout.PresetColumnWidths, opts.Layout.PresetWindowHeights)
+	c.model.SetDefaultColumnDisplay(opts.Layout.DefaultColumnDisplay)
 	c.overviewConfig = opts.Overview
 	c.setTabletConfig(opts.Tablet)
 	c.setPointerConfig(opts.Pointers)

@@ -114,6 +114,9 @@ type Layout struct {
 	Gaps                  int
 	ColumnWidthProportion float64
 	FixedColumnWidth      int
+	PresetColumnWidths    []PresetSize
+	PresetWindowHeights   []PresetSize
+	DefaultColumnDisplay  ColumnDisplay
 	InsertHint            InsertHint
 	FocusRing             FocusRing
 	Shadow                Shadow
@@ -671,6 +674,24 @@ func (c *Config) layout(n *document.Node) error {
 					c.Layout.ColumnWidthProportion = 0
 				}
 			}
+		case "preset-column-widths":
+			presets, err := presetSizeList(child)
+			if err != nil {
+				return fmt.Errorf("preset-column-widths: %w", err)
+			}
+			c.Layout.PresetColumnWidths = presets
+		case "preset-window-heights":
+			presets, err := presetSizeList(child)
+			if err != nil {
+				return fmt.Errorf("preset-window-heights: %w", err)
+			}
+			c.Layout.PresetWindowHeights = presets
+		case "default-column-display":
+			display, err := columnDisplayArg(child)
+			if err != nil {
+				return fmt.Errorf("default-column-display: %w", err)
+			}
+			c.Layout.DefaultColumnDisplay = display
 		case "insert-hint":
 			if err := c.insertHint(child); err != nil {
 				return fmt.Errorf("insert-hint: %w", err)

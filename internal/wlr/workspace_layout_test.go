@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/Nomadcxx/sysc-compositor/internal/config"
+	"github.com/Nomadcxx/sysc-compositor/internal/layout"
 	"github.com/Nomadcxx/sysc-compositor/internal/wm"
 )
 
@@ -37,6 +38,49 @@ func TestWorkspaceLayoutOverridesTheOutputLayout(t *testing.T) {
 		}
 		if window.Tile.Height != bounds.h {
 			t.Errorf("the tile height = %d, want the whole working height %d", window.Tile.Height, bounds.h)
+		}
+		c.Terminate()
+	}
+	runClient(t, c, []string{"weston-terminal"}, nil, nil)
+}
+
+// TestWorkspacePresetsReachTheLayout: the config-wide preset sizes and the
+// default column display reach the layout through the compositor options. The
+// window that opens uses the display, and the preset cycle steps through the
+// configured sizes.
+func TestWorkspacePresetsReachTheLayout(t *testing.T) {
+	c := newNested(t)
+	workspace := "wide"
+	if err := c.Reconfigure(Options{
+		Animations: config.Animations{Off: true},
+		Layout: &LayoutOptions{
+			Gaps: 16, ColumnWidthProportion: 0.5,
+			PresetColumnWidths:   []layout.PresetSize{{Fixed: true, Value: 300}},
+			DefaultColumnDisplay: layout.ColumnDisplayTabbed,
+		},
+		WindowRules: []config.WindowRule{{OpenOnWorkspace: &workspace}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	c.viewMapped = func(view *toplevelView) {
+		window, ok := findWindowSnapshot(c.WorkspaceSnapshot().Windows, view.id)
+		if !ok {
+			t.Errorf("mapped window %d missing from the workspace snapshot", view.id)
+			c.Terminate()
+			return
+		}
+		if window.Tile.Display != layout.ColumnDisplayTabbed {
+			t.Errorf("the display of the new column = %v, want tabbed", window.Tile.Display)
+		}
+		if !c.model.SwitchPresetColumnWidth(false) {
+			t.Errorf("SwitchPresetColumnWidth = false, want true")
+			c.Terminate()
+			return
+		}
+		if window, ok := findWindowSnapshot(c.WorkspaceSnapshot().Windows, view.id); ok {
+			if window.Tile.Width != 300 {
+				t.Errorf("the preset column width = %d, want the configured 300", window.Tile.Width)
+			}
 		}
 		c.Terminate()
 	}

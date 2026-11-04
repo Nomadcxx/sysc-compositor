@@ -26,6 +26,11 @@ type WorkspaceLayout struct {
 	Gaps                  *int
 	ColumnWidthProportion *float64
 	FixedColumnWidth      *int
+	// A nil preset list keeps the config's list, an empty one resets to
+	// Niri's default presets.
+	PresetColumnWidths   []layout.PresetSize
+	PresetWindowHeights  []layout.PresetSize
+	DefaultColumnDisplay *layout.ColumnDisplay
 }
 
 type outputState struct {
@@ -77,6 +82,12 @@ type Model struct {
 	focusedOutput   string
 	nextWorkspaceID uint64
 	workspaceConfig []WorkspaceConfig
+	// presetColumnWidths, presetWindowHeights and defaultDisplay are the
+	// config-wide layout values; the workspaces without their own override
+	// use them.
+	presetColumnWidths  []layout.PresetSize
+	presetWindowHeights []layout.PresetSize
+	defaultDisplay      layout.ColumnDisplay
 }
 
 // WorkspaceSnapshot is the immutable Niri-facing state for one workspace.
@@ -213,8 +224,7 @@ func (m *Model) SetOutputGeometry(name string, bounds layout.Bounds, columnWidth
 	out.columnWidth = columnWidth
 	out.gap = gap
 	for _, workspace := range out.workspaces {
-		width, workspaceGap := m.workspaceGeometry(out, workspace)
-		workspace.strip.SetGeometry(bounds, width, workspaceGap)
+		m.applyWorkspaceLayout(out, workspace)
 	}
 	for id, state := range m.windows {
 		if state.output == name {
@@ -243,6 +253,73 @@ func (m *Model) workspaceGeometry(out *outputState, workspace *workspaceState) (
 		width = layout.ColumnWidthPixels(out.bounds.Width, gap, *override.ColumnWidthProportion)
 	}
 	return width, gap
+}
+
+// applyWorkspaceLayout pushes the merged layout of a workspace into its strip:
+// the geometry of its output with its own overrides, the preset sizes and the
+// default column display.
+func (m *Model) applyWorkspaceLayout(out *outputState, workspace *workspaceState) {
+	width, gap := m.workspaceGeometry(out, workspace)
+	workspace.strip.SetGeometry(out.bounds, width, gap)
+	widths, heights := m.presetSizes(workspace)
+	workspace.strip.SetPresetSizes(widths, heights)
+	workspace.strip.SetDefaultColumnDisplay(m.columnDisplay(workspace))
+}
+
+// presetSizes returns the preset sizes a workspace cycles through: its own
+// lists when it sets them, otherwise the config-wide lists.
+func (m *Model) presetSizes(workspace *workspaceState) ([]layout.PresetSize, []layout.PresetSize) {
+	widths, heights := m.presetColumnWidths, m.presetWindowHeights
+	if override := m.workspaceLayout(workspace); override != nil {
+		if override.PresetColumnWidths != nil {
+			widths = override.PresetColumnWidths
+		}
+		if override.PresetWindowHeights != nil {
+			heights = override.PresetWindowHeights
+		}
+	}
+	return widths, heights
+}
+
+// columnDisplay returns the display mode the new columns of a workspace start
+// in: its own when it sets one, otherwise the config-wide one.
+func (m *Model) columnDisplay(workspace *workspaceState) layout.ColumnDisplay {
+	if override := m.workspaceLayout(workspace); override != nil && override.DefaultColumnDisplay != nil {
+		return *override.DefaultColumnDisplay
+	}
+	return m.defaultDisplay
+}
+
+// SetPresetSizes sets the preset sizes the workspaces without their own lists
+// cycle through.
+func (m *Model) SetPresetSizes(columnWidths, windowHeights []layout.PresetSize) {
+	if slices.Equal(m.presetColumnWidths, columnWidths) && slices.Equal(m.presetWindowHeights, windowHeights) {
+		return
+	}
+	m.presetColumnWidths = slices.Clone(columnWidths)
+	m.presetWindowHeights = slices.Clone(windowHeights)
+	m.reapplyWorkspaceLayout()
+}
+
+// SetDefaultColumnDisplay sets the display mode new columns start in when
+// their workspace does not set one.
+func (m *Model) SetDefaultColumnDisplay(display layout.ColumnDisplay) {
+	if m.defaultDisplay == display {
+		return
+	}
+	m.defaultDisplay = display
+	m.reapplyWorkspaceLayout()
+}
+
+// reapplyWorkspaceLayout pushes the merged layout of every workspace into its
+// strip after the config-wide layout changed.
+func (m *Model) reapplyWorkspaceLayout() {
+	for _, name := range m.outputNames() {
+		out := m.outputs[name]
+		for _, workspace := range out.workspaces {
+			m.applyWorkspaceLayout(out, workspace)
+		}
+	}
 }
 
 // workspaceLayout returns the layout override of a named workspace.
@@ -274,8 +351,7 @@ func (m *Model) SetWorkspaceConfig(workspaces []WorkspaceConfig) bool {
 	for _, name := range m.outputNames() {
 		out := m.outputs[name]
 		for _, workspace := range out.workspaces {
-			width, gap := m.workspaceGeometry(out, workspace)
-			workspace.strip.SetGeometry(out.bounds, width, gap)
+			m.applyWorkspaceLayout(out, workspace)
 		}
 	}
 	return true
@@ -306,10 +382,31 @@ func sameWorkspaceLayout(a, b *WorkspaceLayout) bool {
 		!sameIntPtr(a.FixedColumnWidth, b.FixedColumnWidth) {
 		return false
 	}
-	return true
+	if !samePresetSizes(a.PresetColumnWidths, b.PresetColumnWidths) ||
+		!samePresetSizes(a.PresetWindowHeights, b.PresetWindowHeights) {
+		return false
+	}
+	return sameDisplayPtr(a.DefaultColumnDisplay, b.DefaultColumnDisplay)
 }
 
 func sameIntPtr(a, b *int) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
+}
+
+// samePresetSizes compares two preset lists by value. A nil list keeps the
+// config's list while an empty one resets to the defaults, so the two are
+// different.
+func samePresetSizes(a, b []layout.PresetSize) bool {
+	if (a == nil) != (b == nil) {
+		return false
+	}
+	return slices.Equal(a, b)
+}
+
+func sameDisplayPtr(a, b *layout.ColumnDisplay) bool {
 	if a == nil || b == nil {
 		return a == nil && b == nil
 	}
@@ -1847,8 +1944,7 @@ func (m *Model) addConfiguredWorkspaces(out *outputState, firstOutput bool) {
 		workspace := m.newWorkspace(out)
 		name := config.Name
 		workspace.name = &name
-		width, gap := m.workspaceGeometry(out, workspace)
-		workspace.strip.SetGeometry(out.bounds, width, gap)
+		m.applyWorkspaceLayout(out, workspace)
 		out.workspaces = append(out.workspaces, nil)
 		copy(out.workspaces[1:], out.workspaces[:len(out.workspaces)-1])
 		out.workspaces[0] = workspace

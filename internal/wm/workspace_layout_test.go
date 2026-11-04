@@ -81,3 +81,95 @@ func TestWorkspaceLayoutFixedColumnWidth(t *testing.T) {
 		t.Fatalf("the column width = %d, want 320", got)
 	}
 }
+
+// The preset sizes come from the config, and a workspace may set its own.
+func TestWorkspacePresetsFollowTheConfig(t *testing.T) {
+	m := New(WorkspaceConfig{
+		Name:   "wide",
+		Layout: &WorkspaceLayout{PresetColumnWidths: []layout.PresetSize{{Fixed: true, Value: 700}}},
+	})
+	m.AddOutput("eDP-1", layout.Bounds{Width: 1000, Height: 800}, 500, 16)
+	m.SetPresetSizes([]layout.PresetSize{{Value: 0.25}}, nil)
+
+	wide, ok := m.WorkspaceIDByName("wide")
+	if !ok {
+		t.Fatal("the named workspace is missing")
+	}
+	snapshot := m.Snapshot()
+	var plain uint64
+	for _, workspace := range snapshot.Workspaces {
+		if workspace.Name == nil {
+			plain = workspace.ID
+		}
+	}
+	if plain == 0 {
+		t.Fatalf("workspaces = %+v, want an unnamed workspace", snapshot.Workspaces)
+	}
+	if !m.MapWindowToWorkspace(1, wide) || !m.MapWindowToWorkspace(2, plain) {
+		t.Fatal("MapWindowToWorkspace() = false, want true")
+	}
+
+	// The workspaces without their own list cycle the config's presets, the
+	// named workspace cycles its own.
+	m.FocusWorkspaceID(plain)
+	if !m.SwitchPresetColumnWidth(false) {
+		t.Fatal("SwitchPresetColumnWidth = false, want true")
+	}
+	m.FocusWorkspaceID(wide)
+	if !m.SwitchPresetColumnWidth(false) {
+		t.Fatal("SwitchPresetColumnWidth = false, want true")
+	}
+
+	widths := map[uint64]int{}
+	for _, window := range m.Snapshot().Windows {
+		widths[window.WorkspaceID] = window.Tile.Width
+	}
+	if got := widths[plain]; got != 230 {
+		t.Errorf("the preset width of the plain workspace = %d, want 230", got)
+	}
+	if got := widths[wide]; got != 700 {
+		t.Errorf("the preset width of the named workspace = %d, want 700", got)
+	}
+}
+
+// The default column display comes from the config, and a workspace may set
+// its own.
+func TestWorkspaceDefaultColumnDisplayFollowsTheConfig(t *testing.T) {
+	tabbed := layout.ColumnDisplayTabbed
+	normal := layout.ColumnDisplayNormal
+	m := New(WorkspaceConfig{
+		Name:   "wide",
+		Layout: &WorkspaceLayout{DefaultColumnDisplay: &normal},
+	})
+	m.AddOutput("eDP-1", layout.Bounds{Width: 1000, Height: 800}, 500, 16)
+	m.SetDefaultColumnDisplay(tabbed)
+
+	wide, ok := m.WorkspaceIDByName("wide")
+	if !ok {
+		t.Fatal("the named workspace is missing")
+	}
+	snapshot := m.Snapshot()
+	var plain uint64
+	for _, workspace := range snapshot.Workspaces {
+		if workspace.Name == nil {
+			plain = workspace.ID
+		}
+	}
+	if plain == 0 {
+		t.Fatalf("workspaces = %+v, want an unnamed workspace", snapshot.Workspaces)
+	}
+	if !m.MapWindowToWorkspace(1, wide) || !m.MapWindowToWorkspace(2, plain) {
+		t.Fatal("MapWindowToWorkspace() = false, want true")
+	}
+
+	displays := map[uint64]layout.ColumnDisplay{}
+	for _, window := range m.Snapshot().Windows {
+		displays[window.WorkspaceID] = window.Tile.Display
+	}
+	if got := displays[plain]; got != tabbed {
+		t.Errorf("the display of the plain workspace = %v, want tabbed", got)
+	}
+	if got := displays[wide]; got != normal {
+		t.Errorf("the display of the named workspace = %v, want its normal", got)
+	}
+}
