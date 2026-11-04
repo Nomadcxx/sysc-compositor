@@ -44,6 +44,7 @@ func compositorOptions(cfg *config.Config, locale *config.Keyboard) wlr.Options 
 			PresetColumnWidths:   presetSizes(cfg.Layout.PresetColumnWidths),
 			PresetWindowHeights:  presetSizes(cfg.Layout.PresetWindowHeights),
 			DefaultColumnDisplay: columnDisplay(cfg.Layout.DefaultColumnDisplay),
+			CenterFocusedColumn:  centerFocusedColumn(cfg.Layout.CenterFocusedColumn),
 			InsertHint:           cfg.Layout.InsertHint,
 			FocusRing:            cfg.Layout.FocusRing, Shadow: cfg.Layout.Shadow,
 		},
@@ -70,6 +71,7 @@ func workspaceLayout(layout *config.WorkspaceLayout) *wm.WorkspaceLayout {
 		PresetColumnWidths:   presetSizes(layout.PresetColumnWidths),
 		PresetWindowHeights:  presetSizes(layout.PresetWindowHeights),
 		DefaultColumnDisplay: columnDisplayPtr(layout.DefaultColumnDisplay),
+		CenterFocusedColumn:  centerFocusedColumnPtr(layout.CenterFocusedColumn),
 	}
 }
 
@@ -101,6 +103,27 @@ func columnDisplayPtr(display *config.ColumnDisplay) *layout.ColumnDisplay {
 		return nil
 	}
 	value := columnDisplay(*display)
+	return &value
+}
+
+// centerFocusedColumn converts a config centering policy for the layout.
+func centerFocusedColumn(mode config.CenterFocusedColumn) layout.CenterFocusedColumn {
+	switch mode {
+	case config.CenterFocusedColumnAlways:
+		return layout.CenterFocusedColumnAlways
+	case config.CenterFocusedColumnOnOverflow:
+		return layout.CenterFocusedColumnOnOverflow
+	}
+	return layout.CenterFocusedColumnNever
+}
+
+// centerFocusedColumnPtr converts an optional config centering policy for the
+// layout, keeping nil for a workspace that keeps the config's policy.
+func centerFocusedColumnPtr(mode *config.CenterFocusedColumn) *layout.CenterFocusedColumn {
+	if mode == nil {
+		return nil
+	}
+	value := centerFocusedColumn(*mode)
 	return &value
 }
 

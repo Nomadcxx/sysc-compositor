@@ -31,6 +31,8 @@ type WorkspaceLayout struct {
 	PresetColumnWidths   []layout.PresetSize
 	PresetWindowHeights  []layout.PresetSize
 	DefaultColumnDisplay *layout.ColumnDisplay
+	// A nil mode keeps the config's policy.
+	CenterFocusedColumn *layout.CenterFocusedColumn
 }
 
 type outputState struct {
@@ -82,12 +84,13 @@ type Model struct {
 	focusedOutput   string
 	nextWorkspaceID uint64
 	workspaceConfig []WorkspaceConfig
-	// presetColumnWidths, presetWindowHeights and defaultDisplay are the
-	// config-wide layout values; the workspaces without their own override
-	// use them.
+	// presetColumnWidths, presetWindowHeights, defaultDisplay and
+	// centerFocusedColumn are the config-wide layout values; the workspaces
+	// without their own override use them.
 	presetColumnWidths  []layout.PresetSize
 	presetWindowHeights []layout.PresetSize
 	defaultDisplay      layout.ColumnDisplay
+	centerFocusedColumn layout.CenterFocusedColumn
 }
 
 // WorkspaceSnapshot is the immutable Niri-facing state for one workspace.
@@ -256,14 +259,15 @@ func (m *Model) workspaceGeometry(out *outputState, workspace *workspaceState) (
 }
 
 // applyWorkspaceLayout pushes the merged layout of a workspace into its strip:
-// the geometry of its output with its own overrides, the preset sizes and the
-// default column display.
+// the geometry of its output with its own overrides, the preset sizes, the
+// default column display and the centering policy.
 func (m *Model) applyWorkspaceLayout(out *outputState, workspace *workspaceState) {
 	width, gap := m.workspaceGeometry(out, workspace)
 	workspace.strip.SetGeometry(out.bounds, width, gap)
 	widths, heights := m.presetSizes(workspace)
 	workspace.strip.SetPresetSizes(widths, heights)
 	workspace.strip.SetDefaultColumnDisplay(m.columnDisplay(workspace))
+	workspace.strip.SetCenterFocusedColumn(m.centerFocusedColumnFor(workspace))
 }
 
 // presetSizes returns the preset sizes a workspace cycles through: its own
@@ -290,6 +294,15 @@ func (m *Model) columnDisplay(workspace *workspaceState) layout.ColumnDisplay {
 	return m.defaultDisplay
 }
 
+// centerFocusedColumnFor returns the centering policy of a workspace: its own
+// when it sets one, otherwise the config-wide one.
+func (m *Model) centerFocusedColumnFor(workspace *workspaceState) layout.CenterFocusedColumn {
+	if override := m.workspaceLayout(workspace); override != nil && override.CenterFocusedColumn != nil {
+		return *override.CenterFocusedColumn
+	}
+	return m.centerFocusedColumn
+}
+
 // SetPresetSizes sets the preset sizes the workspaces without their own lists
 // cycle through.
 func (m *Model) SetPresetSizes(columnWidths, windowHeights []layout.PresetSize) {
@@ -308,6 +321,16 @@ func (m *Model) SetDefaultColumnDisplay(display layout.ColumnDisplay) {
 		return
 	}
 	m.defaultDisplay = display
+	m.reapplyWorkspaceLayout()
+}
+
+// SetCenterFocusedColumn sets the centering policy of the workspaces that do
+// not set one.
+func (m *Model) SetCenterFocusedColumn(mode layout.CenterFocusedColumn) {
+	if m.centerFocusedColumn == mode {
+		return
+	}
+	m.centerFocusedColumn = mode
 	m.reapplyWorkspaceLayout()
 }
 
@@ -386,7 +409,10 @@ func sameWorkspaceLayout(a, b *WorkspaceLayout) bool {
 		!samePresetSizes(a.PresetWindowHeights, b.PresetWindowHeights) {
 		return false
 	}
-	return sameDisplayPtr(a.DefaultColumnDisplay, b.DefaultColumnDisplay)
+	if !sameDisplayPtr(a.DefaultColumnDisplay, b.DefaultColumnDisplay) {
+		return false
+	}
+	return sameCenterPtr(a.CenterFocusedColumn, b.CenterFocusedColumn)
 }
 
 func sameIntPtr(a, b *int) bool {
@@ -407,6 +433,13 @@ func samePresetSizes(a, b []layout.PresetSize) bool {
 }
 
 func sameDisplayPtr(a, b *layout.ColumnDisplay) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
+}
+
+func sameCenterPtr(a, b *layout.CenterFocusedColumn) bool {
 	if a == nil || b == nil {
 		return a == nil && b == nil
 	}

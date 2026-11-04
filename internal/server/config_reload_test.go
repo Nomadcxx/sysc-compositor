@@ -190,11 +190,13 @@ func TestWorkspaceLayoutReachesTheModelOptions(t *testing.T) {
 	gaps := 8
 	proportion := 0.75
 	display := config.ColumnDisplayNormal
+	centerNever := config.CenterFocusedColumnNever
 	cfg := &config.Config{
 		Layout: config.Layout{
 			PresetColumnWidths:   []config.PresetSize{{Value: 0.25}},
 			PresetWindowHeights:  []config.PresetSize{{Fixed: true, Value: 700}},
 			DefaultColumnDisplay: config.ColumnDisplayTabbed,
+			CenterFocusedColumn:  config.CenterFocusedColumnOnOverflow,
 		},
 		Workspaces: []config.WorkspaceConfig{{
 			Name: "wide",
@@ -202,6 +204,7 @@ func TestWorkspaceLayoutReachesTheModelOptions(t *testing.T) {
 				Gaps: &gaps, ColumnWidthProportion: &proportion,
 				PresetColumnWidths:   []config.PresetSize{{Fixed: true, Value: 600}},
 				DefaultColumnDisplay: &display,
+				CenterFocusedColumn:  &centerNever,
 			},
 		}},
 	}
@@ -215,6 +218,9 @@ func TestWorkspaceLayoutReachesTheModelOptions(t *testing.T) {
 	}
 	if options.Layout.DefaultColumnDisplay != layout.ColumnDisplayTabbed {
 		t.Errorf("the default column display = %v, want tabbed", options.Layout.DefaultColumnDisplay)
+	}
+	if options.Layout.CenterFocusedColumn != layout.CenterFocusedColumnOnOverflow {
+		t.Errorf("the centering policy = %v, want on-overflow", options.Layout.CenterFocusedColumn)
 	}
 	if len(options.Workspaces) != 1 {
 		t.Fatalf("workspaces = %+v, want one", options.Workspaces)
@@ -238,6 +244,9 @@ func TestWorkspaceLayoutReachesTheModelOptions(t *testing.T) {
 	}
 	if workspace.Layout.DefaultColumnDisplay == nil || *workspace.Layout.DefaultColumnDisplay != layout.ColumnDisplayNormal {
 		t.Errorf("the default column display of the workspace = %+v, want normal", workspace.Layout.DefaultColumnDisplay)
+	}
+	if workspace.Layout.CenterFocusedColumn == nil || *workspace.Layout.CenterFocusedColumn != layout.CenterFocusedColumnNever {
+		t.Errorf("the centering policy of the workspace = %+v, want its own never", workspace.Layout.CenterFocusedColumn)
 	}
 }
 

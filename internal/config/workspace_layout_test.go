@@ -15,6 +15,7 @@ workspace "wide" {
         preset-column-widths { proportion 0.25; fixed 600; }
         preset-window-heights { proportion 0.5; }
         default-column-display "tabbed"
+        center-focused-column "on-overflow"
     }
 }
 workspace "fixed" {
@@ -57,6 +58,9 @@ workspace "fixed" {
 	if wide.Layout.DefaultColumnDisplay == nil || *wide.Layout.DefaultColumnDisplay != ColumnDisplayTabbed {
 		t.Errorf("the default column display = %+v, want tabbed", wide.Layout.DefaultColumnDisplay)
 	}
+	if wide.Layout.CenterFocusedColumn == nil || *wide.Layout.CenterFocusedColumn != CenterFocusedColumnOnOverflow {
+		t.Errorf("the centering policy = %+v, want on-overflow", wide.Layout.CenterFocusedColumn)
+	}
 	fixed := cfg.Workspaces[1]
 	if fixed.Layout == nil || fixed.Layout.FixedColumnWidth == nil || *fixed.Layout.FixedColumnWidth != 400 {
 		t.Fatalf("the fixed column width = %+v, want 400", fixed.Layout)
@@ -65,8 +69,8 @@ workspace "fixed" {
 		t.Errorf("the second workspace has gaps of its own: %+v", fixed.Layout.Gaps)
 	}
 	if fixed.Layout.PresetColumnWidths != nil || fixed.Layout.PresetWindowHeights != nil ||
-		fixed.Layout.DefaultColumnDisplay != nil {
-		t.Errorf("the second workspace overrides the presets or the display: %+v", fixed.Layout)
+		fixed.Layout.DefaultColumnDisplay != nil || fixed.Layout.CenterFocusedColumn != nil {
+		t.Errorf("the second workspace overrides the presets, the display or the centering policy: %+v", fixed.Layout)
 	}
 }
 
@@ -95,6 +99,7 @@ func TestWorkspaceLayoutRejectsBadValues(t *testing.T) {
 		`workspace "wide" { layout { preset-column-widths { fixed 0; } } }`,
 		`workspace "wide" { layout { preset-window-heights { proportion "lots"; } } }`,
 		`workspace "wide" { layout { default-column-display "weird"; } }`,
+		`workspace "wide" { layout { center-focused-column "sometimes"; } }`,
 	} {
 		if _, err := Parse("bad-layout.kdl", []byte(src)); err == nil {
 			t.Errorf("Parse(%q) error = nil, want a rejection", src)
@@ -137,9 +142,29 @@ func TestLayoutRejectsBadPresetValues(t *testing.T) {
 		`layout { preset-column-widths { weird 3; } }`,
 		`layout { preset-window-heights 3; }`,
 		`layout { default-column-display "centered"; }`,
+		`layout { center-focused-column "centered"; }`,
+		`layout { center-focused-column 3; }`,
 	} {
 		if _, err := Parse("bad-layout.kdl", []byte(src)); err == nil {
 			t.Errorf("Parse(%q) error = nil, want a rejection", src)
 		}
+	}
+}
+
+// The layout section takes the centering policy of the focused column.
+func TestCenterFocusedColumnIsParsed(t *testing.T) {
+	cfg, err := Parse("layout.kdl", []byte(`
+layout {
+    center-focused-column "on-overflow"
+}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Warnings) != 0 {
+		t.Fatalf("warnings = %q, want none", cfg.Warnings)
+	}
+	if cfg.Layout.CenterFocusedColumn != CenterFocusedColumnOnOverflow {
+		t.Errorf("the centering policy = %+v, want on-overflow", cfg.Layout.CenterFocusedColumn)
 	}
 }

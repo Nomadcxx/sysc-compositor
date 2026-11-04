@@ -108,6 +108,7 @@ type Layout struct {
 	PresetColumnWidths    []PresetSize
 	PresetWindowHeights   []PresetSize
 	DefaultColumnDisplay  ColumnDisplay
+	CenterFocusedColumn   CenterFocusedColumn
 	InsertHint            InsertHint
 	FocusRing             FocusRing
 	Shadow                Shadow
@@ -613,6 +614,12 @@ func (c *Config) layout(n *document.Node) error {
 				return fmt.Errorf("default-column-display: %w", err)
 			}
 			c.Layout.DefaultColumnDisplay = display
+		case "center-focused-column":
+			mode, err := centerFocusedColumnArg(child)
+			if err != nil {
+				return fmt.Errorf("center-focused-column: %w", err)
+			}
+			c.Layout.CenterFocusedColumn = mode
 		case "insert-hint":
 			if err := c.insertHint(child); err != nil {
 				return fmt.Errorf("insert-hint: %w", err)
