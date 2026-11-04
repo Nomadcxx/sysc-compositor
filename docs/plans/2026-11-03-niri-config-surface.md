@@ -252,6 +252,61 @@ as fixed values today), `center-focused-column`, `struts`, and the appearance
 keys of the layout part, which belong to slice 5. `scroll-factor` per window
 is still open.
 
+#### Slice 4b — the preset sizes, the column display, the centering, the struts and the scroll factor (landed)
+
+**Landed on 2026-11-04** (commits `f471fc7`, `a78b4c2`, `069a2fc`, `4e757a7`,
+draft PR #94). This closes everything slice 4 listed as still open except the
+appearance keys, which remain slice 5's.
+
+- `preset-column-widths`, `preset-window-heights` and `default-column-display`
+  (`f471fc7`) parse in the `layout` section and in a workspace's `layout` part.
+  A nil preset list keeps the config's list and an empty one resets to Niri's
+  default thirds, per workspace over config-wide; the same for the display.
+  Preset cycles mix `fixed` and `proportion` entries: each preset resolves to
+  pixels before the cycle compares it with the current size. A column a
+  workspace creates fresh starts in that workspace's default display; columns
+  that move whole keep their own.
+- `center-focused-column` (`a78b4c2`) parses in both places. `never` keeps the
+  scroll-into-view, `always` centers the focused column on every reveal, and
+  `on-overflow` centers it only when the focused column and the one focused
+  before it do not fit on screen together — Niri's rule. Focus changes carry
+  the previous column into the reveal; window adds, moves and geometry changes
+  keep the fit behavior, matching the places in Niri that pass no previous
+  column.
+- `struts` (`069a2fc`) parse in both places as a block with `left`, `right`,
+  `top` and `bottom`, each from -65535 to 65535; a negative edge widens the
+  area past the output. `layout.Struts.Inset` cuts the strip's bounds inside
+  the usable area — the area layer-shell exclusive zones already left — and
+  the model re-applies it when the config-wide value changes or a workspace's
+  override is merged. A workspace without a `struts` block keeps the config's;
+  one with a block replaces the whole struct, as Niri's `merge_clone` does.
+  `MoveWorkspaceToOutput` now routes through `applyWorkspaceLayout`, so a
+  workspace that moves to another output gets its gaps, its column width and
+  its struts there too — slice 4a's overrides now also apply on output moves.
+  The same commit closes the ordering gap the handover named: a workspace
+  created after the config was read — a hotplug, a new workspace — starts from
+  the config-wide preset sizes, display, centering and struts, not from the
+  layout's own defaults.
+- `scroll-factor` (`4e757a7`) parses as a window rule, greater than zero and
+  at most 100 like Niri's `FloatOrInt<0,100>`. The resolved factor rides on
+  the window's appearance record, re-resolved on reconfigure, and the pointer
+  axis handler multiplies the continuous and the discrete delta by the focused
+  window's factor before they reach the client. Scroll binds and the overview
+  gesture see the device's own delta, as in Niri.
+
+**Where sysc differs from Niri:** the column width in pixels that an output
+computes when the config gives a proportion uses the config-wide struts; a
+workspace that overrides the struts keeps that width, the same pixels-over-
+share gap slice 4a records for the gaps. Niri also multiplies a per-device
+scroll factor from `input.mouse` and `input.touchpad`; sysc scales only the
+per-window factor. The discrete delta rounds toward zero after scaling, a
+detail Niri's fixed-point path hides. Struts cut the strip's bounds; a
+fullscreen window and the overview keep the full usable area, as in Niri.
+
+**Still open in slice 4:** the appearance keys of the layout part — `border`,
+`tab-indicator`, `focus-ring`, `shadow`, `background-color` — which belong to
+slice 5, and `always-center-single-column`, which still warns.
+
 ### Slice 5 — the appearance properties
 
 `opacity`, `border`, `focus-ring`, `shadow`, `tab-indicator`,
@@ -296,11 +351,28 @@ rejected with a clear message rather than accepted and ignored.
   `TestSetFloatingPositionKeepsThePositionForALaterFloat`. Slice 4a added
   `internal/wm/workspace_layout_test.go` with
   `TestWorkspaceLayoutOverridesTheOutputLayout` and
-  `TestWorkspaceLayoutFixedColumnWidth`.
+  `TestWorkspaceLayoutFixedColumnWidth`. Slice 4b added
+  `TestSwitchPresetColumnWidthMixesFixedAndProportionalPresets`,
+  `TestSwitchPresetWindowHeightMixesFixedAndProportionalPresets`,
+  `TestNewColumnsUseTheDefaultColumnDisplay`,
+  `TestCenterFocusedColumnAlwaysCentersTheFocusedColumn`,
+  `TestCenterFocusedColumnOnOverflowCentersWhenTheColumnsOverflow`,
+  `TestCenterFocusedColumnOnOverflowFitsWhenTheColumnsFit`,
+  `TestStrutsInset`, `TestWorkspacePresetsFollowTheConfig`,
+  `TestWorkspaceDefaultColumnDisplayFollowsTheConfig`,
+  `TestWorkspaceCenterFocusedColumnFollowsTheConfig`,
+  `TestWorkspaceStrutsFollowsTheConfig` and
+  `TestConfigWideLayoutReachesLaterWorkspaces`, the last one pinning the
+  ordering gap the 2026-11-04 handover named.
 - `internal/config`: slice 4a added `internal/config/workspace_layout_test.go`
   with `TestWorkspaceLayoutIsParsed`,
   `TestWorkspaceLayoutWarnsForTheKeysTheCompositorCannotApply` and
-  `TestWorkspaceLayoutRejectsBadValues`.
+  `TestWorkspaceLayoutRejectsBadValues`. Slice 4b added
+  `TestLayoutPresetsAreParsed`, `TestLayoutRejectsBadPresetValues`,
+  `TestCenterFocusedColumnIsParsed` and `TestStrutsAreParsed`, re-targeted the
+  warning test at `always-center-single-column`, and taught
+  `TestNiriWindowRuleOpenKeysAreParsedAndResolved` and its reject twin the
+  `scroll-factor` key.
 - `internal/wlr`: one test per key that the compositor applies it, next to the
   existing rule tests. These need a compositor, so they run in CI lane 2
   under vkms, not locally. Slice 1 added `internal/wlr/window_rules_test.go`
@@ -316,9 +388,17 @@ rejected with a clear message rather than accepted and ignored.
   `TestWindowRuleIsActiveAppliesToTheActiveWindow` and
   `TestWindowRuleIsWindowCastTargetIsNeverTrue`. Slice 4a added
   `internal/wlr/workspace_layout_test.go` with
-  `TestWorkspaceLayoutOverridesTheOutputLayout`.
+  `TestWorkspaceLayoutOverridesTheOutputLayout`. Slice 4b added
+  `TestWorkspacePresetsReachTheLayout`,
+  `TestCenterFocusedColumnReachesTheLayout` and
+  `TestWorkspaceStrutsReachTheLayout`. The scroll factor multiplies the axis
+  delta before it reaches `wlr_seat_pointer_notify_axis`; no vkms test drives
+  a synthetic axis event, so that path rests on the config parse tests and
+  code reading for now.
 - `internal/server`: the config has to carry the layout of a workspace into the
-  model options. Slice 4a added `TestWorkspaceLayoutReachesTheModelOptions`.
+  model options. Slice 4a added `TestWorkspaceLayoutReachesTheModelOptions`;
+  slice 4b extended it with the presets, the column display, the centering
+  and the struts.
 - `internal/cli`: `validate` on a config that uses the new keys must print no
   warning. Slice 1 covered this in the config test instead: a config that
   uses the new keys parses without a warning.
