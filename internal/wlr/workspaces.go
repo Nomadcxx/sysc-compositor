@@ -56,7 +56,12 @@ func (c *Compositor) syncWorkspaceOutput(output unsafe.Pointer) {
 		usable = rect{int(full.x), int(full.y), int(full.width), int(full.height)}
 	}
 	bounds := layout.Bounds{X: usable.x, Y: usable.y, Width: usable.w, Height: usable.h}
-	width := c.defaultColumnWidth(bounds.Width)
+	// Niri derives the default column width from the working area, so the
+	// config-wide struts come off the width first. A workspace that overrides
+	// the struts still starts from this output-derived default; the gap with
+	// Niri is recorded in the plan doc.
+	strutted := c.layoutOptions.Struts.Inset(bounds)
+	width := c.defaultColumnWidth(strutted.Width)
 	added := false
 	if !c.hasWorkspaceOutput(name) {
 		added = c.model.AddOutput(name, bounds, width, c.layoutOptions.Gaps)

@@ -407,6 +407,7 @@ type LayoutOptions struct {
 	PresetWindowHeights   []layout.PresetSize
 	DefaultColumnDisplay  layout.ColumnDisplay
 	CenterFocusedColumn   layout.CenterFocusedColumn
+	Struts                layout.Struts
 	InsertHint            config.InsertHint
 	FocusRing             config.FocusRing
 	Shadow                config.Shadow
@@ -457,6 +458,7 @@ func NewWith(opts Options) (*Compositor, error) {
 	c.model.SetPresetSizes(opts.Layout.PresetColumnWidths, opts.Layout.PresetWindowHeights)
 	c.model.SetDefaultColumnDisplay(opts.Layout.DefaultColumnDisplay)
 	c.model.SetCenterFocusedColumn(opts.Layout.CenterFocusedColumn)
+	c.model.SetStruts(opts.Layout.Struts)
 	c.cursorTheme, c.cursorSize = opts.CursorTheme, opts.CursorSize
 	c.keyboardConfig = opts.Keyboard
 	c.atStartup = true
@@ -730,6 +732,7 @@ func (c *Compositor) Reconfigure(opts Options) error {
 	c.model.SetPresetSizes(opts.Layout.PresetColumnWidths, opts.Layout.PresetWindowHeights)
 	c.model.SetDefaultColumnDisplay(opts.Layout.DefaultColumnDisplay)
 	c.model.SetCenterFocusedColumn(opts.Layout.CenterFocusedColumn)
+	c.model.SetStruts(opts.Layout.Struts)
 	c.overviewConfig = opts.Overview
 	c.setTabletConfig(opts.Tablet)
 	c.setPointerConfig(opts.Pointers)

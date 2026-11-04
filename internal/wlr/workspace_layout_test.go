@@ -118,3 +118,38 @@ func TestCenterFocusedColumnReachesTheLayout(t *testing.T) {
 	}
 	runClient(t, c, []string{"weston-terminal"}, nil, nil)
 }
+
+// TestWorkspaceStrutsReachTheLayout: the struts the config reserves shrink
+// the layout area of the workspaces on the output. The mapped column sits
+// behind the reserved edge, computed from the layout box so the assertion
+// does not depend on the nested output size.
+func TestWorkspaceStrutsReachTheLayout(t *testing.T) {
+	c := newNested(t)
+	if err := c.Reconfigure(Options{
+		Animations: config.Animations{Off: true},
+		Layout: &LayoutOptions{
+			Gaps: 16, FixedColumnWidth: 300,
+			Struts: layout.Struts{Left: 100},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	c.viewMapped = func(view *toplevelView) {
+		window, ok := findWindowSnapshot(c.WorkspaceSnapshot().Windows, view.id)
+		if !ok {
+			t.Errorf("mapped window %d missing from the workspace snapshot", view.id)
+			c.Terminate()
+			return
+		}
+		bounds := c.layoutBox()
+		// A lone 300-wide column in the strutted area still gets the fit
+		// padding, capped at the gaps: min(16, (w-100-300)/2).
+		pad := min(16, (bounds.w-400)/2)
+		want := bounds.x + 100 + pad
+		if window.Tile.X != want {
+			t.Errorf("the tile X = %d, want %d: the column behind the reserved edge in %+v", window.Tile.X, want, bounds)
+		}
+		c.Terminate()
+	}
+	runClient(t, c, []string{"weston-terminal"}, nil, nil)
+}

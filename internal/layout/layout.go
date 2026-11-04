@@ -8,6 +8,30 @@ type Bounds struct {
 	X, Y, Width, Height int
 }
 
+// Struts are reserved edges of the layout area, Niri's layout.struts. They
+// shrink the area on top of what layer-shell exclusive zones already took
+// from the output; negative values open it back up.
+type Struts struct {
+	Left, Right, Top, Bottom int
+}
+
+// Inset returns bounds with the struts removed from each edge. The remaining
+// width and height are clamped to zero.
+func (s Struts) Inset(bounds Bounds) Bounds {
+	inset := bounds
+	inset.X += s.Left
+	inset.Y += s.Top
+	inset.Width -= s.Left + s.Right
+	if inset.Width < 0 {
+		inset.Width = 0
+	}
+	inset.Height -= s.Top + s.Bottom
+	if inset.Height < 0 {
+		inset.Height = 0
+	}
+	return inset
+}
+
 type PositionChangeKind string
 
 const (

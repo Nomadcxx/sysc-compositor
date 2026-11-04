@@ -197,6 +197,7 @@ func TestWorkspaceLayoutReachesTheModelOptions(t *testing.T) {
 			PresetWindowHeights:  []config.PresetSize{{Fixed: true, Value: 700}},
 			DefaultColumnDisplay: config.ColumnDisplayTabbed,
 			CenterFocusedColumn:  config.CenterFocusedColumnOnOverflow,
+			Struts:               config.Struts{Left: 10, Right: 10, Bottom: 32},
 		},
 		Workspaces: []config.WorkspaceConfig{{
 			Name: "wide",
@@ -205,6 +206,7 @@ func TestWorkspaceLayoutReachesTheModelOptions(t *testing.T) {
 				PresetColumnWidths:   []config.PresetSize{{Fixed: true, Value: 600}},
 				DefaultColumnDisplay: &display,
 				CenterFocusedColumn:  &centerNever,
+				Struts:               &config.Struts{Top: 44},
 			},
 		}},
 	}
@@ -221,6 +223,9 @@ func TestWorkspaceLayoutReachesTheModelOptions(t *testing.T) {
 	}
 	if options.Layout.CenterFocusedColumn != layout.CenterFocusedColumnOnOverflow {
 		t.Errorf("the centering policy = %v, want on-overflow", options.Layout.CenterFocusedColumn)
+	}
+	if options.Layout.Struts != (layout.Struts{Left: 10, Right: 10, Bottom: 32}) {
+		t.Errorf("the config struts = %+v, want left and right 10 and bottom 32", options.Layout.Struts)
 	}
 	if len(options.Workspaces) != 1 {
 		t.Fatalf("workspaces = %+v, want one", options.Workspaces)
@@ -247,6 +252,9 @@ func TestWorkspaceLayoutReachesTheModelOptions(t *testing.T) {
 	}
 	if workspace.Layout.CenterFocusedColumn == nil || *workspace.Layout.CenterFocusedColumn != layout.CenterFocusedColumnNever {
 		t.Errorf("the centering policy of the workspace = %+v, want its own never", workspace.Layout.CenterFocusedColumn)
+	}
+	if workspace.Layout.Struts == nil || *workspace.Layout.Struts != (layout.Struts{Top: 44}) {
+		t.Errorf("the struts of the workspace = %+v, want its own top 44", workspace.Layout.Struts)
 	}
 }
 

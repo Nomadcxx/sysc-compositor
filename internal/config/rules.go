@@ -28,6 +28,9 @@ type WorkspaceLayout struct {
 	DefaultColumnDisplay *ColumnDisplay
 	// A nil mode keeps the output's policy.
 	CenterFocusedColumn *CenterFocusedColumn
+	// A nil strut set keeps the output's. When present it replaces the
+	// whole set, Niri's merge_clone of the struct, not one edge at a time.
+	Struts *Struts
 }
 
 type PresetSize struct {
@@ -446,6 +449,12 @@ func (c *Config) workspaceLayout(node *document.Node) (*WorkspaceLayout, error) 
 				return nil, fmt.Errorf("center-focused-column: %w", err)
 			}
 			layout.CenterFocusedColumn = &mode
+		case "struts":
+			struts, err := strutsBlock(child)
+			if err != nil {
+				return nil, err
+			}
+			layout.Struts = &struts
 		default:
 			c.addWarning("workspace.layout." + nodeName(child))
 		}

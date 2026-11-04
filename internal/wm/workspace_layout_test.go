@@ -208,3 +208,83 @@ func TestWorkspaceCenterFocusedColumnFollowsTheConfig(t *testing.T) {
 		t.Errorf("the X of the named workspace = %d, want 16 (its own never)", got)
 	}
 }
+
+// TestWorkspaceStrutsFollowsTheConfig: the config-wide struts shrink the
+// layout area of every workspace, and a workspace of its own keeps its own
+// set. The strip only: the tile is placed inside the strutted area.
+func TestWorkspaceStrutsFollowsTheConfig(t *testing.T) {
+	wideStruts := layout.Struts{Left: 200}
+	m := New(WorkspaceConfig{
+		Name:   "wide",
+		Layout: &WorkspaceLayout{Struts: &wideStruts},
+	})
+	m.AddOutput("eDP-1", layout.Bounds{Width: 1000, Height: 800}, 500, 16)
+	m.SetStruts(layout.Struts{Left: 100})
+
+	wide, foundWide := m.WorkspaceIDByName("wide")
+	var plain uint64
+	foundPlain := false
+	for _, workspace := range m.Snapshot().Workspaces {
+		if workspace.Name == nil {
+			plain, foundPlain = workspace.ID, true
+		}
+	}
+	if !foundWide || !foundPlain {
+		t.Fatalf("workspaces found = %t %t, want the two", foundWide, foundPlain)
+	}
+	if !m.MapWindowToWorkspace(1, wide) || !m.MapWindowToWorkspace(2, plain) {
+		t.Fatal("MapWindowToWorkspace() = false, want true")
+	}
+
+	// A lone column of 500 in the strutted area still gets the fit padding
+	// of 16, so the tile starts at the inset edge plus that padding.
+	xs := map[uint64]int{}
+	widths := map[uint64]int{}
+	for _, window := range m.Snapshot().Windows {
+		xs[window.WorkspaceID] = window.Tile.X
+		widths[window.WorkspaceID] = window.Tile.Width
+	}
+	if got := xs[plain]; got != 116 {
+		t.Errorf("the X of the plain workspace = %d, want 116 (strut 100 + padding 16)", got)
+	}
+	if got := xs[wide]; got != 216 {
+		t.Errorf("the X of the named workspace = %d, want 216 (its strut 200 + padding 16)", got)
+	}
+	if got := widths[plain]; got != 500 {
+		t.Errorf("the column width of the plain workspace = %d, want the output's 500", got)
+	}
+}
+
+// TestConfigWideLayoutReachesLaterWorkspaces: the config-wide setters may
+// run before an output exists, so a workspace created afterwards must start
+// from the config's values, not from the layout's own defaults.
+func TestConfigWideLayoutReachesLaterWorkspaces(t *testing.T) {
+	m := New()
+	m.SetPresetSizes([]layout.PresetSize{{Fixed: true, Value: 300}}, nil)
+	m.SetDefaultColumnDisplay(layout.ColumnDisplayTabbed)
+	m.AddOutput("eDP-1", layout.Bounds{Width: 1000, Height: 800}, 500, 16)
+
+	var plain uint64
+	for _, workspace := range m.Snapshot().Workspaces {
+		if workspace.Name == nil {
+			plain = workspace.ID
+		}
+	}
+	if plain == 0 {
+		t.Fatalf("workspaces = %+v, want an unnamed workspace", m.Snapshot().Workspaces)
+	}
+	if !m.MapWindowToWorkspace(1, plain) {
+		t.Fatal("MapWindowToWorkspace() = false, want true")
+	}
+	m.FocusWorkspaceID(plain)
+	if !m.SwitchPresetColumnWidth(false) {
+		t.Fatal("SwitchPresetColumnWidth = false, want true")
+	}
+	window := m.Snapshot().Windows[0]
+	if got := window.Tile.Width; got != 300 {
+		t.Errorf("the preset width = %d, want the config's fixed 300", got)
+	}
+	if got := window.Tile.Display; got != layout.ColumnDisplayTabbed {
+		t.Errorf("the display = %v, want the config's tabbed", got)
+	}
+}
