@@ -1036,8 +1036,15 @@ func (c *Compositor) handleCursorAxis(data unsafe.Pointer) {
 			horizontal, float64(event.delta), int32(event.delta_discrete)) {
 		return
 	}
+	// Niri scales the scroll that reaches a window by that window's
+	// scroll-factor; the binds above still saw the device's own delta.
+	factor := 1.0
+	if view := c.focusedView; view != nil && view.appearance.ScrollFactor != nil {
+		factor = *view.appearance.ScrollFactor
+	}
 	C.wlr_seat_pointer_notify_axis(c.seat, event.time_msec,
-		event.orientation, event.delta, event.delta_discrete,
+		event.orientation, C.double(float64(event.delta)*factor),
+		C.int32_t(float64(event.delta_discrete)*factor),
 		event.source, event.relative_direction)
 }
 

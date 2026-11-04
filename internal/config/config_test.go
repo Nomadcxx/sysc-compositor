@@ -1343,6 +1343,7 @@ window-rule {
     max-height 900
     default-column-display "tabbed"
     default-floating-position x=100 y=50 relative-to="bottom-right"
+    scroll-factor 0.5
 }
 `))
 	if err != nil {
@@ -1374,6 +1375,9 @@ window-rule {
 	if position == nil || position.X != 100 || position.Y != 50 || position.RelativeTo != RelativeToBottomRight {
 		t.Errorf("default-floating-position = %+v, want x=100 y=50 relative to bottom-right", position)
 	}
+	if resolved.ScrollFactor == nil || *resolved.ScrollFactor != 0.5 {
+		t.Errorf("scroll-factor = %+v, want 0.5", resolved.ScrollFactor)
+	}
 	if other := cfg.ResolveWindowRules("other", "page", UnmappedWindowState(false)); other.OpenMaximized != nil {
 		t.Errorf("a window that does not match got rules = %+v", other)
 	}
@@ -1388,6 +1392,9 @@ func TestNiriWindowRuleOpenKeysRejectBadValues(t *testing.T) {
 		`window-rule { default-floating-position x="left"; }`:                "must be a number",
 		`window-rule { default-floating-position relative-to="middle"; }`:    "relative-to must be one of",
 		`window-rule { default-floating-position x=1 y=2 sideways="left"; }`: "unexpected default-floating-position property",
+		`window-rule { scroll-factor 200; }`:                                 "greater than 0",
+		`window-rule { scroll-factor 0; }`:                                   "greater than 0",
+		`window-rule { scroll-factor "fast"; }`:                              "number",
 	} {
 		if _, err := Parse("bad-open-rules.kdl", []byte(src)); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("Parse(%q) error = %v, want containing %q", src, err, want)
