@@ -100,6 +100,92 @@ func TestSwitchPresetColumnWidthCyclesThePresets(t *testing.T) {
 	}
 }
 
+func TestSwitchPresetColumnWidthMixesFixedAndProportionalPresets(t *testing.T) {
+	ws := NewWorkspace(Bounds{Width: 1000, Height: 800}, 500, 16)
+	ws.SetPresetSizes([]PresetSize{{Value: 0.25}, {Fixed: true, Value: 600}}, nil)
+	ws.AddWindow(1)
+
+	// The cycle mixes proportional and fixed sizes. From the default width
+	// the first switch picks the first larger preset, then it wraps.
+	for _, want := range []int{600, 230, 600} {
+		if !ws.SwitchPresetColumnWidth(false) {
+			t.Fatal("SwitchPresetColumnWidth = false, want true")
+		}
+		placement, ok := ws.Placement(1)
+		if !ok {
+			t.Fatal("Placement(1) missing")
+		}
+		if placement.Width != want {
+			t.Fatalf("preset column width = %d, want %d", placement.Width, want)
+		}
+	}
+	// Going backward steps back through the cycle.
+	if !ws.SwitchPresetColumnWidth(true) {
+		t.Fatal("SwitchPresetColumnWidth(back) = false, want true")
+	}
+	placement, _ := ws.Placement(1)
+	if placement.Width != 230 {
+		t.Errorf("preset column width after going back = %d, want 230", placement.Width)
+	}
+}
+
+func TestSwitchPresetWindowHeightMixesFixedAndProportionalPresets(t *testing.T) {
+	ws := NewWorkspace(Bounds{Width: 1000, Height: 800}, 500, 16)
+	ws.SetPresetSizes(nil, []PresetSize{{Value: 0.5}, {Fixed: true, Value: 700}})
+	ws.AddWindow(1)
+
+	for _, want := range []int{376, 700, 376} {
+		if !ws.SwitchPresetWindowHeight(1, false) {
+			t.Fatal("SwitchPresetWindowHeight = false, want true")
+		}
+		placement, ok := ws.Placement(1)
+		if !ok {
+			t.Fatal("Placement(1) missing")
+		}
+		if placement.Height != want {
+			t.Fatalf("preset window height = %d, want %d", placement.Height, want)
+		}
+	}
+}
+
+func TestNewColumnsUseTheDefaultColumnDisplay(t *testing.T) {
+	ws := NewWorkspace(Bounds{Width: 1200, Height: 800}, 400, 16)
+	ws.SetDefaultColumnDisplay(ColumnDisplayTabbed)
+	ws.AddWindow(1)
+	placement, ok := ws.Placement(1)
+	if !ok {
+		t.Fatal("Placement(1) missing")
+	}
+	if placement.Display != ColumnDisplayTabbed {
+		t.Errorf("the display of a new column = %v, want tabbed", placement.Display)
+	}
+
+	// A window that un-floats lands in a column of the default display too.
+	ws.AddWindow(2)
+	if !ws.SetWindowFloating(2, true, Bounds{X: 10, Y: 10, Width: 300, Height: 200}) {
+		t.Fatal("SetWindowFloating(2, true) = false, want true")
+	}
+	if !ws.SetWindowFloating(2, false, Bounds{}) {
+		t.Fatal("SetWindowFloating(2, false) = false, want true")
+	}
+	placement, _ = ws.Placement(2)
+	if placement.Display != ColumnDisplayTabbed {
+		t.Errorf("the display of the un-floated window's column = %v, want tabbed", placement.Display)
+	}
+
+	// A window that moves to another workspace lands in a column of that
+	// workspace's default display, not the source's.
+	target := NewWorkspace(Bounds{Width: 1200, Height: 800}, 400, 16)
+	ws.AddWindow(3)
+	if !ws.MoveWindowTo(target, 3) {
+		t.Fatal("MoveWindowTo() = false, want true")
+	}
+	placement, _ = target.Placement(3)
+	if placement.Display != ColumnDisplayNormal {
+		t.Errorf("the display of the moved window's column = %v, want the target's normal", placement.Display)
+	}
+}
+
 func TestToggleMaximizeColumnFillsTheWidthAndRestoresIt(t *testing.T) {
 	ws := NewWorkspace(Bounds{Width: 1200, Height: 800}, 400, 16)
 	ws.AddWindow(1)

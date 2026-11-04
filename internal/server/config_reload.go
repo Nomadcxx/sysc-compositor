@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/Nomadcxx/sysc-compositor/internal/config"
+	"github.com/Nomadcxx/sysc-compositor/internal/layout"
 	"github.com/Nomadcxx/sysc-compositor/internal/wlr"
 	"github.com/Nomadcxx/sysc-compositor/internal/wm"
 )
@@ -39,8 +40,12 @@ func compositorOptions(cfg *config.Config, locale *config.Keyboard) wlr.Options 
 		ModKey: cfg.Input.ModKey, ModKeyNested: cfg.Input.ModKeyNested,
 		Layout: &wlr.LayoutOptions{
 			Gaps: cfg.Layout.Gaps, ColumnWidthProportion: cfg.Layout.ColumnWidthProportion,
-			FixedColumnWidth: cfg.Layout.FixedColumnWidth, InsertHint: cfg.Layout.InsertHint,
-			FocusRing: cfg.Layout.FocusRing, Shadow: cfg.Layout.Shadow,
+			FixedColumnWidth:     cfg.Layout.FixedColumnWidth,
+			PresetColumnWidths:   presetSizes(cfg.Layout.PresetColumnWidths),
+			PresetWindowHeights:  presetSizes(cfg.Layout.PresetWindowHeights),
+			DefaultColumnDisplay: columnDisplay(cfg.Layout.DefaultColumnDisplay),
+			InsertHint:           cfg.Layout.InsertHint,
+			FocusRing:            cfg.Layout.FocusRing, Shadow: cfg.Layout.Shadow,
 		},
 		CursorTheme: cfg.Cursor.Theme, CursorSize: cfg.Cursor.Size, Binds: cfg.Binds,
 		Overview: cfg.Overview, Gestures: cfg.Gestures, Animations: cfg.Animations, Blur: cfg.Blur,
@@ -61,8 +66,42 @@ func workspaceLayout(layout *config.WorkspaceLayout) *wm.WorkspaceLayout {
 	}
 	return &wm.WorkspaceLayout{
 		Gaps: layout.Gaps, ColumnWidthProportion: layout.ColumnWidthProportion,
-		FixedColumnWidth: layout.FixedColumnWidth,
+		FixedColumnWidth:     layout.FixedColumnWidth,
+		PresetColumnWidths:   presetSizes(layout.PresetColumnWidths),
+		PresetWindowHeights:  presetSizes(layout.PresetWindowHeights),
+		DefaultColumnDisplay: columnDisplayPtr(layout.DefaultColumnDisplay),
 	}
+}
+
+// presetSizes converts config preset sizes for the layout. A nil list stays
+// nil so the model knows the workspace keeps the config's list.
+func presetSizes(presets []config.PresetSize) []layout.PresetSize {
+	if presets == nil {
+		return nil
+	}
+	sizes := make([]layout.PresetSize, 0, len(presets))
+	for _, preset := range presets {
+		sizes = append(sizes, layout.PresetSize{Fixed: preset.Fixed, Value: preset.Value})
+	}
+	return sizes
+}
+
+// columnDisplay converts a config column display mode for the layout.
+func columnDisplay(display config.ColumnDisplay) layout.ColumnDisplay {
+	if display == config.ColumnDisplayTabbed {
+		return layout.ColumnDisplayTabbed
+	}
+	return layout.ColumnDisplayNormal
+}
+
+// columnDisplayPtr converts an optional config column display mode for the
+// layout, keeping nil for a workspace that keeps the config's mode.
+func columnDisplayPtr(display *config.ColumnDisplay) *layout.ColumnDisplay {
+	if display == nil {
+		return nil
+	}
+	value := columnDisplay(*display)
+	return &value
 }
 
 func keyboardWithLocale(configured, locale config.Keyboard) config.Keyboard {

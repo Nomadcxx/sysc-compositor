@@ -21,6 +21,11 @@ type WorkspaceLayout struct {
 	Gaps                  *int
 	ColumnWidthProportion *float64
 	FixedColumnWidth      *int
+	// A nil preset list keeps the output's list, an empty one resets to
+	// Niri's default presets.
+	PresetColumnWidths   []PresetSize
+	PresetWindowHeights  []PresetSize
+	DefaultColumnDisplay *ColumnDisplay
 }
 
 type PresetSize struct {
@@ -406,6 +411,24 @@ func (c *Config) workspaceLayout(node *document.Node) (*WorkspaceLayout, error) 
 					layout.ColumnWidthProportion = nil
 				}
 			}
+		case "preset-column-widths":
+			presets, err := presetSizeList(child)
+			if err != nil {
+				return nil, fmt.Errorf("preset-column-widths: %w", err)
+			}
+			layout.PresetColumnWidths = presets
+		case "preset-window-heights":
+			presets, err := presetSizeList(child)
+			if err != nil {
+				return nil, fmt.Errorf("preset-window-heights: %w", err)
+			}
+			layout.PresetWindowHeights = presets
+		case "default-column-display":
+			display, err := columnDisplayArg(child)
+			if err != nil {
+				return nil, fmt.Errorf("default-column-display: %w", err)
+			}
+			layout.DefaultColumnDisplay = &display
 		default:
 			c.addWarning("workspace.layout." + nodeName(child))
 		}
@@ -708,6 +731,48 @@ func parseLayerMatch(node *document.Node) (LayerMatch, error) {
 		}
 	}
 	return match, nil
+}
+
+// presetSizeList parses a cycle of preset sizes: fixed pixel sizes and
+// proportional shares of the working size. An empty list is valid and means
+// Niri's default presets.
+func presetSizeList(node *document.Node) ([]PresetSize, error) {
+	if len(node.Arguments) != 0 || len(node.Properties) != 0 {
+		return nil, fmt.Errorf("takes only fixed and proportion children")
+	}
+	presets := make([]PresetSize, 0, len(node.Children))
+	for _, child := range node.Children {
+		switch nodeName(child) {
+		case "fixed":
+			value, err := intArg(child, 1, 1<<31-1)
+			if err != nil {
+				return nil, err
+			}
+			presets = append(presets, PresetSize{Fixed: true, Value: float64(value)})
+		case "proportion":
+			value, err := proportionArg(child)
+			if err != nil {
+				return nil, err
+			}
+			presets = append(presets, PresetSize{Value: value})
+		default:
+			return nil, fmt.Errorf("expected fixed or proportion, got `%s`", nodeName(child))
+		}
+	}
+	return presets, nil
+}
+
+// columnDisplayArg reads a column display mode: normal or tabbed.
+func columnDisplayArg(node *document.Node) (ColumnDisplay, error) {
+	value, err := stringArgs(node, 1, 1)
+	if err != nil {
+		return "", err
+	}
+	display := ColumnDisplay(value[0])
+	if display != ColumnDisplayNormal && display != ColumnDisplayTabbed {
+		return "", fmt.Errorf("expected normal or tabbed")
+	}
+	return display, nil
 }
 
 func parsePresetSize(node *document.Node) (PresetSize, error) {

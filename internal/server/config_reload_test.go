@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Nomadcxx/sysc-compositor/internal/config"
+	"github.com/Nomadcxx/sysc-compositor/internal/layout"
 )
 
 func TestFailedConfigReloadPreservesActiveConfig(t *testing.T) {
@@ -188,15 +189,33 @@ func TestReportConfigGapsNamesUnappliedActions(t *testing.T) {
 func TestWorkspaceLayoutReachesTheModelOptions(t *testing.T) {
 	gaps := 8
 	proportion := 0.75
+	display := config.ColumnDisplayNormal
 	cfg := &config.Config{
+		Layout: config.Layout{
+			PresetColumnWidths:   []config.PresetSize{{Value: 0.25}},
+			PresetWindowHeights:  []config.PresetSize{{Fixed: true, Value: 700}},
+			DefaultColumnDisplay: config.ColumnDisplayTabbed,
+		},
 		Workspaces: []config.WorkspaceConfig{{
 			Name: "wide",
 			Layout: &config.WorkspaceLayout{
 				Gaps: &gaps, ColumnWidthProportion: &proportion,
+				PresetColumnWidths:   []config.PresetSize{{Fixed: true, Value: 600}},
+				DefaultColumnDisplay: &display,
 			},
 		}},
 	}
 	options := compositorOptions(cfg, nil)
+	if len(options.Layout.PresetColumnWidths) != 1 || options.Layout.PresetColumnWidths[0] != (layout.PresetSize{Value: 0.25}) {
+		t.Errorf("the preset column widths = %+v, want 0.25", options.Layout.PresetColumnWidths)
+	}
+	if len(options.Layout.PresetWindowHeights) != 1 ||
+		options.Layout.PresetWindowHeights[0] != (layout.PresetSize{Fixed: true, Value: 700}) {
+		t.Errorf("the preset window heights = %+v, want fixed 700", options.Layout.PresetWindowHeights)
+	}
+	if options.Layout.DefaultColumnDisplay != layout.ColumnDisplayTabbed {
+		t.Errorf("the default column display = %v, want tabbed", options.Layout.DefaultColumnDisplay)
+	}
 	if len(options.Workspaces) != 1 {
 		t.Fatalf("workspaces = %+v, want one", options.Workspaces)
 	}
@@ -212,6 +231,13 @@ func TestWorkspaceLayoutReachesTheModelOptions(t *testing.T) {
 	}
 	if workspace.Layout.ColumnWidthProportion == nil || *workspace.Layout.ColumnWidthProportion != 0.75 {
 		t.Errorf("the column width proportion = %+v, want 0.75", workspace.Layout.ColumnWidthProportion)
+	}
+	if len(workspace.Layout.PresetColumnWidths) != 1 ||
+		workspace.Layout.PresetColumnWidths[0] != (layout.PresetSize{Fixed: true, Value: 600}) {
+		t.Errorf("the preset column widths of the workspace = %+v, want fixed 600", workspace.Layout.PresetColumnWidths)
+	}
+	if workspace.Layout.DefaultColumnDisplay == nil || *workspace.Layout.DefaultColumnDisplay != layout.ColumnDisplayNormal {
+		t.Errorf("the default column display of the workspace = %+v, want normal", workspace.Layout.DefaultColumnDisplay)
 	}
 }
 
