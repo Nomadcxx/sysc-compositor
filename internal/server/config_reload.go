@@ -45,6 +45,7 @@ func compositorOptions(cfg *config.Config, locale *config.Keyboard) wlr.Options 
 			PresetWindowHeights:  presetSizes(cfg.Layout.PresetWindowHeights),
 			DefaultColumnDisplay: columnDisplay(cfg.Layout.DefaultColumnDisplay),
 			CenterFocusedColumn:  centerFocusedColumn(cfg.Layout.CenterFocusedColumn),
+			Struts:               struts(cfg.Layout.Struts),
 			InsertHint:           cfg.Layout.InsertHint,
 			FocusRing:            cfg.Layout.FocusRing, Shadow: cfg.Layout.Shadow,
 		},
@@ -72,6 +73,7 @@ func workspaceLayout(layout *config.WorkspaceLayout) *wm.WorkspaceLayout {
 		PresetWindowHeights:  presetSizes(layout.PresetWindowHeights),
 		DefaultColumnDisplay: columnDisplayPtr(layout.DefaultColumnDisplay),
 		CenterFocusedColumn:  centerFocusedColumnPtr(layout.CenterFocusedColumn),
+		Struts:               strutsPtr(layout.Struts),
 	}
 }
 
@@ -124,6 +126,26 @@ func centerFocusedColumnPtr(mode *config.CenterFocusedColumn) *layout.CenterFocu
 		return nil
 	}
 	value := centerFocusedColumn(*mode)
+	return &value
+}
+
+// struts converts the config's reserved layout edges for the layout.
+func struts(s config.Struts) layout.Struts {
+	return layout.Struts{
+		Left:   s.Left,
+		Right:  s.Right,
+		Top:    s.Top,
+		Bottom: s.Bottom,
+	}
+}
+
+// strutsPtr converts optional config struts for the layout, keeping nil for a
+// workspace that keeps the config's struts.
+func strutsPtr(s *config.Struts) *layout.Struts {
+	if s == nil {
+		return nil
+	}
+	value := struts(*s)
 	return &value
 }
 

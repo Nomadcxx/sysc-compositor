@@ -33,6 +33,9 @@ type WorkspaceLayout struct {
 	DefaultColumnDisplay *layout.ColumnDisplay
 	// A nil mode keeps the config's policy.
 	CenterFocusedColumn *layout.CenterFocusedColumn
+	// A nil strut set keeps the config's. When present it replaces the
+	// whole set, Niri's merge_clone, not one edge at a time.
+	Struts *layout.Struts
 }
 
 type outputState struct {
@@ -91,6 +94,9 @@ type Model struct {
 	presetWindowHeights []layout.PresetSize
 	defaultDisplay      layout.ColumnDisplay
 	centerFocusedColumn layout.CenterFocusedColumn
+	// struts is the config-wide layout.struts; the zero value reserves
+	// nothing and leaves each workspace on its output's full area.
+	struts layout.Struts
 }
 
 // WorkspaceSnapshot is the immutable Niri-facing state for one workspace.
@@ -253,9 +259,18 @@ func (m *Model) workspaceGeometry(out *outputState, workspace *workspaceState) (
 	case override.FixedColumnWidth != nil:
 		width = *override.FixedColumnWidth
 	case override.ColumnWidthProportion != nil:
-		width = layout.ColumnWidthPixels(out.bounds.Width, gap, *override.ColumnWidthProportion)
+		// Niri computes the proportion on the working area, so the
+		// workspace's struts are already removed from the width.
+		width = layout.ColumnWidthPixels(m.workspaceBounds(out, workspace).Width, gap, *override.ColumnWidthProportion)
 	}
 	return width, gap
+}
+
+// workspaceBounds returns the layout area of a workspace: its output's full
+// area minus the struts it keeps. Only the strip lays out inside this area;
+// fullscreen windows and the overview still use the whole output.
+func (m *Model) workspaceBounds(out *outputState, workspace *workspaceState) layout.Bounds {
+	return m.strutsFor(workspace).Inset(out.bounds)
 }
 
 // applyWorkspaceLayout pushes the merged layout of a workspace into its strip:
@@ -263,7 +278,7 @@ func (m *Model) workspaceGeometry(out *outputState, workspace *workspaceState) (
 // default column display and the centering policy.
 func (m *Model) applyWorkspaceLayout(out *outputState, workspace *workspaceState) {
 	width, gap := m.workspaceGeometry(out, workspace)
-	workspace.strip.SetGeometry(out.bounds, width, gap)
+	workspace.strip.SetGeometry(m.workspaceBounds(out, workspace), width, gap)
 	widths, heights := m.presetSizes(workspace)
 	workspace.strip.SetPresetSizes(widths, heights)
 	workspace.strip.SetDefaultColumnDisplay(m.columnDisplay(workspace))
@@ -303,6 +318,15 @@ func (m *Model) centerFocusedColumnFor(workspace *workspaceState) layout.CenterF
 	return m.centerFocusedColumn
 }
 
+// strutsFor returns the struts a workspace lays out inside: its own when it
+// sets them, otherwise the config-wide ones.
+func (m *Model) strutsFor(workspace *workspaceState) layout.Struts {
+	if override := m.workspaceLayout(workspace); override != nil && override.Struts != nil {
+		return *override.Struts
+	}
+	return m.struts
+}
+
 // SetPresetSizes sets the preset sizes the workspaces without their own lists
 // cycle through.
 func (m *Model) SetPresetSizes(columnWidths, windowHeights []layout.PresetSize) {
@@ -331,6 +355,16 @@ func (m *Model) SetCenterFocusedColumn(mode layout.CenterFocusedColumn) {
 		return
 	}
 	m.centerFocusedColumn = mode
+	m.reapplyWorkspaceLayout()
+}
+
+// SetStruts sets the reserved edges of the layout area for the workspaces
+// that do not set their own struts.
+func (m *Model) SetStruts(struts layout.Struts) {
+	if m.struts == struts {
+		return
+	}
+	m.struts = struts
 	m.reapplyWorkspaceLayout()
 }
 
@@ -412,7 +446,19 @@ func sameWorkspaceLayout(a, b *WorkspaceLayout) bool {
 	if !sameDisplayPtr(a.DefaultColumnDisplay, b.DefaultColumnDisplay) {
 		return false
 	}
+	if !sameStrutsPtr(a.Struts, b.Struts) {
+		return false
+	}
 	return sameCenterPtr(a.CenterFocusedColumn, b.CenterFocusedColumn)
+}
+
+// sameStrutsPtr compares two strut sets. A nil set keeps the config's struts,
+// so it differs from any set, even an all-zero one.
+func sameStrutsPtr(a, b *layout.Struts) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
 }
 
 func sameIntPtr(a, b *int) bool {
@@ -1348,7 +1394,10 @@ func (m *Model) MoveWorkspaceToOutput(id uint64, output string) bool {
 		return false
 	}
 	activate := source.name == m.focusedOutput && sourceIndex == source.active
-	workspace.strip.SetGeometry(target.bounds, target.columnWidth, target.gap)
+	// Route the move through the same merged layout a reconfigure uses, so a
+	// workspace that carries its own overrides keeps them on the new output
+	// instead of reverting to the target's raw defaults.
+	m.applyWorkspaceLayout(target, workspace)
 
 	source.workspaces = append(source.workspaces[:sourceIndex], source.workspaces[sourceIndex+1:]...)
 	if source.active > sourceIndex {
@@ -2037,10 +2086,16 @@ func equalName(a, b string) bool {
 func (m *Model) newWorkspace(out *outputState) *workspaceState {
 	id := m.nextWorkspaceID
 	m.nextWorkspaceID++
-	return &workspaceState{
+	workspace := &workspaceState{
 		id:    id,
 		strip: layout.NewWorkspace(out.bounds, out.columnWidth, out.gap),
 	}
+	// The config-wide layout may have been set before this output existed and
+	// a plain workspace never goes through SetWorkspaceConfig, so apply the
+	// merged layout now: for an unnamed workspace the merged values are
+	// exactly the config-wide ones.
+	m.applyWorkspaceLayout(out, workspace)
+	return workspace
 }
 
 func (m *Model) outputNames() []string {

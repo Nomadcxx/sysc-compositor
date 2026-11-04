@@ -78,15 +78,15 @@ func TestWorkspaceLayoutWarnsForTheKeysTheCompositorCannotApply(t *testing.T) {
 	cfg, err := Parse("workspaces.kdl", []byte(`
 workspace "wide" {
     layout {
-        struts { left 10; }
+        always-center-single-column
     }
 }
 `))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(cfg.Warnings, []string{"workspace.layout.struts"}) {
-		t.Fatalf("warnings = %q, want the struts key to be named", cfg.Warnings)
+	if !reflect.DeepEqual(cfg.Warnings, []string{"workspace.layout.always-center-single-column"}) {
+		t.Fatalf("warnings = %q, want the unapplied key to be named", cfg.Warnings)
 	}
 }
 
@@ -100,10 +100,45 @@ func TestWorkspaceLayoutRejectsBadValues(t *testing.T) {
 		`workspace "wide" { layout { preset-window-heights { proportion "lots"; } } }`,
 		`workspace "wide" { layout { default-column-display "weird"; } }`,
 		`workspace "wide" { layout { center-focused-column "sometimes"; } }`,
+		`workspace "wide" { layout { struts { left 70000; } } }`,
+		`workspace "wide" { layout { struts { right -70000; } } }`,
+		`workspace "wide" { layout { struts { west 3; } } }`,
+		`workspace "wide" { layout { struts { left "ten"; } } }`,
 	} {
 		if _, err := Parse("bad-layout.kdl", []byte(src)); err == nil {
 			t.Errorf("Parse(%q) error = nil, want a rejection", src)
 		}
+	}
+}
+
+// The layout section and a workspace both take a struts block, and the edges
+// accept Niri's range, negatives included.
+func TestStrutsAreParsed(t *testing.T) {
+	cfg, err := Parse("struts.kdl", []byte(`
+layout {
+    struts { left 10; right 10; top 0; bottom 0; }
+}
+workspace "wide" {
+    layout {
+        struts { left -20; bottom 5; }
+    }
+}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Warnings) != 0 {
+		t.Fatalf("warnings = %q, want none", cfg.Warnings)
+	}
+	if cfg.Layout.Struts != (Struts{Left: 10, Right: 10}) {
+		t.Errorf("the config struts = %+v, want left and right 10", cfg.Layout.Struts)
+	}
+	wide := cfg.Workspaces[0]
+	if wide.Layout == nil || wide.Layout.Struts == nil {
+		t.Fatalf("the workspace has no struts of its own: %+v", wide.Layout)
+	}
+	if *wide.Layout.Struts != (Struts{Left: -20, Bottom: 5}) {
+		t.Errorf("the workspace struts = %+v, want left -20 and bottom 5", *wide.Layout.Struts)
 	}
 }
 
@@ -144,6 +179,10 @@ func TestLayoutRejectsBadPresetValues(t *testing.T) {
 		`layout { default-column-display "centered"; }`,
 		`layout { center-focused-column "centered"; }`,
 		`layout { center-focused-column 3; }`,
+		`layout { struts { left 70000; } }`,
+		`layout { struts { top -70000; } }`,
+		`layout { struts { west 3; } }`,
+		`layout { struts "flat"; }`,
 	} {
 		if _, err := Parse("bad-layout.kdl", []byte(src)); err == nil {
 			t.Errorf("Parse(%q) error = nil, want a rejection", src)

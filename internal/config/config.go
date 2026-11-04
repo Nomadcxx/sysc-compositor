@@ -109,9 +109,17 @@ type Layout struct {
 	PresetWindowHeights   []PresetSize
 	DefaultColumnDisplay  ColumnDisplay
 	CenterFocusedColumn   CenterFocusedColumn
+	Struts                Struts
 	InsertHint            InsertHint
 	FocusRing             FocusRing
 	Shadow                Shadow
+}
+
+// Struts holds the reserved edges of the layout area, Niri's layout.struts.
+// Each edge accepts -65535 to 65535; a negative value opens the area back up
+// beyond the output edge.
+type Struts struct {
+	Left, Right, Top, Bottom int
 }
 
 type Color struct{ R, G, B, A float64 }
@@ -620,6 +628,12 @@ func (c *Config) layout(n *document.Node) error {
 				return fmt.Errorf("center-focused-column: %w", err)
 			}
 			c.Layout.CenterFocusedColumn = mode
+		case "struts":
+			struts, err := strutsBlock(child)
+			if err != nil {
+				return err
+			}
+			c.Layout.Struts = struts
 		case "insert-hint":
 			if err := c.insertHint(child); err != nil {
 				return fmt.Errorf("insert-hint: %w", err)
@@ -637,6 +651,35 @@ func (c *Config) layout(n *document.Node) error {
 		}
 	}
 	return nil
+}
+
+// strutsBlock parses one `struts { left 10; ... }` block. Each edge takes
+// Niri's range of -65535 to 65535; a negative value opens the area beyond
+// the output edge. An unknown edge is an error, matching Niri.
+func strutsBlock(n *document.Node) (Struts, error) {
+	var struts Struts
+	if len(n.Arguments) > 0 {
+		return Struts{}, fmt.Errorf("`struts` takes only the left, right, top and bottom children")
+	}
+	for _, edge := range n.Children {
+		value, err := intArg(edge, -65535, 65535)
+		if err != nil {
+			return Struts{}, fmt.Errorf("struts: %w", err)
+		}
+		switch nodeName(edge) {
+		case "left":
+			struts.Left = value
+		case "right":
+			struts.Right = value
+		case "top":
+			struts.Top = value
+		case "bottom":
+			struts.Bottom = value
+		default:
+			return Struts{}, fmt.Errorf("struts: unknown edge %q", nodeName(edge))
+		}
+	}
+	return struts, nil
 }
 
 func defaultAnimations() Animations {
