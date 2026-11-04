@@ -86,3 +86,35 @@ func TestWorkspacePresetsReachTheLayout(t *testing.T) {
 	}
 	runClient(t, c, []string{"weston-terminal"}, nil, nil)
 }
+
+// TestCenterFocusedColumnReachesTheLayout: the centering policy reaches the
+// layout through the compositor options. The mapped window's column ends up
+// in the middle of the working area, computed from the layout box so the
+// assertion does not depend on the nested output size.
+func TestCenterFocusedColumnReachesTheLayout(t *testing.T) {
+	c := newNested(t)
+	if err := c.Reconfigure(Options{
+		Animations: config.Animations{Off: true},
+		Layout: &LayoutOptions{
+			Gaps: 16, FixedColumnWidth: 300,
+			CenterFocusedColumn: layout.CenterFocusedColumnAlways,
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	c.viewMapped = func(view *toplevelView) {
+		window, ok := findWindowSnapshot(c.WorkspaceSnapshot().Windows, view.id)
+		if !ok {
+			t.Errorf("mapped window %d missing from the workspace snapshot", view.id)
+			c.Terminate()
+			return
+		}
+		bounds := c.layoutBox()
+		want := bounds.x + (bounds.w-300)/2
+		if window.Tile.X != want {
+			t.Errorf("the tile X = %d, want %d: the focused column centered in %+v", window.Tile.X, want, bounds)
+		}
+		c.Terminate()
+	}
+	runClient(t, c, []string{"weston-terminal"}, nil, nil)
+}

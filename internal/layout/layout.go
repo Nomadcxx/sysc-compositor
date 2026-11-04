@@ -78,6 +78,20 @@ const (
 	ColumnDisplayTabbed
 )
 
+// CenterFocusedColumn is when the view centers the focused column, Niri's
+// center-focused-column policy.
+type CenterFocusedColumn uint8
+
+const (
+	// CenterFocusedColumnNever only scrolls the focused column into view.
+	CenterFocusedColumnNever CenterFocusedColumn = iota
+	// CenterFocusedColumnAlways keeps the focused column centered.
+	CenterFocusedColumnAlways
+	// CenterFocusedColumnOnOverflow centers the focused column when it does
+	// not fit on screen together with the previously focused one.
+	CenterFocusedColumnOnOverflow
+)
+
 // Placement is a window's tile in the visible workspace view.
 type Placement struct {
 	ID                  uint64
@@ -386,6 +400,7 @@ type Workspace struct {
 	presetColumnWidths  []PresetSize
 	presetWindowHeights []PresetSize
 	defaultDisplay      ColumnDisplay
+	centerFocusedColumn CenterFocusedColumn
 }
 
 const directionalMovePixels = 50
@@ -394,6 +409,11 @@ const directionalMovePixels = 50
 // Columns that already exist keep their display.
 func (w *Workspace) SetDefaultColumnDisplay(display ColumnDisplay) {
 	w.defaultDisplay = display
+}
+
+// SetCenterFocusedColumn sets when the view centers the focused column.
+func (w *Workspace) SetCenterFocusedColumn(mode CenterFocusedColumn) {
+	w.centerFocusedColumn = mode
 }
 
 // NewWorkspace creates an empty workspace with fixed column width and gap.
@@ -747,8 +767,9 @@ func (w *Workspace) FocusLeft() bool {
 	if w.focused <= 0 {
 		return false
 	}
+	previous := w.focused
 	w.focused--
-	w.revealFocused()
+	w.revealFocusedFrom(previous)
 	return true
 }
 
@@ -757,8 +778,9 @@ func (w *Workspace) FocusRight() bool {
 	if w.focused < 0 || w.focused+1 >= len(w.columns) {
 		return false
 	}
+	previous := w.focused
 	w.focused++
-	w.revealFocused()
+	w.revealFocusedFrom(previous)
 	return true
 }
 
@@ -782,8 +804,9 @@ func (w *Workspace) FocusFirst() bool {
 	if w.focused <= 0 || len(w.columns) == 0 {
 		return false
 	}
+	previous := w.focused
 	w.focused = 0
-	w.revealFocused()
+	w.revealFocusedFrom(previous)
 	return true
 }
 
@@ -792,8 +815,9 @@ func (w *Workspace) FocusLast() bool {
 	if last < 0 || w.focused == last {
 		return false
 	}
+	previous := w.focused
 	w.focused = last
-	w.revealFocused()
+	w.revealFocusedFrom(previous)
 	return true
 }
 
@@ -851,12 +875,13 @@ func (w *Workspace) FocusColumn(index int) bool {
 		return false
 	}
 	changed := w.focusedFloat != 0 && w.FocusTiling()
+	previous := w.focused
 	target := min(max(index-1, 0), len(w.columns)-1)
 	if target != w.focused {
 		w.focused = target
 		changed = true
 	}
-	w.revealFocused()
+	w.revealFocusedFrom(previous)
 	return changed
 }
 
@@ -1164,10 +1189,11 @@ func (w *Workspace) FocusWindow(id uint64) bool {
 	if !ok {
 		return false
 	}
+	previous := w.focused
 	w.focused = columnIndex
 	w.focusedFloat = 0
 	w.columns[columnIndex].active = tileIndex
-	w.revealFocused()
+	w.revealFocusedFrom(previous)
 	return true
 }
 
@@ -1468,9 +1494,22 @@ func (w *Workspace) indexOf(id uint64) int {
 	return column
 }
 
+// revealFocused scrolls the view so the focused column is visible after an
+// operation that is not a focus change; Niri has no previous column there.
 func (w *Workspace) revealFocused() {
+	w.revealFocusedFrom(-1)
+}
+
+// revealFocusedFrom scrolls the view after a focus change away from the
+// previous column index (negative when focus did not move between columns).
+func (w *Workspace) revealFocusedFrom(previous int) {
 	if w.focused < 0 || w.focused >= len(w.columns) || w.bounds.Width == 0 {
 		w.viewOffset = 0
+		return
+	}
+	if w.centerFocusedColumn == CenterFocusedColumnAlways ||
+		(w.centerFocusedColumn == CenterFocusedColumnOnOverflow && w.focusOverflowsWith(previous)) {
+		w.centerFocusedView()
 		return
 	}
 	left := w.columnStart(w.focused)
@@ -1486,6 +1525,41 @@ func (w *Workspace) revealFocused() {
 	} else if right-w.viewOffset > w.bounds.Width-padding {
 		w.viewOffset = right - (w.bounds.Width - padding)
 	}
+}
+
+// centerFocusedView centers the focused column in the view; a column that
+// fills the working area stays at its left edge, like the fit reveal.
+func (w *Workspace) centerFocusedView() {
+	left := w.columnStart(w.focused)
+	width := w.columnWidthAt(w.focused)
+	if width >= w.bounds.Width {
+		w.viewOffset = left
+		return
+	}
+	w.viewOffset = left - (w.bounds.Width-width)/2
+}
+
+// focusOverflowsWith reports whether the focused column does not fit on
+// screen together with the previously focused one, Niri's on-overflow check.
+// A negative previous index marks operations that are not focus changes;
+// those never overflow.
+func (w *Workspace) focusOverflowsWith(previous int) bool {
+	if previous < 0 || previous == w.focused {
+		return false
+	}
+	source := w.focused - 1
+	if previous > w.focused {
+		source = min(w.focused+1, len(w.columns)-1)
+	}
+	span := 2 * w.gap
+	sourceStart := w.columnStart(source)
+	targetStart := w.columnStart(w.focused)
+	if sourceStart < targetStart {
+		span += targetStart - sourceStart + w.columnWidthAt(w.focused)
+	} else {
+		span += sourceStart - targetStart + w.columnWidthAt(source)
+	}
+	return span > w.bounds.Width
 }
 
 func (w *Workspace) columnStart(index int) int {

@@ -26,6 +26,8 @@ type WorkspaceLayout struct {
 	PresetColumnWidths   []PresetSize
 	PresetWindowHeights  []PresetSize
 	DefaultColumnDisplay *ColumnDisplay
+	// A nil mode keeps the output's policy.
+	CenterFocusedColumn *CenterFocusedColumn
 }
 
 type PresetSize struct {
@@ -47,6 +49,15 @@ type ColumnDisplay string
 const (
 	ColumnDisplayNormal ColumnDisplay = "normal"
 	ColumnDisplayTabbed ColumnDisplay = "tabbed"
+)
+
+// CenterFocusedColumn is when the view centers the focused column.
+type CenterFocusedColumn string
+
+const (
+	CenterFocusedColumnNever      CenterFocusedColumn = "never"
+	CenterFocusedColumnAlways     CenterFocusedColumn = "always"
+	CenterFocusedColumnOnOverflow CenterFocusedColumn = "on-overflow"
 )
 
 // RelativeTo names the corner or edge a floating position is measured from.
@@ -429,6 +440,12 @@ func (c *Config) workspaceLayout(node *document.Node) (*WorkspaceLayout, error) 
 				return nil, fmt.Errorf("default-column-display: %w", err)
 			}
 			layout.DefaultColumnDisplay = &display
+		case "center-focused-column":
+			mode, err := centerFocusedColumnArg(child)
+			if err != nil {
+				return nil, fmt.Errorf("center-focused-column: %w", err)
+			}
+			layout.CenterFocusedColumn = &mode
 		default:
 			c.addWarning("workspace.layout." + nodeName(child))
 		}
@@ -773,6 +790,19 @@ func columnDisplayArg(node *document.Node) (ColumnDisplay, error) {
 		return "", fmt.Errorf("expected normal or tabbed")
 	}
 	return display, nil
+}
+
+func centerFocusedColumnArg(node *document.Node) (CenterFocusedColumn, error) {
+	value, err := stringArgs(node, 1, 1)
+	if err != nil {
+		return "", err
+	}
+	mode := CenterFocusedColumn(value[0])
+	if mode != CenterFocusedColumnNever && mode != CenterFocusedColumnAlways &&
+		mode != CenterFocusedColumnOnOverflow {
+		return "", fmt.Errorf("expected never, always or on-overflow")
+	}
+	return mode, nil
 }
 
 func parsePresetSize(node *document.Node) (PresetSize, error) {

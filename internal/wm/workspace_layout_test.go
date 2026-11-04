@@ -173,3 +173,38 @@ func TestWorkspaceDefaultColumnDisplayFollowsTheConfig(t *testing.T) {
 		t.Errorf("the display of the named workspace = %v, want its normal", got)
 	}
 }
+
+// TestWorkspaceCenterFocusedColumnFollowsTheConfig: the config-wide centering
+// policy reaches every workspace after a change, and a workspace of its own
+// keeps its own policy.
+func TestWorkspaceCenterFocusedColumnFollowsTheConfig(t *testing.T) {
+	always := layout.CenterFocusedColumnAlways
+	never := layout.CenterFocusedColumnNever
+	m := New(WorkspaceConfig{Name: "wide", Layout: &WorkspaceLayout{CenterFocusedColumn: &never}})
+	m.AddOutput("eDP-1", layout.Bounds{Width: 1000, Height: 800}, 500, 16)
+	m.SetCenterFocusedColumn(always)
+	wide, foundWide := m.WorkspaceIDByName("wide")
+	var plain uint64
+	foundPlain := false
+	for _, workspace := range m.Snapshot().Workspaces {
+		if workspace.Name == nil {
+			plain, foundPlain = workspace.ID, true
+		}
+	}
+	if !foundWide || !foundPlain {
+		t.Fatalf("workspaces found = %t %t, want the two", foundWide, foundPlain)
+	}
+	if !m.MapWindowToWorkspace(1, wide) || !m.MapWindowToWorkspace(2, plain) {
+		t.Fatal("MapWindowToWorkspace() = false, want true")
+	}
+	xs := map[uint64]int{}
+	for _, window := range m.Snapshot().Windows {
+		xs[window.WorkspaceID] = window.Tile.X
+	}
+	if got := xs[plain]; got != 250 {
+		t.Errorf("the X of the plain workspace = %d, want 250 (centered)", got)
+	}
+	if got := xs[wide]; got != 16 {
+		t.Errorf("the X of the named workspace = %d, want 16 (its own never)", got)
+	}
+}
