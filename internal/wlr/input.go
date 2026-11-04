@@ -1052,11 +1052,20 @@ func (c *Compositor) handleCursorAxis(data unsafe.Pointer) {
 	// Niri treats a continuous scroll, such as a trackpoint's, as a touchpad's.
 	finger := event.source == C.WL_POINTER_AXIS_SOURCE_FINGER || event.source == C.WL_POINTER_AXIS_SOURCE_CONTINUOUS
 	horizontal := event.orientation == C.WL_POINTER_AXIS_HORIZONTAL_SCROLL
-	delta, v120 := scaleAxis(c.pointerScrollFactor(unsafe.Pointer(event.pointer), finger), horizontal, float64(event.delta), int32(event.delta_discrete))
+	factor := c.pointerScrollFactor(unsafe.Pointer(event.pointer), finger)
+	delta, v120 := scaleAxis(factor, horizontal, float64(event.delta), int32(event.delta_discrete))
 	if c.overviewScrollGesture(finger, horizontal, delta) ||
 		c.scrollBinds(event.source == C.WL_POINTER_AXIS_SOURCE_WHEEL, finger,
 			horizontal, delta, v120) {
 		return
+	}
+	// Niri multiplies the scroll-factor of the window under the pointer into
+	// the device's for the scroll that reaches the client. The binds above saw
+	// the device's factor only. The product scales the raw event once.
+	if view := c.viewForSurface(c.seat.pointer_state.focused_surface); view != nil && view.appearance.ScrollFactor != nil {
+		factor.Vertical *= *view.appearance.ScrollFactor
+		factor.Horizontal *= *view.appearance.ScrollFactor
+		delta, v120 = scaleAxis(factor, horizontal, float64(event.delta), int32(event.delta_discrete))
 	}
 	C.wlr_seat_pointer_notify_axis(c.seat, event.time_msec,
 		event.orientation, C.double(delta), C.int32_t(v120),

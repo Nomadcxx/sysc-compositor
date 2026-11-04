@@ -144,6 +144,9 @@ type WindowRule struct {
 	DefaultColumnDisplay *ColumnDisplay
 	// DefaultFloatingPosition is where a floating window opens.
 	DefaultFloatingPosition *FloatingPosition
+	// ScrollFactor scales the scroll events delivered to the window, Niri's
+	// scroll-factor; nil means one.
+	ScrollFactor *float64
 }
 
 type WindowRuleResult struct {
@@ -166,6 +169,9 @@ type WindowRuleResult struct {
 	DefaultColumnDisplay *ColumnDisplay
 	// DefaultFloatingPosition is where a floating window opens.
 	DefaultFloatingPosition *FloatingPosition
+	// ScrollFactor scales the scroll events delivered to the window, Niri's
+	// scroll-factor; nil means one.
+	ScrollFactor *float64
 }
 
 type LayerRule struct {
@@ -207,6 +213,7 @@ func ResolveWindowRules(rules []WindowRule, appID, title string, state WindowSta
 		applyRuleValue(&result.MaxHeight, rule.MaxHeight)
 		applyRuleValue(&result.DefaultColumnDisplay, rule.DefaultColumnDisplay)
 		applyRuleValue(&result.DefaultFloatingPosition, rule.DefaultFloatingPosition)
+		applyRuleValue(&result.ScrollFactor, rule.ScrollFactor)
 	}
 	return result
 }
@@ -549,6 +556,12 @@ func (c *Config) windowRule(node *document.Node) error {
 			value, err = parseCornerRadius(child)
 			if err == nil {
 				rule.GeometryCornerRadius = &value
+			}
+		case "scroll-factor":
+			var value float64
+			value, err = floatArg(child, 0, 100)
+			if err == nil {
+				rule.ScrollFactor = &value
 			}
 		case "clip-to-geometry":
 			var value bool
