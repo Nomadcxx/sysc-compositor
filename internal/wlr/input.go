@@ -366,7 +366,6 @@ func (c *Compositor) handleInputDestroy(device unsafe.Pointer) {
 	}
 	// The keyboard group lets a destroyed keyboard go by itself.
 	delete(c.keyboardDevices, device)
-	c.removeTouch(device)
 	c.refreshCapabilities()
 }
 

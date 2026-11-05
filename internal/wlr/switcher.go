@@ -304,6 +304,7 @@ func (c *Compositor) openSwitcher(action bind.Action) {
 	if m.Empty() {
 		return
 	}
+	c.endTouchPoints(nowMsec())
 	scope := s.scope
 	if action.MRUScope != "" {
 		scope = mruScope(action.MRUScope)

@@ -28,6 +28,7 @@ func (c *Compositor) PickColor(done func([3]float64, error)) (func(), error) {
 	if c.sessionLocked || c.allOutputsOff() || c.pickColor != nil || c.shotUI != nil {
 		return nil, errors.New("wlr: color picker unavailable")
 	}
+	c.endTouchPoints(nowMsec())
 	pick := &colorPicker{done: done}
 	c.pickColor = pick
 	c.cancelTiledWindowMove()

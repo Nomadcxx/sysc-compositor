@@ -84,6 +84,7 @@ func (c *Compositor) showExitDialog() bool {
 	if d.tree == nil && !c.buildExitDialog() {
 		return false
 	}
+	c.endTouchPoints(nowMsec())
 	d.open = true
 	C.wlr_scene_node_raise_to_top(&d.tree.node)
 	c.stopKeyboardRepeat()
