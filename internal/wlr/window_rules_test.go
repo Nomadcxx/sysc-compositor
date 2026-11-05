@@ -661,14 +661,32 @@ func TestWindowRuleOpacityChangesRenderedPixels(t *testing.T) {
 			return
 		}
 
-		client, err := testclient.StartToplevelClient(c.SocketName(), time.Hour)
+		targetClient, err := testclient.StartToplevelClient(c.SocketName(), time.Hour)
 		if err != nil {
 			t.Error(err)
 			return
 		}
-		defer client.Close()
+		defer targetClient.Close()
+		if err := targetClient.SetIdentity("opacity target", "opacity-target"); err != nil {
+			t.Error(err)
+			return
+		}
 		const sourceARGB = uint32(0xff3498db)
-		if err := client.Paint(sourceARGB, 200, 150); err != nil {
+		if err := targetClient.Paint(sourceARGB, 200, 150); err != nil {
+			t.Error(err)
+			return
+		}
+		focusClient, err := testclient.StartToplevelClient(c.SocketName(), time.Hour)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer focusClient.Close()
+		if err := focusClient.SetIdentity("opacity focus", "opacity-focus"); err != nil {
+			t.Error(err)
+			return
+		}
+		if err := focusClient.Paint(sourceARGB, 200, 150); err != nil {
 			t.Error(err)
 			return
 		}
@@ -676,8 +694,10 @@ func TestWindowRuleOpacityChangesRenderedPixels(t *testing.T) {
 		var view *toplevelView
 		onCompositor(t, c, func() {
 			for _, candidate := range c.views {
-				view = candidate
-				break
+				if cString(candidate.toplevel.app_id) == "opacity-target" {
+					view = candidate
+					break
+				}
 			}
 			if view == nil {
 				t.Error("painted window did not map")
