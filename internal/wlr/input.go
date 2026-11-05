@@ -1036,8 +1036,15 @@ func (c *Compositor) handleCursorAxis(data unsafe.Pointer) {
 			horizontal, float64(event.delta), int32(event.delta_discrete)) {
 		return
 	}
+	// Niri scales the scroll that reaches a window by that window's
+	// scroll-factor; the binds above still saw the device's own delta.
+	factor := 1.0
+	if view := c.focusedView; view != nil && view.appearance.ScrollFactor != nil {
+		factor = *view.appearance.ScrollFactor
+	}
 	C.wlr_seat_pointer_notify_axis(c.seat, event.time_msec,
-		event.orientation, event.delta, event.delta_discrete,
+		event.orientation, C.double(float64(event.delta)*factor),
+		C.int32_t(float64(event.delta_discrete)*factor),
 		event.source, event.relative_direction)
 }
 
@@ -1170,6 +1177,9 @@ func (c *Compositor) focusView(view *toplevelView) {
 		c.notifyWindowStateChanged()
 	}
 	c.syncFocusRings()
+	// A rule that matches on the focus has to be read again now that the
+	// focus moved.
+	c.reapplyWindowRules()
 }
 
 func (c *Compositor) focusSurfaceAtCursor() {
@@ -1482,6 +1492,8 @@ func (c *Compositor) handleNewToplevel(data unsafe.Pointer) {
 		if c.model != nil {
 			c.model.RemoveWindow(view.id)
 			c.applyWorkspaceModel()
+			// The workspace may have a different active window now.
+			c.reapplyWindowRules()
 		}
 		c.switcherWindowGone(view.id)
 		c.releaseView(view)
@@ -1520,7 +1532,9 @@ func (c *Compositor) handleNewToplevel(data unsafe.Pointer) {
 		newlyMapped := !view.mapped
 		view.mapped = true
 		if newlyMapped {
+			var previousFocus uint64
 			if c.model != nil {
+				previousFocus, _ = c.model.ActiveWindow()
 				clientFullscreen := bool(toplevel.current.fullscreen) || bool(toplevel.requested.fullscreen)
 				if !view.rulesApplied {
 					c.mapWindowWithRules(view, clientFullscreen)
@@ -1534,8 +1548,15 @@ func (c *Compositor) handleNewToplevel(data unsafe.Pointer) {
 				}
 			}
 			// Niri activates newly mapped windows (ActivateWindow::Smart); its
-			// dialog and activation-token heuristics come with M5.
-			c.focusView(view)
+			// dialog and activation-token heuristics come with M5. A rule with
+			// open-focused false keeps the focus where it is.
+			if c.opensFocused(view) {
+				c.focusView(view)
+			} else if previousFocus != 0 && previousFocus != view.id {
+				// The new window took the model's focus when it mapped, so the
+				// window that had it gets it back.
+				c.model.FocusWindow(previousFocus)
+			}
 		}
 		if c.syncWorkspaceWindowSizeHints(view) {
 			c.applyWorkspaceModel()
@@ -1727,6 +1748,8 @@ func (c *Compositor) handleToplevelDestroy(view *toplevelView) {
 	}
 	if c.model != nil {
 		c.model.DestroyWindow(view.id)
+		// The workspace may have a different active window now.
+		c.reapplyWindowRules()
 	}
 	view.mapped = false
 	c.dropOverviewSurfaceListeners(view, nil)

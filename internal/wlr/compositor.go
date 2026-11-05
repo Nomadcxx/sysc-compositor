@@ -129,6 +129,7 @@ import (
 	"github.com/Nomadcxx/sysc-compositor/internal/a11y"
 	"github.com/Nomadcxx/sysc-compositor/internal/bind"
 	"github.com/Nomadcxx/sysc-compositor/internal/config"
+	"github.com/Nomadcxx/sysc-compositor/internal/layout"
 	"github.com/Nomadcxx/sysc-compositor/internal/wm"
 )
 
@@ -244,14 +245,19 @@ type Compositor struct {
 	keyboardRepeatToken     uintptr
 	keyboardRepeatBinding   bind.Binding
 	keyboardRepeatInterval  int
-	inputDestroyListeners   map[unsafe.Pointer]*Listener
-	modifiers               uint32
-	focusedView             *toplevelView
-	onDemandLayerFocus      *layerSurface
-	pointerGrab             *pointerGrab
-	grabView                *toplevelView
-	grabButton              uint32
-	pressedPointerButtons   map[uint32]bool
+	// atStartup is true during the compositor's first minute. Niri's
+	// at-startup window rules match while it holds.
+	atStartup             bool
+	startupTimerSource    *C.struct_wl_event_source
+	startupTimerToken     uintptr
+	inputDestroyListeners map[unsafe.Pointer]*Listener
+	modifiers             uint32
+	focusedView           *toplevelView
+	onDemandLayerFocus    *layerSurface
+	pointerGrab           *pointerGrab
+	grabView              *toplevelView
+	grabButton            uint32
+	pressedPointerButtons map[uint32]bool
 	// pointerBinds is the scroll and mouse bind state (pointer_binds.go).
 	pointerBinds           pointerBindState
 	pointerSerialButtons   map[uint32]uint32
@@ -387,6 +393,11 @@ type LayoutOptions struct {
 	Gaps                  int
 	ColumnWidthProportion float64
 	FixedColumnWidth      int
+	PresetColumnWidths    []layout.PresetSize
+	PresetWindowHeights   []layout.PresetSize
+	DefaultColumnDisplay  layout.ColumnDisplay
+	CenterFocusedColumn   layout.CenterFocusedColumn
+	Struts                layout.Struts
 	InsertHint            config.InsertHint
 	FocusRing             config.FocusRing
 	Shadow                config.Shadow
@@ -432,8 +443,13 @@ func NewWith(opts Options) (*Compositor, error) {
 	c.windowRules = slices.Clone(opts.WindowRules)
 	c.layerRules = slices.Clone(opts.LayerRules)
 	c.layoutOptions = *opts.Layout
+	c.model.SetPresetSizes(opts.Layout.PresetColumnWidths, opts.Layout.PresetWindowHeights)
+	c.model.SetDefaultColumnDisplay(opts.Layout.DefaultColumnDisplay)
+	c.model.SetCenterFocusedColumn(opts.Layout.CenterFocusedColumn)
+	c.model.SetStruts(opts.Layout.Struts)
 	c.cursorTheme, c.cursorSize = opts.CursorTheme, opts.CursorSize
 	c.keyboardConfig = opts.Keyboard
+	c.atStartup = true
 
 	c.display = C.wl_display_create()
 	if c.display == nil {
@@ -447,6 +463,7 @@ func NewWith(opts Options) (*Compositor, error) {
 	c.socketName = C.GoString(name)
 
 	c.loop = C.wl_display_get_event_loop(c.display)
+	c.armStartupTimer()
 	c.listeners = map[*Listener]struct{}{}
 	c.sceneOutputs = map[unsafe.Pointer]*C.struct_wlr_scene_output{}
 	c.mapped = map[unsafe.Pointer]bool{}
@@ -698,6 +715,10 @@ func (c *Compositor) Reconfigure(opts Options) error {
 		c.bindings[i].Chord = c.bindings[i].Chord.ResolveMod(c.modKey)
 	}
 	c.layoutOptions = *opts.Layout
+	c.model.SetPresetSizes(opts.Layout.PresetColumnWidths, opts.Layout.PresetWindowHeights)
+	c.model.SetDefaultColumnDisplay(opts.Layout.DefaultColumnDisplay)
+	c.model.SetCenterFocusedColumn(opts.Layout.CenterFocusedColumn)
+	c.model.SetStruts(opts.Layout.Struts)
 	c.overviewConfig = opts.Overview
 	c.setTabletConfig(opts.Tablet)
 	c.animationConfig = opts.Animations
@@ -723,10 +744,7 @@ func (c *Compositor) Reconfigure(opts Options) error {
 	if c.dndScroll != nil {
 		c.stopDndEdgeScroll(c.dndScroll)
 	}
-	workspaces := make([]wm.WorkspaceConfig, len(opts.Workspaces))
-	for i, workspace := range opts.Workspaces {
-		workspaces[i] = wm.WorkspaceConfig{Name: workspace.Name, OpenOnOutput: workspace.OpenOnOutput}
-	}
+	workspaces := slices.Clone(opts.Workspaces)
 	c.model.SetWorkspaceConfig(workspaces)
 	c.reapplyWindowRules()
 	c.reapplyLayerRules()
@@ -832,6 +850,7 @@ func (c *Compositor) Destroy() {
 	c.destroyCapturePrivacy()
 	c.destroyVirtualInputGuard()
 	c.stopKeyboardRepeat()
+	c.stopStartupTimer()
 	if c.focusTimer != nil {
 		c.focusTimer.Stop()
 		c.focusTimer = nil

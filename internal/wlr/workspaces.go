@@ -29,7 +29,6 @@ static void sysc_workspace_set_size(struct wlr_xdg_toplevel *toplevel, int width
 import "C"
 
 import (
-	"math"
 	"unsafe"
 
 	"github.com/Nomadcxx/sysc-compositor/internal/layout"
@@ -57,7 +56,12 @@ func (c *Compositor) syncWorkspaceOutput(output unsafe.Pointer) {
 		usable = rect{int(full.x), int(full.y), int(full.width), int(full.height)}
 	}
 	bounds := layout.Bounds{X: usable.x, Y: usable.y, Width: usable.w, Height: usable.h}
-	width := c.defaultColumnWidth(bounds.Width)
+	// Niri derives the default column width from the working area, so the
+	// config-wide struts come off the width first. A workspace that overrides
+	// the struts still starts from this output-derived default; the gap with
+	// Niri is recorded in the plan doc.
+	strutted := c.layoutOptions.Struts.Inset(bounds)
+	width := c.defaultColumnWidth(strutted.Width)
 	added := false
 	if !c.hasWorkspaceOutput(name) {
 		added = c.model.AddOutput(name, bounds, width, c.layoutOptions.Gaps)
@@ -218,6 +222,9 @@ func (c *Compositor) SetWindowUrgent(id uint64, urgent bool) bool {
 		return false
 	}
 	c.notifyStateChanged()
+	// A rule that matches on the urgency has to be read again now that the
+	// urgency moved.
+	c.reapplyWindowRules()
 	return true
 }
 
@@ -226,6 +233,7 @@ func (c *Compositor) ToggleWindowUrgent(id uint64) bool {
 		return false
 	}
 	c.notifyStateChanged()
+	c.reapplyWindowRules()
 	return true
 }
 
@@ -341,12 +349,7 @@ func (c *Compositor) defaultColumnWidth(available int) int {
 	if c.layoutOptions.FixedColumnWidth > 0 {
 		return c.layoutOptions.FixedColumnWidth
 	}
-	proportion := c.layoutOptions.ColumnWidthProportion
-	if proportion <= 0 {
-		proportion = 0.5
-	}
-	width := (float64(available-c.layoutOptions.Gaps) * proportion) - float64(c.layoutOptions.Gaps)
-	return max(1, int(math.Round(width)))
+	return layout.ColumnWidthPixels(available, c.layoutOptions.Gaps, c.layoutOptions.ColumnWidthProportion)
 }
 
 func (c *Compositor) applyWorkspaceModel() {
@@ -538,10 +541,42 @@ func (c *Compositor) syncWorkspaceWindowSizeHints(view *toplevelView) bool {
 	if c.model == nil || view == nil || view.toplevel == nil || !view.mapped {
 		return false
 	}
+	minWidth, maxWidth, minHeight, maxHeight := c.windowSizeHints(view)
+	return c.model.SetWindowSizeHints(view.id, minWidth, maxWidth, minHeight, maxHeight)
+}
+
+// windowSizeHints amends the client's size hints with the window rule's
+// limits, the way Niri's min-width, max-width, min-height and max-height do:
+// a rule can only raise the client's minimum and lower the client's maximum,
+// and it gives a window without a maximum the rule's maximum.
+func (c *Compositor) windowSizeHints(view *toplevelView) (int, int, int, int) {
 	current := view.toplevel.current
-	return c.model.SetWindowSizeHints(view.id,
-		int(current.min_width), int(current.max_width),
-		int(current.min_height), int(current.max_height))
+	minWidth, maxWidth := int(current.min_width), int(current.max_width)
+	minHeight, maxHeight := int(current.min_height), int(current.max_height)
+	appearance := view.appearance
+	if appearance.MinWidth != nil {
+		minWidth = max(minWidth, *appearance.MinWidth)
+	}
+	if appearance.MinHeight != nil {
+		minHeight = max(minHeight, *appearance.MinHeight)
+	}
+	if appearance.MaxWidth != nil {
+		switch {
+		case maxWidth == 0:
+			maxWidth = *appearance.MaxWidth
+		case *appearance.MaxWidth > 0:
+			maxWidth = min(maxWidth, *appearance.MaxWidth)
+		}
+	}
+	if appearance.MaxHeight != nil {
+		switch {
+		case maxHeight == 0:
+			maxHeight = *appearance.MaxHeight
+		case *appearance.MaxHeight > 0:
+			maxHeight = min(maxHeight, *appearance.MaxHeight)
+		}
+	}
+	return minWidth, maxWidth, minHeight, maxHeight
 }
 
 func (c *Compositor) activateWorkspaceFocus() {

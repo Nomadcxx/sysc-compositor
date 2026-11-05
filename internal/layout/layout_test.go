@@ -947,3 +947,108 @@ func TestSwapWindowMatchesNiri(t *testing.T) {
 		t.Fatal("swap acted while floating was focused")
 	}
 }
+
+// TestCenterFocusedColumnAlwaysCentersTheFocusedColumn: the always policy
+// centers the focused column after every reveal, including the reveal of a
+// window that just opened.
+func TestCenterFocusedColumnAlwaysCentersTheFocusedColumn(t *testing.T) {
+	ws := NewWorkspace(Bounds{Width: 1000, Height: 800}, 500, 16)
+	ws.SetCenterFocusedColumn(CenterFocusedColumnAlways)
+	ws.AddWindow(1)
+	ws.AddWindow(2)
+	placement, ok := ws.Placement(2)
+	if !ok {
+		t.Fatal("Placement(2) missing")
+	}
+	if placement.X != 250 {
+		t.Fatalf("placement = %+v, want the second column centered at X 250", placement)
+	}
+	if !ws.FocusLeft() {
+		t.Fatal("FocusLeft() = false")
+	}
+	placement, ok = ws.Placement(1)
+	if !ok {
+		t.Fatal("Placement(1) missing")
+	}
+	if placement.X != 250 {
+		t.Fatalf("placement = %+v, want the first column centered at X 250", placement)
+	}
+}
+
+// TestCenterFocusedColumnOnOverflowCentersWhenTheColumnsOverflow: the
+// on-overflow policy centers the focused column when it does not fit on screen
+// together with its neighbor toward the previously focused column, and only
+// then. Opening a window is not a focus change, so its reveal stays fit.
+func TestCenterFocusedColumnOnOverflowCentersWhenTheColumnsOverflow(t *testing.T) {
+	ws := NewWorkspace(Bounds{Width: 1000, Height: 800}, 500, 16)
+	ws.SetCenterFocusedColumn(CenterFocusedColumnOnOverflow)
+	ws.AddWindow(1)
+	ws.AddWindow(2)
+	placement, ok := ws.Placement(2)
+	if !ok {
+		t.Fatal("Placement(2) missing")
+	}
+	if placement.X != 484 {
+		t.Fatalf("placement = %+v, want X 484: opening a window is not a focus change, so the column stays fit", placement)
+	}
+	if !ws.FocusLeft() {
+		t.Fatal("FocusLeft() = false")
+	}
+	placement, ok = ws.Placement(1)
+	if !ok {
+		t.Fatal("Placement(1) missing")
+	}
+	if placement.X != 250 {
+		t.Fatalf("placement = %+v, want the first column centered at X 250", placement)
+	}
+	if !ws.FocusRight() {
+		t.Fatal("FocusRight() = false")
+	}
+	placement, ok = ws.Placement(2)
+	if !ok {
+		t.Fatal("Placement(2) missing")
+	}
+	if placement.X != 250 {
+		t.Fatalf("placement = %+v, want the second column centered at X 250", placement)
+	}
+	if !ws.FocusColumn(1) {
+		t.Fatal("FocusColumn(1) = false")
+	}
+	placement, ok = ws.Placement(1)
+	if !ok {
+		t.Fatal("Placement(1) missing")
+	}
+	if placement.X != 250 {
+		t.Fatalf("placement = %+v, want the first column centered at X 250 through FocusColumn", placement)
+	}
+}
+
+// TestCenterFocusedColumnOnOverflowFitsWhenTheColumnsFit: when the focused
+// column fits on screen together with its neighbor, the on-overflow policy
+// keeps the plain fit reveal instead of centering.
+func TestCenterFocusedColumnOnOverflowFitsWhenTheColumnsFit(t *testing.T) {
+	ws := NewWorkspace(Bounds{Width: 1200, Height: 800}, 400, 16)
+	ws.SetCenterFocusedColumn(CenterFocusedColumnOnOverflow)
+	ws.AddWindow(1)
+	ws.AddWindow(2)
+	if !ws.FocusLeft() {
+		t.Fatal("FocusLeft() = false")
+	}
+	if !ws.FocusRight() {
+		t.Fatal("FocusRight() = false")
+	}
+	placement, ok := ws.Placement(2)
+	if !ok {
+		t.Fatal("Placement(2) missing")
+	}
+	if placement.X != 432 {
+		t.Fatalf("placement = %+v, want X 432: the columns fit together, so the focus change does not center", placement)
+	}
+	placement, ok = ws.Placement(1)
+	if !ok {
+		t.Fatal("Placement(1) missing")
+	}
+	if placement.X != 16 {
+		t.Fatalf("placement = %+v, want X 16", placement)
+	}
+}

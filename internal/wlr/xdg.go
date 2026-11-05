@@ -140,8 +140,13 @@ func (c *Compositor) handleNewPopup(data unsafe.Pointer) {
 			return
 		}
 		tree := c.trackXDGTree(popup.base, C.sysc_scene_xdg_create(parent, popup.base))
-		if view := c.viewForSurface(popup.parent); tree != nil && view != nil && view.clipToGeometry {
-			sceneFXSetSubsurfaceClip(unsafe.Pointer(&tree.node), false, 0, 0, 0, 0)
+		if view := c.viewForSurface(popup.parent); tree != nil && view != nil {
+			if view.clipToGeometry {
+				sceneFXSetSubsurfaceClip(unsafe.Pointer(&tree.node), false, 0, 0, 0, 0)
+			}
+			// The new popup tree was created after the parent applied its
+			// per-buffer opacity, so bring its buffers under the same rule.
+			c.syncViewOpacity(view)
 		}
 		c.unconstrainPopup(popup)
 	})
@@ -393,6 +398,7 @@ type popupPlacement struct {
 	box           rect // its window geometry in layout coordinates
 	constraint    rect // the box it was unconstrained against, root-surface relative
 	rootX, rootY  int  // the root window's surface origin in layout coordinates
+	tree          unsafe.Pointer
 	hasConstraint bool
 }
 
@@ -416,6 +422,7 @@ func (c *Compositor) popupPlacements() []popupPlacement {
 			constraint:    constraint,
 			rootX:         rx,
 			rootY:         ry,
+			tree:          unsafe.Pointer(tree),
 			hasConstraint: ok,
 		})
 	}

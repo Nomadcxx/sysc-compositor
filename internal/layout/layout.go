@@ -8,6 +8,30 @@ type Bounds struct {
 	X, Y, Width, Height int
 }
 
+// Struts are reserved edges of the layout area, Niri's layout.struts. They
+// shrink the area on top of what layer-shell exclusive zones already took
+// from the output; negative values open it back up.
+type Struts struct {
+	Left, Right, Top, Bottom int
+}
+
+// Inset returns bounds with the struts removed from each edge. The remaining
+// width and height are clamped to zero.
+func (s Struts) Inset(bounds Bounds) Bounds {
+	inset := bounds
+	inset.X += s.Left
+	inset.Y += s.Top
+	inset.Width -= s.Left + s.Right
+	if inset.Width < 0 {
+		inset.Width = 0
+	}
+	inset.Height -= s.Top + s.Bottom
+	if inset.Height < 0 {
+		inset.Height = 0
+	}
+	return inset
+}
+
 type PositionChangeKind string
 
 const (
@@ -22,6 +46,53 @@ type PositionChange struct {
 	Value float64
 }
 
+// RelativeTo names the corner or edge a floating position is measured from.
+// The names are the ones Niri uses.
+type RelativeTo string
+
+const (
+	RelativeToTopLeft     RelativeTo = "top-left"
+	RelativeToTopRight    RelativeTo = "top-right"
+	RelativeToBottomLeft  RelativeTo = "bottom-left"
+	RelativeToBottomRight RelativeTo = "bottom-right"
+	RelativeToTop         RelativeTo = "top"
+	RelativeToBottom      RelativeTo = "bottom"
+	RelativeToLeft        RelativeTo = "left"
+	RelativeToRight       RelativeTo = "right"
+)
+
+// FloatingPosition is a floating window's position inside the working area,
+// measured from one of the working area's corners or edges.
+type FloatingPosition struct {
+	X          int
+	Y          int
+	RelativeTo RelativeTo
+}
+
+// resolve turns the position into the top-left corner of a window of the
+// given size inside the working area, the way Niri places a floating window
+// that has no position of its own.
+func (p FloatingPosition) resolve(area Bounds, width, height int) (int, int) {
+	x, y := p.X, p.Y
+	switch p.RelativeTo {
+	case RelativeToTopRight, RelativeToBottomRight, RelativeToRight:
+		x = area.Width - width - x
+	}
+	switch p.RelativeTo {
+	case RelativeToBottomLeft, RelativeToBottomRight, RelativeToBottom:
+		y = area.Height - height - y
+	}
+	switch p.RelativeTo {
+	case RelativeToTop, RelativeToBottom:
+		x += area.Width/2 - width/2
+	}
+	switch p.RelativeTo {
+	case RelativeToLeft, RelativeToRight:
+		y += area.Height/2 - height/2
+	}
+	return area.X + x, area.Y + y
+}
+
 // ColumnDisplay controls whether a column's windows are tiled vertically or
 // share one tile with only the active window visible.
 type ColumnDisplay uint8
@@ -29,6 +100,20 @@ type ColumnDisplay uint8
 const (
 	ColumnDisplayNormal ColumnDisplay = iota
 	ColumnDisplayTabbed
+)
+
+// CenterFocusedColumn is when the view centers the focused column, Niri's
+// center-focused-column policy.
+type CenterFocusedColumn uint8
+
+const (
+	// CenterFocusedColumnNever only scrolls the focused column into view.
+	CenterFocusedColumnNever CenterFocusedColumn = iota
+	// CenterFocusedColumnAlways keeps the focused column centered.
+	CenterFocusedColumnAlways
+	// CenterFocusedColumnOnOverflow centers the focused column when it does
+	// not fit on screen together with the previously focused one.
+	CenterFocusedColumnOnOverflow
 )
 
 // Placement is a window's tile in the visible workspace view.
@@ -116,7 +201,7 @@ func (w *Workspace) SetWindowFloating(id uint64, floating bool, bounds Bounds) b
 	} else {
 		w.columns = append(w.columns, columnState{})
 		copy(w.columns[columnIndex+1:], w.columns[columnIndex:])
-		w.columns[columnIndex] = columnState{tiles: []tileState{f.tile}, width: f.columnWidth}
+		w.columns[columnIndex] = columnState{tiles: []tileState{f.tile}, display: w.defaultDisplay, width: f.columnWidth}
 		if w.focused >= columnIndex {
 			w.focused++
 		}
@@ -327,18 +412,33 @@ type floatingState struct {
 // Workspace is one horizontal strip of columns. A column can contain multiple
 // windows; focus is a column and an active window within that column.
 type Workspace struct {
-	bounds       Bounds
-	columnWidth  int
-	gap          int
-	columns      []columnState
-	floating     []floatingState
-	focused      int
-	focusedFloat uint64
-	activeFloat  uint64
-	viewOffset   int
+	bounds              Bounds
+	columnWidth         int
+	gap                 int
+	columns             []columnState
+	floating            []floatingState
+	focused             int
+	focusedFloat        uint64
+	activeFloat         uint64
+	viewOffset          int
+	presetColumnWidths  []PresetSize
+	presetWindowHeights []PresetSize
+	defaultDisplay      ColumnDisplay
+	centerFocusedColumn CenterFocusedColumn
 }
 
 const directionalMovePixels = 50
+
+// SetDefaultColumnDisplay sets the display mode that new columns start in.
+// Columns that already exist keep their display.
+func (w *Workspace) SetDefaultColumnDisplay(display ColumnDisplay) {
+	w.defaultDisplay = display
+}
+
+// SetCenterFocusedColumn sets when the view centers the focused column.
+func (w *Workspace) SetCenterFocusedColumn(mode CenterFocusedColumn) {
+	w.centerFocusedColumn = mode
+}
 
 // NewWorkspace creates an empty workspace with fixed column width and gap.
 func NewWorkspace(bounds Bounds, columnWidth, gap int) *Workspace {
@@ -384,7 +484,7 @@ func (w *Workspace) AddWindow(id uint64) {
 	}
 	w.columns = append(w.columns, columnState{})
 	copy(w.columns[idx+1:], w.columns[idx:])
-	w.columns[idx] = columnState{tiles: []tileState{{id: id}}}
+	w.columns[idx] = columnState{tiles: []tileState{{id: id}}, display: w.defaultDisplay}
 	w.focused = idx
 	w.focusedFloat = 0
 	w.revealFocused()
@@ -609,7 +709,7 @@ func (w *Workspace) MoveWindowToPosition(target *Workspace, id uint64, position 
 		return true
 	}
 	index := min(max(position.Column, 0), len(target.columns))
-	column := columnState{tiles: []tileState{tile}, width: columnWidth}
+	column := columnState{tiles: []tileState{tile}, display: target.defaultDisplay, width: columnWidth}
 	target.columns = append(target.columns, columnState{})
 	copy(target.columns[index+1:], target.columns[index:])
 	target.columns[index] = column
@@ -691,8 +791,9 @@ func (w *Workspace) FocusLeft() bool {
 	if w.focused <= 0 {
 		return false
 	}
+	previous := w.focused
 	w.focused--
-	w.revealFocused()
+	w.revealFocusedFrom(previous)
 	return true
 }
 
@@ -701,8 +802,9 @@ func (w *Workspace) FocusRight() bool {
 	if w.focused < 0 || w.focused+1 >= len(w.columns) {
 		return false
 	}
+	previous := w.focused
 	w.focused++
-	w.revealFocused()
+	w.revealFocusedFrom(previous)
 	return true
 }
 
@@ -726,8 +828,9 @@ func (w *Workspace) FocusFirst() bool {
 	if w.focused <= 0 || len(w.columns) == 0 {
 		return false
 	}
+	previous := w.focused
 	w.focused = 0
-	w.revealFocused()
+	w.revealFocusedFrom(previous)
 	return true
 }
 
@@ -736,8 +839,9 @@ func (w *Workspace) FocusLast() bool {
 	if last < 0 || w.focused == last {
 		return false
 	}
+	previous := w.focused
 	w.focused = last
-	w.revealFocused()
+	w.revealFocusedFrom(previous)
 	return true
 }
 
@@ -795,12 +899,13 @@ func (w *Workspace) FocusColumn(index int) bool {
 		return false
 	}
 	changed := w.focusedFloat != 0 && w.FocusTiling()
+	previous := w.focused
 	target := min(max(index-1, 0), len(w.columns)-1)
 	if target != w.focused {
 		w.focused = target
 		changed = true
 	}
-	w.revealFocused()
+	w.revealFocusedFrom(previous)
 	return changed
 }
 
@@ -966,7 +1071,7 @@ func (w *Workspace) ExpelWindowFromColumn() bool {
 	idx := w.focused + 1
 	w.columns = append(w.columns, columnState{})
 	copy(w.columns[idx+1:], w.columns[idx:])
-	w.columns[idx] = columnState{tiles: []tileState{tile}}
+	w.columns[idx] = columnState{tiles: []tileState{tile}, display: w.defaultDisplay}
 	w.revealFocused()
 	return true
 }
@@ -1036,7 +1141,7 @@ func (w *Workspace) consumeOrExpelWindow(id *uint64, direction int) bool {
 	}
 	w.columns = append(w.columns, columnState{})
 	copy(w.columns[insertAt+1:], w.columns[insertAt:])
-	w.columns[insertAt] = columnState{tiles: []tileState{tile}, width: width}
+	w.columns[insertAt] = columnState{tiles: []tileState{tile}, display: w.defaultDisplay, width: width}
 	if wasActive {
 		w.focused = insertAt
 		w.focusedFloat = 0
@@ -1108,10 +1213,11 @@ func (w *Workspace) FocusWindow(id uint64) bool {
 	if !ok {
 		return false
 	}
+	previous := w.focused
 	w.focused = columnIndex
 	w.focusedFloat = 0
 	w.columns[columnIndex].active = tileIndex
-	w.revealFocused()
+	w.revealFocusedFrom(previous)
 	return true
 }
 
@@ -1412,9 +1518,22 @@ func (w *Workspace) indexOf(id uint64) int {
 	return column
 }
 
+// revealFocused scrolls the view so the focused column is visible after an
+// operation that is not a focus change; Niri has no previous column there.
 func (w *Workspace) revealFocused() {
+	w.revealFocusedFrom(-1)
+}
+
+// revealFocusedFrom scrolls the view after a focus change away from the
+// previous column index (negative when focus did not move between columns).
+func (w *Workspace) revealFocusedFrom(previous int) {
 	if w.focused < 0 || w.focused >= len(w.columns) || w.bounds.Width == 0 {
 		w.viewOffset = 0
+		return
+	}
+	if w.centerFocusedColumn == CenterFocusedColumnAlways ||
+		(w.centerFocusedColumn == CenterFocusedColumnOnOverflow && w.focusOverflowsWith(previous)) {
+		w.centerFocusedView()
 		return
 	}
 	left := w.columnStart(w.focused)
@@ -1430,6 +1549,41 @@ func (w *Workspace) revealFocused() {
 	} else if right-w.viewOffset > w.bounds.Width-padding {
 		w.viewOffset = right - (w.bounds.Width - padding)
 	}
+}
+
+// centerFocusedView centers the focused column in the view; a column that
+// fills the working area stays at its left edge, like the fit reveal.
+func (w *Workspace) centerFocusedView() {
+	left := w.columnStart(w.focused)
+	width := w.columnWidthAt(w.focused)
+	if width >= w.bounds.Width {
+		w.viewOffset = left
+		return
+	}
+	w.viewOffset = left - (w.bounds.Width-width)/2
+}
+
+// focusOverflowsWith reports whether the focused column does not fit on
+// screen together with the previously focused one, Niri's on-overflow check.
+// A negative previous index marks operations that are not focus changes;
+// those never overflow.
+func (w *Workspace) focusOverflowsWith(previous int) bool {
+	if previous < 0 || previous == w.focused {
+		return false
+	}
+	source := w.focused - 1
+	if previous > w.focused {
+		source = min(w.focused+1, len(w.columns)-1)
+	}
+	span := 2 * w.gap
+	sourceStart := w.columnStart(source)
+	targetStart := w.columnStart(w.focused)
+	if sourceStart < targetStart {
+		span += targetStart - sourceStart + w.columnWidthAt(w.focused)
+	} else {
+		span += sourceStart - targetStart + w.columnWidthAt(source)
+	}
+	return span > w.bounds.Width
 }
 
 func (w *Workspace) columnStart(index int) int {

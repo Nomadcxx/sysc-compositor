@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/Nomadcxx/sysc-compositor/internal/config"
+	"github.com/Nomadcxx/sysc-compositor/internal/layout"
 	"github.com/Nomadcxx/sysc-compositor/internal/wlr"
 	"github.com/Nomadcxx/sysc-compositor/internal/wm"
 )
@@ -22,7 +23,10 @@ type reloadTarget struct {
 func compositorOptions(cfg *config.Config, locale *config.Keyboard) wlr.Options {
 	workspaces := make([]wm.WorkspaceConfig, len(cfg.Workspaces))
 	for i, workspace := range cfg.Workspaces {
-		workspaces[i] = wm.WorkspaceConfig{Name: workspace.Name, OpenOnOutput: workspace.OpenOnOutput}
+		workspaces[i] = wm.WorkspaceConfig{
+			Name: workspace.Name, OpenOnOutput: workspace.OpenOnOutput,
+			Layout: workspaceLayout(workspace.Layout),
+		}
 	}
 	k := cfg.Keyboard
 	if locale != nil {
@@ -36,8 +40,14 @@ func compositorOptions(cfg *config.Config, locale *config.Keyboard) wlr.Options 
 		ModKey: cfg.Input.ModKey, ModKeyNested: cfg.Input.ModKeyNested,
 		Layout: &wlr.LayoutOptions{
 			Gaps: cfg.Layout.Gaps, ColumnWidthProportion: cfg.Layout.ColumnWidthProportion,
-			FixedColumnWidth: cfg.Layout.FixedColumnWidth, InsertHint: cfg.Layout.InsertHint,
-			FocusRing: cfg.Layout.FocusRing, Shadow: cfg.Layout.Shadow,
+			FixedColumnWidth:     cfg.Layout.FixedColumnWidth,
+			PresetColumnWidths:   presetSizes(cfg.Layout.PresetColumnWidths),
+			PresetWindowHeights:  presetSizes(cfg.Layout.PresetWindowHeights),
+			DefaultColumnDisplay: columnDisplay(cfg.Layout.DefaultColumnDisplay),
+			CenterFocusedColumn:  centerFocusedColumn(cfg.Layout.CenterFocusedColumn),
+			Struts:               struts(cfg.Layout.Struts),
+			InsertHint:           cfg.Layout.InsertHint,
+			FocusRing:            cfg.Layout.FocusRing, Shadow: cfg.Layout.Shadow,
 		},
 		CursorTheme: cfg.Cursor.Theme, CursorSize: cfg.Cursor.Size, Binds: cfg.Binds,
 		Overview: cfg.Overview, Gestures: cfg.Gestures, Animations: cfg.Animations, Blur: cfg.Blur,
@@ -49,6 +59,94 @@ func compositorOptions(cfg *config.Config, locale *config.Keyboard) wlr.Options 
 		PreferNoCSD:                cfg.PreferNoCSD, Workspaces: workspaces,
 		WindowRules: cfg.WindowRules, LayerRules: cfg.LayerRules,
 	}
+}
+
+// workspaceLayout converts the layout override of a workspace for the model.
+func workspaceLayout(layout *config.WorkspaceLayout) *wm.WorkspaceLayout {
+	if layout == nil {
+		return nil
+	}
+	return &wm.WorkspaceLayout{
+		Gaps: layout.Gaps, ColumnWidthProportion: layout.ColumnWidthProportion,
+		FixedColumnWidth:     layout.FixedColumnWidth,
+		PresetColumnWidths:   presetSizes(layout.PresetColumnWidths),
+		PresetWindowHeights:  presetSizes(layout.PresetWindowHeights),
+		DefaultColumnDisplay: columnDisplayPtr(layout.DefaultColumnDisplay),
+		CenterFocusedColumn:  centerFocusedColumnPtr(layout.CenterFocusedColumn),
+		Struts:               strutsPtr(layout.Struts),
+	}
+}
+
+// presetSizes converts config preset sizes for the layout. A nil list stays
+// nil so the model knows the workspace keeps the config's list.
+func presetSizes(presets []config.PresetSize) []layout.PresetSize {
+	if presets == nil {
+		return nil
+	}
+	sizes := make([]layout.PresetSize, 0, len(presets))
+	for _, preset := range presets {
+		sizes = append(sizes, layout.PresetSize{Fixed: preset.Fixed, Value: preset.Value})
+	}
+	return sizes
+}
+
+// columnDisplay converts a config column display mode for the layout.
+func columnDisplay(display config.ColumnDisplay) layout.ColumnDisplay {
+	if display == config.ColumnDisplayTabbed {
+		return layout.ColumnDisplayTabbed
+	}
+	return layout.ColumnDisplayNormal
+}
+
+// columnDisplayPtr converts an optional config column display mode for the
+// layout, keeping nil for a workspace that keeps the config's mode.
+func columnDisplayPtr(display *config.ColumnDisplay) *layout.ColumnDisplay {
+	if display == nil {
+		return nil
+	}
+	value := columnDisplay(*display)
+	return &value
+}
+
+// centerFocusedColumn converts a config centering policy for the layout.
+func centerFocusedColumn(mode config.CenterFocusedColumn) layout.CenterFocusedColumn {
+	switch mode {
+	case config.CenterFocusedColumnAlways:
+		return layout.CenterFocusedColumnAlways
+	case config.CenterFocusedColumnOnOverflow:
+		return layout.CenterFocusedColumnOnOverflow
+	}
+	return layout.CenterFocusedColumnNever
+}
+
+// centerFocusedColumnPtr converts an optional config centering policy for the
+// layout, keeping nil for a workspace that keeps the config's policy.
+func centerFocusedColumnPtr(mode *config.CenterFocusedColumn) *layout.CenterFocusedColumn {
+	if mode == nil {
+		return nil
+	}
+	value := centerFocusedColumn(*mode)
+	return &value
+}
+
+// struts converts the config's reserved layout edges for the layout.
+func struts(s config.Struts) layout.Struts {
+	return layout.Struts{
+		Left:   s.Left,
+		Right:  s.Right,
+		Top:    s.Top,
+		Bottom: s.Bottom,
+	}
+}
+
+// strutsPtr converts optional config struts for the layout, keeping nil for a
+// workspace that keeps the config's struts.
+func strutsPtr(s *config.Struts) *layout.Struts {
+	if s == nil {
+		return nil
+	}
+	value := struts(*s)
+	return &value
 }
 
 func keyboardWithLocale(configured, locale config.Keyboard) config.Keyboard {

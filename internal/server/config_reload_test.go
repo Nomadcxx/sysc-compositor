@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Nomadcxx/sysc-compositor/internal/config"
+	"github.com/Nomadcxx/sysc-compositor/internal/layout"
 )
 
 func TestFailedConfigReloadPreservesActiveConfig(t *testing.T) {
@@ -182,6 +183,78 @@ func TestReportConfigGapsNamesUnappliedActions(t *testing.T) {
 		if !strings.Contains(stderr.String(), want) {
 			t.Errorf("warning %q does not contain %q", stderr.String(), want)
 		}
+	}
+}
+
+func TestWorkspaceLayoutReachesTheModelOptions(t *testing.T) {
+	gaps := 8
+	proportion := 0.75
+	display := config.ColumnDisplayNormal
+	centerNever := config.CenterFocusedColumnNever
+	cfg := &config.Config{
+		Layout: config.Layout{
+			PresetColumnWidths:   []config.PresetSize{{Value: 0.25}},
+			PresetWindowHeights:  []config.PresetSize{{Fixed: true, Value: 700}},
+			DefaultColumnDisplay: config.ColumnDisplayTabbed,
+			CenterFocusedColumn:  config.CenterFocusedColumnOnOverflow,
+			Struts:               config.Struts{Left: 10, Right: 10, Bottom: 32},
+		},
+		Workspaces: []config.WorkspaceConfig{{
+			Name: "wide",
+			Layout: &config.WorkspaceLayout{
+				Gaps: &gaps, ColumnWidthProportion: &proportion,
+				PresetColumnWidths:   []config.PresetSize{{Fixed: true, Value: 600}},
+				DefaultColumnDisplay: &display,
+				CenterFocusedColumn:  &centerNever,
+				Struts:               &config.Struts{Top: 44},
+			},
+		}},
+	}
+	options := compositorOptions(cfg, nil)
+	if len(options.Layout.PresetColumnWidths) != 1 || options.Layout.PresetColumnWidths[0] != (layout.PresetSize{Value: 0.25}) {
+		t.Errorf("the preset column widths = %+v, want 0.25", options.Layout.PresetColumnWidths)
+	}
+	if len(options.Layout.PresetWindowHeights) != 1 ||
+		options.Layout.PresetWindowHeights[0] != (layout.PresetSize{Fixed: true, Value: 700}) {
+		t.Errorf("the preset window heights = %+v, want fixed 700", options.Layout.PresetWindowHeights)
+	}
+	if options.Layout.DefaultColumnDisplay != layout.ColumnDisplayTabbed {
+		t.Errorf("the default column display = %v, want tabbed", options.Layout.DefaultColumnDisplay)
+	}
+	if options.Layout.CenterFocusedColumn != layout.CenterFocusedColumnOnOverflow {
+		t.Errorf("the centering policy = %v, want on-overflow", options.Layout.CenterFocusedColumn)
+	}
+	if options.Layout.Struts != (layout.Struts{Left: 10, Right: 10, Bottom: 32}) {
+		t.Errorf("the config struts = %+v, want left and right 10 and bottom 32", options.Layout.Struts)
+	}
+	if len(options.Workspaces) != 1 {
+		t.Fatalf("workspaces = %+v, want one", options.Workspaces)
+	}
+	workspace := options.Workspaces[0]
+	if workspace.Name != "wide" {
+		t.Fatalf("the workspace name = %q, want wide", workspace.Name)
+	}
+	if workspace.Layout == nil {
+		t.Fatal("the workspace has no layout")
+	}
+	if workspace.Layout.Gaps == nil || *workspace.Layout.Gaps != 8 {
+		t.Errorf("the gaps = %+v, want 8", workspace.Layout.Gaps)
+	}
+	if workspace.Layout.ColumnWidthProportion == nil || *workspace.Layout.ColumnWidthProportion != 0.75 {
+		t.Errorf("the column width proportion = %+v, want 0.75", workspace.Layout.ColumnWidthProportion)
+	}
+	if len(workspace.Layout.PresetColumnWidths) != 1 ||
+		workspace.Layout.PresetColumnWidths[0] != (layout.PresetSize{Fixed: true, Value: 600}) {
+		t.Errorf("the preset column widths of the workspace = %+v, want fixed 600", workspace.Layout.PresetColumnWidths)
+	}
+	if workspace.Layout.DefaultColumnDisplay == nil || *workspace.Layout.DefaultColumnDisplay != layout.ColumnDisplayNormal {
+		t.Errorf("the default column display of the workspace = %+v, want normal", workspace.Layout.DefaultColumnDisplay)
+	}
+	if workspace.Layout.CenterFocusedColumn == nil || *workspace.Layout.CenterFocusedColumn != layout.CenterFocusedColumnNever {
+		t.Errorf("the centering policy of the workspace = %+v, want its own never", workspace.Layout.CenterFocusedColumn)
+	}
+	if workspace.Layout.Struts == nil || *workspace.Layout.Struts != (layout.Struts{Top: 44}) {
+		t.Errorf("the struts of the workspace = %+v, want its own top 44", workspace.Layout.Struts)
 	}
 }
 
