@@ -1,12 +1,14 @@
 package wlr
 
 import (
+	"math"
 	"os"
 	"os/exec"
 	"testing"
 	"time"
 
 	"github.com/Nomadcxx/sysc-compositor/internal/config"
+	"github.com/Nomadcxx/sysc-compositor/internal/layout"
 )
 
 // TestWindowRuleOpenMaximizedFillsTheWorkingWidth: a window that opens
@@ -348,4 +350,176 @@ func TestWindowRuleMinWidthAmendsTheSizeHints(t *testing.T) {
 		c.Terminate()
 	}
 	runClient(t, c, []string{"weston-terminal"}, nil, nil)
+}
+
+// TestWindowRuleOpacityComposesWithAnimationsFullscreenAndResize covers the
+// mapped buffer, opacity-sensitive state changes, fullscreen, reload removal,
+// and the snapshots that temporarily replace the live tree.
+func TestWindowRuleOpacityComposesWithAnimationsFullscreenAndResize(t *testing.T) {
+	notUrgent, urgent := false, true
+	normalOpacity, urgentOpacity := 0.65, -0.5
+	animations := laptopAnimations()
+	opts := Options{
+		Animations: animations,
+		WindowRules: []config.WindowRule{
+			{Matches: []config.RuleMatch{{IsUrgent: &notUrgent}}, Opacity: &normalOpacity},
+			{Matches: []config.RuleMatch{{IsUrgent: &urgent}}, Opacity: &urgentOpacity},
+		},
+	}
+	c := newNestedWith(t, opts)
+	var mapped, finished bool
+
+	assertOpacity := func(view *toplevelView, want float64, stage string) bool {
+		_, _, got, found := sceneFXTreeFirstBuffer(view.sceneNode())
+		if !found {
+			t.Errorf("%s: no mapped buffer in the window tree", stage)
+			c.Terminate()
+			return false
+		}
+		if math.Abs(got-want) > 0.01 {
+			t.Errorf("%s: buffer opacity = %v, want %v", stage, got, want)
+			c.Terminate()
+			return false
+		}
+		return true
+	}
+
+	var waitForOpen func(*toplevelView)
+	waitForOpen = func(view *toplevelView) {
+		time.AfterFunc(25*time.Millisecond, func() {
+			_ = c.Post(func() {
+				if !view.openAnimationFinished {
+					assertOpacity(view, clampOpacity(view.presentationOpacity)*normalOpacity, "opening animation")
+					if !finished {
+						waitForOpen(view)
+					}
+					return
+				}
+				if !assertOpacity(view, normalOpacity, "open window") {
+					return
+				}
+				if !c.SetWindowUrgent(view.id, true) {
+					t.Error("SetWindowUrgent(true) failed")
+					c.Terminate()
+					return
+				}
+				if !assertOpacity(view, 0, "transparent urgent rule") {
+					return
+				}
+				x, y := c.viewCenter(view)
+				surface, _, _ := c.surfaceAt(x, y)
+				if c.viewForSurface(surface) != view || !sceneFXNodeEnabled(view.sceneNode()) {
+					t.Error("transparent window stopped receiving hit tests or was disabled")
+					c.Terminate()
+					return
+				}
+				if !c.SetWindowUrgent(view.id, false) || !assertOpacity(view, normalOpacity, "urgent rule removal") {
+					if !finished {
+						c.Terminate()
+					}
+					return
+				}
+				if !c.SetFullscreen(view.id, true) || !assertOpacity(view, 1, "fullscreen") {
+					if !finished {
+						c.Terminate()
+					}
+					return
+				}
+				if !c.SetFullscreen(view.id, false) || !assertOpacity(view, normalOpacity, "fullscreen exit") {
+					if !finished {
+						c.Terminate()
+					}
+					return
+				}
+
+				geometry := view.geometry()
+				if !c.model.SetWindowFloating(view.id, true, layout.Bounds{X: 100, Y: 100, Width: geometry.w, Height: geometry.h}) {
+					t.Error("SetWindowFloating() failed")
+					c.Terminate()
+					return
+				}
+				c.applyWorkspaceModel()
+				target := layout.Bounds{X: 100, Y: 100, Width: geometry.w + 120, Height: geometry.h + 80}
+				if !c.model.SetFloatingGeometry(view.id, target) {
+					t.Error("SetFloatingGeometry() failed")
+					c.Terminate()
+					return
+				}
+				c.applyWorkspaceModel()
+				if view.resizeSnapshot == nil {
+					t.Error("resize did not create a snapshot")
+					c.Terminate()
+					return
+				}
+				_, _, snapshotOpacity, snapshotFound := sceneFXTreeFirstBuffer(view.resizeSnapshot)
+				if !snapshotFound || math.Abs(snapshotOpacity-normalOpacity) > 0.01 {
+					t.Errorf("resize snapshot opacity = %v (found %v), want %v", snapshotOpacity, snapshotFound, normalOpacity)
+					c.Terminate()
+					return
+				}
+				if !assertOpacity(view, 0, "live tree during resize") || !sceneFXNodeEnabled(view.sceneNode()) {
+					t.Error("resize hid or disabled the live window tree")
+					c.Terminate()
+					return
+				}
+				x, y = c.viewCenter(view)
+				surface, _, _ = c.surfaceAt(x, y)
+				if c.viewForSurface(surface) != view {
+					t.Error("resizing window stopped receiving hit tests")
+					c.Terminate()
+					return
+				}
+
+				resizeStarted := time.Now()
+				var waitForResize func()
+				waitForResize = func() {
+					time.AfterFunc(50*time.Millisecond, func() {
+						_ = c.Post(func() {
+							if view.resizeSnapshot == nil {
+								if !assertOpacity(view, normalOpacity, "settled resize") {
+									return
+								}
+								opts.WindowRules = nil
+								if err := c.Reconfigure(opts); err != nil {
+									t.Errorf("remove opacity rule: %v", err)
+									c.Terminate()
+									return
+								}
+								if !assertOpacity(view, 1, "opacity rule removal") {
+									return
+								}
+								finished = true
+								c.Terminate()
+								return
+							}
+							if time.Since(resizeStarted) > 5*time.Second {
+								t.Error("resize snapshot did not settle")
+								c.Terminate()
+								return
+							}
+							waitForResize()
+						})
+					})
+				}
+				waitForResize()
+			})
+		})
+	}
+
+	c.viewMapped = func(view *toplevelView) {
+		mapped = true
+		if !view.openAnimationStarted || view.openAnimationFinished {
+			t.Error("new window did not start its opening opacity animation")
+			c.Terminate()
+			return
+		}
+		if !assertOpacity(view, clampOpacity(view.presentationOpacity)*normalOpacity, "opening window") {
+			return
+		}
+		waitForOpen(view)
+	}
+	runClient(t, c, []string{"weston-terminal"}, nil, nil)
+	if !mapped || !finished {
+		t.Fatalf("opacity regression did not finish: mapped=%v finished=%v", mapped, finished)
+	}
 }

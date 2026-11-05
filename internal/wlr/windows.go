@@ -239,6 +239,7 @@ func (c *Compositor) reapplyWindowRules() {
 		view.appearance = config.ResolveWindowRules(c.windowRules,
 			cString(view.toplevel.app_id), cString(view.toplevel.title),
 			c.ruleState(view, snapshot))
+		c.syncViewOpacity(view)
 	}
 }
 
