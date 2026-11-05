@@ -3,10 +3,10 @@
 - Date: 2026-11-03
 - Bead: `sysc-2231`
 - Branch: `feat/config-surface-20261103`
-- Status: slices 1, 2 and 3 landed on 2026-11-03 (commits `3bd4e41`,
-  `79b939d` and `99a6c7e`, draft PR #94). Slice 4a, the per-workspace
-  layout, landed on 2026-11-03 (commit `c817344`). Slices 4b to 6 are not
-  started.
+- Execution snapshot: slices 1–5a are implemented on draft PR #94 at
+  `aa17823`; slices 5b–6 remain. See the execution records below and the
+  [2026-11-05 continuation plan](2026-11-05-handover.md). bd `sysc-2231`
+  owns current status; implemented on this branch does not mean merged.
 - Reference: niri v26.04 in `/home/nomadx/references/niri`
   (`niri-config/src/window_rule.rs`, `layer_rule.rs`, `workspace.rs`, `layout.rs`,
   `docs/wiki/Configuration:-Window-Rules.md`, `Configuration:-Layer-Rules.md`,
@@ -314,6 +314,29 @@ slice 5, and `always-center-single-column`, which still warns.
 `opacity`, `shadow`, `geometry-corner-radius`, `background-effect`,
 `block-out-from`. These are per-window overrides of what is one global
 setting today, so they touch the decoration and the renderer.
+
+#### Slice 5a — window opacity
+
+The window-rule `opacity` key parses as a finite number and resolves with the
+last matching rule. Rendering clamps it to 0–1, multiplies it by the opening
+animation opacity, and forces fullscreen windows opaque. `syncViewOpacity`
+applies the value to every buffer under the window tree; newly mapped xdg popup
+trees receive it when wlroots creates them. Resize snapshots copy the buffer
+alpha and keep it while the live tree stays enabled for hit testing and frame
+callbacks.
+
+Tests: `internal/config/config_test.go`
+`TestNiriWindowRuleOpacityIsParsedAndResolved`; `internal/wlr/window_rules_test.go`
+`TestWindowRuleOpacityComposesWithOpeningAndResizeSnapshots` and
+`TestWindowRuleOpacityTracksUrgencyAndFullscreen`; and
+`internal/wlr/popup_test.go` `TestPopupDrawsBesideItsParent` also checks popup
+buffer opacity. The config test passes locally. Hosted CI run `41994617812`
+passed both `check` and `compositor` on `aa17823`; the compositor lane ran under
+vkms. No nested compositor test ran locally.
+
+Known differences: sysc applies full opacity as soon as fullscreen state lands;
+Niri interpolates the window-rule opacity toward one during its fullscreen
+transition. `popups.opacity` remains unsupported and belongs to slice 6.
 
 ### Slice 6 — the leftovers
 
