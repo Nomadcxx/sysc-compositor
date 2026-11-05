@@ -455,6 +455,11 @@ struct sysc_idle_client {
 	struct wl_proxy *cursor_shape_device;
 	uint32_t enter_serial;
 	bool entered;
+	struct wl_touch *touch;
+	int touch_downs, touch_ups, touch_motions, touch_frames, touch_cancels;
+	int32_t touch_id;
+	double touch_x, touch_y;
+	bool touch_on_toplevel;
 	struct wl_surface *surface;
 	struct wl_proxy *xdg_surface, *toplevel, *notification, *inhibitor;
 	struct wl_buffer *buffer;
@@ -657,6 +662,59 @@ static const struct wl_seat_listener sysc_seat_listener = {
 	.capabilities = sysc_seat_capabilities,
 	.name = sysc_seat_name,
 };
+
+// The touch listener counts the events the client receives. A client that
+// never binds wl_seat.get_touch never sees one: only a client that asked
+// for touch is offered it.
+static void sysc_touch_down(void *data, struct wl_touch *touch, uint32_t serial, uint32_t time,
+		struct wl_surface *surface, int32_t id, wl_fixed_t x, wl_fixed_t y) {
+	struct sysc_idle_client *c = data;
+	c->touch_downs++;
+	c->touch_id = id;
+	c->touch_x = wl_fixed_to_double(x);
+	c->touch_y = wl_fixed_to_double(y);
+	c->touch_on_toplevel = surface == c->surface;
+}
+static void sysc_touch_up(void *data, struct wl_touch *touch, uint32_t serial, uint32_t time, int32_t id) {
+	struct sysc_idle_client *c = data;
+	c->touch_ups++;
+	c->touch_id = id;
+}
+static void sysc_touch_motion(void *data, struct wl_touch *touch, uint32_t time, int32_t id,
+		wl_fixed_t x, wl_fixed_t y) {
+	struct sysc_idle_client *c = data;
+	c->touch_motions++;
+	c->touch_id = id;
+	c->touch_x = wl_fixed_to_double(x);
+	c->touch_y = wl_fixed_to_double(y);
+}
+static void sysc_touch_frame(void *data, struct wl_touch *touch) {
+	((struct sysc_idle_client *)data)->touch_frames++;
+}
+static void sysc_touch_cancel(void *data, struct wl_touch *touch) {
+	((struct sysc_idle_client *)data)->touch_cancels++;
+}
+static const struct wl_touch_listener sysc_touch_listener = {
+	.down = sysc_touch_down, .up = sysc_touch_up, .motion = sysc_touch_motion,
+	.frame = sysc_touch_frame, .cancel = sysc_touch_cancel,
+};
+
+// Binds the user seat's touch, which makes the toplevel accept touch input.
+// The seat must advertise the touch capability first: wl_seat.get_touch
+// without it is a protocol error.
+static int sysc_client_bind_touch(struct sysc_idle_client *c) {
+	if (c->seat == NULL) {
+		return 1;
+	}
+	if (c->touch == NULL) {
+		c->touch = wl_seat_get_touch(c->seat);
+		if (c->touch == NULL) {
+			return 2;
+		}
+		wl_touch_add_listener(c->touch, &sysc_touch_listener, c);
+	}
+	return wl_display_roundtrip(c->display) < 0 ? 3 : 0;
+}
 
 static struct wl_buffer *sysc_idle_color_buffer(struct wl_shm *shm, int width, int height, uint32_t color) {
 	int stride = width * 4, size = stride * height;
@@ -1678,6 +1736,37 @@ func (c *ToplevelClient) TabletEvents() TabletEvents {
 		PadEnters: int(s.pad_enters), PadLeaves: int(s.pad_leaves), PadButtons: int(s.pad_buttons),
 		OtherSeatObjects: int(s.other_seat_tablet_objects),
 		ToolOnToplevel:   bool(s.tool_on_toplevel), PadOnToplevel: bool(s.pad_on_toplevel),
+	}
+}
+
+// BindTouch binds the user seat's touch, so the toplevel accepts touch
+// input. The seat must advertise the touch capability: the call fails
+// otherwise.
+func (c *ToplevelClient) BindTouch() error {
+	if code := int(C.sysc_client_bind_touch(c.state)); code != 0 {
+		return fmt.Errorf("Wayland touch request failed at step %d", code)
+	}
+	return nil
+}
+
+// TouchEvents counts the touch events the client received.
+type TouchEvents struct {
+	Downs, Ups, Motions, Frames, Cancels int
+	// ID is the last touch point's identifier.
+	ID int32
+	// X and Y are the last position, in surface-local coordinates.
+	X, Y float64
+	// OnToplevel reports whether the last down named the toplevel.
+	OnToplevel bool
+}
+
+func (c *ToplevelClient) TouchEvents() TouchEvents {
+	s := c.state
+	return TouchEvents{
+		Downs: int(s.touch_downs), Ups: int(s.touch_ups), Motions: int(s.touch_motions),
+		Frames: int(s.touch_frames), Cancels: int(s.touch_cancels),
+		ID: int32(s.touch_id), X: float64(s.touch_x), Y: float64(s.touch_y),
+		OnToplevel: bool(s.touch_on_toplevel),
 	}
 }
 

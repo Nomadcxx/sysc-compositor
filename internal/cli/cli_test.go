@@ -523,12 +523,31 @@ func TestUsageLeadsWithSyscCompositorAndNamesTheNiriAlias(t *testing.T) {
 			t.Fatalf("%s: exit %d, want 2 (usage)", name, code)
 		}
 		out := stderr.String()
-		if !strings.Contains(out, "usage: sysc-compositor [--session] [-c CONFIG] | sysc-compositor validate [-c CONFIG] | sysc-compositor msg [--json] REQUEST\n") {
+		if !strings.Contains(out, "usage: sysc-compositor [--session] [-c CONFIG] | sysc-compositor validate [-c CONFIG] | sysc-compositor msg [--json] REQUEST") {
 			t.Errorf("%s usage %q does not lead with sysc-compositor", name, out)
+		}
+		if !strings.Contains(out, "sysc-compositor touch-probe") {
+			t.Errorf("%s usage %q does not name the touch-probe command", name, out)
 		}
 		alias := strings.Contains(out, "niri is a compatibility alias of sysc-compositor")
 		if alias {
 			t.Errorf("%s usage %q: alias note present = %v", name, out, alias)
 		}
+	}
+}
+
+// The gate records a whole stroke, down and up, so the flag has to be part of
+// the command. An unknown flag ends with the usage code, a known one runs.
+func TestTouchProbeTakesTheUntilStrokeFlag(t *testing.T) {
+	var stderr bytes.Buffer
+	env := Env{Getenv: func(string) string { return "" }, Stdout: &bytes.Buffer{}, Stderr: &stderr}
+	code := Main("sysc-compositor", []string{
+		"touch-probe", "--until-stroke", "--display", "no-such-display", "--timeout", "1ms",
+	}, env)
+	if code != 4 {
+		t.Fatalf("exit %d, want 4 (the probe could not run)", code)
+	}
+	if strings.Contains(stderr.String(), "unknown touch-probe argument") {
+		t.Errorf("the probe rejected --until-stroke: %s", stderr.String())
 	}
 }

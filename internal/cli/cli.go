@@ -42,6 +42,8 @@ func Main(name string, args []string, env Env) int {
 			return msg(name, args[1:], env)
 		case "validate":
 			return validateConfig(name, args[1:], env)
+		case "touch-probe":
+			return touchProbe(name, args[1:], env)
 		case "-V", "--version":
 			fmt.Fprintln(env.Stdout, server.Version())
 			return 0
@@ -80,7 +82,7 @@ func parseRunOptions(args []string) (runOptions, error) {
 
 // usage describes the installed sysc-compositor command.
 func usage(name string, env Env, problem string) int {
-	fmt.Fprintf(env.Stderr, "%s: %s\nusage: sysc-compositor [--session] [-c CONFIG] | sysc-compositor validate [-c CONFIG] | sysc-compositor msg [--json] REQUEST\n", name, problem)
+	fmt.Fprintf(env.Stderr, "%s: %s\nusage: sysc-compositor [--session] [-c CONFIG] | sysc-compositor validate [-c CONFIG] | sysc-compositor msg [--json] REQUEST | sysc-compositor touch-probe [--display NAME] [--timeout DURATION] [--no-window] [--until-stroke]\n", name, problem)
 	return 2
 }
 

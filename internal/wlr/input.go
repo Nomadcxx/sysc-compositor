@@ -93,7 +93,10 @@ static void sysc_seat_keyboard_focus(struct wlr_seat *seat,
 import "C"
 
 import (
+	"fmt"
 	"math"
+	"os"
+	"strings"
 	"time"
 	"unsafe"
 
@@ -295,6 +298,10 @@ func (c *Compositor) handleNewInput(data unsafe.Pointer) {
 		C.wlr_cursor_attach_input_device(c.cursor, device)
 		c.attachPointerGestureListeners(deviceKey, C.wlr_pointer_from_input_device(device))
 		c.pointerDevices[deviceKey] = true
+	case C.WLR_INPUT_DEVICE_TOUCH:
+		if !c.addTouch(device) {
+			return
+		}
 	case C.WLR_INPUT_DEVICE_TABLET:
 		c.loadCursorTheme()
 		if !c.addTablet(device) {
@@ -336,6 +343,7 @@ func (c *Compositor) loadCursorTheme() {
 
 func (c *Compositor) handleInputDestroy(device unsafe.Pointer) {
 	c.detachPointerGestureListeners(device)
+	c.removeTouch(device)
 	if listener := c.switchToggleListeners[device]; listener != nil {
 		c.drop(listener)
 		delete(c.switchToggleListeners, device)
@@ -1080,6 +1088,15 @@ func (c *Compositor) overviewShown() bool {
 	return c.model != nil && (c.model.OverviewProgress() > 0 || c.model.OverviewOpen())
 }
 
+// modalUIOpen reports whether a pointer-driven modal UI is up: the colour
+// picker, the screenshot UI, the switcher, the exit dialog or the overview.
+// Those UIs have no touch handling yet, so a touch is dropped while one is
+// open.
+func (c *Compositor) modalUIOpen() bool {
+	return c.pickColor != nil || c.shotUI != nil || c.switcher.isOpen() || c.exitDialog.open ||
+		(c.model != nil && (c.model.OverviewProgress() > 0 || c.model.OverviewOpen()))
+}
+
 // upperLayerAt reports whether a top or overlay layer surface is at layout
 // coordinates.
 func (c *Compositor) upperLayerAt(x, y float64) bool {
@@ -1754,8 +1771,36 @@ func (c *Compositor) refreshCapabilities() {
 	if len(c.keyboardDevices)+len(c.virtualKeyboards) > 0 {
 		caps |= C.WL_SEAT_CAPABILITY_KEYBOARD
 	}
+	// A touch screen is its own capability: it is not a pointer, and a
+	// client must ask for touch to get it.
+	if !c.touchConfig.Off && len(c.touchDevices) > 0 {
+		caps |= C.WL_SEAT_CAPABILITY_TOUCH
+	}
+	if int(caps) != c.capabilities {
+		c.capabilities = int(caps)
+		fmt.Fprintf(os.Stderr, "sysc-compositor: seat capabilities: %s\n", seatCapabilityNames(int(caps)))
+	}
 	C.wlr_seat_set_capabilities(c.seat, caps)
-	c.capabilities = int(caps)
+}
+
+// seatCapabilityNames spells the seat's capability bits out, in the order
+// the protocol numbers them. The log says what the seat offers, which is
+// otherwise nowhere to be seen.
+func seatCapabilityNames(caps int) string {
+	names := []string{}
+	if caps&int(C.WL_SEAT_CAPABILITY_POINTER) != 0 {
+		names = append(names, "pointer")
+	}
+	if caps&int(C.WL_SEAT_CAPABILITY_KEYBOARD) != 0 {
+		names = append(names, "keyboard")
+	}
+	if caps&int(C.WL_SEAT_CAPABILITY_TOUCH) != 0 {
+		names = append(names, "touch")
+	}
+	if len(names) == 0 {
+		return "none"
+	}
+	return strings.Join(names, "|")
 }
 
 // SeatCapabilities reports the capability bitmask the seat advertises. A
