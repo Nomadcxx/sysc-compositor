@@ -376,113 +376,119 @@ func TestWindowRuleOpacityComposesWithOpeningAndResizeSnapshots(t *testing.T) {
 		return true
 	}
 
+	var waitForSettledOpacity func(*toplevelView, float64, string, time.Time, func())
+	waitForSettledOpacity = func(view *toplevelView, want float64, stage string, started time.Time, done func()) {
+		time.AfterFunc(25*time.Millisecond, func() {
+			_ = c.Post(func() {
+				if time.Since(started) > 5*time.Second {
+					t.Errorf("%s did not settle", stage)
+					c.Terminate()
+					return
+				}
+				if view.resizeSnapshot != nil {
+					if !assertOpacity(view, 0, stage+" live tree during resize") {
+						return
+					}
+					_, _, snapshotOpacity, found := sceneFXTreeFirstBuffer(view.resizeSnapshot)
+					if !found || math.Abs(snapshotOpacity-want) > 0.01 {
+						t.Errorf("%s resize snapshot opacity = %v (found %v), want %v", stage, snapshotOpacity, found, want)
+						c.Terminate()
+						return
+					}
+					waitForSettledOpacity(view, want, stage, started, done)
+					return
+				}
+				wKey, hKey := c.resizeKeys(view)
+				if c.hasAnimation(wKey) || c.hasAnimation(hKey) {
+					waitForSettledOpacity(view, want, stage, started, done)
+					return
+				}
+				if !assertOpacity(view, want, stage) {
+					return
+				}
+				done()
+			})
+		})
+	}
+
+	var startResize func(*toplevelView)
+	startResize = func(view *toplevelView) {
+		geometry := view.geometry()
+		if !c.model.SetWindowFloating(view.id, true, layout.Bounds{X: 100, Y: 100, Width: geometry.w, Height: geometry.h}) {
+			t.Error("SetWindowFloating() failed")
+			c.Terminate()
+			return
+		}
+		c.applyWorkspaceModel()
+		target := layout.Bounds{X: 100, Y: 100, Width: geometry.w + 120, Height: geometry.h + 80}
+		if !c.model.SetFloatingGeometry(view.id, target) {
+			t.Error("SetFloatingGeometry() failed")
+			c.Terminate()
+			return
+		}
+		c.applyWorkspaceModel()
+		if view.resizeSnapshot == nil {
+			t.Error("resize did not create a snapshot")
+			c.Terminate()
+			return
+		}
+		_, _, snapshotOpacity, snapshotFound := sceneFXTreeFirstBuffer(view.resizeSnapshot)
+		if !snapshotFound || math.Abs(snapshotOpacity-normalOpacity) > 0.01 {
+			t.Errorf("resize snapshot opacity = %v (found %v), want %v", snapshotOpacity, snapshotFound, normalOpacity)
+			c.Terminate()
+			return
+		}
+		if !assertOpacity(view, 0, "live tree during resize") {
+			return
+		}
+		if !sceneFXNodeEnabled(view.sceneNode()) {
+			t.Error("resize hid or disabled the live window tree")
+			c.Terminate()
+			return
+		}
+		x, y := c.viewCenter(view)
+		surface, _, _ := c.surfaceAt(x, y)
+		if c.viewForSurface(surface) != view {
+			t.Error("resizing window stopped receiving hit tests")
+			c.Terminate()
+			return
+		}
+		waitForSettledOpacity(view, normalOpacity, "settled resize", time.Now(), func() {
+			finished = true
+			c.Terminate()
+		})
+	}
+
 	var waitForOpen func(*toplevelView)
 	waitForOpen = func(view *toplevelView) {
 		time.AfterFunc(25*time.Millisecond, func() {
 			_ = c.Post(func() {
 				if !view.openAnimationFinished {
-					assertOpacity(view, clampOpacity(view.presentationOpacity)*normalOpacity, "opening animation")
+					if !assertOpacity(view, clampOpacity(view.presentationOpacity)*normalOpacity, "opening animation") {
+						return
+					}
 					waitForOpen(view)
 					return
 				}
-				if view.resizeSnapshot != nil {
-					if !assertOpacity(view, 0, "live tree during initial resize") {
-						return
-					}
-					_, _, snapshotOpacity, found := sceneFXTreeFirstBuffer(view.resizeSnapshot)
-					if !found || math.Abs(snapshotOpacity-normalOpacity) > 0.01 {
-						t.Errorf("initial resize snapshot opacity = %v (found %v), want %v", snapshotOpacity, found, normalOpacity)
+				waitForSettledOpacity(view, normalOpacity, "open window", time.Now(), func() {
+					opts.WindowRules = nil
+					if err := c.Reconfigure(opts); err != nil {
+						t.Errorf("remove opacity rule: %v", err)
 						c.Terminate()
 						return
 					}
-					waitForOpen(view)
-					return
-				}
-				if !assertOpacity(view, normalOpacity, "open window") {
-					return
-				}
-
-				opts.WindowRules = nil
-				if err := c.Reconfigure(opts); err != nil {
-					t.Errorf("remove opacity rule: %v", err)
-					c.Terminate()
-					return
-				}
-				if !assertOpacity(view, 1, "opacity rule removal") {
-					return
-				}
-				opts.WindowRules = rules
-				if err := c.Reconfigure(opts); err != nil {
-					t.Errorf("restore opacity rule: %v", err)
-					c.Terminate()
-					return
-				}
-				if !assertOpacity(view, normalOpacity, "opacity rule restore") {
-					return
-				}
-
-				geometry := view.geometry()
-				if !c.model.SetWindowFloating(view.id, true, layout.Bounds{X: 100, Y: 100, Width: geometry.w, Height: geometry.h}) {
-					t.Error("SetWindowFloating() failed")
-					c.Terminate()
-					return
-				}
-				c.applyWorkspaceModel()
-				target := layout.Bounds{X: 100, Y: 100, Width: geometry.w + 120, Height: geometry.h + 80}
-				if !c.model.SetFloatingGeometry(view.id, target) {
-					t.Error("SetFloatingGeometry() failed")
-					c.Terminate()
-					return
-				}
-				c.applyWorkspaceModel()
-				if view.resizeSnapshot == nil {
-					t.Error("resize did not create a snapshot")
-					c.Terminate()
-					return
-				}
-				_, _, snapshotOpacity, snapshotFound := sceneFXTreeFirstBuffer(view.resizeSnapshot)
-				if !snapshotFound || math.Abs(snapshotOpacity-normalOpacity) > 0.01 {
-					t.Errorf("resize snapshot opacity = %v (found %v), want %v", snapshotOpacity, snapshotFound, normalOpacity)
-					c.Terminate()
-					return
-				}
-				if !assertOpacity(view, 0, "live tree during resize") || !sceneFXNodeEnabled(view.sceneNode()) {
-					t.Error("resize hid or disabled the live window tree")
-					c.Terminate()
-					return
-				}
-				x, y := c.viewCenter(view)
-				surface, _, _ := c.surfaceAt(x, y)
-				if c.viewForSurface(surface) != view {
-					t.Error("resizing window stopped receiving hit tests")
-					c.Terminate()
-					return
-				}
-
-				resizeStarted := time.Now()
-				var waitForResize func()
-				waitForResize = func() {
-					time.AfterFunc(50*time.Millisecond, func() {
-						_ = c.Post(func() {
-							wKey, hKey := c.resizeKeys(view)
-							if view.resizeSnapshot == nil && !c.hasAnimation(wKey) && !c.hasAnimation(hKey) {
-								if !assertOpacity(view, normalOpacity, "settled resize") {
-									return
-								}
-								finished = true
-								c.Terminate()
-								return
-							}
-							if time.Since(resizeStarted) > 5*time.Second {
-								t.Error("resize snapshot did not settle")
-								c.Terminate()
-								return
-							}
-							waitForResize()
+					waitForSettledOpacity(view, 1, "opacity rule removal", time.Now(), func() {
+						opts.WindowRules = rules
+						if err := c.Reconfigure(opts); err != nil {
+							t.Errorf("restore opacity rule: %v", err)
+							c.Terminate()
+							return
+						}
+						waitForSettledOpacity(view, normalOpacity, "opacity rule restore", time.Now(), func() {
+							startResize(view)
 						})
 					})
-				}
-				waitForResize()
+				})
 			})
 		})
 	}
