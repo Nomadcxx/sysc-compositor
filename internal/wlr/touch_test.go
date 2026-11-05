@@ -253,3 +253,59 @@ func TestSessionLockEndsAnActiveTouch(t *testing.T) {
 		onCompositor(t, c, func() { screen.remove() })
 	})
 }
+
+// TestModalOpeningEndsAnActiveTouch: opening a modal UI ends a finger already
+// delivered to a window, and later motion never reaches that window.
+func TestModalOpeningEndsAnActiveTouch(t *testing.T) {
+	c := newNested(t)
+	runTouchClients(t, c, 1, func(clients []*testclient.ToplevelClient, views []*toplevelView) {
+		client := clients[0]
+		var screen *fakeTouch
+		var dx, dy float64
+		onCompositor(t, c, func() {
+			screen = c.addFakeTouch()
+			lx, ly := c.viewCenter(views[0])
+			dx, dy = touchDevicePoint(c, lx, ly)
+		})
+		if screen == nil {
+			t.Fatal("the fake touch screen did not appear")
+		}
+		if err := client.BindTouch(); err != nil {
+			t.Fatal(err)
+		}
+		onCompositor(t, c, func() {
+			screen.down(1, dx, dy)
+			screen.frame()
+		})
+		if err := client.SyncInput(); err != nil {
+			t.Fatal(err)
+		}
+		if ev := client.TouchEvents(); ev.Downs != 1 {
+			t.Fatalf("pre-modal touch events = %+v, want one down", ev)
+		}
+
+		onCompositor(t, c, func() {
+			if !c.OpenOverview() {
+				t.Fatal("could not open overview")
+			}
+		})
+		if err := client.SyncInput(); err != nil {
+			t.Fatal(err)
+		}
+		if ev := client.TouchEvents(); ev.Ups != 1 || ev.Motions != 0 {
+			t.Fatalf("modal-open touch events = %+v, want one up and no motion", ev)
+		}
+
+		onCompositor(t, c, func() {
+			screen.motion(1, dx+0.01, dy)
+			screen.frame()
+			screen.remove()
+		})
+		if err := client.SyncInput(); err != nil {
+			t.Fatal(err)
+		}
+		if ev := client.TouchEvents(); ev.Motions != 0 {
+			t.Errorf("post-modal touch events = %+v, want no motion", ev)
+		}
+	})
+}
