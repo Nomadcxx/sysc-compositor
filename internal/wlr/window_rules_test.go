@@ -395,15 +395,18 @@ func TestWindowRuleOpacityComposesWithAnimationsFullscreenAndResize(t *testing.T
 				}
 				if view.resizeSnapshot != nil {
 					stage := "initial resize"
+					snapshotOpacityWant := normalOpacity
 					if fullscreenExitPending {
 						stage = "fullscreen exit resize"
+						// The exit snapshot retains the opaque fullscreen frame it cloned.
+						snapshotOpacityWant = 1
 					}
 					if !assertOpacity(view, 0, "live tree during "+stage) {
 						return
 					}
 					_, _, snapshotOpacity, found := sceneFXTreeFirstBuffer(view.resizeSnapshot)
-					if !found || math.Abs(snapshotOpacity-normalOpacity) > 0.01 {
-						t.Errorf("%s snapshot opacity = %v (found %v), want %v", stage, snapshotOpacity, found, normalOpacity)
+					if !found || math.Abs(snapshotOpacity-snapshotOpacityWant) > 0.01 {
+						t.Errorf("%s snapshot opacity = %v (found %v), want %v", stage, snapshotOpacity, found, snapshotOpacityWant)
 						c.Terminate()
 						return
 					}
