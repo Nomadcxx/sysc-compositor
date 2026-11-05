@@ -760,6 +760,20 @@ func TestWindowRuleOpacityChangesRenderedPixels(t *testing.T) {
 		})
 		assertPixel("urgent rule removal", readWindowPixel(), blend(foreground, background, normalOpacity))
 
+		onCompositor(t, c, func() {
+			if !c.SetFullscreen(view.id, true) {
+				t.Error("SetFullscreen(true) failed")
+			}
+		})
+		assertPixel("fullscreen opacity override", readWindowPixel(), foreground)
+
+		onCompositor(t, c, func() {
+			if !c.SetFullscreen(view.id, false) {
+				t.Error("SetFullscreen(false) failed")
+			}
+		})
+		assertPixel("fullscreen exit opacity", readWindowPixel(), blend(foreground, background, normalOpacity))
+
 		opts := Options{Animations: animations}
 		onCompositor(t, c, func() {
 			if err := c.Reconfigure(opts); err != nil {
