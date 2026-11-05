@@ -1,14 +1,18 @@
 package wlr
 
 import (
+	"image"
+	"image/color"
 	"math"
 	"os"
 	"os/exec"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/Nomadcxx/sysc-compositor/internal/config"
 	"github.com/Nomadcxx/sysc-compositor/internal/layout"
+	"github.com/Nomadcxx/sysc-compositor/internal/wlr/testclient"
 )
 
 // TestWindowRuleOpenMaximizedFillsTheWorkingWidth: a window that opens
@@ -600,4 +604,148 @@ func TestWindowRuleOpacityTracksUrgencyAndFullscreen(t *testing.T) {
 	if len(views) != 2 || !checked {
 		t.Fatalf("opacity state regression did not finish: mapped=%d checked=%v", len(views), checked)
 	}
+}
+
+// TestWindowRuleOpacityChangesRenderedPixels checks opacity in the rendered
+// output, not only the scene buffer metadata.
+func TestWindowRuleOpacityChangesRenderedPixels(t *testing.T) {
+	notUrgent, urgent := false, true
+	normalOpacity, urgentOpacity := 0.5, 0.0
+	animations := config.Animations{Off: true}
+	rules := []config.WindowRule{
+		{Matches: []config.RuleMatch{{IsUrgent: &notUrgent}}, Opacity: &normalOpacity},
+		{Matches: []config.RuleMatch{{IsUrgent: &urgent}}, Opacity: &urgentOpacity},
+	}
+	c := newNestedWith(t, Options{Animations: animations, WindowRules: rules})
+	runTools(t, c, func(func(string, ...string) *exec.Cmd) {
+		var output unsafe.Pointer
+		var outputBox image.Rectangle
+		var backgroundNode unsafe.Pointer
+		onCompositor(t, c, func() {
+			for output = range c.sceneOutputs {
+				break
+			}
+			if output == nil {
+				t.Error("no output for rendered opacity test")
+				return
+			}
+			outputBox = c.outputLayoutBox(output)
+			backgroundNode = sceneFXCreateRect(unsafe.Pointer(c.layerTrees[layerBackground]),
+				outputBox.Dx(), outputBox.Dy(), [4]float32{0.2, 0.4, 0.6, 1})
+			if backgroundNode == nil {
+				t.Error("create background for rendered opacity test")
+				return
+			}
+			sceneFXNodeSetPosition(backgroundNode, outputBox.Min.X, outputBox.Min.Y)
+		})
+		if output == nil || backgroundNode == nil {
+			return
+		}
+		defer onCompositor(t, c, func() {
+			if backgroundNode != nil {
+				sceneFXNodeDestroy(backgroundNode)
+			}
+		})
+
+		var background color.NRGBA
+		onCompositor(t, c, func() {
+			frame, err := c.captureOutput(output)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			background = frame.NRGBAAt(1, 1)
+		})
+		if want := (color.NRGBA{R: 51, G: 102, B: 153, A: 255}); background != want {
+			t.Errorf("test background pixel = %v, want %v", background, want)
+			return
+		}
+
+		client, err := testclient.StartToplevelClient(c.SocketName(), time.Hour)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer client.Close()
+		const sourceARGB = uint32(0xff3498db)
+		if err := client.Paint(sourceARGB, 200, 150); err != nil {
+			t.Error(err)
+			return
+		}
+
+		var view *toplevelView
+		onCompositor(t, c, func() {
+			for _, candidate := range c.views {
+				view = candidate
+				break
+			}
+			if view == nil {
+				t.Error("painted window did not map")
+			}
+		})
+		if view == nil {
+			return
+		}
+
+		readWindowPixel := func() color.NRGBA {
+			var pixel color.NRGBA
+			onCompositor(t, c, func() {
+				frame, err := c.captureOutput(output)
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				x, y := c.viewCenter(view)
+				px := int((x - float64(outputBox.Min.X)) * float64(frame.Bounds().Dx()) / float64(outputBox.Dx()))
+				py := int((y - float64(outputBox.Min.Y)) * float64(frame.Bounds().Dy()) / float64(outputBox.Dy()))
+				if !image.Pt(px, py).In(frame.Bounds()) {
+					t.Errorf("window center pixel (%d,%d) outside rendered output %v", px, py, frame.Bounds())
+					return
+				}
+				pixel = frame.NRGBAAt(px, py)
+			})
+			return pixel
+		}
+		assertPixel := func(stage string, got, want color.NRGBA) {
+			t.Helper()
+			const tolerance = 3
+			if math.Abs(float64(int(got.R)-int(want.R))) > tolerance ||
+				math.Abs(float64(int(got.G)-int(want.G))) > tolerance ||
+				math.Abs(float64(int(got.B)-int(want.B))) > tolerance || got.A != 255 {
+				t.Errorf("%s rendered pixel = %v, want %v (±%d per color channel)", stage, got, want, tolerance)
+			}
+		}
+		blend := func(foreground, under color.NRGBA, opacity float64) color.NRGBA {
+			return color.NRGBA{
+				R: uint8(math.Round(float64(foreground.R)*opacity + float64(under.R)*(1-opacity))),
+				G: uint8(math.Round(float64(foreground.G)*opacity + float64(under.G)*(1-opacity))),
+				B: uint8(math.Round(float64(foreground.B)*opacity + float64(under.B)*(1-opacity))),
+				A: 255,
+			}
+		}
+		foreground := color.NRGBA{R: 0x34, G: 0x98, B: 0xdb, A: 255}
+		assertPixel("rule opacity", readWindowPixel(), blend(foreground, background, normalOpacity))
+
+		onCompositor(t, c, func() {
+			if !c.SetWindowUrgent(view.id, true) {
+				t.Error("SetWindowUrgent(true) failed")
+			}
+		})
+		assertPixel("transparent urgent rule", readWindowPixel(), background)
+
+		onCompositor(t, c, func() {
+			if !c.SetWindowUrgent(view.id, false) {
+				t.Error("SetWindowUrgent(false) failed")
+			}
+		})
+		assertPixel("urgent rule removal", readWindowPixel(), blend(foreground, background, normalOpacity))
+
+		opts := Options{Animations: animations}
+		onCompositor(t, c, func() {
+			if err := c.Reconfigure(opts); err != nil {
+				t.Errorf("remove opacity rule: %v", err)
+			}
+		})
+		assertPixel("opacity rule removal", readWindowPixel(), foreground)
+	})
 }
