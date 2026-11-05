@@ -390,9 +390,20 @@ func TestWindowRuleOpacityComposesWithAnimationsFullscreenAndResize(t *testing.T
 			_ = c.Post(func() {
 				if !view.openAnimationFinished {
 					assertOpacity(view, clampOpacity(view.presentationOpacity)*normalOpacity, "opening animation")
-					if !finished {
-						waitForOpen(view)
+					waitForOpen(view)
+					return
+				}
+				if view.resizeSnapshot != nil {
+					if !assertOpacity(view, 0, "live tree during initial resize") {
+						return
 					}
+					_, _, snapshotOpacity, found := sceneFXTreeFirstBuffer(view.resizeSnapshot)
+					if !found || math.Abs(snapshotOpacity-normalOpacity) > 0.01 {
+						t.Errorf("initial resize snapshot opacity = %v (found %v), want %v", snapshotOpacity, found, normalOpacity)
+						c.Terminate()
+						return
+					}
+					waitForOpen(view)
 					return
 				}
 				if !assertOpacity(view, normalOpacity, "open window") {
