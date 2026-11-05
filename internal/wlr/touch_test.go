@@ -130,6 +130,51 @@ func TestTouchReachesTheClientThatAskedForIt(t *testing.T) {
 	})
 }
 
+// TestTouchFocusesWindowThatDidNotRequestTouch: touch activates the tile even
+// when its client has no wl_touch object, without turning the touch into a
+// pointer click.
+func TestTouchFocusesWindowThatDidNotRequestTouch(t *testing.T) {
+	c := newHeadless(t)
+	runTouchClients(t, c, 2, func(clients []*testclient.ToplevelClient, views []*toplevelView) {
+		plain := clients[0]
+		var screen *fakeTouch
+		var initialFocus *toplevelView
+		var dx, dy float64
+		onCompositor(t, c, func() {
+			screen = c.addFakeTouch()
+			c.focusView(views[1])
+			initialFocus = c.focusedView
+			lx, ly := viewCenter(views[0])
+			dx, dy = touchDevicePoint(c, lx, ly)
+		})
+		if screen == nil {
+			t.Fatal("the fake touch screen did not appear")
+		}
+		if initialFocus != views[1] {
+			t.Fatalf("initial focus = %p, want second tile %p", initialFocus, views[1])
+		}
+		onCompositor(t, c, func() {
+			screen.down(1, dx, dy)
+			screen.frame()
+			if c.focusedView != views[0] {
+				t.Errorf("touch focused %p, want touched tile %p", c.focusedView, views[0])
+			}
+			screen.up(1)
+			screen.frame()
+		})
+		if err := plain.SyncInput(); err != nil {
+			t.Fatal(err)
+		}
+		if ev := plain.TouchEvents(); ev.Downs != 0 || ev.Motions != 0 || ev.Ups != 0 {
+			t.Errorf("a client without wl_touch received %+v", ev)
+		}
+		if n := plain.InputEvents().PointerButtons; n != 0 {
+			t.Errorf("touch produced %d emulated pointer buttons, want none", n)
+		}
+		onCompositor(t, c, func() { screen.remove() })
+	})
+}
+
 // TestTouchOffKeepsTheSeatSilent: input.touch off leaves the seat without
 // the touch capability, and no finger reaches anything.
 func TestTouchOffKeepsTheSeatSilent(t *testing.T) {
