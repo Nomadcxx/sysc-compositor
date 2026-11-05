@@ -367,7 +367,7 @@ func TestWindowRuleOpacityComposesWithAnimationsFullscreenAndResize(t *testing.T
 		},
 	}
 	c := newNestedWith(t, opts)
-	var mapped, otherMapped, finished bool
+	var mapped, otherMapped, fullscreenExitPending, finished bool
 
 	assertOpacity := func(view *toplevelView, want float64, stage string) bool {
 		_, _, got, found := sceneFXTreeFirstBuffer(view.sceneNode())
@@ -394,12 +394,16 @@ func TestWindowRuleOpacityComposesWithAnimationsFullscreenAndResize(t *testing.T
 					return
 				}
 				if view.resizeSnapshot != nil {
-					if !assertOpacity(view, 0, "live tree during initial resize") {
+					stage := "initial resize"
+					if fullscreenExitPending {
+						stage = "fullscreen exit resize"
+					}
+					if !assertOpacity(view, 0, "live tree during "+stage) {
 						return
 					}
 					_, _, snapshotOpacity, found := sceneFXTreeFirstBuffer(view.resizeSnapshot)
 					if !found || math.Abs(snapshotOpacity-normalOpacity) > 0.01 {
-						t.Errorf("initial resize snapshot opacity = %v (found %v), want %v", snapshotOpacity, found, normalOpacity)
+						t.Errorf("%s snapshot opacity = %v (found %v), want %v", stage, snapshotOpacity, found, normalOpacity)
 						c.Terminate()
 						return
 					}
@@ -410,40 +414,49 @@ func TestWindowRuleOpacityComposesWithAnimationsFullscreenAndResize(t *testing.T
 					waitForOpen(view)
 					return
 				}
-				if !assertOpacity(view, normalOpacity, "open window") {
-					return
-				}
-				if !c.SetWindowUrgent(view.id, true) {
-					t.Error("SetWindowUrgent(true) failed")
-					c.Terminate()
-					return
-				}
-				if !assertOpacity(view, 0, "transparent urgent rule") {
-					return
-				}
-				x, y := c.viewCenter(view)
-				surface, _, _ := c.surfaceAt(x, y)
-				if c.viewForSurface(surface) != view || !sceneFXNodeEnabled(view.sceneNode()) {
-					t.Error("transparent window stopped receiving hit tests or was disabled")
-					c.Terminate()
-					return
-				}
-				if !c.SetWindowUrgent(view.id, false) || !assertOpacity(view, normalOpacity, "urgent rule removal") {
-					if !finished {
-						c.Terminate()
+				if fullscreenExitPending {
+					if !assertOpacity(view, normalOpacity, "fullscreen exit") {
+						return
 					}
-					return
-				}
-				if !c.SetFullscreen(view.id, true) || !assertOpacity(view, 1, "fullscreen") {
-					if !finished {
-						c.Terminate()
+					fullscreenExitPending = false
+				} else {
+					if !assertOpacity(view, normalOpacity, "open window") {
+						return
 					}
-					return
-				}
-				if !c.SetFullscreen(view.id, false) || !assertOpacity(view, normalOpacity, "fullscreen exit") {
-					if !finished {
+					if !c.SetWindowUrgent(view.id, true) {
+						t.Error("SetWindowUrgent(true) failed")
 						c.Terminate()
+						return
 					}
+					if !assertOpacity(view, 0, "transparent urgent rule") {
+						return
+					}
+					x, y := c.viewCenter(view)
+					surface, _, _ := c.surfaceAt(x, y)
+					if c.viewForSurface(surface) != view || !sceneFXNodeEnabled(view.sceneNode()) {
+						t.Error("transparent window stopped receiving hit tests or was disabled")
+						c.Terminate()
+						return
+					}
+					if !c.SetWindowUrgent(view.id, false) || !assertOpacity(view, normalOpacity, "urgent rule removal") {
+						if !finished {
+							c.Terminate()
+						}
+						return
+					}
+					if !c.SetFullscreen(view.id, true) || !assertOpacity(view, 1, "fullscreen") {
+						if !finished {
+							c.Terminate()
+						}
+						return
+					}
+					if !c.SetFullscreen(view.id, false) {
+						t.Error("SetFullscreen(false) failed")
+						c.Terminate()
+						return
+					}
+					fullscreenExitPending = true
+					waitForOpen(view)
 					return
 				}
 
