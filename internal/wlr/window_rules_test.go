@@ -352,22 +352,14 @@ func TestWindowRuleMinWidthAmendsTheSizeHints(t *testing.T) {
 	runClient(t, c, []string{"weston-terminal"}, nil, nil)
 }
 
-// TestWindowRuleOpacityComposesWithAnimationsFullscreenAndResize covers the
-// mapped buffer, opacity-sensitive state changes, fullscreen, reload removal,
-// and the snapshots that temporarily replace the live tree.
-func TestWindowRuleOpacityComposesWithAnimationsFullscreenAndResize(t *testing.T) {
-	notUrgent, urgent := false, true
-	normalOpacity, urgentOpacity := 0.65, -0.5
-	animations := laptopAnimations()
-	opts := Options{
-		Animations: animations,
-		WindowRules: []config.WindowRule{
-			{Matches: []config.RuleMatch{{IsUrgent: &notUrgent}}, Opacity: &normalOpacity},
-			{Matches: []config.RuleMatch{{IsUrgent: &urgent}}, Opacity: &urgentOpacity},
-		},
-	}
+// TestWindowRuleOpacityComposesWithOpeningAndResizeSnapshots covers opening
+// opacity, reload/removal, resize snapshots and hit testing while transparent.
+func TestWindowRuleOpacityComposesWithOpeningAndResizeSnapshots(t *testing.T) {
+	normalOpacity := 0.65
+	rules := []config.WindowRule{{Opacity: &normalOpacity}}
+	opts := Options{Animations: laptopAnimations(), WindowRules: rules}
 	c := newNestedWith(t, opts)
-	var mapped, otherMapped, fullscreenExitPending, finished bool
+	var mapped, finished bool
 
 	assertOpacity := func(view *toplevelView, want float64, stage string) bool {
 		_, _, got, found := sceneFXTreeFirstBuffer(view.sceneNode())
@@ -394,72 +386,38 @@ func TestWindowRuleOpacityComposesWithAnimationsFullscreenAndResize(t *testing.T
 					return
 				}
 				if view.resizeSnapshot != nil {
-					stage := "initial resize"
-					snapshotOpacityWant := normalOpacity
-					if fullscreenExitPending {
-						stage = "fullscreen exit resize"
-						// The exit snapshot retains the opaque fullscreen frame it cloned.
-						snapshotOpacityWant = 1
-					}
-					if !assertOpacity(view, 0, "live tree during "+stage) {
+					if !assertOpacity(view, 0, "live tree during initial resize") {
 						return
 					}
 					_, _, snapshotOpacity, found := sceneFXTreeFirstBuffer(view.resizeSnapshot)
-					if !found || math.Abs(snapshotOpacity-snapshotOpacityWant) > 0.01 {
-						t.Errorf("%s snapshot opacity = %v (found %v), want %v", stage, snapshotOpacity, found, snapshotOpacityWant)
+					if !found || math.Abs(snapshotOpacity-normalOpacity) > 0.01 {
+						t.Errorf("initial resize snapshot opacity = %v (found %v), want %v", snapshotOpacity, found, normalOpacity)
 						c.Terminate()
 						return
 					}
 					waitForOpen(view)
 					return
 				}
-				if !otherMapped {
-					waitForOpen(view)
+				if !assertOpacity(view, normalOpacity, "open window") {
 					return
 				}
-				if fullscreenExitPending {
-					if !assertOpacity(view, normalOpacity, "fullscreen exit") {
-						return
-					}
-					fullscreenExitPending = false
-				} else {
-					if !assertOpacity(view, normalOpacity, "open window") {
-						return
-					}
-					if !c.SetWindowUrgent(view.id, true) {
-						t.Error("SetWindowUrgent(true) failed")
-						c.Terminate()
-						return
-					}
-					if !assertOpacity(view, 0, "transparent urgent rule") {
-						return
-					}
-					x, y := c.viewCenter(view)
-					surface, _, _ := c.surfaceAt(x, y)
-					if c.viewForSurface(surface) != view || !sceneFXNodeEnabled(view.sceneNode()) {
-						t.Error("transparent window stopped receiving hit tests or was disabled")
-						c.Terminate()
-						return
-					}
-					if !c.SetWindowUrgent(view.id, false) || !assertOpacity(view, normalOpacity, "urgent rule removal") {
-						if !finished {
-							c.Terminate()
-						}
-						return
-					}
-					if !c.SetFullscreen(view.id, true) || !assertOpacity(view, 1, "fullscreen") {
-						if !finished {
-							c.Terminate()
-						}
-						return
-					}
-					if !c.SetFullscreen(view.id, false) {
-						t.Error("SetFullscreen(false) failed")
-						c.Terminate()
-						return
-					}
-					fullscreenExitPending = true
-					waitForOpen(view)
+
+				opts.WindowRules = nil
+				if err := c.Reconfigure(opts); err != nil {
+					t.Errorf("remove opacity rule: %v", err)
+					c.Terminate()
+					return
+				}
+				if !assertOpacity(view, 1, "opacity rule removal") {
+					return
+				}
+				opts.WindowRules = rules
+				if err := c.Reconfigure(opts); err != nil {
+					t.Errorf("restore opacity rule: %v", err)
+					c.Terminate()
+					return
+				}
+				if !assertOpacity(view, normalOpacity, "opacity rule restore") {
 					return
 				}
 
@@ -506,17 +464,9 @@ func TestWindowRuleOpacityComposesWithAnimationsFullscreenAndResize(t *testing.T
 				waitForResize = func() {
 					time.AfterFunc(50*time.Millisecond, func() {
 						_ = c.Post(func() {
-							if view.resizeSnapshot == nil {
+							wKey, hKey := c.resizeKeys(view)
+							if view.resizeSnapshot == nil && !c.hasAnimation(wKey) && !c.hasAnimation(hKey) {
 								if !assertOpacity(view, normalOpacity, "settled resize") {
-									return
-								}
-								opts.WindowRules = nil
-								if err := c.Reconfigure(opts); err != nil {
-									t.Errorf("remove opacity rule: %v", err)
-									c.Terminate()
-									return
-								}
-								if !assertOpacity(view, 1, "opacity rule removal") {
 									return
 								}
 								finished = true
@@ -538,10 +488,6 @@ func TestWindowRuleOpacityComposesWithAnimationsFullscreenAndResize(t *testing.T
 	}
 
 	c.viewMapped = func(view *toplevelView) {
-		if mapped {
-			otherMapped = true
-			return
-		}
 		mapped = true
 		if !view.openAnimationStarted || view.openAnimationFinished {
 			t.Error("new window did not start its opening opacity animation")
@@ -553,8 +499,99 @@ func TestWindowRuleOpacityComposesWithAnimationsFullscreenAndResize(t *testing.T
 		}
 		waitForOpen(view)
 	}
+	runClient(t, c, []string{"weston-terminal"}, nil, nil)
+	if !mapped || !finished {
+		t.Fatalf("opacity regression did not finish: mapped=%v finished=%v", mapped, finished)
+	}
+}
+
+// TestWindowRuleOpacityTracksUrgencyAndFullscreen covers state-rule
+// reapplication and the fullscreen opaque override.
+func TestWindowRuleOpacityTracksUrgencyAndFullscreen(t *testing.T) {
+	notUrgent, urgent := false, true
+	normalOpacity, urgentOpacity := 0.65, -0.5
+	animations := laptopAnimations()
+	animations.WindowOpen.Off = true
+	animations.WindowResize.Off = true
+	c := newNestedWith(t, Options{
+		Animations: animations,
+		WindowRules: []config.WindowRule{
+			{Matches: []config.RuleMatch{{IsUrgent: &notUrgent}}, Opacity: &normalOpacity},
+			{Matches: []config.RuleMatch{{IsUrgent: &urgent}}, Opacity: &urgentOpacity},
+		},
+	})
+	var views []*toplevelView
+	checked := false
+
+	assertOpacity := func(view *toplevelView, want float64, stage string) bool {
+		_, _, got, found := sceneFXTreeFirstBuffer(view.sceneNode())
+		if !found {
+			t.Errorf("%s: no mapped buffer in the window tree", stage)
+			c.Terminate()
+			return false
+		}
+		if math.Abs(got-want) > 0.01 {
+			t.Errorf("%s: buffer opacity = %v, want %v", stage, got, want)
+			c.Terminate()
+			return false
+		}
+		return true
+	}
+
+	c.viewMapped = func(view *toplevelView) {
+		views = append(views, view)
+		if len(views) < 2 {
+			return
+		}
+		target := views[0]
+		if !assertOpacity(target, normalOpacity, "open window") {
+			return
+		}
+		if !c.SetWindowUrgent(target.id, true) {
+			t.Error("SetWindowUrgent(true) failed")
+			c.Terminate()
+			return
+		}
+		if !assertOpacity(target, 0, "transparent urgent rule") {
+			c.Terminate()
+			return
+		}
+		x, y := c.viewCenter(target)
+		surface, _, _ := c.surfaceAt(x, y)
+		if c.viewForSurface(surface) != target || !sceneFXNodeEnabled(target.sceneNode()) {
+			t.Error("transparent window stopped receiving hit tests or was disabled")
+			c.Terminate()
+			return
+		}
+		if !c.SetWindowUrgent(target.id, false) {
+			t.Error("SetWindowUrgent(false) failed")
+			c.Terminate()
+			return
+		}
+		if !assertOpacity(target, normalOpacity, "urgent rule removal") {
+			return
+		}
+		if !c.SetFullscreen(target.id, true) {
+			t.Error("SetFullscreen(true) failed")
+			c.Terminate()
+			return
+		}
+		if !assertOpacity(target, 1, "fullscreen") {
+			return
+		}
+		if !c.SetFullscreen(target.id, false) {
+			t.Error("SetFullscreen(false) failed")
+			c.Terminate()
+			return
+		}
+		if !assertOpacity(target, normalOpacity, "fullscreen exit") {
+			return
+		}
+		checked = true
+		c.Terminate()
+	}
 	runClient(t, c, []string{"sh", "-c", "weston-terminal & weston-terminal & wait"}, nil, nil)
-	if !mapped || !otherMapped || !finished {
-		t.Fatalf("opacity regression did not finish: mapped=%v otherMapped=%v finished=%v", mapped, otherMapped, finished)
+	if len(views) != 2 || !checked {
+		t.Fatalf("opacity state regression did not finish: mapped=%d checked=%v", len(views), checked)
 	}
 }
