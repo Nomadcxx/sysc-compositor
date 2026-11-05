@@ -328,11 +328,14 @@ callbacks.
 Tests: `internal/config/config_test.go`
 `TestNiriWindowRuleOpacityIsParsedAndResolved`; `internal/wlr/window_rules_test.go`
 `TestWindowRuleOpacityComposesWithOpeningAndResizeSnapshots` and
-`TestWindowRuleOpacityTracksUrgencyAndFullscreen`; and
+`TestWindowRuleOpacityTracksUrgencyAndFullscreen` and
+`TestWindowRuleOpacityChangesRenderedPixels`; and
 `internal/wlr/popup_test.go` `TestPopupDrawsBesideItsParent` also checks popup
-buffer opacity. The config test passes locally. Hosted CI run `41994617812`
-passed both `check` and `compositor` on `aa17823`; the compositor lane ran under
-vkms. No nested compositor test ran locally.
+buffer opacity. The rendered-pixel test captures the compositor output and
+checks the 50% blend, transparent urgency, fullscreen entry and exit, and
+rule-removal restoration. The named config test passes locally. Hosted CI run
+`42006897511` on `0d4416b` passed both `check` and `compositor`; the compositor
+lane ran under vkms. No nested compositor test ran locally.
 
 Known differences: sysc applies full opacity as soon as fullscreen state lands;
 Niri interpolates the window-rule opacity toward one during its fullscreen
