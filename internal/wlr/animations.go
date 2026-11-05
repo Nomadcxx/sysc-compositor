@@ -213,7 +213,11 @@ func (c *Compositor) setViewSceneEnabled(view *toplevelView, enabled bool) {
 // by disabling the node, so the window stays hit-testable and keeps getting
 // frame callbacks during the resize spring.
 func (c *Compositor) syncViewOpacity(view *toplevelView) {
-	opacity := view.presentationOpacity
+	ruleOpacity := 1.0
+	if !view.fullscreen && view.appearance.Opacity != nil {
+		ruleOpacity = clampOpacity(*view.appearance.Opacity)
+	}
+	opacity := clampOpacity(view.presentationOpacity) * ruleOpacity
 	if view.resizeSnapshot != nil {
 		opacity = 0
 	}

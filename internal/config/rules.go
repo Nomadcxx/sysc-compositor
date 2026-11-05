@@ -137,6 +137,8 @@ type WindowRule struct {
 	DefaultWindowHeight  *PresetSize
 	GeometryCornerRadius *CornerRadius
 	ClipToGeometry       *bool
+	// Opacity is clamped to [0, 1] when the window is rendered.
+	Opacity              *float64
 	MinWidth             *int
 	MaxWidth             *int
 	MinHeight            *int
@@ -162,6 +164,7 @@ type WindowRuleResult struct {
 	DefaultWindowHeight  *PresetSize
 	GeometryCornerRadius *CornerRadius
 	ClipToGeometry       *bool
+	Opacity              *float64
 	MinWidth             *int
 	MaxWidth             *int
 	MinHeight            *int
@@ -206,6 +209,7 @@ func ResolveWindowRules(rules []WindowRule, appID, title string, state WindowSta
 		applyRuleValue(&result.DefaultWindowHeight, rule.DefaultWindowHeight)
 		applyRuleValue(&result.GeometryCornerRadius, rule.GeometryCornerRadius)
 		applyRuleValue(&result.ClipToGeometry, rule.ClipToGeometry)
+		applyRuleValue(&result.Opacity, rule.Opacity)
 		applyRuleValue(&result.BlockOutFrom, rule.BlockOutFrom)
 		applyRuleValue(&result.MinWidth, rule.MinWidth)
 		applyRuleValue(&result.MaxWidth, rule.MaxWidth)
@@ -562,6 +566,12 @@ func (c *Config) windowRule(node *document.Node) error {
 			value, err = floatArg(child, 0, 100)
 			if err == nil {
 				rule.ScrollFactor = &value
+			}
+		case "opacity":
+			var value float64
+			value, err = numberArg(child)
+			if err == nil {
+				rule.Opacity = &value
 			}
 		case "clip-to-geometry":
 			var value bool

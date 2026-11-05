@@ -446,6 +446,72 @@ window-rule {
 	}
 }
 
+func TestNiriWindowRuleOpacityIsParsedAndResolved(t *testing.T) {
+	cfg, err := Parse("window-rule-opacity.kdl", []byte(`
+window-rule {
+    match app-id="test"
+    opacity 0.25
+}
+window-rule {
+    match app-id="test" title="dialog"
+    opacity 0.75
+}
+window-rule {
+    match app-id="transparent"
+    opacity 0
+}
+window-rule {
+    match app-id="clamped"
+    opacity 1.5
+}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Warnings) != 0 {
+		t.Fatalf("supported opacity rules produced warnings: %v", cfg.Warnings)
+	}
+	for _, tc := range []struct {
+		app, title string
+		want       float64
+		wantSet    bool
+	}{
+		{app: "test", title: "dialog", want: 0.75, wantSet: true},
+		{app: "test", title: "other", want: 0.25, wantSet: true},
+		{app: "transparent", wantSet: true},
+		{app: "clamped", want: 1.5, wantSet: true},
+		{app: "no-match"},
+	} {
+		got := cfg.ResolveWindowRules(tc.app, tc.title, UnmappedWindowState(false)).Opacity
+		if (got != nil) != tc.wantSet || got != nil && *got != tc.want {
+			t.Errorf("opacity for %q/%q = %v, want %v", tc.app, tc.title, got, tc.want)
+		}
+	}
+
+	for _, src := range []string{
+		`window-rule { opacity "invalid"; }`,
+		`window-rule { opacity NaN; }`,
+		`window-rule { opacity 1e999; }`,
+	} {
+		if _, err := Parse("bad-opacity.kdl", []byte(src)); err == nil {
+			t.Errorf("accepted malformed or non-finite opacity: %s", src)
+		}
+	}
+
+	unsupported, err := Parse("unsupported-window-rule.kdl", []byte(`
+window-rule {
+    opacity 0.5
+    background-effect { blur true; }
+}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(unsupported.Warnings, "window-rule") {
+		t.Errorf("unsupported rule key lost its warning after opacity support: %v", unsupported.Warnings)
+	}
+}
+
 func TestM6RulesRejectBadRegexDuplicateNamesAndValues(t *testing.T) {
 	for src, want := range map[string]string{
 		`window-rule { match app-id="["; }`:                       "regular expression",

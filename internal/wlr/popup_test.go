@@ -1,8 +1,11 @@
 package wlr
 
 import (
+	"math"
 	"testing"
 	"time"
+
+	"github.com/Nomadcxx/sysc-compositor/internal/config"
 )
 
 const btnRight = 273 // evdev BTN_RIGHT
@@ -11,7 +14,8 @@ const btnRight = 273 // evdev BTN_RIGHT
 // menu is an xdg_popup. It must draw in its window's tree, not at the layout
 // origin, and inside the output.
 func TestPopupDrawsBesideItsParent(t *testing.T) {
-	c := newNested(t)
+	opacity := 0.4
+	c := newNestedWith(t, Options{WindowRules: []config.WindowRule{{Opacity: &opacity}}})
 	if err := c.AddInjectedSeat("agent"); err != nil {
 		t.Fatal(err)
 	}
@@ -74,6 +78,10 @@ func TestPopupDrawsBesideItsParent(t *testing.T) {
 		t.Log("weston-terminal reported no geometry offset; the origin check below is weaker")
 	}
 	for _, p := range placed {
+		_, _, bufferOpacity, found := sceneFXTreeFirstBuffer(p.tree)
+		if !found || math.Abs(bufferOpacity-opacity) > 0.01 {
+			t.Errorf("popup buffer opacity = %v (found %v), want window opacity %v", bufferOpacity, found, opacity)
+		}
 		if !p.underParent {
 			t.Errorf("popup tree is not a child of its parent's tree (box %+v)", p.box)
 		}
