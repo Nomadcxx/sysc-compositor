@@ -367,7 +367,7 @@ func TestWindowRuleOpacityComposesWithAnimationsFullscreenAndResize(t *testing.T
 		},
 	}
 	c := newNestedWith(t, opts)
-	var mapped, finished bool
+	var mapped, otherMapped, finished bool
 
 	assertOpacity := func(view *toplevelView, want float64, stage string) bool {
 		_, _, got, found := sceneFXTreeFirstBuffer(view.sceneNode())
@@ -403,6 +403,10 @@ func TestWindowRuleOpacityComposesWithAnimationsFullscreenAndResize(t *testing.T
 						c.Terminate()
 						return
 					}
+					waitForOpen(view)
+					return
+				}
+				if !otherMapped {
 					waitForOpen(view)
 					return
 				}
@@ -518,6 +522,10 @@ func TestWindowRuleOpacityComposesWithAnimationsFullscreenAndResize(t *testing.T
 	}
 
 	c.viewMapped = func(view *toplevelView) {
+		if mapped {
+			otherMapped = true
+			return
+		}
 		mapped = true
 		if !view.openAnimationStarted || view.openAnimationFinished {
 			t.Error("new window did not start its opening opacity animation")
@@ -529,8 +537,8 @@ func TestWindowRuleOpacityComposesWithAnimationsFullscreenAndResize(t *testing.T
 		}
 		waitForOpen(view)
 	}
-	runClient(t, c, []string{"weston-terminal"}, nil, nil)
-	if !mapped || !finished {
-		t.Fatalf("opacity regression did not finish: mapped=%v finished=%v", mapped, finished)
+	runClient(t, c, []string{"sh", "-c", "weston-terminal & weston-terminal & wait"}, nil, nil)
+	if !mapped || !otherMapped || !finished {
+		t.Fatalf("opacity regression did not finish: mapped=%v otherMapped=%v finished=%v", mapped, otherMapped, finished)
 	}
 }
