@@ -204,3 +204,52 @@ func TestTouchReachesNothingWhileTheSessionIsLocked(t *testing.T) {
 		onCompositor(t, c, func() { screen.remove() })
 	})
 }
+
+// TestSessionLockEndsAnActiveTouch: locking ends a finger that started before
+// the session was sealed, and later motion never reaches the application.
+func TestSessionLockEndsAnActiveTouch(t *testing.T) {
+	c := newNested(t)
+	runTouchClients(t, c, 1, func(clients []*testclient.ToplevelClient, views []*toplevelView) {
+		client := clients[0]
+		var screen *fakeTouch
+		var dx, dy float64
+		onCompositor(t, c, func() {
+			screen = c.addFakeTouch()
+			lx, ly := c.viewCenter(views[0])
+			dx, dy = touchDevicePoint(c, lx, ly)
+		})
+		if screen == nil {
+			t.Fatal("the fake touch screen did not appear")
+		}
+		if err := client.BindTouch(); err != nil {
+			t.Fatal(err)
+		}
+		onCompositor(t, c, func() {
+			screen.down(1, dx, dy)
+			screen.frame()
+		})
+		if err := client.SyncInput(); err != nil {
+			t.Fatal(err)
+		}
+		if ev := client.TouchEvents(); ev.Downs != 1 {
+			t.Fatalf("pre-lock touch events = %+v, want one down", ev)
+		}
+
+		lock, err := testclient.StartLockClient(c.SocketName(), true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer lock.Close()
+		onCompositor(t, c, func() {
+			screen.motion(1, dx+0.01, dy)
+			screen.frame()
+		})
+		if err := client.SyncInput(); err != nil {
+			t.Fatal(err)
+		}
+		if ev := client.TouchEvents(); ev.Ups != 1 || ev.Motions != 0 {
+			t.Errorf("post-lock touch events = %+v, want one up and no motion", ev)
+		}
+		onCompositor(t, c, func() { screen.remove() })
+	})
+}
