@@ -490,8 +490,8 @@ func TestWindowRuleOpacityComposesWithAnimationsFullscreenAndResize(t *testing.T
 					c.Terminate()
 					return
 				}
-				x, y = c.viewCenter(view)
-				surface, _, _ = c.surfaceAt(x, y)
+				x, y := c.viewCenter(view)
+				surface, _, _ := c.surfaceAt(x, y)
 				if c.viewForSurface(surface) != view {
 					t.Error("resizing window stopped receiving hit tests")
 					c.Terminate()
