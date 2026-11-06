@@ -117,6 +117,7 @@ func TestReconfigureUpdatesCompositorSettings(t *testing.T) {
 			Gaps: 24, ColumnWidthProportion: 0.6, FixedColumnWidth: 900,
 			InsertHint: defaults.Layout.InsertHint, FocusRing: defaults.Layout.FocusRing,
 			Border: defaults.Layout.Border, Shadow: defaults.Layout.Shadow,
+			TabIndicator: defaults.Layout.TabIndicator,
 		},
 		Overview: defaults.Overview, Animations: defaults.Animations,
 		Gestures: defaults.Gestures,

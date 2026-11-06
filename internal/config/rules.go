@@ -496,6 +496,12 @@ func (c *Config) workspaceLayout(node *document.Node) (*WorkspaceLayout, error) 
 				return nil, fmt.Errorf("shadow: %w", err)
 			}
 			layout.Shadow = layout.Shadow.merge(rule)
+		case "tab-indicator":
+			part, err := c.tabIndicatorPart(child, "workspace.layout.tab-indicator", false)
+			if err != nil {
+				return nil, fmt.Errorf("tab-indicator: %w", err)
+			}
+			layout.TabIndicator = layout.TabIndicator.merge(part)
 		default:
 			c.addWarning("workspace.layout." + nodeName(child))
 		}
@@ -628,6 +634,12 @@ func (c *Config) windowRule(node *document.Node) error {
 			part, err = c.shadowRule(child)
 			if err == nil {
 				rule.Shadow = rule.Shadow.merge(part)
+			}
+		case "tab-indicator":
+			var part TabIndicatorPart
+			part, err = c.tabIndicatorPart(child, "window-rule.tab-indicator", true)
+			if err == nil {
+				rule.TabIndicator = rule.TabIndicator.merge(part)
 			}
 		case "block-out-from":
 			var value []string

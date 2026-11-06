@@ -157,6 +157,9 @@ type Compositor struct {
 	windowShadowTree    *C.struct_wlr_scene_tree
 	windowAnimationTree *C.struct_wlr_scene_tree
 	windowBorderTree    *C.struct_wlr_scene_tree
+	tabIndicatorTree    *C.struct_wlr_scene_tree
+	tabIndicatorNodes   []unsafe.Pointer
+	tabIndicatorHits    []tabIndicatorHit
 	windowFocusTree     *C.struct_wlr_scene_tree
 	overviewTree        *C.struct_wlr_scene_tree
 	insertHintTree      *C.struct_wlr_scene_tree
@@ -419,6 +422,9 @@ type LayoutOptions struct {
 	// WorkspaceDecorations holds each named workspace's decoration parts,
 	// keyed by config.WorkspaceKey.
 	WorkspaceDecorations map[string]config.Decorations
+	TabIndicator         config.TabIndicator
+	// TabSpace is the room the tab indicator keeps inside a tabbed column.
+	TabSpace layout.TabSpace
 }
 
 // ErrNestedTestNeedsConsent is what NewWith returns inside a test binary unless
@@ -467,6 +473,7 @@ func NewWith(opts Options) (*Compositor, error) {
 	c.model.SetDefaultColumnDisplay(opts.Layout.DefaultColumnDisplay)
 	c.model.SetCenterFocusedColumn(opts.Layout.CenterFocusedColumn)
 	c.model.SetStruts(opts.Layout.Struts)
+	c.model.SetTabSpace(opts.Layout.TabSpace)
 	c.cursorTheme, c.cursorSize = opts.CursorTheme, opts.CursorSize
 	c.keyboardConfig = opts.Keyboard
 	c.atStartup = true
@@ -696,6 +703,7 @@ func normalizeOptions(opts Options) Options {
 			Gaps: defaults.Layout.Gaps, ColumnWidthProportion: 0.5,
 			InsertHint: defaults.Layout.InsertHint, FocusRing: defaults.Layout.FocusRing,
 			Border: defaults.Layout.Border, Shadow: defaults.Layout.Shadow,
+			TabIndicator: defaults.Layout.TabIndicator,
 		}
 	}
 	if opts.CursorTheme == "" {
@@ -741,6 +749,7 @@ func (c *Compositor) Reconfigure(opts Options) error {
 	c.model.SetDefaultColumnDisplay(opts.Layout.DefaultColumnDisplay)
 	c.model.SetCenterFocusedColumn(opts.Layout.CenterFocusedColumn)
 	c.model.SetStruts(opts.Layout.Struts)
+	c.model.SetTabSpace(opts.Layout.TabSpace)
 	c.overviewConfig = opts.Overview
 	c.setTabletConfig(opts.Tablet)
 	c.setPointerConfig(opts.Pointers)

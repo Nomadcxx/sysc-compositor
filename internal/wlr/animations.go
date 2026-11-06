@@ -58,6 +58,10 @@ func (c *Compositor) tickAnimations(now time.Time) {
 	if c.switcher.dirty {
 		c.syncSwitcher()
 	}
+	// Drawn tabs follow their column while it moves.
+	if len(c.tabIndicatorHits) > 0 {
+		c.syncTabIndicators()
+	}
 	c.damageCaptureSources()
 	c.scheduleAnimationTick()
 }

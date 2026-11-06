@@ -542,6 +542,7 @@ func (c *Compositor) applyWorkspaceModel() {
 			c.syncViewDecorations(view)
 		}
 	}
+	c.syncTabIndicators()
 	// Workspace activation can change while the mapped-window snapshots stay
 	// identical, especially when switching between empty workspaces.
 	c.syncOverviewScene()

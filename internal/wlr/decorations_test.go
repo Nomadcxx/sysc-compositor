@@ -233,3 +233,138 @@ func TestBorderDrawsAroundTheWindowAndShrinksIt(t *testing.T) {
 		configured("border removal", 0)
 	})
 }
+
+// TestTabIndicatorDrawsTabbedColumnsAndActivatesTabs: a tabbed column draws
+// one tab per window beside its active tile, in the rule's colour before the
+// tab indicator's, and a click on a tab activates its window, as in Niri.
+func TestTabIndicatorDrawsTabbedColumnsAndActivatesTabs(t *testing.T) {
+	defaults := config.Default().Layout
+	red, green, yellow := config.Color{R: 1, A: 1}, config.Color{G: 1, A: 1}, config.Color{R: 1, G: 1, A: 1}
+	indicator := defaults.TabIndicator
+	indicator.Width, indicator.ActiveColor, indicator.InactiveColor = 8, &red, &green
+	layoutOptions := &LayoutOptions{Gaps: defaults.Gaps, ColumnWidthProportion: 0.5,
+		InsertHint: defaults.InsertHint, FocusRing: defaults.FocusRing, Border: defaults.Border,
+		Shadow: defaults.Shadow, TabIndicator: indicator}
+	rules := []config.WindowRule{{
+		Matches:     []config.RuleMatch{{AppID: regexp.MustCompile(`^tab-b$`)}},
+		Decorations: config.Decorations{TabIndicator: config.TabIndicatorPart{InactiveColor: &yellow}},
+	}}
+	c := newNestedWith(t, Options{Animations: config.Animations{Off: true}, Layout: layoutOptions, WindowRules: rules})
+	runTools(t, c, func(func(string, ...string) *exec.Cmd) {
+		var output unsafe.Pointer
+		var outputBox image.Rectangle
+		onCompositor(t, c, func() {
+			for output = range c.sceneOutputs {
+				break
+			}
+			if output != nil {
+				outputBox = c.outputLayoutBox(output)
+			}
+		})
+		if output == nil {
+			t.Error("no output for the tab indicator test")
+			return
+		}
+		var clients []*testclient.ToplevelClient
+		defer func() {
+			for _, client := range clients {
+				client.Close()
+			}
+		}()
+		for _, appID := range []string{"tab-a", "tab-b"} {
+			client, err := testclient.StartToplevelClient(c.SocketName(), time.Hour)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			clients = append(clients, client)
+			if err := client.SetIdentity(appID, appID); err != nil {
+				t.Error(err)
+				return
+			}
+			if err := client.Paint(0xff3498db, 200, 150); err != nil {
+				t.Error(err)
+				return
+			}
+		}
+
+		views := map[string]*toplevelView{}
+		onCompositor(t, c, func() {
+			for _, view := range c.views {
+				views[cString(view.toplevel.app_id)] = view
+			}
+			if views["tab-a"] == nil || views["tab-b"] == nil {
+				t.Error("the tabbed windows did not map")
+				return
+			}
+			if !c.FocusColumnLeft() || !c.ConsumeWindowIntoColumn() || !c.ToggleColumnTabbedDisplay() {
+				t.Error("could not stack the windows in one tabbed column")
+			}
+		})
+		if t.Failed() {
+			return
+		}
+
+		tabPixel := func(index int) (color.NRGBA, uint64) {
+			var pixel color.NRGBA
+			var id uint64
+			onCompositor(t, c, func() {
+				if len(c.tabIndicatorHits) != 2 {
+					t.Errorf("drawn tabs = %d, want 2", len(c.tabIndicatorHits))
+					return
+				}
+				hit := c.tabIndicatorHits[index]
+				id = hit.id
+				frame, err := c.captureOutput(output)
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				center := hit.rect.Min.Add(hit.rect.Max).Div(2)
+				px := (center.X - outputBox.Min.X) * frame.Bounds().Dx() / outputBox.Dx()
+				py := (center.Y - outputBox.Min.Y) * frame.Bounds().Dy() / outputBox.Dy()
+				pixel = frame.NRGBAAt(px, py)
+			})
+			return pixel, id
+		}
+		nrgba := func(c config.Color) color.NRGBA {
+			return color.NRGBA{R: uint8(c.R * 255), G: uint8(c.G * 255), B: uint8(c.B * 255), A: 255}
+		}
+
+		onCompositor(t, c, func() {
+			active := c.focusedView
+			if active == nil || len(c.tabIndicatorHits) != 2 {
+				return
+			}
+			x, _ := active.treePosition()
+			if got := c.tabIndicatorHits[0].rect.Max.X; got != x-5 {
+				t.Errorf("tab right edge = %d, want the 5 px gap left of the window at %d", got, x)
+			}
+		})
+		first, firstID := tabPixel(0)
+		second, secondID := tabPixel(1)
+		if firstID != views["tab-a"].id || secondID != views["tab-b"].id {
+			t.Fatalf("tab order = %d, %d; want tab-a then tab-b", firstID, secondID)
+		}
+		if first != nrgba(red) || second != nrgba(yellow) {
+			t.Errorf("tabs = %v, %v; want the active colour, then the rule's inactive colour", first, second)
+		}
+
+		onCompositor(t, c, func() {
+			hit := c.tabIndicatorHits[1].rect
+			center := hit.Min.Add(hit.Max).Div(2)
+			if !c.tabIndicatorButton(float64(center.X), float64(center.Y)) {
+				t.Error("a click on the second tab was not taken")
+			}
+			if c.focusedView != views["tab-b"] {
+				t.Error("a click on the second tab did not activate its window")
+			}
+		})
+		if first, _ := tabPixel(0); first != nrgba(green) {
+			t.Errorf("first tab after the click = %v, want the inactive colour", first)
+		}
+		if second, _ := tabPixel(1); second != nrgba(red) {
+			t.Errorf("second tab after the click = %v, want the active colour", second)
+		}
+	})
+}

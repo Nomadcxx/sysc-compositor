@@ -1035,6 +1035,11 @@ func (c *Compositor) deliverPointerButton(source unsafe.Pointer, timeMsec C.uint
 		}
 	}
 
+	if pressed && c.tabIndicatorButton(float64(c.cursor.x), float64(c.cursor.y)) {
+		c.consumedPointerButtons[button] = true
+		C.wlr_seat_pointer_notify_frame(c.seat)
+		return
+	}
 	if pressed {
 		c.focusSurfaceAtCursor()
 	}
