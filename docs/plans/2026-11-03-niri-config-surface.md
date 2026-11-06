@@ -341,6 +341,53 @@ Known differences: sysc applies full opacity as soon as fullscreen state lands;
 Niri interpolates the window-rule opacity toward one during its fullscreen
 transition. `popups.opacity` remains unsupported and belongs to slice 6.
 
+#### Slice 5b — decorations
+
+Niri 26.04 parses `focus-ring` and `border` as one partial type (`BorderRule`)
+and `shadow` as another (`ShadowRule`), the same in `layout`,
+`workspace.layout` and `window-rule`. A part merges field by field: `off` and
+`on` override each other, a set colour or number replaces the inherited one,
+and an unset field inherits. `layout` parts merge onto the defaults, the
+workspace part onto the layout, and every matching window rule onto the
+workspace's result, in rule order. So a rule that sets only `active-color`
+keeps the width and the other colours.
+
+What the renderer must do, from `src/layout/tile.rs` and `focus_ring.rs`:
+
+- The colour is urgent, then active, then inactive. Active means the active
+  window of a workspace on the focused output, for border and ring alike.
+- The focus ring is drawn around the active window of each workspace and does
+  not take layout space. The border is drawn around every window and does:
+  the tile is the window plus the border on each side, so the window is
+  configured smaller, its min and max sizes grow by the border, and
+  proportional and fixed column widths are tile widths. Fullscreen and
+  maximized-to-edges windows have no border. A nonzero width rounds to whole
+  physical pixels, at least one.
+- `draw-border-with-background` defaults to true for a client-side decorated
+  window: the border fills the window's rectangle as well as its edge. The
+  focus ring fills only when the border is off.
+- The shadow uses `inactive-color` for an inactive window when set. It is cut
+  out from under the window unless `draw-behind-window` is true. A shadow
+  `offset` sets both axes; a missing axis is zero.
+
+Gradients stay warnings, by key, until implemented.
+
+Parts, each with its own regression:
+
+1. **Config.** One parser per partial type for the three places; the new
+   `layout.border`, `urgent-color` and the shadow's `inactive-color` and
+   `draw-behind-window`; window-rule `focus-ring`, `border`, `shadow` and
+   `draw-border-with-background`; `workspace.layout` `focus-ring`, `border`
+   and `shadow`.
+2. **Render and layout.** Resolve each window's decorations from the layout,
+   its workspace and its rules; draw the border; shrink the window inside its
+   tile; apply urgency, inactive shadow colour, background fill, reload and
+   removal. Prove the colours and the configured size from rendered pixels and
+   client configures.
+3. **Tab indicator.** Draw it for tabbed columns, with the `layout`,
+   `workspace.layout` and window-rule colour overrides and the space Niri
+   reserves for it with `place-within-column`.
+
 ### Slice 6 — the leftovers
 
 `popups`, `variable-refresh-rate`, `baba-is-float`, `tiled-state`,
