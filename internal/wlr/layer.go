@@ -354,14 +354,14 @@ func (c *Compositor) applyLayerAppearance(l *layerSurface) {
 		return
 	}
 	style := makeShadowRenderStyle(shadow, radii, true)
-	spread := style.spread
+	inset := style.inset
 	offsetX, offsetY := int(math.Round(shadow.OffsetX)), int(math.Round(shadow.OffsetY))
-	sceneFXShadowUpdate(l.shadowNode, -spread+offsetX, -spread+offsetY,
-		max(1, width+2*spread), max(1, height+2*spread), style.radius, style.sigma, style.color)
+	sceneFXShadowUpdate(l.shadowNode, -inset+offsetX, -inset+offsetY,
+		max(1, width+2*inset), max(1, height+2*inset), style.radius, style.blurSigma, style.color)
 	if shadow.DrawBehindWindow {
 		sceneFXShadowClip(l.shadowNode, 0, 0, 0, 0, [4]uint16{})
 	} else {
-		sceneFXShadowClip(l.shadowNode, spread-offsetX, spread-offsetY, width, height, sceneFXRadii(radii))
+		sceneFXShadowClip(l.shadowNode, inset-offsetX, inset-offsetY, width, height, sceneFXRadii(radii))
 	}
 	sceneFXSetNodeEnabled(l.shadowNode, shadow.On && width > 0 && height > 0)
 }

@@ -614,8 +614,9 @@ func TestWindowResizeScalesSnapshotWhileLayoutTargetsCommit(t *testing.T) {
 				}
 				visualWidth, visualHeight := int(math.Round(view.resizeWidth)), int(math.Round(view.resizeHeight))
 				shadowWidth, shadowHeight := sceneFXShadowSize(view.shadowNode)
-				if shadowWidth != visualWidth+6 || shadowHeight != visualHeight+6 {
-					t.Errorf("resizing shadow = %dx%d, want animated window size %dx%d plus six pixels", shadowWidth, shadowHeight, visualWidth, visualHeight)
+				// Spread 3 plus softness 8 on each side.
+				if shadowWidth != visualWidth+22 || shadowHeight != visualHeight+22 {
+					t.Errorf("resizing shadow = %dx%d, want animated window size %dx%d plus 22 pixels", shadowWidth, shadowHeight, visualWidth, visualHeight)
 				}
 				ringWidth, ringHeight := sceneFXRectSize(view.focusRingNode)
 				if ringWidth != visualWidth+8 || ringHeight != visualHeight+8 {
