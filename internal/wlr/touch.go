@@ -180,6 +180,7 @@ func (c *Compositor) handleTouchDown(data unsafe.Pointer) {
 	if c.touchDevices[unsafe.Pointer(&touch.base)] == nil {
 		return
 	}
+	c.userActivity(true)
 	if c.touchConfig.Off {
 		fmt.Fprintf(os.Stderr, "sysc-compositor: touch down dropped: input.touch is off\n")
 		return
@@ -234,6 +235,7 @@ func (c *Compositor) handleTouchMotion(data unsafe.Pointer) {
 	if c.touchDevices[unsafe.Pointer(&touch.base)] == nil {
 		return
 	}
+	c.userActivity(true)
 	point := c.touchPoints[int32(event.touch_id)]
 	if point == nil || point.surface == nil {
 		return
@@ -246,6 +248,9 @@ func (c *Compositor) handleTouchMotion(data unsafe.Pointer) {
 // handleTouchUp ends a finger.
 func (c *Compositor) handleTouchUp(data unsafe.Pointer) {
 	event := (*C.struct_wlr_touch_up_event)(data)
+	if c.touchDevices[unsafe.Pointer(&event.touch.base)] != nil {
+		c.userActivity(false)
+	}
 	point := c.touchPoints[int32(event.touch_id)]
 	if point == nil {
 		return

@@ -391,14 +391,24 @@ func (c *Compositor) attachPointerGestureListeners(device unsafe.Pointer, pointe
 	}
 	listeners := []*Listener{
 		AddListener(unsafe.Pointer(&pointer.events.swipe_begin), func(data unsafe.Pointer) {
+			c.userActivity(true)
 			c.handlePointerSwipeBegin(device, data)
 		}),
 		AddListener(unsafe.Pointer(&pointer.events.swipe_update), func(data unsafe.Pointer) {
+			c.userActivity(false)
 			c.handlePointerSwipeUpdate(device, data)
 		}),
 		AddListener(unsafe.Pointer(&pointer.events.swipe_end), func(data unsafe.Pointer) {
+			c.userActivity(false)
 			c.handlePointerSwipeEnd(device, data)
 		}),
+		// ponytail: pinch and hold are not handled or forwarded yet; they
+		// only count as activity, a begin waking the monitors as in Niri.
+		AddListener(unsafe.Pointer(&pointer.events.pinch_begin), func(unsafe.Pointer) { c.userActivity(true) }),
+		AddListener(unsafe.Pointer(&pointer.events.pinch_update), func(unsafe.Pointer) { c.userActivity(false) }),
+		AddListener(unsafe.Pointer(&pointer.events.pinch_end), func(unsafe.Pointer) { c.userActivity(false) }),
+		AddListener(unsafe.Pointer(&pointer.events.hold_begin), func(unsafe.Pointer) { c.userActivity(true) }),
+		AddListener(unsafe.Pointer(&pointer.events.hold_end), func(unsafe.Pointer) { c.userActivity(false) }),
 	}
 	c.pointerGestureListeners[device] = listeners
 	c.keep(listeners...)
@@ -708,7 +718,7 @@ func (c *Compositor) destroyDndScrollState(state *dndEdgeScrollState) {
 
 func (c *Compositor) handleCursorMotion(data unsafe.Pointer) {
 	event := (*C.struct_wlr_pointer_motion_event)(data)
-	if !c.pointerInputAllowed(event.pointer) {
+	if !c.pointerInputAllowed(event.pointer, true) {
 		return
 	}
 	device := (*C.struct_wlr_input_device)(unsafe.Pointer(event.pointer))
@@ -718,7 +728,7 @@ func (c *Compositor) handleCursorMotion(data unsafe.Pointer) {
 
 func (c *Compositor) handleCursorMotionAbsolute(data unsafe.Pointer) {
 	event := (*C.struct_wlr_pointer_motion_absolute_event)(data)
-	if !c.pointerInputAllowed(event.pointer) {
+	if !c.pointerInputAllowed(event.pointer, true) {
 		return
 	}
 	device := (*C.struct_wlr_input_device)(unsafe.Pointer(event.pointer))
@@ -889,7 +899,7 @@ func (c *Compositor) restoreCursorImage() {
 
 func (c *Compositor) handleCursorButton(data unsafe.Pointer) {
 	event := (*C.struct_wlr_pointer_button_event)(data)
-	if !c.pointerInputAllowed(event.pointer) {
+	if !c.pointerInputAllowed(event.pointer, event.state == C.WL_POINTER_BUTTON_STATE_PRESSED) {
 		return
 	}
 	if c.mouseBinds(uint32(event.button), event.state == C.WL_POINTER_BUTTON_STATE_PRESSED) {
@@ -1034,7 +1044,7 @@ func (c *Compositor) deliverPointerButton(source unsafe.Pointer, timeMsec C.uint
 
 func (c *Compositor) handleCursorAxis(data unsafe.Pointer) {
 	event := (*C.struct_wlr_pointer_axis_event)(data)
-	if !c.pointerInputAllowed(event.pointer) {
+	if !c.pointerInputAllowed(event.pointer, true) {
 		return
 	}
 	c.hideExitDialog()

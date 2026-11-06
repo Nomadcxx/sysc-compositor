@@ -206,6 +206,19 @@ proved before it is used on the laptop.
 
 ## What is still open
 
+Touch is not finished across the desktop. The gates below prove the compositor's routing only.
+
+- **Shell surfaces (`sysc-2260`, fixed in sysc-shell).** The sysc-shell bar and panels bound only
+  `wl_pointer`, and the compositor, like Niri 26.04, delivers a finger only to a client that bound
+  `wl_touch`, so every tap on the bar was dropped. Mango has pointer emulation for such clients but
+  ships it off. The owner chose the client-side fix on 2026-11-07: sysc-shell PR #622 binds
+  `wl_touch` and turns the first finger into its pointer events. The owner accepted it on
+  archThink (tapping bar items and using a panel). Dragging a panel's content to scroll is open
+  (`sysc-2262`).
+- **Wake and idle (`sysc-2254`).** Touch down and motion, swipe begins, and pinch and hold now count as
+  input activity, and a release no longer wakes monitors that PowerOffMonitors turned off, as in
+  Niri's `should_activate_monitors`. Pointer motion already woke them; the owner confirmed it with
+  the trackpad on 2026-11-07.
 - **The laptop gate passed on 2026-11-03.** The seat advertised `pointer|keyboard|touch`, the ELAN
   panel was picked up as a touch device, and a finger on the panel reached the probe's own window as
   a whole stroke — down, motion, up — with the compositor's log naming the same finger. The record
@@ -223,6 +236,9 @@ proved before it is used on the laptop.
   handled tap, pinch zoom and scrolling on the previous candidate (`03f9274`).
 - Multi-finger gestures are not implemented. Each finger is tracked separately and delivered
   correctly, but pinch, rotate and swipe are Niri's gestures, not this milestone's.
-- Touch does not drive the compositor's own UI yet — the overview, the switcher and the colour
-  picker take touch only in the sense that a modal UI claims it first.
+- Touch does not drive the compositor's own UI yet. The overview, the window switcher, the
+  screenshot UI, the colour picker, the exit dialog and the hotkey overlay only block a finger
+  while they are open, and a tap on a tab indicator does not switch tabs. Niri's `on_touch_down`
+  routes the screenshot UI and the MRU switcher.
+- Pinch and hold gestures count only as activity; they are not handled or forwarded to clients.
 - `input.touch`'s `calibration-matrix` still warns.
