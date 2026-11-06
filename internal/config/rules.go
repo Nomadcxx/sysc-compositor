@@ -31,6 +31,8 @@ type WorkspaceLayout struct {
 	// A nil strut set keeps the output's. When present it replaces the
 	// whole set, Niri's merge_clone of the struct, not one edge at a time.
 	Struts *Struts
+	// Decorations merge over the layout's, field by field.
+	Decorations
 }
 
 type PresetSize struct {
@@ -149,6 +151,11 @@ type WindowRule struct {
 	// ScrollFactor scales the scroll events delivered to the window, Niri's
 	// scroll-factor; nil means one.
 	ScrollFactor *float64
+	// Decorations merge field by field over the window's workspace layout,
+	// and over each other in rule order.
+	Decorations
+	// DrawBorderWithBackground nil means true for a client-side decorated window.
+	DrawBorderWithBackground *bool
 }
 
 type WindowRuleResult struct {
@@ -175,6 +182,11 @@ type WindowRuleResult struct {
 	// ScrollFactor scales the scroll events delivered to the window, Niri's
 	// scroll-factor; nil means one.
 	ScrollFactor *float64
+	// Decorations merge field by field over the window's workspace layout,
+	// and over each other in rule order.
+	Decorations
+	// DrawBorderWithBackground nil means true for a client-side decorated window.
+	DrawBorderWithBackground *bool
 }
 
 type LayerRule struct {
@@ -218,6 +230,8 @@ func ResolveWindowRules(rules []WindowRule, appID, title string, state WindowSta
 		applyRuleValue(&result.DefaultColumnDisplay, rule.DefaultColumnDisplay)
 		applyRuleValue(&result.DefaultFloatingPosition, rule.DefaultFloatingPosition)
 		applyRuleValue(&result.ScrollFactor, rule.ScrollFactor)
+		result.Decorations = result.Decorations.merge(rule.Decorations)
+		applyRuleValue(&result.DrawBorderWithBackground, rule.DrawBorderWithBackground)
 	}
 	return result
 }
@@ -466,6 +480,22 @@ func (c *Config) workspaceLayout(node *document.Node) (*WorkspaceLayout, error) 
 				return nil, err
 			}
 			layout.Struts = &struts
+		case "focus-ring", "border":
+			rule, err := c.borderRule(child, "workspace.layout."+nodeName(child))
+			if err != nil {
+				return nil, fmt.Errorf("%s: %w", nodeName(child), err)
+			}
+			if nodeName(child) == "focus-ring" {
+				layout.FocusRing = layout.FocusRing.merge(rule)
+			} else {
+				layout.Border = layout.Border.merge(rule)
+			}
+		case "shadow":
+			rule, err := c.shadowRule(child)
+			if err != nil {
+				return nil, fmt.Errorf("shadow: %w", err)
+			}
+			layout.Shadow = layout.Shadow.merge(rule)
 		default:
 			c.addWarning("workspace.layout." + nodeName(child))
 		}
@@ -573,11 +603,31 @@ func (c *Config) windowRule(node *document.Node) error {
 			if err == nil {
 				rule.Opacity = &value
 			}
-		case "clip-to-geometry":
+		case "clip-to-geometry", "draw-border-with-background":
 			var value bool
 			value, err = boolArg(child)
 			if err == nil {
-				rule.ClipToGeometry = &value
+				if nodeName(child) == "clip-to-geometry" {
+					rule.ClipToGeometry = &value
+				} else {
+					rule.DrawBorderWithBackground = &value
+				}
+			}
+		case "focus-ring", "border":
+			var part BorderRule
+			part, err = c.borderRule(child, "window-rule."+nodeName(child))
+			if err == nil {
+				if nodeName(child) == "focus-ring" {
+					rule.FocusRing = rule.FocusRing.merge(part)
+				} else {
+					rule.Border = rule.Border.merge(part)
+				}
+			}
+		case "shadow":
+			var part ShadowRule
+			part, err = c.shadowRule(child)
+			if err == nil {
+				rule.Shadow = rule.Shadow.merge(part)
 			}
 		case "block-out-from":
 			var value []string
@@ -892,6 +942,18 @@ func (c *Config) addWarning(warning string) {
 	if !slices.Contains(c.Warnings, warning) {
 		c.Warnings = append(c.Warnings, warning)
 	}
+}
+
+// WorkspaceKey folds a workspace name the way names compare: ASCII letters
+// ignore case, as in Niri.
+func WorkspaceKey(name string) string {
+	key := []byte(name)
+	for i, b := range key {
+		if b >= 'A' && b <= 'Z' {
+			key[i] = b + 'a' - 'A'
+		}
+	}
+	return string(key)
 }
 
 func asciiEqualFold(a, b string) bool {

@@ -118,10 +118,12 @@ const (
 
 // Placement is a window's tile in the visible workspace view.
 type Placement struct {
-	ID                  uint64
-	Column, Tile        uint32
-	Active, Visible     bool
-	Floating            bool
+	ID              uint64
+	Column, Tile    uint32
+	Active, Visible bool
+	Floating        bool
+	// Maximized is a window maximized to the edges, which has no border.
+	Maximized           bool
 	Display             ColumnDisplay
 	X, Y, Width, Height int
 }
@@ -1480,11 +1482,12 @@ func (w *Workspace) placementAt(columnIndex, tileIndex int) Placement {
 		Active: tileIndex == column.active,
 		Visible: (column.display != ColumnDisplayTabbed || tileIndex == column.active) &&
 			!column.hiddenByMaximizedTile(tileIndex),
-		Display: column.display,
-		X:       w.bounds.X + w.columnStart(columnIndex) - w.viewOffset,
-		Y:       w.tileBaseY(columnIndex, tileIndex) + tile.yOffset,
-		Width:   w.columnWidthAt(columnIndex),
-		Height:  w.windowHeightAt(columnIndex, tileIndex),
+		Maximized: tile.maximized,
+		Display:   column.display,
+		X:         w.bounds.X + w.columnStart(columnIndex) - w.viewOffset,
+		Y:         w.tileBaseY(columnIndex, tileIndex) + tile.yOffset,
+		Width:     w.columnWidthAt(columnIndex),
+		Height:    w.windowHeightAt(columnIndex, tileIndex),
 	}
 }
 
