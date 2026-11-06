@@ -255,12 +255,12 @@ phase B.
 
 ### Task 6: Gate and records
 
-- [ ] **Step 1: Session VM gate.** The VM's virtio tablet is not a touchpad, so gate the mouse
+- [x] **Step 1: Session VM gate.** The VM's virtio tablet is not a touchpad, so gate the mouse
   path there:
   - `input { mouse { left-handed } }` swaps the buttons. Prove it by right-clicking with QMP on a
     foot window, which then receives BTN_LEFT; check with `wev`, or log with `WAYLAND_DEBUG`.
   - `scroll-factor 2` doubles the wheel steps in foot.
-- [ ] **Step 2: Laptop gate** (a real touchpad), on a spare TTY with `--session`; this is
+- [x] **Step 2: Laptop gate** (a real touchpad), on a spare TTY with `--session`; this is
   pre-approved. With `tap`, `natural-scroll` and `accel-speed 0.3`:
   - tap clicks;
   - a two-finger scroll in foot follows natural scrolling;
@@ -311,3 +311,21 @@ without restarting shell or compositor. Source Niri hashes still passed. See
 [the Settings screenshot](assets/2026-11-02-input-devices/vm-native-input-settings.png)
 and [event output](assets/2026-11-02-input-devices/vm-shell-input-ui.txt).
 This proves the VM mouse integration, not physical touchpad acceptance.
+
+## Laptop physical gate (2026-11-05)
+
+The archThink ran combined build `03f9274` (this branch plus PR #91) from the staged user-service
+override, in the owner's graphical session rather than a spare TTY. The owner's config already
+holds `tap` and `natural-scroll`. On the real touchpad, with a page that counted clicks and wheel
+events:
+
+- a light tap clicked the page's button;
+- a two-finger upward swipe moved the scroll list with the fingers (natural scrolling);
+- a three-finger upward swipe switched from workspace 1 down to workspace 2;
+- with `tap` removed from the config and saved, a touchpad tap no longer clicked, while a finger
+  on the touchscreen still did. Restoring the original file reloaded without a restart
+  (`ConfigLoaded` reported `failed: false`), and touchpad tap clicked again. The restored config
+  matches its original SHA-256.
+
+The owner observed each result. On 2026-11-06 the follow-up build `a76110f`, whose tree this
+branch now matches after merging `main`, passed the touch tile-focus gate on the same laptop.
