@@ -3,8 +3,8 @@
 - Date: 2026-11-03
 - Bead: `sysc-2231`
 - Branch: `feat/config-surface-20261103`
-- Execution snapshot: slices 1–5b are implemented on draft PR #94 (5b on
-  2026-11-06); slices 5c–6 remain. See the execution records below and the
+- Execution snapshot: slices 1–5 are implemented on draft PR #94 (5b and 5c
+  on 2026-11-06); slice 6 remains. See the execution records below and the
   [2026-11-05 continuation plan](2026-11-05-handover.md). bd `sysc-2231`
   owns current status; implemented on this branch does not mean merged.
 - Reference: niri v26.04 in `/home/nomadx/references/niri`
@@ -427,6 +427,34 @@ Known differences: no open animation; the room kept within the column comes
 out of the column's width where Niri adds it to a fixed width; a touch on a
 tab does not activate it; the click test calls the hit directly rather than
 driving a pointer device. Gradients still warn.
+
+#### Slice 5c — background effects and layer appearance (landed)
+
+Landed on 2026-11-06 (`a59aeef`). Niri's `background-effect` part parses in
+window and layer rules. Its `blur` applies: true blurs the whole surface when
+the client asked for no ext-background-effect region, false never blurs, and
+unset follows the region. A forced blur gets an effect even when the client
+never bound the protocol. `xray`, `noise` and `saturation` are checked and
+warn: SceneFX takes noise and saturation for the whole scene, and xray needs
+an optimized blur pass that tracks the wallpaper, including a video one.
+
+Layer rules apply `opacity` (clamped), `geometry-corner-radius`, `shadow` and
+`block-out-from`. The shadow starts from the layout's shadow turned off, as in
+Niri, and is cut out from under the surface unless drawn behind it. A blocked
+layer's buffers are masked in the captures the rule names, through the
+window-privacy mask. The border and tab rects no longer take pointer input,
+so the surface under them keeps the pointer.
+
+Tests: `TestNiriLayerRuleAppearanceIsParsedAndResolved` (config, local);
+`TestWindowRuleBlurForcesTheBackgroundEffect` and
+`TestLayerRuleAppearanceAndBlockOut` (a swaybg wallpaper at half opacity in
+the displayed pixels and black in a screen capture). The compositor tests are
+compiled and vetted; they have not run yet.
+
+Known differences: sysc's blur is not xray, so it shows the windows behind;
+Niri's default is xray. Opacity and block-out do not reach a layer's popups.
+A layer newly blocked from screen capture does not close an open screenshot
+UI, as a window does.
 
 ### Slice 6 — the leftovers
 
