@@ -398,8 +398,23 @@ maximized flag; `internal/wlr/decorations_test.go`
 `TestBorderDrawsAroundTheWindowAndShrinksIt` reads rendered pixels for the
 inactive rule colour, urgency, the active colour, fullscreen and reload
 removal, checks the configured size against the tile less the border, the
-background fill and the shadow cut-out. The compositor test is compiled and
-vetted; it has not run yet, locally or in CI.
+background fill and the shadow cut-out. It first ran on 2026-11-07, in lane 2
+in the laptop VM, and failed: the pixel past the border lies under the shadow,
+which the test turns on to check the cut-out. The test now gives the shadow
+a clear colour, so the cut-out is still checked and the pixel reads the
+background. It passes.
+
+The same run showed that the shadow, an M8 mapping, did not match Niri.
+Niri's shadow box is the tile grown by `spread`, blurred with sigma
+`softness / 2` and drawn `ceil(1.5 * softness)` past the box
+(`src/layout/shadow.rs`). SceneFX 0.5's box-shadow shader takes the node
+inset by `blur_sigma` as the box and blurs it with sigma `blur_sigma / 2`.
+sysc passed `softness / 2` as `blur_sigma` on a node the size of the box,
+so its shadow was half as soft and its box lay `softness / 2 - spread` px
+inside the tile, mostly under the window. The node is now the box grown by
+`ceil(softness)`, and `blur_sigma` is the softness, for windows and layers
+alike. Laptop configs with a shadow `on` will see a larger, softer shadow,
+as in Niri.
 
 Known differences: a floating window keeps its rectangle and draws the border
 outside it, where Niri sizes the floating tile to hold the border. Widths
@@ -408,6 +423,9 @@ floating window's border can fall under a tiled window it overlaps. The
 background fill is checked from the scene, not pixels, because the test
 client's buffers are opaque. A workspace's decoration part is merged by the
 config test; no compositor test places a window on a named workspace.
+SceneFX draws the shadow only inside its node, `softness` (two sigmas) past
+the box, where Niri draws to three sigmas, so the outermost tail, under 3 %
+of the shadow's alpha, is cut off.
 
 **Part 3 landed** on 2026-11-06 (`8d46adb`). `tab-indicator` parses in
 `layout`, `workspace.layout` and window rules, where only the colours are
@@ -421,7 +439,7 @@ on a tab activates its window. Tests: `TestNiriTabIndicatorIsParsedAndMerged`
 (config, local), `TestTabbedColumnKeepsRoomForItsTabIndicator` (layout,
 local), `TestTabIndicatorRectsFollowNiri` (Niri's tab geometry, pure, local)
 and `TestTabIndicatorDrawsTabbedColumnsAndActivatesTabs` (rendered colours,
-rule precedence and click activation; compiled, not yet run).
+rule precedence and click activation; passes in lane 2, 2026-11-07).
 
 Known differences: no open animation; the room kept within the column comes
 out of the column's width where Niri adds it to a fixed width; a touch on a
@@ -448,13 +466,27 @@ so the surface under them keeps the pointer.
 Tests: `TestNiriLayerRuleAppearanceIsParsedAndResolved` (config, local);
 `TestWindowRuleBlurForcesTheBackgroundEffect` and
 `TestLayerRuleAppearanceAndBlockOut` (a swaybg wallpaper at half opacity in
-the displayed pixels and black in a screen capture). The compositor tests are
-compiled and vetted; they have not run yet.
+the displayed pixels and black in a screen capture). Both first ran on
+2026-11-07, in lane 2 in the laptop VM, and failed. Both now pass.
+
+- The forced blur never appeared because the window's rules did not match:
+  the test client maps before it sets its app-id, and sysc resolved window
+  rules again only on focus, state and reload. Niri resolves them again on
+  every title and app-id change (`app_id_changed` and `title_changed` in
+  `src/handlers/xdg_shell.rs`); sysc now does too, for a mapped window.
+- The wallpaper kept full opacity although its buffer's opacity was 0.5.
+  `swaybg -c` draws with a single-pixel buffer. wlroots 0.20.2 and SceneFX 0.5
+  (both still so on their main branches) draw a single-pixel buffer as a
+  rect, multiplying only its alpha by the opacity. The rect colour is
+  premultiplied, so the colour stays at full strength. That is an upstream
+  bug, not reported yet. The test now gives swaybg a solid PNG, which
+  arrives as an ordinary shm buffer.
 
 Known differences: sysc's blur is not xray, so it shows the windows behind;
 Niri's default is xray. Opacity and block-out do not reach a layer's popups.
 A layer newly blocked from screen capture does not close an open screenshot
-UI, as a window does.
+UI, as a window does. A window or layer drawn with a single-pixel buffer
+ignores rule opacity (the upstream bug above).
 
 ### Slice 6 — the leftovers
 
