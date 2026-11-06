@@ -195,6 +195,8 @@ func (c *Compositor) syncTabIndicators() {
 				if node == nil {
 					return
 				}
+				// A click on a tab is taken by tabIndicatorButton, not the hit test.
+				sceneFXRectIgnoreInput(node)
 				c.tabIndicatorNodes = append(c.tabIndicatorNodes, node)
 			}
 			node := c.tabIndicatorNodes[used]

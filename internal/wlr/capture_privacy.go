@@ -172,6 +172,16 @@ func (c *Compositor) beginCapturePrivacy(target config.CaptureTarget) (func(), e
 			blocked[node] = true
 		}
 	}
+	// A layer rule's block-out-from masks the layer surface's buffers too.
+	for _, layer := range c.layerOrder {
+		if layer.tree != nil && layer.rules.BlocksCapture(target) {
+			walkCaptureScene(&layer.tree.node, func(node *C.struct_wlr_scene_node) {
+				if node._type == C.WLR_SCENE_NODE_BUFFER {
+					blocked[node] = true
+				}
+			})
+		}
+	}
 	var masks []captureMask
 	var blurMasks []captureBlurMask
 	var blurs []*C.struct_wlr_scene_optimized_blur

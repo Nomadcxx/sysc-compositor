@@ -184,6 +184,7 @@ func (c *Compositor) applyViewAppearance(view *toplevelView) {
 	borderOn := !decorations.border.Off && decorations.border.Width > 0
 	if (borderOn || ringOn && decorations.withBackground) && view.borderNode == nil {
 		view.borderNode = sceneFXCreateRect(unsafe.Pointer(c.windowBorderTree), 1, 1, [4]float32{})
+		sceneFXRectIgnoreInput(view.borderNode)
 	}
 	c.syncViewDecorations(view)
 }

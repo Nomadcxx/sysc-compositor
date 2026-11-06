@@ -264,6 +264,7 @@ func (c *Compositor) reapplyWindowRules() {
 		}
 	}
 	c.syncTabIndicators()
+	c.syncRuleBackgroundEffects()
 }
 
 func (c *Compositor) mapWindowAfterUnmap(view *toplevelView, output string, clientFullscreen bool) {
