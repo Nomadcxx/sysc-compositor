@@ -102,13 +102,25 @@ func (c *Compositor) handleNewDecoration(data unsafe.Pointer) {
 	if c.preferNoCSD {
 		C.sysc_xdg_decoration_set_initial_preference(decoration)
 	}
+	if c.toplevelDecorations == nil {
+		c.toplevelDecorations = make(map[*C.struct_wlr_xdg_toplevel]*C.struct_wlr_xdg_toplevel_decoration_v1)
+	}
+	c.toplevelDecorations[decoration.toplevel] = decoration
 	var requestMode, destroy *Listener
 	requestMode = AddListener(unsafe.Pointer(&decoration.events.request_mode), func(unsafe.Pointer) {
 		C.sysc_xdg_decoration_apply_request(decoration, C.bool(c.preferNoCSD))
 	})
 	destroy = AddListener(unsafe.Pointer(&decoration.events.destroy), func(unsafe.Pointer) {
+		delete(c.toplevelDecorations, decoration.toplevel)
 		c.drop(requestMode)
 		c.drop(destroy)
 	})
 	c.keep(requestMode, destroy)
+}
+
+// serverSideDecorated reports whether the window's current decoration mode is
+// server-side, Niri's has_ssd.
+func (c *Compositor) serverSideDecorated(view *toplevelView) bool {
+	decoration := c.toplevelDecorations[view.toplevel]
+	return decoration != nil && decoration.current.mode == C.WLR_XDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE
 }

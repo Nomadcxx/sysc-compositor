@@ -151,19 +151,23 @@ type Compositor struct {
 	captureNodes         map[*C.struct_wlr_scene_node]*captureNodeOwner
 	xdgDecorationManager unsafe.Pointer
 	kdeDecorationManager unsafe.Pointer
-	windowShadowTree     *C.struct_wlr_scene_tree
-	windowAnimationTree  *C.struct_wlr_scene_tree
-	windowFocusTree      *C.struct_wlr_scene_tree
-	overviewTree         *C.struct_wlr_scene_tree
-	insertHintTree       *C.struct_wlr_scene_tree
-	insertHintNode       *C.struct_wlr_scene_rect
-	seat                 *C.struct_wlr_seat
-	pointerGestures      *C.struct_wlr_pointer_gestures_v1
-	xdgShell             *C.struct_wlr_xdg_shell
-	xdgActivation        *C.struct_wlr_xdg_activation_v1
-	layerShell           *C.struct_wlr_layer_shell_v1
-	socketName           string
-	listeners            map[*Listener]struct{}
+	// toplevelDecorations maps each xdg toplevel to its xdg-decoration
+	// object, which tells whether the window is server-side decorated.
+	toplevelDecorations map[*C.struct_wlr_xdg_toplevel]*C.struct_wlr_xdg_toplevel_decoration_v1
+	windowShadowTree    *C.struct_wlr_scene_tree
+	windowAnimationTree *C.struct_wlr_scene_tree
+	windowBorderTree    *C.struct_wlr_scene_tree
+	windowFocusTree     *C.struct_wlr_scene_tree
+	overviewTree        *C.struct_wlr_scene_tree
+	insertHintTree      *C.struct_wlr_scene_tree
+	insertHintNode      *C.struct_wlr_scene_rect
+	seat                *C.struct_wlr_seat
+	pointerGestures     *C.struct_wlr_pointer_gestures_v1
+	xdgShell            *C.struct_wlr_xdg_shell
+	xdgActivation       *C.struct_wlr_xdg_activation_v1
+	layerShell          *C.struct_wlr_layer_shell_v1
+	socketName          string
+	listeners           map[*Listener]struct{}
 	// tearingControl records each surface's presentation hint. Frames stay
 	// vsynced whatever the hint: Niri never tears, and Mango and Hyprland
 	// tear only after a config opt-in that Niri's KDL has no node for.
@@ -400,7 +404,11 @@ type LayoutOptions struct {
 	Struts                layout.Struts
 	InsertHint            config.InsertHint
 	FocusRing             config.FocusRing
+	Border                config.FocusRing
 	Shadow                config.Shadow
+	// WorkspaceDecorations holds each named workspace's decoration parts,
+	// keyed by config.WorkspaceKey.
+	WorkspaceDecorations map[string]config.Decorations
 }
 
 // ErrNestedTestNeedsConsent is what NewWith returns inside a test binary unless
@@ -673,7 +681,7 @@ func normalizeOptions(opts Options) Options {
 		opts.Layout = &LayoutOptions{
 			Gaps: defaults.Layout.Gaps, ColumnWidthProportion: 0.5,
 			InsertHint: defaults.Layout.InsertHint, FocusRing: defaults.Layout.FocusRing,
-			Shadow: defaults.Layout.Shadow,
+			Border: defaults.Layout.Border, Shadow: defaults.Layout.Shadow,
 		}
 	}
 	if opts.CursorTheme == "" {

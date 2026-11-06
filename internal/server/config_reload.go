@@ -47,7 +47,8 @@ func compositorOptions(cfg *config.Config, locale *config.Keyboard) wlr.Options 
 			CenterFocusedColumn:  centerFocusedColumn(cfg.Layout.CenterFocusedColumn),
 			Struts:               struts(cfg.Layout.Struts),
 			InsertHint:           cfg.Layout.InsertHint,
-			FocusRing:            cfg.Layout.FocusRing, Shadow: cfg.Layout.Shadow,
+			FocusRing:            cfg.Layout.FocusRing, Border: cfg.Layout.Border, Shadow: cfg.Layout.Shadow,
+			WorkspaceDecorations: workspaceDecorations(cfg.Workspaces),
 		},
 		CursorTheme: cfg.Cursor.Theme, CursorSize: cfg.Cursor.Size, Binds: cfg.Binds,
 		Overview: cfg.Overview, Gestures: cfg.Gestures, Animations: cfg.Animations, Blur: cfg.Blur,
@@ -75,6 +76,18 @@ func workspaceLayout(layout *config.WorkspaceLayout) *wm.WorkspaceLayout {
 		CenterFocusedColumn:  centerFocusedColumnPtr(layout.CenterFocusedColumn),
 		Struts:               strutsPtr(layout.Struts),
 	}
+}
+
+// workspaceDecorations keys each named workspace's decoration parts by its
+// folded name.
+func workspaceDecorations(workspaces []config.WorkspaceConfig) map[string]config.Decorations {
+	parts := make(map[string]config.Decorations)
+	for _, workspace := range workspaces {
+		if workspace.Layout != nil {
+			parts[config.WorkspaceKey(workspace.Name)] = workspace.Layout.Decorations
+		}
+	}
+	return parts
 }
 
 // presetSizes converts config preset sizes for the layout. A nil list stays

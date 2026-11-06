@@ -128,6 +128,8 @@ func (c *Compositor) mapWindowWithRules(view *toplevelView, clientFullscreen boo
 		cString(view.toplevel.app_id), cString(view.toplevel.title),
 		config.UnmappedWindowState(c.atStartup))
 	view.appearance = result
+	// The workspace's part joins when the model places the window.
+	c.resolveViewDecorations(view, nil)
 	output := c.model.Snapshot().FocusedOutput
 	if output == "" {
 		output = c.FocusedOutputName()
@@ -232,6 +234,12 @@ func (c *Compositor) reapplyWindowRules() {
 		return
 	}
 	snapshot := c.model.Snapshot()
+	workspaceNames := workspaceNamesByID(snapshot.Workspaces)
+	urgent := make(map[uint64]bool, len(snapshot.Windows))
+	for _, window := range snapshot.Windows {
+		urgent[window.ID] = window.IsUrgent
+	}
+	resized := false
 	for _, view := range c.views {
 		if view == nil || view.toplevel == nil {
 			continue
@@ -239,7 +247,21 @@ func (c *Compositor) reapplyWindowRules() {
 		view.appearance = config.ResolveWindowRules(c.windowRules,
 			cString(view.toplevel.app_id), cString(view.toplevel.title),
 			c.ruleState(view, snapshot))
+		view.urgent = urgent[view.id]
+		if c.resolveViewDecorations(view, workspaceNames[view.workspaceID]) {
+			resized = true
+		}
 		c.syncViewOpacity(view)
+	}
+	// A rule that changes the border width resizes the window inside its tile.
+	if resized {
+		c.applyWorkspaceModel()
+		return
+	}
+	for _, view := range c.views {
+		if view != nil && view.toplevel != nil && view.mapped {
+			c.applyViewAppearance(view)
+		}
 	}
 }
 
