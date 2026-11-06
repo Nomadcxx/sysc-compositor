@@ -1496,12 +1496,16 @@ func (c *Compositor) handleNewToplevel(data unsafe.Pointer) {
 			c.applyFullscreen(view)
 		}
 	})
-	add(unsafe.Pointer(&toplevel.events.set_title), func(unsafe.Pointer) {
+	// Niri resolves the window rules again when the title or app-id changes
+	// (app_id_changed, title_changed); an unmapped window's are resolved at map.
+	identityChanged := func(unsafe.Pointer) {
+		if view.mapped {
+			c.reapplyWindowRules()
+		}
 		c.notifyWindowStateChanged()
-	})
-	add(unsafe.Pointer(&toplevel.events.set_app_id), func(unsafe.Pointer) {
-		c.notifyWindowStateChanged()
-	})
+	}
+	add(unsafe.Pointer(&toplevel.events.set_title), identityChanged)
+	add(unsafe.Pointer(&toplevel.events.set_app_id), identityChanged)
 	// wlroots clears a seat's pointer focus when the surface is destroyed,
 	// never on unmap, and a destroyed toplevel unmaps first.
 	add(unsafe.Pointer(&toplevel.base.surface.events.unmap), func(unsafe.Pointer) {
