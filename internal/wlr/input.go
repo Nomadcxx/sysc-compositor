@@ -187,13 +187,20 @@ func (g pointerGrab) resizeOptions() layout.ResizeOptions {
 }
 
 type toplevelView struct {
-	captureIdentity         *captureIdentity
-	foreign                 *foreignToplevel
-	toplevel                *C.struct_wlr_xdg_toplevel
-	tree                    *C.struct_wlr_scene_tree
-	appearance              config.WindowRuleResult
-	shadowNode              unsafe.Pointer
-	focusRingNode           unsafe.Pointer
+	captureIdentity *captureIdentity
+	foreign         *foreignToplevel
+	toplevel        *C.struct_wlr_xdg_toplevel
+	tree            *C.struct_wlr_scene_tree
+	appearance      config.WindowRuleResult
+	shadowNode      unsafe.Pointer
+	focusRingNode   unsafe.Pointer
+	// borderNode draws the border, or the focus ring's background when the
+	// border is off. It sits below the windows, the focus ring above them.
+	borderNode              unsafe.Pointer
+	decorations             viewDecorations
+	urgent                  bool
+	maximized               bool
+	floating                bool
 	cornerRadii             config.CornerRadius
 	clipToGeometry          bool
 	presentationOpacity     float64

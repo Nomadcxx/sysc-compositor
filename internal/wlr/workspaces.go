@@ -333,6 +333,13 @@ func (c *Compositor) windowSceneTarget(view *toplevelView, window wm.WindowSnaps
 	if !placement.Floating {
 		x += (placement.Width - geometry.w) / 2
 		y += (placement.Height - geometry.h) / 2
+		// The tile holds the border, so the window is configured smaller.
+		// ponytail: a floating window keeps its rectangle and draws the border
+		// outside it; Niri sizes the floating tile to hold the border.
+		if border := view.borderWidth(); border > 0 && placement.Width > 0 && placement.Height > 0 {
+			width = max(1, placement.Width-2*border)
+			height = max(1, placement.Height-2*border)
+		}
 	}
 	if window.Fullscreen {
 		if bounds, ok := c.outputLayoutBounds(window.Output); ok {
@@ -365,6 +372,7 @@ func (c *Compositor) applyWorkspaceModel() {
 		activeWorkspaceByID[workspace.ID] = workspace.IsActive
 	}
 	activeWindowIDs := activeWindowIDsForWorkspaces(snapshot.Workspaces)
+	workspaceNames := workspaceNamesByID(snapshot.Workspaces)
 	nextActive := make(map[string]activeWorkspace)
 	switched := make(map[string]int)
 	for _, workspace := range snapshot.Workspaces {
@@ -424,7 +432,10 @@ func (c *Compositor) applyWorkspaceModel() {
 			visible = fullscreen == view
 		}
 		view.fullscreen = window.Fullscreen
+		view.maximized, view.floating = window.Tile.Maximized, window.Tile.Floating
+		view.urgent = window.IsUrgent
 		view.workspaceID = window.WorkspaceID
+		c.resolveViewDecorations(view, workspaceNames[window.WorkspaceID])
 		view.workspaceIndex = workspaceIndex(snapshot.Workspaces, window.WorkspaceID)
 		view.outputName = window.Output
 		targetX, targetY, targetWidth, targetHeight := c.windowSceneTarget(view, window)
@@ -576,7 +587,27 @@ func (c *Compositor) windowSizeHints(view *toplevelView) (int, int, int, int) {
 			maxHeight = min(maxHeight, *appearance.MaxHeight)
 		}
 	}
+	// The tile holds the border on each side, as Niri's tile min and max
+	// sizes do; an unbounded maximum stays unbounded.
+	if border := view.borderWidth(); border > 0 && !view.floating {
+		minWidth, minHeight = max(1, minWidth)+2*border, max(1, minHeight)+2*border
+		if maxWidth > 0 {
+			maxWidth += 2 * border
+		}
+		if maxHeight > 0 {
+			maxHeight += 2 * border
+		}
+	}
 	return minWidth, maxWidth, minHeight, maxHeight
+}
+
+// workspaceNamesByID maps each named workspace's ID to its name.
+func workspaceNamesByID(workspaces []wm.WorkspaceSnapshot) map[uint64]*string {
+	names := make(map[uint64]*string, len(workspaces))
+	for _, workspace := range workspaces {
+		names[workspace.ID] = workspace.Name
+	}
+	return names
 }
 
 func (c *Compositor) activateWorkspaceFocus() {
