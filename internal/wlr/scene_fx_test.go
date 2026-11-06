@@ -23,8 +23,10 @@ func TestShadowUsesTopLeftCornerRadius(t *testing.T) {
 func TestShadowStyleMatchesNiriBoxShadow(t *testing.T) {
 	shadow := config.Shadow{Softness: 20, Spread: 4.2, Color: config.Color{R: 0.4, G: 0.3, B: 0.2, A: 0.8}}
 	active := makeShadowRenderStyle(shadow, config.CornerRadius{12, 8, 4, 2}, true)
-	if active.spread != 5 || active.radius != 17 || active.sigma != 10 {
-		t.Fatalf("active shadow style = %+v, want spread 5 radius 17 sigma 10", active)
+	// Niri's sigma is softness/2 and SceneFX's is blur_sigma/2, so blur_sigma
+	// is the softness, and the node reaches spread plus softness past the tile.
+	if active.inset != 25 || active.radius != 17 || active.blurSigma != 20 {
+		t.Fatalf("active shadow style = %+v, want inset 25 radius 17 blur sigma 20", active)
 	}
 	inactive := makeShadowRenderStyle(shadow, config.CornerRadius{12, 8, 4, 2}, false)
 	if inactive.color[3] != float32(0.8*0.75) {
@@ -35,8 +37,8 @@ func TestShadowStyleMatchesNiriBoxShadow(t *testing.T) {
 		t.Errorf("spread rounded a square-corner window: radius = %d, want 0", square.radius)
 	}
 	contracted := makeShadowRenderStyle(config.Shadow{Spread: -20}, config.CornerRadius{12, 12, 12, 12}, true)
-	if contracted.spread != -20 || contracted.radius != 0 {
-		t.Errorf("contracted shadow = %+v, want spread -20 with radius 0", contracted)
+	if contracted.inset != -20 || contracted.radius != 0 {
+		t.Errorf("contracted shadow = %+v, want inset -20 with radius 0", contracted)
 	}
 }
 

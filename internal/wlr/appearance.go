@@ -43,11 +43,16 @@ func shadowCornerRadius(radii config.CornerRadius, spread int) int {
 	return int(math.Ceil(max(0, radii[0]+float64(spread))))
 }
 
+// shadowRenderStyle maps Niri's shadow onto a SceneFX shadow node. Niri
+// blurs the tile grown by spread with sigma softness/2 (layout/shadow.rs).
+// SceneFX blurs the node inset by its blur_sigma with sigma blur_sigma/2, so
+// blur_sigma is the softness and the node is the shadow box grown by it.
 type shadowRenderStyle struct {
-	spread int
-	radius int
-	sigma  float64
-	color  [4]float32
+	// inset is how far the node's edge lies outside the tile's.
+	inset     int
+	radius    int
+	blurSigma float64
+	color     [4]float32
 }
 
 func makeShadowRenderStyle(shadow config.Shadow, radii config.CornerRadius, active bool) shadowRenderStyle {
@@ -55,6 +60,7 @@ func makeShadowRenderStyle(shadow config.Shadow, radii config.CornerRadius, acti
 	if shadow.Spread < 0 {
 		spread = -spread
 	}
+	softness := max(0, shadow.Softness)
 	radius := shadowCornerRadius(radii, spread)
 	color := shadow.Color
 	switch {
@@ -65,7 +71,8 @@ func makeShadowRenderStyle(shadow config.Shadow, radii config.CornerRadius, acti
 		color.A *= 0.75
 	}
 	// ponytail: SceneFX shadow geometry rounds to logical pixels; M15 mixed-DPI work can align it to physical pixels.
-	return shadowRenderStyle{spread: spread, radius: radius, sigma: shadow.Softness / 2, color: premultipliedColor(color)}
+	return shadowRenderStyle{inset: spread + int(math.Ceil(softness)), radius: radius,
+		blurSigma: softness, color: premultipliedColor(color)}
 }
 
 func sceneFXRadii(radii config.CornerRadius) [4]uint16 {
@@ -218,16 +225,16 @@ func (c *Compositor) syncViewDecorations(view *toplevelView) {
 		shadow := decorations.shadow
 		style := makeShadowRenderStyle(shadow, tileRadii,
 			view == c.focusedView && c.activeOutputName == c.outputNameForView(view))
-		spread := style.spread
+		inset := style.inset
 		offsetX, offsetY := int(math.Round(shadow.OffsetX)), int(math.Round(shadow.OffsetY))
-		width, height := max(1, tileWidth+2*spread), max(1, tileHeight+2*spread)
-		sceneFXShadowUpdate(view.shadowNode, tileX-spread+offsetX, tileY-spread+offsetY,
-			width, height, style.radius, style.sigma, style.color)
+		width, height := max(1, tileWidth+2*inset), max(1, tileHeight+2*inset)
+		sceneFXShadowUpdate(view.shadowNode, tileX-inset+offsetX, tileY-inset+offsetY,
+			width, height, style.radius, style.blurSigma, style.color)
 		// Niri cuts the shadow out from under the tile unless it is drawn behind.
 		if shadow.DrawBehindWindow {
 			sceneFXShadowClip(view.shadowNode, 0, 0, 0, 0, [4]uint16{})
 		} else {
-			sceneFXShadowClip(view.shadowNode, spread-offsetX, spread-offsetY,
+			sceneFXShadowClip(view.shadowNode, inset-offsetX, inset-offsetY,
 				tileWidth, tileHeight, sceneFXRadii(tileRadii))
 		}
 		sceneFXSetNodeEnabled(view.shadowNode, visible && shadow.On)
