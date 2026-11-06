@@ -47,6 +47,7 @@ static void sysc_tree_coords_layer(struct wlr_scene_tree *tree, int *x, int *y) 
 import "C"
 
 import (
+	"math"
 	"slices"
 	"unsafe"
 
@@ -80,14 +81,15 @@ func sceneLayer(layer C.enum_zwlr_layer_shell_v1_layer) int {
 
 // layerSurface is one layer-shell surface the compositor draws.
 type layerSurface struct {
-	surface             *C.struct_wlr_layer_surface_v1
-	scene               *C.struct_wlr_scene_layer_surface_v1
-	tree                *C.struct_wlr_scene_tree
-	layer               int
-	output              unsafe.Pointer // *wlr_output
-	outputName          string
-	placeWithinBackdrop bool
-	listeners           []*Listener
+	surface    *C.struct_wlr_layer_surface_v1
+	scene      *C.struct_wlr_scene_layer_surface_v1
+	tree       *C.struct_wlr_scene_tree
+	layer      int
+	output     unsafe.Pointer // *wlr_output
+	outputName string
+	rules      config.LayerRuleResult
+	shadowNode unsafe.Pointer
+	listeners  []*Listener
 }
 
 type LayerKind uint8
@@ -230,13 +232,13 @@ func (c *Compositor) handleNewLayerSurface(data unsafe.Pointer) {
 		return
 	}
 	l := &layerSurface{
-		surface:             surface,
-		scene:               scene,
-		tree:                scene.tree,
-		layer:               layer,
-		output:              unsafe.Pointer(surface.output),
-		outputName:          C.GoString(surface.output.name),
-		placeWithinBackdrop: c.resolveLayerRules(C.GoString(surface.namespace)),
+		surface:    surface,
+		scene:      scene,
+		tree:       scene.tree,
+		layer:      layer,
+		output:     unsafe.Pointer(surface.output),
+		outputName: C.GoString(surface.output.name),
+		rules:      c.resolveLayerRules(C.GoString(surface.namespace)),
 	}
 	key := unsafe.Pointer(surface.surface)
 	c.layerSurfaces[key] = l
@@ -258,6 +260,7 @@ func (c *Compositor) handleNewLayerSurface(data unsafe.Pointer) {
 		if surface.current.committed != 0 || bool(surface.initial_commit) {
 			c.arrangeLayers(l.output)
 		}
+		c.applyLayerAppearance(l)
 		c.updateKeyboardFocus()
 		c.notifyStateChanged()
 	})
@@ -266,6 +269,7 @@ func (c *Compositor) handleNewLayerSurface(data unsafe.Pointer) {
 	// changes no layer state, so map and unmap both re-arrange.
 	add(unsafe.Pointer(&surface.surface.events._map), func(unsafe.Pointer) {
 		c.arrangeLayers(l.output)
+		c.syncRuleBackgroundEffects()
 		if snapshotKeyboardMode(int(surface.current.keyboard_interactive)) == LayerKeyboardOnDemandMode {
 			c.onDemandLayerFocus = l
 			c.setActiveOutputName(l.outputName)
@@ -298,14 +302,68 @@ func (c *Compositor) handleNewLayerSurface(data unsafe.Pointer) {
 	})
 }
 
-func (c *Compositor) resolveLayerRules(namespace string) bool {
+func (c *Compositor) resolveLayerRules(namespace string) config.LayerRuleResult {
 	return config.ResolveLayerRules(c.layerRules, namespace)
 }
 
 func (c *Compositor) reapplyLayerRules() {
 	for _, layer := range c.layerOrder {
-		layer.placeWithinBackdrop = c.resolveLayerRules(C.GoString(layer.surface.namespace))
+		layer.rules = c.resolveLayerRules(C.GoString(layer.surface.namespace))
+		c.applyLayerAppearance(layer)
 	}
+	c.syncRuleBackgroundEffects()
+}
+
+func (l *layerSurface) namespace() string { return C.GoString(l.surface.namespace) }
+
+// mappedSize is the surface's size, and whether it is mapped.
+func (l *layerSurface) mappedSize() (width, height int, mapped bool) {
+	surface := l.surface.surface
+	return int(surface.current.width), int(surface.current.height), bool(surface.mapped)
+}
+
+// applyLayerAppearance draws a layer surface's rule opacity, corners and
+// shadow, as Niri's mapped layer does.
+func (c *Compositor) applyLayerAppearance(l *layerSurface) {
+	if l == nil || l.tree == nil || l.surface == nil || l.surface.surface == nil {
+		return
+	}
+	opacity := 1.0
+	if l.rules.Opacity != nil {
+		opacity = clampOpacity(*l.rules.Opacity)
+	}
+	sceneFXSetTreeOpacity(unsafe.Pointer(l.tree), opacity)
+
+	width, height := int(l.surface.surface.current.width), int(l.surface.surface.current.height)
+	var radii config.CornerRadius
+	if l.rules.GeometryCornerRadius != nil {
+		radii = fitCornerRadii(*l.rules.GeometryCornerRadius, float64(width), float64(height))
+	}
+	sceneFXSetWindowCorners(unsafe.Pointer(&l.tree.node), unsafe.Pointer(l.surface.surface), sceneFXRadii(radii))
+
+	// Niri starts a layer's shadow from the layout's, turned off.
+	shadow := c.layoutOptions.Shadow
+	shadow.On = false
+	shadow = shadow.Merged(l.rules.Shadow)
+	if shadow.On && l.shadowNode == nil {
+		l.shadowNode = sceneFXCreateShadow(unsafe.Pointer(l.tree), 1, 1, 0, shadow.Softness,
+			premultipliedColor(shadow.Color))
+		sceneFXNodeLowerToBottom(l.shadowNode)
+	}
+	if l.shadowNode == nil {
+		return
+	}
+	style := makeShadowRenderStyle(shadow, radii, true)
+	spread := style.spread
+	offsetX, offsetY := int(math.Round(shadow.OffsetX)), int(math.Round(shadow.OffsetY))
+	sceneFXShadowUpdate(l.shadowNode, -spread+offsetX, -spread+offsetY,
+		max(1, width+2*spread), max(1, height+2*spread), style.radius, style.sigma, style.color)
+	if shadow.DrawBehindWindow {
+		sceneFXShadowClip(l.shadowNode, 0, 0, 0, 0, [4]uint16{})
+	} else {
+		sceneFXShadowClip(l.shadowNode, spread-offsetX, spread-offsetY, width, height, sceneFXRadii(radii))
+	}
+	sceneFXSetNodeEnabled(l.shadowNode, shadow.On && width > 0 && height > 0)
 }
 
 // defaultOutput is the output under the pointer, else any enabled output.
@@ -373,7 +431,7 @@ func (c *Compositor) layerPlacements() []layerPlacement {
 			layer:               l.layer,
 			namespace:           C.GoString(l.surface.namespace),
 			mapped:              bool(l.surface.surface.mapped),
-			placeWithinBackdrop: l.placeWithinBackdrop,
+			placeWithinBackdrop: l.rules.PlaceWithinBackdrop,
 			box: rect{int(x), int(y),
 				int(l.surface.current.actual_width), int(l.surface.current.actual_height)},
 		})

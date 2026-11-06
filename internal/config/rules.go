@@ -1,6 +1,7 @@
 package config
 
 import (
+	"cmp"
 	"fmt"
 	"math"
 	"regexp"
@@ -156,6 +157,7 @@ type WindowRule struct {
 	Decorations
 	// DrawBorderWithBackground nil means true for a client-side decorated window.
 	DrawBorderWithBackground *bool
+	BackgroundEffect         BackgroundEffectRule
 }
 
 type WindowRuleResult struct {
@@ -187,12 +189,42 @@ type WindowRuleResult struct {
 	Decorations
 	// DrawBorderWithBackground nil means true for a client-side decorated window.
 	DrawBorderWithBackground *bool
+	BackgroundEffect         BackgroundEffectRule
 }
 
 type LayerRule struct {
 	Matches             []LayerMatch
 	Excludes            []LayerMatch
 	PlaceWithinBackdrop *bool
+	// Opacity is clamped to [0, 1] when the layer is rendered.
+	Opacity              *float64
+	BlockOutFrom         *string
+	GeometryCornerRadius *CornerRadius
+	// Shadow merges over the layout's shadow turned off, as in Niri.
+	Shadow           ShadowRule
+	BackgroundEffect BackgroundEffectRule
+}
+
+// LayerRuleResult is every matching layer rule laid over the last, in order.
+type LayerRuleResult struct {
+	PlaceWithinBackdrop  bool
+	Opacity              *float64
+	BlockOutFrom         *string
+	GeometryCornerRadius *CornerRadius
+	Shadow               ShadowRule
+	BackgroundEffect     BackgroundEffectRule
+}
+
+// BlocksCapture is WindowRuleResult.BlocksCapture for a layer.
+func (r LayerRuleResult) BlocksCapture(target CaptureTarget) bool {
+	return blocksCapture(r.BlockOutFrom, target)
+}
+
+// BackgroundEffectRule is Niri's background-effect part. Only blur applies:
+// nil follows the surface's ext-background-effect region, true blurs the
+// whole surface and false never blurs.
+type BackgroundEffectRule struct {
+	Blur *bool
 }
 
 type LayerMatch struct {
@@ -231,6 +263,7 @@ func ResolveWindowRules(rules []WindowRule, appID, title string, state WindowSta
 		applyRuleValue(&result.DefaultFloatingPosition, rule.DefaultFloatingPosition)
 		applyRuleValue(&result.ScrollFactor, rule.ScrollFactor)
 		result.Decorations = result.Decorations.merge(rule.Decorations)
+		result.BackgroundEffect.Blur = cmp.Or(rule.BackgroundEffect.Blur, result.BackgroundEffect.Blur)
 		applyRuleValue(&result.DrawBorderWithBackground, rule.DrawBorderWithBackground)
 	}
 	return result
@@ -247,8 +280,12 @@ const (
 // BlocksCapture follows Niri's RenderTarget: screen-capture protects all
 // capture targets, while screencast protects only PipeWire streams.
 func (r WindowRuleResult) BlocksCapture(target CaptureTarget) bool {
-	return target != CaptureDisplay && r.BlockOutFrom != nil &&
-		(*r.BlockOutFrom == "screen-capture" || target == CaptureCast && *r.BlockOutFrom == "screencast")
+	return blocksCapture(r.BlockOutFrom, target)
+}
+
+func blocksCapture(blockOutFrom *string, target CaptureTarget) bool {
+	return target != CaptureDisplay && blockOutFrom != nil &&
+		(*blockOutFrom == "screen-capture" || target == CaptureCast && *blockOutFrom == "screencast")
 }
 
 func (r WindowRule) matches(appID, title string, state WindowState) bool {
@@ -320,21 +357,26 @@ func hasUnsupportedWindowMatch(matches []RuleMatch) bool {
 	return false
 }
 
-func (c *Config) ResolveLayerRules(namespace string) bool {
+func (c *Config) ResolveLayerRules(namespace string) LayerRuleResult {
 	return ResolveLayerRules(c.LayerRules, namespace)
 }
 
-func ResolveLayerRules(rules []LayerRule, namespace string) bool {
-	withinBackdrop := false
+func ResolveLayerRules(rules []LayerRule, namespace string) LayerRuleResult {
+	var result LayerRuleResult
 	for _, rule := range rules {
 		if !rule.matches(namespace) {
 			continue
 		}
 		if rule.PlaceWithinBackdrop != nil {
-			withinBackdrop = *rule.PlaceWithinBackdrop
+			result.PlaceWithinBackdrop = *rule.PlaceWithinBackdrop
 		}
+		applyRuleValue(&result.Opacity, rule.Opacity)
+		applyRuleValue(&result.BlockOutFrom, rule.BlockOutFrom)
+		applyRuleValue(&result.GeometryCornerRadius, rule.GeometryCornerRadius)
+		result.Shadow = result.Shadow.merge(rule.Shadow)
+		result.BackgroundEffect.Blur = cmp.Or(rule.BackgroundEffect.Blur, result.BackgroundEffect.Blur)
 	}
-	return withinBackdrop
+	return result
 }
 
 func (r LayerRule) matches(namespace string) bool {
@@ -642,14 +684,16 @@ func (c *Config) windowRule(node *document.Node) error {
 				rule.TabIndicator = rule.TabIndicator.merge(part)
 			}
 		case "block-out-from":
-			var value []string
-			value, err = stringArgs(child, 1, 1)
+			var value string
+			value, err = blockOutFromArg(child)
 			if err == nil {
-				if value[0] != "screen-capture" && value[0] != "screencast" {
-					err = fmt.Errorf("expected screen-capture or screencast")
-				} else {
-					rule.BlockOutFrom = &value[0]
-				}
+				rule.BlockOutFrom = &value
+			}
+		case "background-effect":
+			var part BackgroundEffectRule
+			part, err = c.backgroundEffectRule(child, "window-rule.background-effect")
+			if err == nil {
+				rule.BackgroundEffect.Blur = cmp.Or(part.Blur, rule.BackgroundEffect.Blur)
 			}
 		default:
 			c.addWarning("window-rule")
@@ -801,6 +845,36 @@ func (c *Config) layerRule(node *document.Node) error {
 				return fmt.Errorf("place-within-backdrop: %w", err)
 			}
 			rule.PlaceWithinBackdrop = &value
+		case "opacity":
+			value, err := numberArg(child)
+			if err != nil {
+				return fmt.Errorf("opacity: %w", err)
+			}
+			rule.Opacity = &value
+		case "block-out-from":
+			value, err := blockOutFromArg(child)
+			if err != nil {
+				return fmt.Errorf("block-out-from: %w", err)
+			}
+			rule.BlockOutFrom = &value
+		case "geometry-corner-radius":
+			value, err := parseCornerRadius(child)
+			if err != nil {
+				return fmt.Errorf("geometry-corner-radius: %w", err)
+			}
+			rule.GeometryCornerRadius = &value
+		case "shadow":
+			part, err := c.shadowRule(child)
+			if err != nil {
+				return fmt.Errorf("shadow: %w", err)
+			}
+			rule.Shadow = rule.Shadow.merge(part)
+		case "background-effect":
+			part, err := c.backgroundEffectRule(child, "layer-rule.background-effect")
+			if err != nil {
+				return fmt.Errorf("background-effect: %w", err)
+			}
+			rule.BackgroundEffect.Blur = cmp.Or(part.Blur, rule.BackgroundEffect.Blur)
 		default:
 			c.addWarning("layer-rule")
 		}
@@ -954,6 +1028,49 @@ func (c *Config) addWarning(warning string) {
 	if !slices.Contains(c.Warnings, warning) {
 		c.Warnings = append(c.Warnings, warning)
 	}
+}
+
+func blockOutFromArg(node *document.Node) (string, error) {
+	value, err := stringArgs(node, 1, 1)
+	if err != nil {
+		return "", err
+	}
+	if value[0] != "screen-capture" && value[0] != "screencast" {
+		return "", fmt.Errorf("expected screen-capture or screencast")
+	}
+	return value[0], nil
+}
+
+// backgroundEffectRule parses Niri's background-effect part. xray, noise and
+// saturation are checked and warn: SceneFX's blur takes noise and
+// saturation for the whole scene, and xray needs an optimized blur pass.
+func (c *Config) backgroundEffectRule(node *document.Node, prefix string) (BackgroundEffectRule, error) {
+	var rule BackgroundEffectRule
+	if len(node.Arguments) != 0 || len(node.Properties) != 0 {
+		return rule, fmt.Errorf("background-effect takes child nodes only")
+	}
+	for _, child := range node.Children {
+		switch name := nodeName(child); name {
+		case "blur", "xray":
+			value, err := boolArg(child)
+			if err != nil {
+				return rule, fmt.Errorf("%s: %w", name, err)
+			}
+			if name == "blur" {
+				rule.Blur = &value
+			} else {
+				c.addWarning(prefix + ".xray")
+			}
+		case "noise", "saturation":
+			if _, err := boundedNumber(child, 0, 1000); err != nil {
+				return rule, err
+			}
+			c.addWarning(prefix + "." + name)
+		default:
+			return rule, fmt.Errorf("unexpected node `%s`", name)
+		}
+	}
+	return rule, nil
 }
 
 // WorkspaceKey folds a workspace name the way names compare: ASCII letters

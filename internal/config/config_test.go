@@ -420,7 +420,7 @@ layer-rule {
 	if got := cfg.ResolveWindowRules("x-terminal-test", "hidden", UnmappedWindowState(false)); got.OpenFloating != nil {
 		t.Errorf("excluded window got rules = %+v", got)
 	}
-	if !cfg.ResolveLayerRules("sysc-shell-panel") || cfg.ResolveLayerRules("other") {
+	if !cfg.ResolveLayerRules("sysc-shell-panel").PlaceWithinBackdrop || cfg.ResolveLayerRules("other").PlaceWithinBackdrop {
 		t.Error("layer namespace rule did not match only sysc-shell namespaces")
 	}
 }
@@ -501,7 +501,7 @@ window-rule {
 	unsupported, err := Parse("unsupported-window-rule.kdl", []byte(`
 window-rule {
     opacity 0.5
-    background-effect { blur true; }
+    baba-is-float true
 }
 `))
 	if err != nil {
@@ -701,6 +701,77 @@ window-rule {
 		`layout { tab-indicator { length proportion=1; }; }`:    "length",
 	} {
 		if _, err := Parse("bad-tab-indicator.kdl", []byte(src)); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("Parse(%q) error = %v, want containing %q", src, err, want)
+		}
+	}
+}
+
+func TestNiriLayerRuleAppearanceIsParsedAndResolved(t *testing.T) {
+	cfg, err := Parse("layer-rules.kdl", []byte(`
+layer-rule {
+    match namespace="^panel$"
+    opacity 0.5
+    geometry-corner-radius 8
+    shadow { on; softness 10; }
+    block-out-from "screencast"
+    background-effect { blur true; }
+}
+layer-rule {
+    match namespace="^panel$"
+    opacity 0.75
+    shadow { spread 2; }
+    background-effect { blur false; }
+}
+window-rule {
+    match app-id="a"
+    background-effect { blur true; }
+}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Warnings) != 0 {
+		t.Fatalf("supported layer rule keys produced warnings: %v", cfg.Warnings)
+	}
+	panel := cfg.ResolveLayerRules("panel")
+	if panel.Opacity == nil || *panel.Opacity != 0.75 ||
+		panel.GeometryCornerRadius == nil || *panel.GeometryCornerRadius != (CornerRadius{8, 8, 8, 8}) ||
+		!panel.Shadow.On || panel.Shadow.Softness == nil || *panel.Shadow.Softness != 10 ||
+		panel.Shadow.Spread == nil || *panel.Shadow.Spread != 2 ||
+		panel.BackgroundEffect.Blur == nil || *panel.BackgroundEffect.Blur {
+		t.Errorf("panel layer rules = %+v, want the later rule over the earlier, field by field", panel)
+	}
+	if !panel.BlocksCapture(CaptureCast) || panel.BlocksCapture(CaptureScreen) || panel.BlocksCapture(CaptureDisplay) {
+		t.Error("block-out-from screencast should hide the layer from casts only")
+	}
+	if other := cfg.ResolveLayerRules("other"); other.Opacity != nil || other.Shadow.On || other.BlockOutFrom != nil {
+		t.Errorf("unmatched layer got rules = %+v", other)
+	}
+	if blur := cfg.ResolveWindowRules("a", "", UnmappedWindowState(false)).BackgroundEffect.Blur; blur == nil || !*blur {
+		t.Errorf("window-rule background-effect blur = %v, want true", blur)
+	}
+
+	unsupported, err := Parse("effects.kdl", []byte(`
+layer-rule { background-effect { xray false; noise 0.1; }; }
+window-rule { background-effect { saturation 2; }; }
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"layer-rule.background-effect.xray", "layer-rule.background-effect.noise",
+		"window-rule.background-effect.saturation"} {
+		if !slices.Contains(unsupported.Warnings, want) {
+			t.Errorf("warnings = %v, want %q", unsupported.Warnings, want)
+		}
+	}
+	for src, want := range map[string]string{
+		`layer-rule { opacity "x"; }`:                        "opacity",
+		`layer-rule { block-out-from "everything"; }`:        "screen-capture or screencast",
+		`window-rule { background-effect { blur 1; }; }`:     "boolean",
+		`layer-rule { background-effect { glow true; }; }`:   "unexpected node",
+		`window-rule { background-effect { noise 2000; }; }`: "noise",
+	} {
+		if _, err := Parse("bad-layer-rule.kdl", []byte(src)); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("Parse(%q) error = %v, want containing %q", src, err, want)
 		}
 	}

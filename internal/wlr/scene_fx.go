@@ -569,6 +569,21 @@ func sceneFXRectUpdateRing(node unsafe.Pointer, x, y, width, height, border int,
 		C.int(inner[0]), C.int(inner[1]), C.int(inner[2]), C.int(inner[3]), &rgba[0])
 }
 
+// sceneFXRectIgnoreInput keeps a drawn rectangle out of pointer hit tests,
+// so the surface under it still takes the pointer.
+func sceneFXRectIgnoreInput(node unsafe.Pointer) {
+	if node != nil {
+		C.wlr_scene_rect_from_node((*C.struct_wlr_scene_node)(node)).accepts_input = false
+	}
+}
+
+// sceneFXNodeLowerToBottom puts a node under its siblings.
+func sceneFXNodeLowerToBottom(node unsafe.Pointer) {
+	if node != nil {
+		C.wlr_scene_node_lower_to_bottom((*C.struct_wlr_scene_node)(node))
+	}
+}
+
 // sceneFXRectUpdateFill draws the whole rectangle, with no cut-out.
 func sceneFXRectUpdateFill(node unsafe.Pointer, x, y, width, height int, radii [4]uint16, color [4]float32) {
 	rgba := [4]C.float{C.float(color[0]), C.float(color[1]), C.float(color[2]), C.float(color[3])}

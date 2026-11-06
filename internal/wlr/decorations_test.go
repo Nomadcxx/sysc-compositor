@@ -368,3 +368,132 @@ func TestTabIndicatorDrawsTabbedColumnsAndActivatesTabs(t *testing.T) {
 		}
 	})
 }
+
+// TestWindowRuleBlurForcesTheBackgroundEffect: background-effect blur true
+// blurs a window that asked for no region, and false takes the blur away, as
+// in Niri.
+func TestWindowRuleBlurForcesTheBackgroundEffect(t *testing.T) {
+	on, off := true, false
+	rules := func(blur *bool) []config.WindowRule {
+		return []config.WindowRule{{
+			Matches:          []config.RuleMatch{{AppID: regexp.MustCompile(`^blurred$`)}},
+			BackgroundEffect: config.BackgroundEffectRule{Blur: blur},
+		}}
+	}
+	c := newNestedWith(t, Options{Animations: config.Animations{Off: true}, WindowRules: rules(&on)})
+	runTools(t, c, func(func(string, ...string) *exec.Cmd) {
+		client, err := testclient.StartToplevelClient(c.SocketName(), time.Hour)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer client.Close()
+		if err := client.SetIdentity("blurred", "blurred"); err != nil {
+			t.Error(err)
+			return
+		}
+		if err := client.Paint(0xff3498db, 200, 150); err != nil {
+			t.Error(err)
+			return
+		}
+		blurNodes := func() []unsafe.Pointer {
+			for _, view := range c.views {
+				if cString(view.toplevel.app_id) == "blurred" {
+					if effect := c.backgroundEffects[unsafe.Pointer(view.toplevel.base.surface)]; effect != nil {
+						return effect.blurNodes
+					}
+				}
+			}
+			return nil
+		}
+		onCompositor(t, c, func() {
+			nodes := blurNodes()
+			if len(nodes) != 1 {
+				t.Errorf("forced blur drew %d blur nodes, want one over the whole window", len(nodes))
+				return
+			}
+			if box := sceneFXBlurBox(nodes[0]); box.w != 200 || box.h != 150 {
+				t.Errorf("forced blur box = %+v, want the 200x150 window", box)
+			}
+		})
+		onCompositor(t, c, func() {
+			if err := c.Reconfigure(Options{Animations: config.Animations{Off: true}, WindowRules: rules(&off)}); err != nil {
+				t.Error(err)
+			}
+			if nodes := blurNodes(); len(nodes) != 0 {
+				t.Errorf("blur false left %d blur nodes", len(nodes))
+			}
+		})
+	})
+}
+
+// TestLayerRuleAppearanceAndBlockOut: a layer rule's opacity, shadow and
+// block-out-from reach the layer surface, as Niri's mapped layer applies them.
+func TestLayerRuleAppearanceAndBlockOut(t *testing.T) {
+	cfg, err := config.Parse("layer-rules.kdl", []byte(`
+layer-rule {
+    match namespace="wallpaper"
+    opacity 0.5
+    geometry-corner-radius 8
+    shadow { on; spread 4; offset x=0 y=0; }
+    block-out-from "screen-capture"
+}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := newNestedWith(t, Options{LayerRules: cfg.LayerRules})
+	var checked bool
+	pollThenStop(c, func() bool {
+		for _, layer := range c.layerOrder {
+			width, height, mapped := layer.mappedSize()
+			if layer.namespace() != "wallpaper" || !mapped || width == 0 {
+				continue
+			}
+			checked = true
+			if layer.rules.Opacity == nil || *layer.rules.Opacity != 0.5 {
+				t.Errorf("layer opacity rule = %v, want 0.5", layer.rules.Opacity)
+			}
+			if layer.shadowNode == nil || !sceneFXNodeEnabled(layer.shadowNode) {
+				t.Error("the layer rule's shadow is not drawn")
+			} else {
+				if w, h := sceneFXShadowSize(layer.shadowNode); w != width+8 || h != height+8 {
+					t.Errorf("layer shadow %dx%d, want the %dx%d surface spread by 4", w, h, width, height)
+				}
+				if got := sceneFXShadowClipWidth(layer.shadowNode); got != width {
+					t.Errorf("layer shadow cut-out width = %d, want the surface's %d", got, width)
+				}
+			}
+			var output unsafe.Pointer
+			for output = range c.sceneOutputs {
+				break
+			}
+			pixel := func(target config.CaptureTarget) color.NRGBA {
+				frame, err := c.captureOutputForTarget(output, target)
+				if err != nil {
+					t.Error(err)
+					return color.NRGBA{}
+				}
+				center := frame.Bounds().Min.Add(frame.Bounds().Max).Div(2)
+				return frame.NRGBAAt(center.X, center.Y)
+			}
+			// #336699 at half opacity over the black clear colour.
+			near := func(got, want color.NRGBA) bool {
+				d := func(a, b uint8) int { return max(int(a)-int(b), int(b)-int(a)) }
+				return d(got.R, want.R) <= 3 && d(got.G, want.G) <= 3 && d(got.B, want.B) <= 3
+			}
+			if got, want := pixel(config.CaptureDisplay), (color.NRGBA{R: 26, G: 51, B: 77, A: 255}); !near(got, want) {
+				t.Errorf("displayed wallpaper pixel = %v, want %v (half opacity)", got, want)
+			}
+			if got := pixel(config.CaptureScreen); !near(got, color.NRGBA{A: 255}) {
+				t.Errorf("screen capture wallpaper pixel = %v, want the black mask", got)
+			}
+			return true
+		}
+		return false
+	})
+	runClient(t, c, []string{"swaybg", "-c", "#336699"}, nil, nil)
+	if !checked {
+		t.Fatal("swaybg never mapped a wallpaper layer surface")
+	}
+}
