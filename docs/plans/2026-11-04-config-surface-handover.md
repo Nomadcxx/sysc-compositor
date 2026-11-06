@@ -1,5 +1,10 @@
 # Config surface handover — 2026-11-04, after slice 4b items 1–3
 
+Historical snapshot. The later commits `069a2fc` and `4e757a7` completed the
+ordering fix, struts and per-window scroll factor; `7043d17` records the close-out.
+Continue from [the 2026-11-05 plan](2026-11-05-handover.md), not the open-work
+list below.
+
 This picks up from [2026-11-03-config-surface-handover.md](2026-11-03-config-surface-handover.md).
 It records what landed on `feat/config-surface-20261103` after that handover, the
 config-wide ordering gap to close first, the settled design for the rest of slice 4b
