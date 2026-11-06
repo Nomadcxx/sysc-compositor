@@ -3,8 +3,8 @@
 - Date: 2026-11-03
 - Bead: `sysc-2231`
 - Branch: `feat/config-surface-20261103`
-- Execution snapshot: slices 1–5a are implemented on draft PR #94 at
-  `aa17823`; slices 5b–6 remain. See the execution records below and the
+- Execution snapshot: slices 1–5b are implemented on draft PR #94 (5b on
+  2026-11-06); slices 5c–6 remain. See the execution records below and the
   [2026-11-05 continuation plan](2026-11-05-handover.md). bd `sysc-2231`
   owns current status; implemented on this branch does not mean merged.
 - Reference: niri v26.04 in `/home/nomadx/references/niri`
@@ -408,6 +408,25 @@ floating window's border can fall under a tiled window it overlaps. The
 background fill is checked from the scene, not pixels, because the test
 client's buffers are opaque. A workspace's decoration part is merged by the
 config test; no compositor test places a window on a named workspace.
+
+**Part 3 landed** on 2026-11-06 (`8d46adb`). `tab-indicator` parses in
+`layout`, `workspace.layout` and window rules, where only the colours are
+allowed, as in Niri's TabIndicatorRule. A tabbed column draws one tab per
+window beside its active tile. The tab takes the rule's colour, then the tab
+indicator's, then the focus ring's (the border's when the ring is off); an
+inactive column halves it. The indicator is hidden for a fullscreen or
+maximized column and, with `hide-when-single-tab`, for one tab.
+`place-within-column` keeps the width and the gap inside the column. A click
+on a tab activates its window. Tests: `TestNiriTabIndicatorIsParsedAndMerged`
+(config, local), `TestTabbedColumnKeepsRoomForItsTabIndicator` (layout,
+local), `TestTabIndicatorRectsFollowNiri` (Niri's tab geometry, pure, local)
+and `TestTabIndicatorDrawsTabbedColumnsAndActivatesTabs` (rendered colours,
+rule precedence and click activation; compiled, not yet run).
+
+Known differences: no open animation; the room kept within the column comes
+out of the column's width where Niri adds it to a fixed width; a touch on a
+tab does not activate it; the click test calls the hit directly rather than
+driving a pointer device. Gradients still warn.
 
 ### Slice 6 — the leftovers
 
