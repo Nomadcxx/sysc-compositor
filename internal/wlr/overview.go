@@ -200,6 +200,9 @@ func (c *Compositor) ToggleOverview() bool {
 	if !c.model.ToggleOverview() {
 		return false
 	}
+	if c.model.OverviewOpen() {
+		c.endTouchPoints(nowMsec())
+	}
 	to := c.model.OverviewProgress()
 	c.model.SetOverviewAnimationProgress(from)
 	c.animateOverviewProgress(from, to, velocity)
@@ -217,6 +220,7 @@ func (c *Compositor) OpenOverview() bool {
 	if !c.model.OpenOverview() {
 		return false
 	}
+	c.endTouchPoints(nowMsec())
 	to := c.model.OverviewProgress()
 	c.model.SetOverviewAnimationProgress(from)
 	c.animateOverviewProgress(from, to, velocity)

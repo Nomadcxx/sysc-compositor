@@ -1260,6 +1260,47 @@ input {
 	}
 }
 
+// TestParseTouch decodes Niri's input.touch section. off and map-to-output
+// apply; calibration-matrix is a libinput device setting that no device class
+// applies yet, so it is reported unapplied.
+func TestParseTouch(t *testing.T) {
+	cfg, err := Parse("touch.kdl", []byte(`
+input {
+    touch {
+        off
+        map-to-output "eDP-1"
+        calibration-matrix 1.0 2.0 3.0 4.0 5.0 6.0
+    }
+}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (Touch{Off: true, MapToOutput: "eDP-1"}); cfg.Input.Touch != want {
+		t.Errorf("touch = %+v, want %+v", cfg.Input.Touch, want)
+	}
+	if !slices.Contains(cfg.Warnings, "input.touch.calibration-matrix") {
+		t.Errorf("input.touch.calibration-matrix not reported unapplied: %v", cfg.Warnings)
+	}
+	plain, err := Parse("plain.kdl", []byte("input { touch { map-to-output \"HDMI-A-1\"; }; }\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plain.Input.Touch != (Touch{MapToOutput: "HDMI-A-1"}) || len(plain.Warnings) != 0 {
+		t.Errorf("touch = %+v, warnings %v", plain.Input.Touch, plain.Warnings)
+	}
+	for _, bad := range []string{
+		`input { touch { map-to-output; }; }`,
+		`input { touch { off 1; }; }`,
+		`input { touch { calibration-matrix "x"; }; }`,
+		`input { touch { map-to-focused-output; }; }`,
+	} {
+		if _, err := Parse("bad.kdl", []byte(bad)); err == nil {
+			t.Errorf("%s parsed", bad)
+		}
+	}
+}
+
 // niriDefaultConfig is the pinned Niri checkout's default config; tests that
 // read it skip where the checkout is absent (CI).
 const niriDefaultConfig = "/home/nomadx/references/niri/resources/default-config.kdl"

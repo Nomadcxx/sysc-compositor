@@ -363,8 +363,7 @@ func (c *Compositor) tabletTip(tool *tabletTool, timeMsec C.uint32_t, down bool)
 
 // tabletModalUI reports a compositor UI that takes the pen as a pointer.
 func (c *Compositor) tabletModalUI() bool {
-	return c.pickColor != nil || c.shotUI != nil || c.switcher.isOpen() || c.exitDialog.open ||
-		(c.model != nil && (c.model.OverviewProgress() > 0 || c.model.OverviewOpen()))
+	return c.modalUIOpen()
 }
 
 // tabletLayoutPoint maps the tool's device position as Niri does: onto the

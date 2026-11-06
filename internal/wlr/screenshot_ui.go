@@ -125,6 +125,7 @@ func (c *Compositor) Screenshot(showPointer bool, path string) error {
 		C.sysc_shot_tree_destroy(tree)
 		return errors.New("wlr: no output to screenshot")
 	}
+	c.endTouchPoints(nowMsec())
 	c.shotUI = ui
 	defer c.refreshA11y()
 	c.freezePointer(ui)
