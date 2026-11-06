@@ -140,24 +140,28 @@ func (c *Compositor) addTablet(device *C.struct_wlr_input_device) bool {
 		gone,
 		AddListener(unsafe.Pointer(&t.wlr.events.proximity), func(data unsafe.Pointer) {
 			event := (*C.struct_wlr_tablet_tool_proximity_event)(data)
+			c.userActivity(true)
 			if tool := c.tabletToolFor(t, event.tool); tool != nil {
 				c.tabletProximity(tool, event)
 			}
 		}),
 		AddListener(unsafe.Pointer(&t.wlr.events.axis), func(data unsafe.Pointer) {
 			event := (*C.struct_wlr_tablet_tool_axis_event)(data)
+			c.userActivity(true)
 			if tool := c.tabletToolFor(t, event.tool); tool != nil {
 				c.tabletAxis(tool, event)
 			}
 		}),
 		AddListener(unsafe.Pointer(&t.wlr.events.tip), func(data unsafe.Pointer) {
 			event := (*C.struct_wlr_tablet_tool_tip_event)(data)
+			c.userActivity(true)
 			if tool := c.tabletToolFor(t, event.tool); tool != nil {
 				c.tabletTip(tool, event.time_msec, event.state == C.WLR_TABLET_TOOL_TIP_DOWN)
 			}
 		}),
 		AddListener(unsafe.Pointer(&t.wlr.events.button), func(data unsafe.Pointer) {
 			event := (*C.struct_wlr_tablet_tool_button_event)(data)
+			c.userActivity(true)
 			if tool := c.tabletToolFor(t, event.tool); tool != nil && tool.v2.focused_surface != nil {
 				C.wlr_tablet_v2_tablet_tool_notify_button(tool.v2, event.button,
 					C.enum_zwp_tablet_pad_v2_button_state(event.state))
@@ -273,7 +277,6 @@ func (c *Compositor) tabletAxis(tool *tabletTool, event *C.struct_wlr_tablet_too
 // tabletMove takes the pen to its mapped point. A tablet-aware surface with
 // no compositor UI over it gets the tool; anything else gets pointer motion.
 func (c *Compositor) tabletMove(tool *tabletTool, timeMsec C.uint32_t) {
-	c.userActivity()
 	x, y := c.tabletLayoutPoint(tool)
 	C.wlr_cursor_warp_closest(c.cursor, nil, C.double(x), C.double(y))
 	c.damageCapturePointers()

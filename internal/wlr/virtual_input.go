@@ -241,11 +241,12 @@ func (c *Compositor) releasePointerButtons(source unsafe.Pointer) {
 
 // Only physical input wakes the session. Virtual protocols are user-seat
 // devices; injected seats keep their separate Stop-gated control path.
-func (c *Compositor) pointerInputAllowed(pointer *C.struct_wlr_pointer) bool {
+// wakes is whether the event may wake monitors that are off.
+func (c *Compositor) pointerInputAllowed(pointer *C.struct_wlr_pointer, wakes bool) bool {
 	if v := c.virtualPointers[pointer]; v != nil {
 		return !v.stopped && !c.injectedInputBlocked()
 	}
-	c.userActivity()
+	c.userActivity(wakes)
 	return true
 }
 

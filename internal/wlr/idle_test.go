@@ -101,23 +101,76 @@ func TestIdleNotifiesOnlyUserActivityAndHonoursInhibitors(t *testing.T) {
 		onCompositor(t, c, func() { c.SetIdleInhibitedByDBus(false) })
 		expectIdleEvent(t, client, 2*time.Second, "idled", "D-Bus inhibition released")
 
-		// Blanked monitors stay off for injected input and wake for the user.
-		onCompositor(t, c, func() {
-			if err := c.PowerOffMonitors(); err != nil {
-				t.Errorf("PowerOffMonitors: %v", err)
+		// Blanked monitors stay off for injected input and for releases, and
+		// wake for the events Niri's should_activate_monitors lists.
+		powerOff := func(label string) {
+			onCompositor(t, c, func() {
+				if err := c.PowerOffMonitors(); err != nil {
+					t.Errorf("%s: PowerOffMonitors: %v", label, err)
+				}
+				if !c.allOutputsOff() {
+					t.Errorf("%s: an output is on after PowerOffMonitors", label)
+				}
+			})
+		}
+		expectAwake := func(label string, want bool) {
+			onCompositor(t, c, func() {
+				if awake := !c.allOutputsOff() && !c.powerOffActive; awake != want {
+					t.Errorf("%s: monitors awake = %v, want %v", label, awake, want)
+				}
+			})
+		}
+		var pointer *fakePointer
+		var touch *fakeTouch
+		defer onCompositor(t, c, func() {
+			if pointer != nil {
+				pointer.remove()
 			}
+			if touch != nil {
+				touch.remove()
+			}
+		})
+
+		// The key that powered them off is released while they are off.
+		onCompositor(t, c, func() {
+			if keyboard == nil {
+				keyboard = c.addFakeKeyboard()
+			}
+			keyboard.key(keyA, true)
+		})
+		powerOff("key held")
+		onCompositor(t, c, func() {
 			if err := c.InjectKey("agent", keyA, true); !errors.Is(err, ErrInjectedInputBlocked) {
 				t.Errorf("injected key while blanked: error %v, want ErrInjectedInputBlocked", err)
 			}
-			if !c.allOutputsOff() {
-				t.Error("an output is on after PowerOffMonitors")
-			}
+			keyboard.key(keyA, false)
 		})
+		expectAwake("key release", false)
 		userKey()
+		expectAwake("key press", true)
+
+		powerOff("pointer")
 		onCompositor(t, c, func() {
-			if c.allOutputsOff() || c.powerOffActive {
-				t.Error("user input did not wake the monitors")
-			}
+			pointer = c.addFakePointer()
+			pointer.moveTo(10, 10)
+		})
+		expectAwake("pointer motion", true)
+
+		powerOff("swipe")
+		onCompositor(t, c, func() { pointer.swipeBegin(3) })
+		expectAwake("swipe begin", true)
+		onCompositor(t, c, func() { pointer.swipeEnd(true) })
+
+		powerOff("touch")
+		onCompositor(t, c, func() {
+			touch = c.addFakeTouch()
+			touch.down(0, 0.5, 0.5)
+			touch.frame()
+		})
+		expectAwake("touch down", true)
+		onCompositor(t, c, func() {
+			touch.up(0)
+			touch.frame()
 		})
 	}()
 	if err := c.Run(); err != nil {

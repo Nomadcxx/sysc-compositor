@@ -81,15 +81,23 @@ func (c *Compositor) updateIdleInhibit() {
 	C.wlr_idle_notifier_v1_set_inhibited(c.idleNotifier, C.bool(inhibited))
 }
 
-// userActivity runs on every physical input event of the user seat. It resets
-// idle timers and, as Niri does, wakes outputs PowerOffMonitors turned off.
-func (c *Compositor) userActivity() {
-	if c.idleNotifier != nil {
-		C.wlr_idle_notifier_v1_notify_activity(c.idleNotifier, c.seat)
-	}
+// userActivity runs on every physical input event of the user seat, as
+// Niri's process_input_event does. While the monitors are on, any event
+// resets the idle timers. Once PowerOffMonitors turned them off, only an
+// event that wakes them counts (Niri's should_activate_monitors: presses,
+// motion, scrolling, gesture begins, touch down and motion, tablet tools);
+// releases and gesture ends do not, so the key that powered them off does
+// not wake them as it is let go.
+func (c *Compositor) userActivity(wakes bool) {
 	if c.powerOffActive {
+		if !wakes {
+			return
+		}
 		if err := c.PowerOnMonitors(); err != nil {
 			fmt.Fprintf(os.Stderr, "sysc-compositor: waking monitors on input: %v\n", err)
 		}
+	}
+	if c.idleNotifier != nil {
+		C.wlr_idle_notifier_v1_notify_activity(c.idleNotifier, c.seat)
 	}
 }

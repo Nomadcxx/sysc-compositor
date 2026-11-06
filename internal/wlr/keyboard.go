@@ -520,7 +520,7 @@ func (c *Compositor) handleKeyboardKeyFrom(keyboard *C.struct_wlr_keyboard, supp
 	event := (*C.struct_wlr_keyboard_key_event)(data)
 	keycode := uint32(event.keycode)
 	if keyboard == c.keyboard {
-		c.userActivity()
+		c.userActivity(event.state == C.WL_KEYBOARD_KEY_STATE_PRESSED)
 		if c.keyboardMonitor != nil && c.a11yConsumedKey(keyboard, suppressed, event) {
 			return
 		}
