@@ -6,6 +6,10 @@ A document that is not in this map is one the project will lose.
 Product contract: `plans/2026-10-02-sysc-compositor-design.md`. Workstreams and order:
 `plans/2026-10-02-orchestration.md`.
 
+Current continuation: [2026-11-06 handover](plans/2026-11-06-handover.md), with the
+[2026-11-05 implementation plan](plans/2026-11-05-handover.md) for the order and the rules.
+Owner order: finish compositor development and acceptance before resuming benchmarking.
+
 ## Standing rule: plans are written when a milestone starts
 
 `plans/2026-10-02-orchestration.md` Task 3 is explicit — **do not pre-write M1–M15 plans.** When a
@@ -25,6 +29,8 @@ executed until the owner schedules the milestone they belong to.
 | [plans/2026-10-02-m0-nested-tinywl.md](plans/2026-10-02-m0-nested-tinywl.md) | plan | M0, the first code in this repository: nested tinywl, one seat plus cursor. |
 | [plans/2026-10-02-sysc-launch.md](plans/2026-10-02-sysc-launch.md) | plan | Sibling workstream L0, executed in `/home/nomadx/sysc-launch`, not here. |
 | [plans/niri-parity-matrix.md](plans/niri-parity-matrix.md) | checklist | Remaining niri IPC and config parity. Fill this rather than expanding the design. |
+| [plans/2026-11-06-handover.md](plans/2026-11-06-handover.md) | handover | **Current state.** Touch and pointer settings merged; config slices 1–5 on draft #94 with four compositor tests not yet run; slice 6, integration, M15, acceptance and packaging next; leftover worktrees. |
+| [plans/2026-11-05-handover.md](plans/2026-11-05-handover.md) | handover / implementation plan | Implementation order and rules; its branch snapshot is superseded by the 2026-11-06 handover. Was: compositor first, benchmark deferred; verified branch/CI state, config appearance work, remaining M15 checkpoints, integration, acceptance and packaging gates. |
 | [plans/2026-11-03-handover.md](plans/2026-11-03-handover.md) | handover | The state after the sizing milestone and the bar work: the commit map on `main` and on the input branch, the laptop build and its rollback, the audits, the owner decisions in force (the attribution guard, the cherry-pick rule, the bar parity choice, the packaging deferral) and the open work in order. |
 | [plans/2026-10-28-release-readiness.md](plans/2026-10-28-release-readiness.md) | assessment | Release gates after capture and virtual input: remaining M12, M13–M15, session integration and hardware acceptance. |
 | [third_party/godbus/SYSC.md](../third_party/godbus/SYSC.md) | dependency note | Scoped v5.2.2 descriptor backport, provenance, regression command and removal check. |
@@ -61,7 +67,7 @@ executed until the owner schedules the milestone they belong to.
 | [plans/2026-10-24-session-vm.md](plans/2026-10-24-session-vm.md) | record | The session VM on the laptop (`~/vm/sysc-session`, scripts in `plans/assets/2026-10-24-session-vm/`): lane 2 under vkms with no window anywhere, and the `--session` gate (`sysc-1631`) through greetd, which found that `graphical-session.target` refuses a manual start; the session now runs Niri's way (`sysc-compositor-session`, `sysc-compositor.service`); then the same gate with sysc-greet as the greeter. |
 | [plans/2026-10-24-sysc-compositor-continuation-handover.md](plans/2026-10-24-sysc-compositor-continuation-handover.md) | handover | Superseded for planning by the 2026-10-30 post-M12 handover. State after #50–#52 (Niri-style session, sysc-greet gate, lane 2 quarantine down to two); the session VM's use; next: the M10 gate in the VM, `sysc-1642`/`sysc-1640`, M12, small items, M13–M15. |
 | [plans/2026-10-30-m12-vm-gate-handover.md](plans/2026-10-30-m12-vm-gate-handover.md) | handover | Superseded (history). M12 Task 8 VM gate evidence, the fixes #68–#70, VM driving lessons and gate assets. |
-| [plans/2026-10-30-post-m12-handover.md](plans/2026-10-30-post-m12-handover.md) | handover | **Current planning handover.** M12 closed (#71–#74); lane-2 follow-up, frame-pacing audit, M13 and first-use decision; includes the execution record. |
+| [plans/2026-10-30-post-m12-handover.md](plans/2026-10-30-post-m12-handover.md) | handover | Historical post-M12 state; superseded for planning by the 2026-11-05 handover. M12 closed (#71–#74); lane-2 follow-up, frame-pacing audit, M13 and first-use decision; includes the execution record. |
 | [plans/2026-10-30-m13-x11.md](plans/2026-10-30-m13-x11.md) | plan | M13: on-demand satellite sockets and lifecycle, config, DISPLAY publication, and native/X11 application gates. |
 | [plans/2026-10-31-frame-pacing-audit.md](plans/2026-10-31-frame-pacing-audit.md) | report | sysc-2056 source audit: native callback scheduling and scanout, the hidden-surface fallback (fixed in #78), and the remaining physical game benchmark. |
 | [plans/2026-10-31-m14-accessibility.md](plans/2026-10-31-m14-accessibility.md) | plan | M14: Niri's KeyboardMonitor grab rules on wlroots' key path, a session-only D-Bus service, a minimal AT-SPI announcer, announcement sources and the Orca VM gate. |
