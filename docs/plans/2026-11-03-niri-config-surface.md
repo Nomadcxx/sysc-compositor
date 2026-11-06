@@ -388,6 +388,27 @@ Parts, each with its own regression:
    `workspace.layout` and window-rule colour overrides and the space Niri
    reserves for it with `place-within-column`.
 
+**Parts 1 and 2 landed** on 2026-11-06 (`751d161`, `80401a6`). Tests:
+`internal/config/config_test.go`
+`TestNiriDecorationPartsMergeAcrossLayoutWorkspaceAndRules` (parsing, merge
+order, a rule's one colour keeping the inherited width, on/off, gradient
+warnings, bad values) passes locally; `internal/layout/sizing_test.go`
+`TestMaximizeWindowToEdgesFillsTheColumnAndHidesTheRest` checks the placement's
+maximized flag; `internal/wlr/decorations_test.go`
+`TestBorderDrawsAroundTheWindowAndShrinksIt` reads rendered pixels for the
+inactive rule colour, urgency, the active colour, fullscreen and reload
+removal, checks the configured size against the tile less the border, the
+background fill and the shadow cut-out. The compositor test is compiled and
+vetted; it has not run yet, locally or in CI.
+
+Known differences: a floating window keeps its rectangle and draws the border
+outside it, where Niri sizes the floating tile to hold the border. Widths
+round in logical pixels. Borders sit in one tree under all windows, so a
+floating window's border can fall under a tiled window it overlaps. The
+background fill is checked from the scene, not pixels, because the test
+client's buffers are opaque. A workspace's decoration part is merged by the
+config test; no compositor test places a window on a named workspace.
+
 ### Slice 6 — the leftovers
 
 `popups`, `variable-refresh-rate`, `baba-is-float`, `tiled-state`,
