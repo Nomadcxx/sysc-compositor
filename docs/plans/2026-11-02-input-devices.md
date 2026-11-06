@@ -255,12 +255,12 @@ phase B.
 
 ### Task 6: Gate and records
 
-- [ ] **Step 1: Session VM gate.** The VM's virtio tablet is not a touchpad, so gate the mouse
+- [x] **Step 1: Session VM gate.** The VM's virtio tablet is not a touchpad, so gate the mouse
   path there:
   - `input { mouse { left-handed } }` swaps the buttons. Prove it by right-clicking with QMP on a
     foot window, which then receives BTN_LEFT; check with `wev`, or log with `WAYLAND_DEBUG`.
   - `scroll-factor 2` doubles the wheel steps in foot.
-- [ ] **Step 2: Laptop gate** (a real touchpad), on a spare TTY with `--session`; this is
+- [x] **Step 2: Laptop gate** (a real touchpad), on a spare TTY with `--session`; this is
   pre-approved. With `tap`, `natural-scroll` and `accel-speed 0.3`:
   - tap clicks;
   - a two-finger scroll in foot follows natural scrolling;
@@ -272,3 +272,60 @@ phase B.
   sections, and the M15 addendum's "found, not fixed" item points here as fixed.
 - [ ] **Step 4: Write the execution record** in this plan, then open the PR and merge it on green
   CI.
+
+
+## Execution evidence (2026-11-02)
+
+PR #89 implements decoding, classification, libinput application/default restoration,
+scroll scaling and Niri-compatible gesture direction. Named pure checks, vet and
+build passed. CI passed at 16258da after the animation test started computing its
+expected sample at the operation's recorded timestamp.
+
+The isolated session VM used the combined input build through greetd. Its input.go,
+libinput.go and pointer_settings.go hashes match the implementation at 16258da.
+QMP right-click reached wev as BTN_RIGHT (273) by default and BTN_LEFT (272) after
+loading mouse left-handed. scroll-factor 2 changed the same wheel event from
+−120/−15 to −240/−30 (v120/axis delta). Removing the overrides and reloading
+restored BTN_RIGHT and −120/−15 without a restart. Raw events are in
+[vm-mouse-events.txt](assets/2026-11-02-input-devices/vm-mouse-events.txt).
+
+Three approved laptop nested tests passed on their first run. The overview scroll
+test failed on its first run and passed the approved diagnostic rerun, with no
+behavior change; sysc-2219 tracks that intermittent fixture. All approved nested
+runs are consumed. No physical touchpad acceptance is claimed.
+
+The owner chose to perform the physical check later through the existing
+sysc-greet entry at reboot. A current build and seven installation files are
+staged under ~/.cache/sysc-compositor-gate-20261102 on laptop, with a checksum
+manifest and install-for-next-login.sh. The script backs up installed files and
+writes a rollback script before replacing them. It has not run. See the
+[next-login instructions](assets/2026-11-02-input-devices/laptop-next-login.md).
+bd holds the remaining physical-input and packaging gates.
+
+The VM also ran shell Phase B at 6c8724f6 (including merged theme fix #615).
+Opening Session → Mouse & touchpad hid touchpad-only rows on the mouse-only guest.
+A QMP click enabled Left handed: shell JSON stored only mouse.left-handed=true,
+the managed KDL file contained the mouse override, and its optional include was
+last in the main sysc config. A subsequent QMP right-click reached wev as BTN_LEFT
+without restarting shell or compositor. Source Niri hashes still passed. See
+[the Settings screenshot](assets/2026-11-02-input-devices/vm-native-input-settings.png)
+and [event output](assets/2026-11-02-input-devices/vm-shell-input-ui.txt).
+This proves the VM mouse integration, not physical touchpad acceptance.
+
+## Laptop physical gate (2026-11-05)
+
+The archThink ran combined build `03f9274` (this branch plus PR #91) from the staged user-service
+override, in the owner's graphical session rather than a spare TTY. The owner's config already
+holds `tap` and `natural-scroll`. On the real touchpad, with a page that counted clicks and wheel
+events:
+
+- a light tap clicked the page's button;
+- a two-finger upward swipe moved the scroll list with the fingers (natural scrolling);
+- a three-finger upward swipe switched from workspace 1 down to workspace 2;
+- with `tap` removed from the config and saved, a touchpad tap no longer clicked, while a finger
+  on the touchscreen still did. Restoring the original file reloaded without a restart
+  (`ConfigLoaded` reported `failed: false`), and touchpad tap clicked again. The restored config
+  matches its original SHA-256.
+
+The owner observed each result. On 2026-11-06 the follow-up build `a76110f`, whose tree this
+branch now matches after merging `main`, passed the touch tile-focus gate on the same laptop.

@@ -298,6 +298,7 @@ func (c *Compositor) handleNewInput(data unsafe.Pointer) {
 		C.wlr_cursor_attach_input_device(c.cursor, device)
 		c.attachPointerGestureListeners(deviceKey, C.wlr_pointer_from_input_device(device))
 		c.pointerDevices[deviceKey] = true
+		c.applyPointerSettings(device)
 	case C.WLR_INPUT_DEVICE_TOUCH:
 		if !c.addTouch(device) {
 			return
@@ -361,6 +362,7 @@ func (c *Compositor) handleInputDestroy(device unsafe.Pointer) {
 		}
 		C.wlr_cursor_detach_input_device(c.cursor, (*C.struct_wlr_input_device)(device))
 		delete(c.pointerDevices, device)
+		delete(c.pointerKinds, device)
 	}
 	// The keyboard group lets a destroyed keyboard go by itself.
 	delete(c.keyboardDevices, device)
@@ -464,7 +466,8 @@ func (c *Compositor) handlePointerSwipeUpdate(device, data unsafe.Pointer) {
 		}
 		return
 	}
-	c.workspaceSwipe(state, float64(event.dx), float64(event.dy))
+	dx, dy := swipeDeltas(c.touchpadNaturalScroll(device), float64(event.dx), float64(event.dy))
+	c.workspaceSwipe(state, dx, dy)
 }
 
 // aimWorkspaceSwipe points a 3-finger swipe at the output under the pointer,
@@ -498,7 +501,7 @@ func (c *Compositor) workspaceSwipe(state *pointerSwipeState, dx, dy float64) {
 	}
 	if newAxis && !state.actionApplied {
 		direction := -1
-		if delta < 0 {
+		if delta > 0 {
 			direction = 1
 		}
 		state.actionApplied = c.model.FocusWorkspaceByDelta(state.output, direction)
@@ -1039,13 +1042,14 @@ func (c *Compositor) handleCursorAxis(data unsafe.Pointer) {
 	// Niri treats a continuous scroll, such as a trackpoint's, as a touchpad's.
 	finger := event.source == C.WL_POINTER_AXIS_SOURCE_FINGER || event.source == C.WL_POINTER_AXIS_SOURCE_CONTINUOUS
 	horizontal := event.orientation == C.WL_POINTER_AXIS_HORIZONTAL_SCROLL
-	if c.overviewScrollGesture(finger, horizontal, float64(event.delta)) ||
+	delta, v120 := scaleAxis(c.pointerScrollFactor(unsafe.Pointer(event.pointer), finger), horizontal, float64(event.delta), int32(event.delta_discrete))
+	if c.overviewScrollGesture(finger, horizontal, delta) ||
 		c.scrollBinds(event.source == C.WL_POINTER_AXIS_SOURCE_WHEEL, finger,
-			horizontal, float64(event.delta), int32(event.delta_discrete)) {
+			horizontal, delta, v120) {
 		return
 	}
 	C.wlr_seat_pointer_notify_axis(c.seat, event.time_msec,
-		event.orientation, event.delta, event.delta_discrete,
+		event.orientation, C.double(delta), C.int32_t(v120),
 		event.source, event.relative_direction)
 }
 
@@ -1069,12 +1073,10 @@ func (c *Compositor) overviewScrollGesture(finger, horizontal bool, delta float6
 		c.overviewScroll = &pointerSwipeState{}
 		c.aimWorkspaceSwipe(c.overviewScroll)
 	}
-	// Niri reads a positive scroll as down or right. The 3-finger swipe reads
-	// a positive dx as right but a positive dy as up, so dy is flipped.
 	if horizontal {
 		c.workspaceSwipe(c.overviewScroll, delta, 0)
 	} else {
-		c.workspaceSwipe(c.overviewScroll, 0, -delta)
+		c.workspaceSwipe(c.overviewScroll, 0, delta)
 	}
 	return true
 }

@@ -668,6 +668,11 @@ continuous source), no gesture with Shift held, and no axis reaching the window.
   default config) is never set. The 3-finger swipe's two axes also assume opposite settings. With
   natural scrolling on, Niri's horizontal swipe moves the view the other way from sysc's.
 
+  Follow-up, 2026-11-02: the [input-device tranche](2026-11-02-input-devices.md)
+  implements libinput settings and reads the device's natural-scroll state for three-finger
+  swipes. Four-finger overview gestures retain Niri's uninverted direction. Physical qualification
+  remains part of that tranche's gate.
+
 **Tests.** `TestOverviewLayerPopupTakesThePointer` and `TestOverviewTouchpadScrollSwipes` failed
 before their code, and pass. The touchpad test's RED run had the gesture call disabled in the
 laptop copy. These nested tests also pass on the laptop, one per command:

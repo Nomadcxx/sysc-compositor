@@ -25,7 +25,7 @@ jobs:
     container: archlinux:latest
     steps:
       - name: install build dependencies
-        run: pacman -Syu --noconfirm --needed git gcc pkgconf go wlroots0.20 scenefx wayland wayland-protocols libxkbcommon xkeyboard-config ttf-dejavu dbus libpipewire
+        run: pacman -Syu --noconfirm --needed git gcc pkgconf go wlroots0.20 scenefx wayland wayland-protocols libxkbcommon xkeyboard-config ttf-dejavu dbus libpipewire libinput
       - uses: actions/checkout@v4
       - name: trust the checkout
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"

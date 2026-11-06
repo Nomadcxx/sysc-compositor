@@ -86,6 +86,7 @@ type LoadResult struct {
 }
 
 type Input struct {
+	Pointers
 	ModKey, ModKeyNested string
 	Tablet               Tablet
 	Touch                Touch
@@ -227,6 +228,7 @@ type Keyboard struct {
 // Default is what niri runs with when no config applies.
 func Default() *Config {
 	return &Config{Environment: map[string]*string{},
+		Input:    Input{Pointers: defaultPointers()},
 		Keyboard: Keyboard{RepeatDelay: 600, RepeatRate: 25},
 		Layout: Layout{Gaps: 16, ColumnWidthProportion: 0.5,
 			InsertHint: InsertHint{Color: Color{127.0 / 255, 200.0 / 255, 1, 128.0 / 255}},
@@ -480,10 +482,37 @@ func (c *Config) environment(n *document.Node) error {
 	return nil
 }
 
-// input decodes input.keyboard, input.tablet and input.touch. Its other
-// children (mouse, touchpad, …) are accepted and not applied yet.
+// input decodes keyboard, tablet, pointing-device and touch settings.
 func (c *Config) input(n *document.Node) error {
+	if len(n.Arguments) != 0 || len(n.Properties) != 0 {
+		return fmt.Errorf("takes child nodes only")
+	}
+	seenPointers := make(map[string]bool)
 	for _, child := range n.Children {
+		name := nodeName(child)
+		switch name {
+		case "touchpad", "mouse", "trackpoint", "trackball":
+			if seenPointers[name] {
+				return fmt.Errorf("duplicate node `%s`", name)
+			}
+			seenPointers[name] = true
+			device, err := pointerDevice(child, name == "touchpad")
+			if err != nil {
+				return fmt.Errorf("%s: %w", name, err)
+			}
+			switch name {
+			case "touchpad":
+				c.Input.Touchpad = device
+			case "mouse":
+				c.Input.Mouse = device
+			case "trackpoint":
+				c.Input.Trackpoint = device
+			case "trackball":
+				c.Input.Trackball = device
+			}
+			continue
+		}
+
 		if nodeName(child) == "mod-key" || nodeName(child) == "mod-key-nested" {
 			value, err := stringArgs(child, 1, 1)
 			if err != nil {

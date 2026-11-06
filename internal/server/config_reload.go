@@ -42,6 +42,7 @@ func compositorOptions(cfg *config.Config, locale *config.Keyboard) wlr.Options 
 		CursorTheme: cfg.Cursor.Theme, CursorSize: cfg.Cursor.Size, Binds: cfg.Binds,
 		Overview: cfg.Overview, Gestures: cfg.Gestures, Animations: cfg.Animations, Blur: cfg.Blur,
 		Tablet:         cfg.Input.Tablet,
+		Pointers:       cfg.Input.Pointers,
 		Touch:          cfg.Input.Touch,
 		ScreenshotPath: cfg.ScreenshotPath,
 		OverlayBinds:   cfg.OverlayBinds, HotkeyOverlay: cfg.HotkeyOverlay,
