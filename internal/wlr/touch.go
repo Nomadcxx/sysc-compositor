@@ -198,9 +198,14 @@ func (c *Compositor) handleTouchDown(data unsafe.Pointer) {
 		fmt.Fprintf(os.Stderr, "sysc-compositor: touch down dropped: no surface under the finger\n")
 		return
 	}
+	// Niri activates the hit window before delivering the touch. Focus does
+	// not depend on the client binding wl_touch.
+	if view := c.viewForSurface(surface); view != nil {
+		c.focusView(view)
+	}
 	if !bool(C.wlr_surface_accepts_touch(surface, c.seat)) {
-		// The client did not ask for touch. Niri would deliver it anyway;
-		// sysc drops it rather than emulating a mouse.
+		// The client did not ask for touch; keep native touch delivery gated
+		// by that subscription and do not emulate a mouse click.
 		fmt.Fprintf(os.Stderr, "sysc-compositor: touch down dropped: the client did not ask for touch\n")
 		return
 	}
@@ -219,10 +224,6 @@ func (c *Compositor) handleTouchDown(data unsafe.Pointer) {
 	C.wlr_seat_pointer_notify_clear_focus(c.seat)
 	C.wlr_seat_touch_notify_down(c.seat, surface, event.time_msec, event.touch_id, sx, sy)
 	fmt.Fprintf(os.Stderr, "sysc-compositor: touch down id=%d delivered to the client\n", int32(event.touch_id))
-	// Touching a window focuses it, as Niri does.
-	if view := c.viewForSurface(surface); view != nil {
-		c.focusView(view)
-	}
 }
 
 // handleTouchMotion moves a finger. The touch stays with the surface it went
