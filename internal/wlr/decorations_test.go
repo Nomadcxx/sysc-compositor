@@ -3,7 +3,10 @@ package wlr
 import (
 	"image"
 	"image/color"
+	"image/png"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"testing"
 	"time"
@@ -30,6 +33,9 @@ func TestBorderDrawsAroundTheWindowAndShrinksIt(t *testing.T) {
 	border := config.FocusRing{Width: 8, ActiveColor: red, InactiveColor: green, UrgentColor: blue}
 	shadow := defaults.Shadow
 	shadow.On = true
+	// The pixel past the border lies under the shadow; a clear shadow keeps
+	// its cut-out checked without darkening the background read there.
+	shadow.Color = config.Color{}
 	targetRule := func(withBackground *bool) []config.WindowRule {
 		return []config.WindowRule{{
 			Matches:                  []config.RuleMatch{{AppID: regexp.MustCompile(`^border-target$`)}},
@@ -371,7 +377,8 @@ func TestTabIndicatorDrawsTabbedColumnsAndActivatesTabs(t *testing.T) {
 
 // TestWindowRuleBlurForcesTheBackgroundEffect: background-effect blur true
 // blurs a window that asked for no region, and false takes the blur away, as
-// in Niri.
+// in Niri. The client maps before it sets its app-id, so the rule matches only
+// because the app-id change resolves the rules again.
 func TestWindowRuleBlurForcesTheBackgroundEffect(t *testing.T) {
 	on, off := true, false
 	rules := func(blur *bool) []config.WindowRule {
@@ -435,7 +442,7 @@ layer-rule {
     match namespace="wallpaper"
     opacity 0.5
     geometry-corner-radius 8
-    shadow { on; spread 4; offset x=0 y=0; }
+    shadow { on; softness 6; spread 4; offset x=0 y=0; }
     block-out-from "screen-capture"
 }
 `))
@@ -457,8 +464,8 @@ layer-rule {
 			if layer.shadowNode == nil || !sceneFXNodeEnabled(layer.shadowNode) {
 				t.Error("the layer rule's shadow is not drawn")
 			} else {
-				if w, h := sceneFXShadowSize(layer.shadowNode); w != width+8 || h != height+8 {
-					t.Errorf("layer shadow %dx%d, want the %dx%d surface spread by 4", w, h, width, height)
+				if w, h := sceneFXShadowSize(layer.shadowNode); w != width+20 || h != height+20 {
+					t.Errorf("layer shadow %dx%d, want the %dx%d surface grown by spread 4 and softness 6", w, h, width, height)
 				}
 				if got := sceneFXShadowClipWidth(layer.shadowNode); got != width {
 					t.Errorf("layer shadow cut-out width = %d, want the surface's %d", got, width)
@@ -492,8 +499,33 @@ layer-rule {
 		}
 		return false
 	})
-	runClient(t, c, []string{"swaybg", "-c", "#336699"}, nil, nil)
+	// swaybg draws a solid colour with a single-pixel buffer, which wlroots
+	// 0.20 and SceneFX 0.5 draw without applying opacity to its colour, so
+	// the wallpaper is an image.
+	runClient(t, c, []string{"swaybg", "-m", "fill", "-i", solidPNG(t, color.NRGBA{R: 0x33, G: 0x66, B: 0x99, A: 255})}, nil, nil)
 	if !checked {
 		t.Fatal("swaybg never mapped a wallpaper layer surface")
 	}
+}
+
+// solidPNG writes a 16x16 image of one colour and returns its path.
+func solidPNG(t *testing.T, fill color.NRGBA) string {
+	t.Helper()
+	img := image.NewNRGBA(image.Rect(0, 0, 16, 16))
+	for i := 0; i < len(img.Pix); i += 4 {
+		img.Pix[i], img.Pix[i+1], img.Pix[i+2], img.Pix[i+3] = fill.R, fill.G, fill.B, fill.A
+	}
+	path := filepath.Join(t.TempDir(), "solid.png")
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := png.Encode(file, img); err != nil {
+		file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
