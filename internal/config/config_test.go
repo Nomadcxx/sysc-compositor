@@ -637,6 +637,75 @@ window-rule { focus-ring { urgent-gradient from="#000" to="#fff"; }; }
 	}
 }
 
+func TestNiriTabIndicatorIsParsedAndMerged(t *testing.T) {
+	cfg, err := Parse("tab-indicator.kdl", []byte(`
+layout {
+    tab-indicator {
+        hide-when-single-tab
+        place-within-column false
+        gap -2
+        width 6
+        length total-proportion=1.0
+        position "top"
+        gaps-between-tabs 2
+        corner-radius 3
+        active-color "#ff0000"
+    }
+}
+workspace "w" {
+    layout {
+        tab-indicator { place-within-column; width 10; }
+    }
+}
+window-rule {
+    match app-id="a"
+    tab-indicator { urgent-color "#0000ff"; }
+}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Warnings) != 0 {
+		t.Fatalf("supported tab indicator keys produced warnings: %v", cfg.Warnings)
+	}
+	red, blue := Color{1, 0, 0, 1}, Color{0, 0, 1, 1}
+	if got := Default().Layout.TabIndicator; got.Off || got.Gap != 5 || got.Width != 4 || got.Length != 0.5 ||
+		got.Position != TabIndicatorLeft || got.ActiveColor != nil {
+		t.Errorf("default tab indicator = %+v, want Niri's", got)
+	}
+	got := cfg.Layout.TabIndicator
+	if got.Off || !got.HideWhenSingleTab || got.PlaceWithinColumn || got.Gap != -2 || got.Width != 6 ||
+		got.Length != 1 || got.Position != TabIndicatorTop || got.GapsBetweenTabs != 2 || got.CornerRadius != 3 ||
+		got.ActiveColor == nil || *got.ActiveColor != red || got.InactiveColor != nil {
+		t.Errorf("layout tab indicator = %+v", got)
+	}
+	merged := got.Merged(cfg.Workspaces[0].Layout.TabIndicator)
+	if !merged.PlaceWithinColumn || merged.Width != 10 || merged.Gap != -2 || !merged.HideWhenSingleTab {
+		t.Errorf("workspace tab indicator = %+v, want place-within-column and width 10 over the layout", merged)
+	}
+	rule := cfg.ResolveWindowRules("a", "", UnmappedWindowState(false)).TabIndicator
+	if withRule := merged.Merged(rule); withRule.UrgentColor == nil || *withRule.UrgentColor != blue ||
+		*withRule.ActiveColor != red || withRule.Width != 10 {
+		t.Errorf("rule tab indicator = %+v, want the urgent colour over the workspace's", withRule)
+	}
+	if bare, err := Parse("length.kdl", []byte(`layout { tab-indicator { length; }; }`)); err != nil ||
+		bare.Layout.TabIndicator.Length != 0.5 {
+		t.Errorf("length without total-proportion = %v, %v; want Niri's 0.5", bare, err)
+	}
+
+	for src, want := range map[string]string{
+		`window-rule { tab-indicator { width 4; }; }`:           "unexpected node",
+		`layout { tab-indicator { position "middle"; }; }`:      "position",
+		`layout { tab-indicator { width -1; }; }`:               "width",
+		`layout { tab-indicator { hide-when-single-tab 1; }; }`: "boolean",
+		`layout { tab-indicator { length proportion=1; }; }`:    "length",
+	} {
+		if _, err := Parse("bad-tab-indicator.kdl", []byte(src)); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("Parse(%q) error = %v, want containing %q", src, err, want)
+		}
+	}
+}
+
 func TestM6RulesRejectBadRegexDuplicateNamesAndValues(t *testing.T) {
 	for src, want := range map[string]string{
 		`window-rule { match app-id="["; }`:                       "regular expression",

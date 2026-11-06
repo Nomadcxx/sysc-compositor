@@ -128,6 +128,24 @@ type Placement struct {
 	X, Y, Width, Height int
 }
 
+// TabSide is the side of a tabbed column that holds its tab indicator.
+type TabSide uint8
+
+const (
+	TabLeft TabSide = iota
+	TabRight
+	TabTop
+	TabBottom
+)
+
+// TabSpace is the room a tabbed column keeps inside it for its tab
+// indicator, Niri's place-within-column. A zero Size keeps none.
+type TabSpace struct {
+	Size           int
+	Side           TabSide
+	HideWhenSingle bool
+}
+
 // InsertPosition is a column boundary or an insertion point inside a column.
 type InsertPosition struct {
 	Column   int
@@ -427,6 +445,7 @@ type Workspace struct {
 	presetWindowHeights []PresetSize
 	defaultDisplay      ColumnDisplay
 	centerFocusedColumn CenterFocusedColumn
+	tabSpace            TabSpace
 }
 
 const directionalMovePixels = 50
@@ -435,6 +454,11 @@ const directionalMovePixels = 50
 // Columns that already exist keep their display.
 func (w *Workspace) SetDefaultColumnDisplay(display ColumnDisplay) {
 	w.defaultDisplay = display
+}
+
+// SetTabSpace sets the room tabbed columns keep for their tab indicator.
+func (w *Workspace) SetTabSpace(space TabSpace) {
+	w.tabSpace = space
 }
 
 // SetCenterFocusedColumn sets when the view centers the focused column.
@@ -1477,7 +1501,7 @@ func (w *Workspace) Placements() []Placement {
 func (w *Workspace) placementAt(columnIndex, tileIndex int) Placement {
 	column := w.columns[columnIndex]
 	tile := column.tiles[tileIndex]
-	return Placement{
+	placement := Placement{
 		ID: tile.id, Column: uint32(columnIndex), Tile: uint32(tileIndex),
 		Active: tileIndex == column.active,
 		Visible: (column.display != ColumnDisplayTabbed || tileIndex == column.active) &&
@@ -1489,6 +1513,24 @@ func (w *Workspace) placementAt(columnIndex, tileIndex int) Placement {
 		Width:     w.columnWidthAt(columnIndex),
 		Height:    w.windowHeightAt(columnIndex, tileIndex),
 	}
+	// A tabbed column's tiles give up the tab indicator's room, Niri's
+	// extra_size and content_offset.
+	space := w.tabSpace
+	if column.display == ColumnDisplayTabbed && space.Size > 0 && !(space.HideWhenSingle && len(column.tiles) == 1) {
+		switch space.Side {
+		case TabLeft, TabRight:
+			placement.Width = max(1, placement.Width-space.Size)
+			if space.Side == TabLeft {
+				placement.X += space.Size
+			}
+		default:
+			placement.Height = max(1, placement.Height-space.Size)
+			if space.Side == TabTop {
+				placement.Y += space.Size
+			}
+		}
+	}
+	return placement
 }
 
 // ponytail: keep order as the source of truth with O(n) ID lookups; add an

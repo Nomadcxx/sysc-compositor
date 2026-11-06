@@ -273,6 +273,7 @@ func (c *Compositor) syncFocusRings() {
 	for _, view := range c.views {
 		c.syncViewDecorations(view)
 	}
+	c.syncTabIndicators()
 }
 
 func (c *Compositor) setViewAppearanceEnabled(view *toplevelView, enabled bool) {

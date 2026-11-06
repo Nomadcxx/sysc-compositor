@@ -115,6 +115,7 @@ type Layout struct {
 	FocusRing             FocusRing
 	Border                FocusRing
 	Shadow                Shadow
+	TabIndicator          TabIndicator
 }
 
 // Struts holds the reserved edges of the layout area, Niri's layout.struts.
@@ -185,11 +186,193 @@ func (f FocusRing) Merged(part BorderRule) FocusRing {
 type Decorations struct {
 	FocusRing, Border BorderRule
 	Shadow            ShadowRule
+	// TabIndicator holds only colours in a window rule, Niri's TabIndicatorRule.
+	TabIndicator TabIndicatorPart
 }
 
 func (d Decorations) merge(part Decorations) Decorations {
 	return Decorations{FocusRing: d.FocusRing.merge(part.FocusRing),
-		Border: d.Border.merge(part.Border), Shadow: d.Shadow.merge(part.Shadow)}
+		Border: d.Border.merge(part.Border), Shadow: d.Shadow.merge(part.Shadow),
+		TabIndicator: d.TabIndicator.merge(part.TabIndicator)}
+}
+
+type TabIndicatorPosition string
+
+const (
+	TabIndicatorLeft   TabIndicatorPosition = "left"
+	TabIndicatorRight  TabIndicatorPosition = "right"
+	TabIndicatorTop    TabIndicatorPosition = "top"
+	TabIndicatorBottom TabIndicatorPosition = "bottom"
+)
+
+// TabIndicator is Niri's resolved tab indicator. A nil colour falls back to
+// the window's focus ring colour, or its border's when the ring is off.
+type TabIndicator struct {
+	Off, HideWhenSingleTab, PlaceWithinColumn bool
+	Gap, Width                                float64
+	// Length is the indicator's share of the column's side, Niri's
+	// length total-proportion.
+	Length                                  float64
+	Position                                TabIndicatorPosition
+	GapsBetweenTabs, CornerRadius           float64
+	ActiveColor, InactiveColor, UrgentColor *Color
+}
+
+// TabIndicatorPart is Niri's partial tab indicator: unset fields inherit.
+type TabIndicatorPart struct {
+	On, Off                                           bool
+	HideWhenSingleTab, PlaceWithinColumn              *bool
+	Gap, Width, Length, GapsBetweenTabs, CornerRadius *float64
+	Position                                          *TabIndicatorPosition
+	ActiveColor, InactiveColor, UrgentColor           *Color
+}
+
+func (p TabIndicatorPart) merge(part TabIndicatorPart) TabIndicatorPart {
+	mergeOnOff(&p.On, &p.Off, part.On, part.Off)
+	p.HideWhenSingleTab = cmp.Or(part.HideWhenSingleTab, p.HideWhenSingleTab)
+	p.PlaceWithinColumn = cmp.Or(part.PlaceWithinColumn, p.PlaceWithinColumn)
+	p.Gap, p.Width, p.Length = cmp.Or(part.Gap, p.Gap), cmp.Or(part.Width, p.Width), cmp.Or(part.Length, p.Length)
+	p.GapsBetweenTabs = cmp.Or(part.GapsBetweenTabs, p.GapsBetweenTabs)
+	p.CornerRadius = cmp.Or(part.CornerRadius, p.CornerRadius)
+	p.Position = cmp.Or(part.Position, p.Position)
+	p.ActiveColor = cmp.Or(part.ActiveColor, p.ActiveColor)
+	p.InactiveColor = cmp.Or(part.InactiveColor, p.InactiveColor)
+	p.UrgentColor = cmp.Or(part.UrgentColor, p.UrgentColor)
+	return p
+}
+
+// Merged lays part over the resolved tab indicator.
+func (t TabIndicator) Merged(part TabIndicatorPart) TabIndicator {
+	t.Off = t.Off || part.Off
+	if part.On {
+		t.Off = false
+	}
+	if part.HideWhenSingleTab != nil {
+		t.HideWhenSingleTab = *part.HideWhenSingleTab
+	}
+	if part.PlaceWithinColumn != nil {
+		t.PlaceWithinColumn = *part.PlaceWithinColumn
+	}
+	for _, field := range []struct {
+		to   *float64
+		from *float64
+	}{{&t.Gap, part.Gap}, {&t.Width, part.Width}, {&t.Length, part.Length},
+		{&t.GapsBetweenTabs, part.GapsBetweenTabs}, {&t.CornerRadius, part.CornerRadius}} {
+		if field.from != nil {
+			*field.to = *field.from
+		}
+	}
+	if part.Position != nil {
+		t.Position = *part.Position
+	}
+	t.ActiveColor = cmp.Or(part.ActiveColor, t.ActiveColor)
+	t.InactiveColor = cmp.Or(part.InactiveColor, t.InactiveColor)
+	t.UrgentColor = cmp.Or(part.UrgentColor, t.UrgentColor)
+	return t
+}
+
+// tabIndicatorPart parses Niri's TabIndicatorPart; colorsOnly takes a window
+// rule's TabIndicatorRule, which holds the colours alone.
+func (c *Config) tabIndicatorPart(node *document.Node, prefix string, colorsOnly bool) (TabIndicatorPart, error) {
+	var part TabIndicatorPart
+	if len(node.Arguments) != 0 || len(node.Properties) != 0 {
+		return part, fmt.Errorf("tab-indicator takes child nodes only")
+	}
+	for _, child := range node.Children {
+		name := nodeName(child)
+		colour := strings.HasSuffix(name, "-color") || strings.HasSuffix(name, "-gradient")
+		if colorsOnly && !colour {
+			return part, fmt.Errorf("unexpected node `%s`", name)
+		}
+		switch name {
+		case "off", "on":
+			if err := noValue(child); err != nil {
+				return part, err
+			}
+			mergeOnOff(&part.On, &part.Off, name == "on", name == "off")
+		case "hide-when-single-tab", "place-within-column":
+			value, err := flagArg(child)
+			if err != nil {
+				return part, fmt.Errorf("%s: %w", name, err)
+			}
+			if name == "hide-when-single-tab" {
+				part.HideWhenSingleTab = &value
+			} else {
+				part.PlaceWithinColumn = &value
+			}
+		case "gap", "width", "gaps-between-tabs", "corner-radius":
+			minimum := 0.0
+			if name == "gap" {
+				minimum = -65535
+			}
+			value, err := boundedNumber(child, minimum, 65535)
+			if err != nil {
+				return part, err
+			}
+			switch name {
+			case "gap":
+				part.Gap = &value
+			case "width":
+				part.Width = &value
+			case "gaps-between-tabs":
+				part.GapsBetweenTabs = &value
+			default:
+				part.CornerRadius = &value
+			}
+		case "length":
+			// Niri decodes the length as a whole: no total-proportion is 0.5.
+			if len(child.Arguments) != 0 || len(child.Children) != 0 {
+				return part, fmt.Errorf("length takes a total-proportion property only")
+			}
+			length := 0.5
+			for key, property := range child.Properties {
+				value, ok := numericValue(property.Value)
+				if key != "total-proportion" || !ok {
+					return part, fmt.Errorf("length takes a numeric total-proportion property only")
+				}
+				length = value
+			}
+			part.Length = &length
+		case "position":
+			value, err := stringArgs(child, 1, 1)
+			if err != nil {
+				return part, fmt.Errorf("position: %w", err)
+			}
+			position := TabIndicatorPosition(value[0])
+			switch position {
+			case TabIndicatorLeft, TabIndicatorRight, TabIndicatorTop, TabIndicatorBottom:
+				part.Position = &position
+			default:
+				return part, fmt.Errorf("position must be left, right, top or bottom")
+			}
+		case "active-color", "inactive-color", "urgent-color":
+			value, err := colorArg(child)
+			if err != nil {
+				return part, fmt.Errorf("%s: %w", name, err)
+			}
+			switch name {
+			case "active-color":
+				part.ActiveColor = &value
+			case "inactive-color":
+				part.InactiveColor = &value
+			default:
+				part.UrgentColor = &value
+			}
+		case "active-gradient", "inactive-gradient", "urgent-gradient":
+			c.addWarning(prefix + "." + name)
+		default:
+			return part, fmt.Errorf("unexpected node `%s`", name)
+		}
+	}
+	return part, nil
+}
+
+// flagArg parses Niri's Flag: the bare node means true, or one boolean.
+func flagArg(node *document.Node) (bool, error) {
+	if len(node.Arguments) == 0 && len(node.Properties) == 0 && len(node.Children) == 0 {
+		return true, nil
+	}
+	return boolArg(node)
 }
 
 type Shadow struct {
@@ -351,7 +534,8 @@ func Default() *Config {
 				InactiveColor: Color{80.0 / 255, 80.0 / 255, 80.0 / 255, 1}, UrgentColor: Color{155.0 / 255, 0, 0, 1}},
 			Border: FocusRing{Off: true, Width: 4, ActiveColor: Color{1, 200.0 / 255, 127.0 / 255, 1},
 				InactiveColor: Color{80.0 / 255, 80.0 / 255, 80.0 / 255, 1}, UrgentColor: Color{155.0 / 255, 0, 0, 1}},
-			Shadow: Shadow{Softness: 30, Spread: 5, OffsetY: 5, Color: Color{0, 0, 0, 119.0 / 255}}},
+			Shadow:       Shadow{Softness: 30, Spread: 5, OffsetY: 5, Color: Color{0, 0, 0, 119.0 / 255}},
+			TabIndicator: TabIndicator{Gap: 5, Width: 4, Length: 0.5, Position: TabIndicatorLeft}},
 		Overview:          Overview{Zoom: 0.5, BackdropColor: Color{0.15, 0.15, 0.15, 1}},
 		Gestures:          Gestures{DNDEdgeViewScroll: DNDEdgeViewScroll{TriggerWidth: 30, DelayMS: 100, MaxSpeed: 1500}},
 		Cursor:            Cursor{Theme: "default", Size: 24},
@@ -770,6 +954,12 @@ func (c *Config) layout(n *document.Node) error {
 				return fmt.Errorf("shadow: %w", err)
 			}
 			c.Layout.Shadow = c.Layout.Shadow.Merged(rule)
+		case "tab-indicator":
+			part, err := c.tabIndicatorPart(child, "layout.tab-indicator", false)
+			if err != nil {
+				return fmt.Errorf("tab-indicator: %w", err)
+			}
+			c.Layout.TabIndicator = c.Layout.TabIndicator.Merged(part)
 		default:
 			c.addWarning("layout." + nodeName(child))
 		}

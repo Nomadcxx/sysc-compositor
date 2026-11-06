@@ -36,6 +36,8 @@ type WorkspaceLayout struct {
 	// A nil strut set keeps the config's. When present it replaces the
 	// whole set, Niri's merge_clone, not one edge at a time.
 	Struts *layout.Struts
+	// A nil tab space keeps the config's.
+	TabSpace *layout.TabSpace
 }
 
 type outputState struct {
@@ -97,6 +99,8 @@ type Model struct {
 	// struts is the config-wide layout.struts; the zero value reserves
 	// nothing and leaves each workspace on its output's full area.
 	struts layout.Struts
+	// tabSpace is the room tabbed columns keep for their tab indicator.
+	tabSpace layout.TabSpace
 }
 
 // WorkspaceSnapshot is the immutable Niri-facing state for one workspace.
@@ -283,6 +287,26 @@ func (m *Model) applyWorkspaceLayout(out *outputState, workspace *workspaceState
 	workspace.strip.SetPresetSizes(widths, heights)
 	workspace.strip.SetDefaultColumnDisplay(m.columnDisplay(workspace))
 	workspace.strip.SetCenterFocusedColumn(m.centerFocusedColumnFor(workspace))
+	workspace.strip.SetTabSpace(m.tabSpaceFor(workspace))
+}
+
+// tabSpaceFor returns the room a workspace's tabbed columns keep for their
+// tab indicator: its own when it sets one, otherwise the config-wide one.
+func (m *Model) tabSpaceFor(workspace *workspaceState) layout.TabSpace {
+	if override := m.workspaceLayout(workspace); override != nil && override.TabSpace != nil {
+		return *override.TabSpace
+	}
+	return m.tabSpace
+}
+
+// SetTabSpace sets the room the tabbed columns of the workspaces without
+// their own keep for their tab indicator.
+func (m *Model) SetTabSpace(space layout.TabSpace) {
+	if m.tabSpace == space {
+		return
+	}
+	m.tabSpace = space
+	m.reapplyWorkspaceLayout()
 }
 
 // presetSizes returns the preset sizes a workspace cycles through: its own

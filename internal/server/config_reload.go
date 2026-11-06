@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -25,7 +26,7 @@ func compositorOptions(cfg *config.Config, locale *config.Keyboard) wlr.Options 
 	for i, workspace := range cfg.Workspaces {
 		workspaces[i] = wm.WorkspaceConfig{
 			Name: workspace.Name, OpenOnOutput: workspace.OpenOnOutput,
-			Layout: workspaceLayout(workspace.Layout),
+			Layout: workspaceLayout(workspace.Layout, cfg.Layout.TabIndicator),
 		}
 	}
 	k := cfg.Keyboard
@@ -49,6 +50,7 @@ func compositorOptions(cfg *config.Config, locale *config.Keyboard) wlr.Options 
 			InsertHint:           cfg.Layout.InsertHint,
 			FocusRing:            cfg.Layout.FocusRing, Border: cfg.Layout.Border, Shadow: cfg.Layout.Shadow,
 			WorkspaceDecorations: workspaceDecorations(cfg.Workspaces),
+			TabIndicator:         cfg.Layout.TabIndicator, TabSpace: tabSpace(cfg.Layout.TabIndicator),
 		},
 		CursorTheme: cfg.Cursor.Theme, CursorSize: cfg.Cursor.Size, Binds: cfg.Binds,
 		Overview: cfg.Overview, Gestures: cfg.Gestures, Animations: cfg.Animations, Blur: cfg.Blur,
@@ -63,12 +65,13 @@ func compositorOptions(cfg *config.Config, locale *config.Keyboard) wlr.Options 
 }
 
 // workspaceLayout converts the layout override of a workspace for the model.
-func workspaceLayout(layout *config.WorkspaceLayout) *wm.WorkspaceLayout {
+func workspaceLayout(layout *config.WorkspaceLayout, tabIndicator config.TabIndicator) *wm.WorkspaceLayout {
 	if layout == nil {
 		return nil
 	}
 	return &wm.WorkspaceLayout{
-		Gaps: layout.Gaps, ColumnWidthProportion: layout.ColumnWidthProportion,
+		TabSpace: workspaceTabSpace(layout.TabIndicator, tabIndicator),
+		Gaps:     layout.Gaps, ColumnWidthProportion: layout.ColumnWidthProportion,
 		FixedColumnWidth:     layout.FixedColumnWidth,
 		PresetColumnWidths:   presetSizes(layout.PresetColumnWidths),
 		PresetWindowHeights:  presetSizes(layout.PresetWindowHeights),
@@ -154,6 +157,30 @@ func struts(s config.Struts) layout.Struts {
 
 // strutsPtr converts optional config struts for the layout, keeping nil for a
 // workspace that keeps the config's struts.
+// tabSpace is the room a tabbed column keeps for its tab indicator, Niri's
+// extra_size: the width and the gap, when the indicator sits within it.
+func tabSpace(t config.TabIndicator) layout.TabSpace {
+	if t.Off || !t.PlaceWithinColumn {
+		return layout.TabSpace{}
+	}
+	side := map[config.TabIndicatorPosition]layout.TabSide{
+		config.TabIndicatorLeft: layout.TabLeft, config.TabIndicatorRight: layout.TabRight,
+		config.TabIndicatorTop: layout.TabTop, config.TabIndicatorBottom: layout.TabBottom,
+	}[t.Position]
+	return layout.TabSpace{Size: max(0, int(math.Round(t.Width))+int(math.Round(t.Gap))),
+		Side: side, HideWhenSingle: t.HideWhenSingleTab}
+}
+
+// workspaceTabSpace is a workspace's own tab space, nil when its layout
+// leaves the tab indicator alone.
+func workspaceTabSpace(part config.TabIndicatorPart, tabIndicator config.TabIndicator) *layout.TabSpace {
+	if part == (config.TabIndicatorPart{}) {
+		return nil
+	}
+	space := tabSpace(tabIndicator.Merged(part))
+	return &space
+}
+
 func strutsPtr(s *config.Struts) *layout.Struts {
 	if s == nil {
 		return nil

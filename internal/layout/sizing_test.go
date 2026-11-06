@@ -495,3 +495,41 @@ func TestSetFloatingPositionKeepsThePositionForALaterFloat(t *testing.T) {
 		t.Errorf("floating position = (%d,%d), want (120,60)", placement.X, placement.Y)
 	}
 }
+
+func TestTabbedColumnKeepsRoomForItsTabIndicator(t *testing.T) {
+	ws := NewWorkspace(Bounds{Width: 1200, Height: 800}, 400, 16)
+	ws.AddWindow(1)
+	if !ws.ToggleColumnTabbedDisplay() {
+		t.Fatal("ToggleColumnTabbedDisplay = false, want true")
+	}
+	plain, _ := ws.Placement(1)
+
+	ws.SetTabSpace(TabSpace{Size: 9, Side: TabLeft})
+	if got, _ := ws.Placement(1); got.X != plain.X+9 || got.Width != plain.Width-9 || got.Y != plain.Y || got.Height != plain.Height {
+		t.Errorf("left tab space placement = %+v, want %+v moved right and narrowed by 9", got, plain)
+	}
+	ws.SetTabSpace(TabSpace{Size: 9, Side: TabBottom})
+	if got, _ := ws.Placement(1); got.X != plain.X || got.Width != plain.Width || got.Y != plain.Y || got.Height != plain.Height-9 {
+		t.Errorf("bottom tab space placement = %+v, want %+v shortened by 9", got, plain)
+	}
+	ws.SetTabSpace(TabSpace{Size: 9, Side: TabTop, HideWhenSingle: true})
+	if got, _ := ws.Placement(1); got != plain {
+		t.Errorf("a single hidden tab kept room: %+v, want %+v", got, plain)
+	}
+
+	ws.AddWindow(2)
+	if !ws.FocusColumn(0) || !ws.ConsumeWindowIntoColumn() {
+		t.Fatal("could not stack the second window in the tabbed column")
+	}
+	if got, _ := ws.Placement(1); got.Y != plain.Y+9 || got.Height != plain.Height-9 {
+		t.Errorf("two tabs placement = %+v, want %+v moved down and shortened by 9", got, plain)
+	}
+	ws.SetTabSpace(TabSpace{})
+	if !ws.ToggleColumnTabbedDisplay() {
+		t.Fatal("ToggleColumnTabbedDisplay back = false, want true")
+	}
+	ws.SetTabSpace(TabSpace{Size: 9, Side: TabLeft})
+	if got, _ := ws.Placement(1); got.X != plain.X {
+		t.Errorf("a normal column took tab room: %+v", got)
+	}
+}
