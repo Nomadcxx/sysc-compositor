@@ -246,6 +246,9 @@ func TestMaximizeWindowToEdgesFillsTheColumnAndHidesTheRest(t *testing.T) {
 	if hidden.Visible {
 		t.Error("the window behind the maximized one is still visible")
 	}
+	if !maximized.Maximized || hidden.Maximized {
+		t.Errorf("Maximized = %v and %v, want only the maximized window marked", maximized.Maximized, hidden.Maximized)
+	}
 
 	if !ws.ToggleMaximizeWindowToEdges(0) {
 		t.Fatal("ToggleMaximizeWindowToEdges = false, want true")
@@ -253,6 +256,9 @@ func TestMaximizeWindowToEdgesFillsTheColumnAndHidesTheRest(t *testing.T) {
 	restored, _ := ws.Placement(2)
 	if !restored.Visible {
 		t.Error("the window behind the maximized one stayed hidden")
+	}
+	if unmaximized, _ := ws.Placement(1); unmaximized.Maximized {
+		t.Error("the restored window is still marked maximized")
 	}
 }
 

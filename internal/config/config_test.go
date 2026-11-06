@@ -512,6 +512,131 @@ window-rule {
 	}
 }
 
+func TestNiriDecorationPartsMergeAcrossLayoutWorkspaceAndRules(t *testing.T) {
+	cfg, err := Parse("decorations.kdl", []byte(`
+layout {
+    focus-ring {
+        urgent-color "#ff00ff"
+    }
+    border {
+        on
+        width 2
+        inactive-color "#202020"
+    }
+    shadow {
+        inactive-color "#00000040"
+        draw-behind-window true
+        offset x=3
+    }
+}
+workspace "thick" {
+    layout {
+        border { width 8; }
+        focus-ring { off; }
+        shadow { on; softness 10; }
+    }
+}
+window-rule {
+    match app-id="a"
+    border { active-color "#ff0000"; }
+    focus-ring { width 6; }
+}
+window-rule {
+    match app-id="a" title="t"
+    border { off; }
+    shadow { on; color "#00ff00"; }
+    draw-border-with-background false
+}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Warnings) != 0 {
+		t.Fatalf("supported decoration keys produced warnings: %v", cfg.Warnings)
+	}
+
+	red, green := Color{1, 0, 0, 1}, Color{0, 1, 0, 1}
+	defaults := Default().Layout
+	ring, border, shadow := cfg.Layout.FocusRing, cfg.Layout.Border, cfg.Layout.Shadow
+	if want := (FocusRing{Width: 4, ActiveColor: defaults.FocusRing.ActiveColor,
+		InactiveColor: defaults.FocusRing.InactiveColor, UrgentColor: Color{1, 0, 1, 1}}); ring != want {
+		t.Errorf("layout focus ring = %+v, want %+v", ring, want)
+	}
+	if want := (FocusRing{Width: 2, ActiveColor: defaults.Border.ActiveColor,
+		InactiveColor: Color{0x20 / 255.0, 0x20 / 255.0, 0x20 / 255.0, 1},
+		UrgentColor:   defaults.Border.UrgentColor}); border != want {
+		t.Errorf("layout border = %+v, want %+v", border, want)
+	}
+	if shadow.On || !shadow.DrawBehindWindow || shadow.OffsetX != 3 || shadow.OffsetY != 0 ||
+		shadow.InactiveColor == nil || *shadow.InactiveColor != (Color{0, 0, 0, 0x40 / 255.0}) {
+		t.Errorf("layout shadow = %+v, want off, drawn behind, offset 3,0 and an inactive colour", shadow)
+	}
+	if !defaults.Border.Off || defaults.Border.Width != 4 ||
+		defaults.Border.ActiveColor != (Color{1, 200 / 255.0, 127 / 255.0, 1}) ||
+		defaults.FocusRing.UrgentColor != (Color{155 / 255.0, 0, 0, 1}) {
+		t.Errorf("defaults = border %+v ring %+v, want Niri's", defaults.Border, defaults.FocusRing)
+	}
+
+	workspace := cfg.Workspaces[0].Layout
+	if workspace == nil || workspace.Border.Width == nil || *workspace.Border.Width != 8 ||
+		workspace.Border.On || workspace.Border.Off || workspace.Border.ActiveColor != nil ||
+		!workspace.FocusRing.Off || !workspace.Shadow.On || workspace.Shadow.Softness == nil ||
+		*workspace.Shadow.Softness != 10 {
+		t.Fatalf("workspace layout = %+v, want only the set fields", workspace)
+	}
+
+	rules := cfg.ResolveWindowRules("a", "t", UnmappedWindowState(false))
+	if !rules.Border.Off || rules.Border.ActiveColor == nil || *rules.Border.ActiveColor != red ||
+		rules.FocusRing.Width == nil || *rules.FocusRing.Width != 6 ||
+		!rules.Shadow.On || rules.Shadow.Color == nil || *rules.Shadow.Color != green ||
+		rules.DrawBorderWithBackground == nil || *rules.DrawBorderWithBackground {
+		t.Errorf("rules for a/t = %+v, want the parts merged in rule order", rules)
+	}
+
+	// The rule's one colour keeps the workspace's width and the layout's other colours.
+	got := border.Merged(workspace.Border).Merged(cfg.ResolveWindowRules("a", "", UnmappedWindowState(false)).Border)
+	if got.Off || got.Width != 8 || got.ActiveColor != red || got.InactiveColor != border.InactiveColor {
+		t.Errorf("merged border = %+v, want on, width 8, red active and the layout's inactive colour", got)
+	}
+	if got := border.Merged(workspace.Border).Merged(rules.Border); !got.Off {
+		t.Errorf("a rule's off did not turn the border off: %+v", got)
+	}
+	if got := ring.Merged(workspace.FocusRing).Merged(rules.FocusRing); !got.Off || got.Width != 6 {
+		t.Errorf("merged focus ring = %+v, want off with width 6", got)
+	}
+	if got := ring.Merged(BorderRule{On: true}); got.Off {
+		t.Errorf("on did not turn the focus ring back on: %+v", got)
+	}
+	gotShadow := shadow.Merged(workspace.Shadow).Merged(rules.Shadow)
+	if !gotShadow.On || gotShadow.Softness != 10 || gotShadow.Color != green || !gotShadow.DrawBehindWindow {
+		t.Errorf("merged shadow = %+v, want on, softness 10, green and drawn behind", gotShadow)
+	}
+
+	gradients, err := Parse("gradients.kdl", []byte(`
+layout { border { active-gradient from="#000" to="#fff"; }; }
+window-rule { focus-ring { urgent-gradient from="#000" to="#fff"; }; }
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(gradients.Warnings, "layout.border.active-gradient") ||
+		!slices.Contains(gradients.Warnings, "window-rule.focus-ring.urgent-gradient") {
+		t.Errorf("gradient warnings = %v, want each gradient named", gradients.Warnings)
+	}
+
+	for src, want := range map[string]string{
+		`window-rule { border { width -1; }; }`:                 "width",
+		`window-rule { shadow { softness 2000; }; }`:            "softness",
+		`window-rule { draw-border-with-background "yes"; }`:    "boolean",
+		`workspace "w" { layout { focus-ring { size 1; }; }; }`: "unexpected node",
+		`layout { border 1 {}; }`:                               "takes child",
+	} {
+		if _, err := Parse("bad-decoration.kdl", []byte(src)); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("Parse(%q) error = %v, want containing %q", src, err, want)
+		}
+	}
+}
+
 func TestM6RulesRejectBadRegexDuplicateNamesAndValues(t *testing.T) {
 	for src, want := range map[string]string{
 		`window-rule { match app-id="["; }`:                       "regular expression",

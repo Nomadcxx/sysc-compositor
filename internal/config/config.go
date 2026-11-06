@@ -5,6 +5,7 @@
 package config
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"math"
@@ -112,6 +113,7 @@ type Layout struct {
 	Struts                Struts
 	InsertHint            InsertHint
 	FocusRing             FocusRing
+	Border                FocusRing
 	Shadow                Shadow
 }
 
@@ -124,17 +126,128 @@ type Struts struct {
 
 type Color struct{ R, G, B, A float64 }
 
+// FocusRing is Niri's resolved focus ring. Niri's border has the same
+// fields, so Layout.Border uses this type too.
 type FocusRing struct {
-	Off                        bool
-	Width                      float64
-	ActiveColor, InactiveColor Color
+	Off                                     bool
+	Width                                   float64
+	ActiveColor, InactiveColor, UrgentColor Color
+}
+
+// BorderRule is Niri's partial focus ring or border: unset fields inherit.
+type BorderRule struct {
+	On, Off                                 bool
+	Width                                   *float64
+	ActiveColor, InactiveColor, UrgentColor *Color
+}
+
+// mergeOnOff lays a part's on and off flags over a rule's, Niri's
+// merge_on_off: off then on, so a part holding both turns the rule on.
+func mergeOnOff(on, off *bool, partOn, partOff bool) {
+	if partOff {
+		*on, *off = false, true
+	}
+	if partOn {
+		*on, *off = true, false
+	}
+}
+
+// merge lays part over r, Niri's MergeWith<BorderRule> for BorderRule.
+func (r BorderRule) merge(part BorderRule) BorderRule {
+	mergeOnOff(&r.On, &r.Off, part.On, part.Off)
+	r.Width = cmp.Or(part.Width, r.Width)
+	r.ActiveColor = cmp.Or(part.ActiveColor, r.ActiveColor)
+	r.InactiveColor = cmp.Or(part.InactiveColor, r.InactiveColor)
+	r.UrgentColor = cmp.Or(part.UrgentColor, r.UrgentColor)
+	return r
+}
+
+// Merged lays part over the resolved ring or border.
+func (f FocusRing) Merged(part BorderRule) FocusRing {
+	f.Off = f.Off || part.Off
+	if part.On {
+		f.Off = false
+	}
+	if part.Width != nil {
+		f.Width = *part.Width
+	}
+	for _, field := range []struct{ to, from *Color }{
+		{&f.ActiveColor, part.ActiveColor}, {&f.InactiveColor, part.InactiveColor}, {&f.UrgentColor, part.UrgentColor},
+	} {
+		if field.from != nil {
+			*field.to = *field.from
+		}
+	}
+	return f
+}
+
+// Decorations is the decoration part of a workspace layout or a window rule.
+type Decorations struct {
+	FocusRing, Border BorderRule
+	Shadow            ShadowRule
+}
+
+func (d Decorations) merge(part Decorations) Decorations {
+	return Decorations{FocusRing: d.FocusRing.merge(part.FocusRing),
+		Border: d.Border.merge(part.Border), Shadow: d.Shadow.merge(part.Shadow)}
 }
 
 type Shadow struct {
 	On               bool
 	Softness, Spread float64
 	OffsetX, OffsetY float64
+	DrawBehindWindow bool
 	Color            Color
+	// InactiveColor replaces Color for an inactive window; nil keeps Color.
+	InactiveColor *Color
+}
+
+// ShadowRule is Niri's partial shadow: unset fields inherit.
+type ShadowRule struct {
+	On, Off              bool
+	Offset               *[2]float64
+	Softness, Spread     *float64
+	DrawBehindWindow     *bool
+	Color, InactiveColor *Color
+}
+
+// merge lays part over r, Niri's MergeWith<ShadowRule> for ShadowRule.
+func (r ShadowRule) merge(part ShadowRule) ShadowRule {
+	mergeOnOff(&r.On, &r.Off, part.On, part.Off)
+	r.Offset = cmp.Or(part.Offset, r.Offset)
+	r.Softness = cmp.Or(part.Softness, r.Softness)
+	r.Spread = cmp.Or(part.Spread, r.Spread)
+	r.DrawBehindWindow = cmp.Or(part.DrawBehindWindow, r.DrawBehindWindow)
+	r.Color = cmp.Or(part.Color, r.Color)
+	r.InactiveColor = cmp.Or(part.InactiveColor, r.InactiveColor)
+	return r
+}
+
+// Merged lays part over the resolved shadow.
+func (s Shadow) Merged(part ShadowRule) Shadow {
+	s.On = s.On || part.On
+	if part.Off {
+		s.On = false
+	}
+	if part.Offset != nil {
+		s.OffsetX, s.OffsetY = part.Offset[0], part.Offset[1]
+	}
+	if part.Softness != nil {
+		s.Softness = *part.Softness
+	}
+	if part.Spread != nil {
+		s.Spread = *part.Spread
+	}
+	if part.DrawBehindWindow != nil {
+		s.DrawBehindWindow = *part.DrawBehindWindow
+	}
+	if part.Color != nil {
+		s.Color = *part.Color
+	}
+	if part.InactiveColor != nil {
+		s.InactiveColor = part.InactiveColor
+	}
+	return s
 }
 
 type CornerRadius [4]float64
@@ -234,8 +347,11 @@ func Default() *Config {
 		Keyboard: Keyboard{RepeatDelay: 600, RepeatRate: 25},
 		Layout: Layout{Gaps: 16, ColumnWidthProportion: 0.5,
 			InsertHint: InsertHint{Color: Color{127.0 / 255, 200.0 / 255, 1, 128.0 / 255}},
-			FocusRing:  FocusRing{Width: 4, ActiveColor: Color{127.0 / 255, 200.0 / 255, 1, 1}, InactiveColor: Color{80.0 / 255, 80.0 / 255, 80.0 / 255, 1}},
-			Shadow:     Shadow{Softness: 30, Spread: 5, OffsetY: 5, Color: Color{0, 0, 0, 119.0 / 255}}},
+			FocusRing: FocusRing{Width: 4, ActiveColor: Color{127.0 / 255, 200.0 / 255, 1, 1},
+				InactiveColor: Color{80.0 / 255, 80.0 / 255, 80.0 / 255, 1}, UrgentColor: Color{155.0 / 255, 0, 0, 1}},
+			Border: FocusRing{Off: true, Width: 4, ActiveColor: Color{1, 200.0 / 255, 127.0 / 255, 1},
+				InactiveColor: Color{80.0 / 255, 80.0 / 255, 80.0 / 255, 1}, UrgentColor: Color{155.0 / 255, 0, 0, 1}},
+			Shadow: Shadow{Softness: 30, Spread: 5, OffsetY: 5, Color: Color{0, 0, 0, 119.0 / 255}}},
 		Overview:          Overview{Zoom: 0.5, BackdropColor: Color{0.15, 0.15, 0.15, 1}},
 		Gestures:          Gestures{DNDEdgeViewScroll: DNDEdgeViewScroll{TriggerWidth: 30, DelayMS: 100, MaxSpeed: 1500}},
 		Cursor:            Cursor{Theme: "default", Size: 24},
@@ -638,14 +754,22 @@ func (c *Config) layout(n *document.Node) error {
 			if err := c.insertHint(child); err != nil {
 				return fmt.Errorf("insert-hint: %w", err)
 			}
-		case "focus-ring":
-			if err := c.focusRing(child); err != nil {
-				return fmt.Errorf("focus-ring: %w", err)
+		case "focus-ring", "border":
+			rule, err := c.borderRule(child, "layout."+nodeName(child))
+			if err != nil {
+				return fmt.Errorf("%s: %w", nodeName(child), err)
+			}
+			if nodeName(child) == "focus-ring" {
+				c.Layout.FocusRing = c.Layout.FocusRing.Merged(rule)
+			} else {
+				c.Layout.Border = c.Layout.Border.Merged(rule)
 			}
 		case "shadow":
-			if err := c.shadow(child); err != nil {
+			rule, err := c.shadowRule(child)
+			if err != nil {
 				return fmt.Errorf("shadow: %w", err)
 			}
+			c.Layout.Shadow = c.Layout.Shadow.Merged(rule)
 		default:
 			c.addWarning("layout." + nodeName(child))
 		}
@@ -920,96 +1044,117 @@ func numericValue(value any) (float64, bool) {
 	return number, !math.IsNaN(number) && !math.IsInf(number, 0)
 }
 
-func (c *Config) focusRing(node *document.Node) error {
+// borderRule parses Niri's BorderRule, the partial focus-ring or border that
+// layout, workspace.layout and window-rule share. prefix names the block in
+// the warning for a gradient, which is not applied yet.
+func (c *Config) borderRule(node *document.Node, prefix string) (BorderRule, error) {
+	var rule BorderRule
 	if len(node.Arguments) != 0 || len(node.Properties) != 0 {
-		return fmt.Errorf("focus-ring takes child nodes only")
+		return rule, fmt.Errorf("%s takes child nodes only", nodeName(node))
 	}
 	for _, child := range node.Children {
 		switch nodeName(child) {
 		case "off", "on":
 			if err := noValue(child); err != nil {
-				return err
+				return rule, err
 			}
-			c.Layout.FocusRing.Off = nodeName(child) == "off"
+			mergeOnOff(&rule.On, &rule.Off, nodeName(child) == "on", nodeName(child) == "off")
 		case "width":
 			value, err := boundedNumber(child, 0, 65535)
 			if err != nil {
-				return err
+				return rule, err
 			}
-			c.Layout.FocusRing.Width = value
-		case "active-color", "inactive-color":
+			rule.Width = &value
+		case "active-color", "inactive-color", "urgent-color":
 			value, err := colorArg(child)
 			if err != nil {
-				return fmt.Errorf("%s: %w", nodeName(child), err)
+				return rule, fmt.Errorf("%s: %w", nodeName(child), err)
 			}
-			if nodeName(child) == "active-color" {
-				c.Layout.FocusRing.ActiveColor = value
-			} else {
-				c.Layout.FocusRing.InactiveColor = value
+			switch nodeName(child) {
+			case "active-color":
+				rule.ActiveColor = &value
+			case "inactive-color":
+				rule.InactiveColor = &value
+			default:
+				rule.UrgentColor = &value
 			}
-		case "urgent-color", "active-gradient", "inactive-gradient", "urgent-gradient":
-			c.addWarning("layout.focus-ring." + nodeName(child))
+		case "active-gradient", "inactive-gradient", "urgent-gradient":
+			c.addWarning(prefix + "." + nodeName(child))
 		default:
-			return fmt.Errorf("unexpected node `%s`", nodeName(child))
+			return rule, fmt.Errorf("unexpected node `%s`", nodeName(child))
 		}
 	}
-	return nil
+	return rule, nil
 }
 
-func (c *Config) shadow(node *document.Node) error {
+// shadowRule parses Niri's ShadowRule, the partial shadow that layout,
+// workspace.layout and window-rule share.
+func (c *Config) shadowRule(node *document.Node) (ShadowRule, error) {
+	var rule ShadowRule
 	if len(node.Arguments) != 0 || len(node.Properties) != 0 {
-		return fmt.Errorf("shadow takes child nodes only")
+		return rule, fmt.Errorf("shadow takes child nodes only")
 	}
 	for _, child := range node.Children {
 		switch nodeName(child) {
 		case "off", "on":
 			if err := noValue(child); err != nil {
-				return err
+				return rule, err
 			}
-			c.Layout.Shadow.On = nodeName(child) == "on"
+			mergeOnOff(&rule.On, &rule.Off, nodeName(child) == "on", nodeName(child) == "off")
 		case "softness":
 			value, err := boundedNumber(child, 0, 1024)
 			if err != nil {
-				return err
+				return rule, err
 			}
-			c.Layout.Shadow.Softness = value
+			rule.Softness = &value
 		case "spread":
 			value, err := boundedNumber(child, -1024, 1024)
 			if err != nil {
-				return err
+				return rule, err
 			}
-			c.Layout.Shadow.Spread = value
+			rule.Spread = &value
 		case "offset":
+			// Niri decodes the offset as a whole: a missing axis is zero.
 			if len(child.Arguments) != 0 || len(child.Children) != 0 {
-				return fmt.Errorf("offset takes x and y properties only")
+				return rule, fmt.Errorf("offset takes x and y properties only")
 			}
+			var offset [2]float64
 			for key, property := range child.Properties {
 				value, ok := numericValue(property.Value)
 				if !ok || value < -65535 || value > 65535 {
-					return fmt.Errorf("offset %s must be a number from -65535 to 65535", key)
+					return rule, fmt.Errorf("offset %s must be a number from -65535 to 65535", key)
 				}
 				switch key {
 				case "x":
-					c.Layout.Shadow.OffsetX = value
+					offset[0] = value
 				case "y":
-					c.Layout.Shadow.OffsetY = value
+					offset[1] = value
 				default:
-					return fmt.Errorf("unexpected offset property `%s`", key)
+					return rule, fmt.Errorf("unexpected offset property `%s`", key)
 				}
 			}
-		case "color":
+			rule.Offset = &offset
+		case "draw-behind-window":
+			value, err := boolArg(child)
+			if err != nil {
+				return rule, fmt.Errorf("draw-behind-window: %w", err)
+			}
+			rule.DrawBehindWindow = &value
+		case "color", "inactive-color":
 			value, err := colorArg(child)
 			if err != nil {
-				return fmt.Errorf("color: %w", err)
+				return rule, fmt.Errorf("%s: %w", nodeName(child), err)
 			}
-			c.Layout.Shadow.Color = value
-		case "inactive-color", "draw-behind-window":
-			c.addWarning("layout.shadow." + nodeName(child))
+			if nodeName(child) == "color" {
+				rule.Color = &value
+			} else {
+				rule.InactiveColor = &value
+			}
 		default:
-			return fmt.Errorf("unexpected node `%s`", nodeName(child))
+			return rule, fmt.Errorf("unexpected node `%s`", nodeName(child))
 		}
 	}
-	return nil
+	return rule, nil
 }
 
 func boundedNumber(node *document.Node, minValue, maxValue float64) (float64, error) {
