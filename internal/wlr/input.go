@@ -1102,8 +1102,8 @@ func (c *Compositor) overviewShown() bool {
 
 // modalUIOpen reports whether a pointer-driven modal UI is up: the colour
 // picker, the screenshot UI, the switcher, the exit dialog or the overview.
-// Those UIs have no touch handling yet, so a touch is dropped while one is
-// open.
+// A finger drives the last four through the pointer (touchDrivesUI); the
+// colour picker takes none, as Niri's does not.
 func (c *Compositor) modalUIOpen() bool {
 	return c.pickColor != nil || c.shotUI != nil || c.switcher.isOpen() || c.exitDialog.open ||
 		(c.model != nil && (c.model.OverviewProgress() > 0 || c.model.OverviewOpen()))

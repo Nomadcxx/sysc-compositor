@@ -176,6 +176,9 @@ type Compositor struct {
 	touchDevices   map[unsafe.Pointer]*touchDevice
 	touchPoints    map[int32]*touchPoint
 	touchConfig    config.Touch
+	// touchUI is the finger driving the compositor's own UI through the
+	// pointer, or nil.
+	touchUI *touchUIFinger
 	// syncobj is nil where the renderer or backend cannot take timelines.
 	syncobj *C.struct_wlr_linux_drm_syncobj_manager_v1
 
