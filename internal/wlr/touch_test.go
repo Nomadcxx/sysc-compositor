@@ -134,7 +134,7 @@ func TestTouchReachesTheClientThatAskedForIt(t *testing.T) {
 // when its client has no wl_touch object, without turning the touch into a
 // pointer click.
 func TestTouchFocusesWindowThatDidNotRequestTouch(t *testing.T) {
-	c := newHeadless(t)
+	c := newNested(t)
 	runTouchClients(t, c, 2, func(clients []*testclient.ToplevelClient, views []*toplevelView) {
 		plain := clients[0]
 		var screen *fakeTouch
