@@ -88,8 +88,10 @@ without a compositor.
 - **Touch is never emulated as a mouse.** There is no mouse-emulation fallback. The bead for this
   work forbids it, and a compositor that fakes a pointer would break the client that *did* ask
   for touch. A finger therefore produces pointer buttons on no client at all.
-- **The window under the finger is activated**, as niri activates it. The pointer's focus is
-  cleared at the same time, so the two input paths do not fight over the same client.
+- **The window under the finger is activated**, as niri activates it, before the capability check:
+  a tile whose client never bound `wl_touch` still takes focus from a tap, and gets no event. The
+  pointer's focus is cleared at the same time, so the two input paths do not fight over the same
+  client.
 - **The finger keeps the surface it went down on.** The layout-to-surface offset is recorded when
   the finger lands, and every later motion is reported relative to it. This is the implicit grab,
   and it is what lets a drag leave the window it started in.
@@ -159,6 +161,10 @@ error, so `map-to-focused-output` — which is a tablet node, not a touch node �
   `TestTouchOffKeepsTheSeatSilent` and `TestTouchReachesNothingWhileTheSessionIsLocked`: a finger
   reaches the client that asked for touch and no other, no finger reaches anything while the
   session is locked, and `input.touch off` keeps the seat silent.
+  `TestTouchFocusesWindowThatDidNotRequestTouch`: a tap focuses a tile whose client never bound
+  `wl_touch`, with no touch event and no pointer button. `TestSessionLockEndsAnActiveTouch` and
+  `TestModalOpeningEndsAnActiveTouch`: a finger already down is lifted when the session locks or a
+  modal UI opens, so it sends nothing further to the client.
 - `internal/wlr/touch_probe_test.go` — `TestTouchProbeSeesTheFinger`: the probe client, the same
   client the laptop gate uses, sees the finger the compositor sends.
 - `internal/touchprobe/probe_test.go` — `TestCapabilityNames`, `TestSummaryCountsTheFinger` and
@@ -206,6 +212,15 @@ proved before it is used on the laptop.
   is in `~/.cache/sysc-compositor-gate-20261103/touch-gate-capture.txt` on the laptop. The probe
   grew a `--until-stroke` flag for this, so the record holds the finger's lift as well as its
   landing; the exit code says which half was missing (5 = the finger arrived but never lifted).
+- **The tile-focus gate passed on 2026-11-06** with build `a76110f` (main at `f902729` plus PR #89).
+  Before PR #95 a tap on a tile whose client had not bound `wl_touch` was dropped before the
+  activation, so a finger could focus nothing but a touch-aware client. On the archThink two kitty
+  tiles were tapped in turn: the journal logged each touch-down as `the client did not ask for
+  touch`, and IPC focus timestamps show focus moving to each tapped tile within about 80 ms of its
+  touch-down. The owner confirmed the focus ring moved. The probe then received a whole stroke on
+  the same build (down, four motions, up, no cancel); the record is
+  `~/.cache/sysc-compositor-gate-20261103/touch-gate-capture-a76110f.txt` on the laptop. Chromium
+  handled tap, pinch zoom and scrolling on the previous candidate (`03f9274`).
 - Multi-finger gestures are not implemented. Each finger is tracked separately and delivered
   correctly, but pinch, rotate and swipe are Niri's gestures, not this milestone's.
 - Touch does not drive the compositor's own UI yet — the overview, the switcher and the colour
