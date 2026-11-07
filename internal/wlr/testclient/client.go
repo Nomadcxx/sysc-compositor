@@ -861,7 +861,7 @@ done:
 	return result;
 }
 
-static int sysc_client_prefer_no_csd_tiled_state(const char *display_name) {
+static int sysc_client_tiled_state(const char *display_name, bool want_tiled) {
 	int result = 1;
 	struct wl_display *display = wl_display_connect(display_name);
 	if (display == NULL) {
@@ -875,7 +875,7 @@ static int sysc_client_prefer_no_csd_tiled_state(const char *display_name) {
 	if (registry == NULL || wl_registry_add_listener(registry,
 			&sysc_client_registry_listener, &globals) < 0 ||
 		wl_display_roundtrip(display) < 0 || globals.compositor == NULL ||
-		globals.xdg_wm_base == NULL || globals.xdg_decoration_manager != NULL) {
+		globals.xdg_wm_base == NULL) {
 		result = 3;
 		goto done;
 	}
@@ -913,7 +913,7 @@ static int sysc_client_prefer_no_csd_tiled_state(const char *display_name) {
 		result = 9;
 		goto done;
 	}
-	if ((state.edges & 0xfu) != 0xfu) {
+	if ((state.edges & 0xfu) != (want_tiled ? 0xfu : 0u)) {
 		result = 10;
 		goto done;
 	}
@@ -1044,12 +1044,12 @@ func RunKDEServerDecorationSequence(display string) error {
 	return nil
 }
 
-// RunPreferNoCSDTiledState checks the initial configure without binding the
-// xdg-decoration manager.
-func RunPreferNoCSDTiledState(display string) error {
+// RunTiledState checks that the initial configure of a toplevel that never
+// binds a decoration protocol is tiled on every edge, or on none.
+func RunTiledState(display string, wantTiled bool) error {
 	name := C.CString(display)
 	defer C.free(unsafe.Pointer(name))
-	if code := int(C.sysc_client_prefer_no_csd_tiled_state(name)); code != 0 {
+	if code := int(C.sysc_client_tiled_state(name, C.bool(wantTiled))); code != 0 {
 		return fmt.Errorf("Wayland undecorated client failed at step %d", code)
 	}
 	return nil

@@ -1898,3 +1898,37 @@ layer-rule {
 		}
 	}
 }
+
+// TestNiriWindowRuleTiledStateIsParsedAndResolved: tiled-state overrides the
+// tiled state the compositor would derive from the decoration mode, and the
+// last matching rule wins.
+func TestNiriWindowRuleTiledStateIsParsedAndResolved(t *testing.T) {
+	cfg, err := Parse("tiled.kdl", []byte(`
+window-rule {
+    tiled-state true
+}
+window-rule {
+    match app-id="^round$"
+    tiled-state false
+}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Warnings) != 0 {
+		t.Fatalf("warnings = %q, want none", cfg.Warnings)
+	}
+	state := UnmappedWindowState(false)
+	if got := cfg.ResolveWindowRules("term", "", state).TiledState; got == nil || !*got {
+		t.Errorf("term tiled-state = %v, want true", got)
+	}
+	if got := cfg.ResolveWindowRules("round", "", state).TiledState; got == nil || *got {
+		t.Errorf("round tiled-state = %v, want false", got)
+	}
+	if got := ResolveWindowRules(nil, "term", "", state).TiledState; got != nil {
+		t.Errorf("no rule: tiled-state = %v, want unset", *got)
+	}
+	if _, err := Parse("bad.kdl", []byte(`window-rule { tiled-state "yes"; }`)); err == nil {
+		t.Error("a string tiled-state parsed, want an error")
+	}
+}

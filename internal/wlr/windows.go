@@ -128,6 +128,7 @@ func (c *Compositor) mapWindowWithRules(view *toplevelView, clientFullscreen boo
 		cString(view.toplevel.app_id), cString(view.toplevel.title),
 		config.UnmappedWindowState(c.atStartup))
 	view.appearance = result
+	c.syncTiledState(view)
 	// The workspace's part joins when the model places the window.
 	c.resolveViewDecorations(view, nil)
 	output := c.model.Snapshot().FocusedOutput
@@ -247,6 +248,7 @@ func (c *Compositor) reapplyWindowRules() {
 		view.appearance = config.ResolveWindowRules(c.windowRules,
 			cString(view.toplevel.app_id), cString(view.toplevel.title),
 			c.ruleState(view, snapshot))
+		c.syncTiledState(view)
 		view.urgent = urgent[view.id]
 		if c.resolveViewDecorations(view, workspaceNames[view.workspaceID]) {
 			resized = true

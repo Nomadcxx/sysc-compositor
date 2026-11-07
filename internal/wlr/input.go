@@ -1439,9 +1439,12 @@ func (c *Compositor) handleNewToplevel(data unsafe.Pointer) {
 			return
 		}
 		c.drop(initialCommit)
-		if c.preferNoCSD && !bool(toplevel.requested.fullscreen) {
-			C.wlr_xdg_toplevel_set_tiled(toplevel,
-				C.uint32_t(C.WLR_EDGE_TOP|C.WLR_EDGE_RIGHT|C.WLR_EDGE_BOTTOM|C.WLR_EDGE_LEFT))
+		// Niri sets the tiled state for the initial configure from the rules
+		// of the unmapped window.
+		view.appearance = config.ResolveWindowRules(c.windowRules,
+			cString(toplevel.app_id), cString(toplevel.title), config.UnmappedWindowState(c.atStartup))
+		if !bool(toplevel.requested.fullscreen) {
+			c.syncTiledState(view)
 		}
 		// kitty --start-as=fullscreen asks before its first commit.
 		if bool(toplevel.requested.fullscreen) {
