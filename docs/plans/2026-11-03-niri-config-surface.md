@@ -3,10 +3,13 @@
 - Date: 2026-11-03
 - Bead: `sysc-2231`
 - Branch: `feat/config-surface-20261103`
-- Execution snapshot: slices 1–5 are implemented on draft PR #94 (5b and 5c
-  on 2026-11-06); slice 6 remains. See the execution records below and the
-  [2026-11-05 continuation plan](2026-11-05-handover.md). bd `sysc-2231`
-  owns current status; implemented on this branch does not mean merged.
+- Execution snapshot: slices 1–6 are implemented on draft PR #94 (5b and 5c
+  on 2026-11-06, 6 on 2026-11-07) and pass lane 2 in the laptop VM. Two keys
+  remain, each tracked: `variable-refresh-rate` (M15 outputs, `sysc-2265`)
+  and `layout.background-color` (owner decision on the default,
+  `sysc-2266`). See the execution records below and the
+  [2026-11-05 continuation plan](2026-11-05-handover.md). Implemented on this
+  branch does not mean merged.
 - Reference: niri v26.04 in `/home/nomadx/references/niri`
   (`niri-config/src/window_rule.rs`, `layer_rule.rs`, `workspace.rs`, `layout.rs`,
   `docs/wiki/Configuration:-Window-Rules.md`, `Configuration:-Layer-Rules.md`,
@@ -73,7 +76,10 @@ wallpaper engine, no notification server, no tray.
 | `default-floating-position` | `rules.go` `parseFloatingPosition` | `mapWindowWithRules` → `model.SetFloatingPositionFor` | slice 1; `x`, `y`, `relative-to` |
 | `match is-focused`, `is-urgent`, `is-active-in-column`, `is-floating`, `at-startup` | `rules.go` `parseWindowMatch` | `internal/wlr/window_rules.go` `ruleState` → `ResolveWindowRules` | slice 2; the rules are matched against the state of the window they apply to |
 | `match is-active` | `rules.go` `parseWindowMatch` | `internal/wlr/window_rules.go` `ruleState` | slice 3; the active window of every workspace on the focused output |
-| `match is-window-cast-target` | `rules.go` `parseWindowMatch` | `internal/wlr/window_rules.go` `ruleState` | slice 3; the compositor has no window screencast protocol, so no window is ever the target |
+| `match is-window-cast-target` | `rules.go` `parseWindowMatch` | `internal/wlr/window_rules.go` `ruleState` | slice 3; since slice 6 true while a PipeWire cast shows the window (`internal/wlr/screencast.go` `castStateChanged`) |
+| `tiled-state` | `rules.go` | `internal/wlr/decoration.go` `syncTiledState` | slice 6 |
+| `popups` | `rules.go` `popupsRule` | `internal/wlr/xdg.go` `syncPopupOpacity`, `background_effect.go` | slice 6; window and layer rules |
+| `baba-is-float` | `rules.go` | `internal/wlr/bob.go` | slice 6; window and layer rules |
 
 ### 2.2 `window-rule` — the keys sysc has no counterpart for
 
@@ -84,9 +90,10 @@ wallpaper engine, no notification server, no tray.
 | `border`, `focus-ring`, `shadow`, `tab-indicator` | per-window decoration overrides | the decoration code reads one global `layoutOptions` | 5 |
 | `draw-border-with-background` | draw the border over the background | decoration code | 5 |
 | `background-effect` | a per-window background effect (blur) | the effect is global today | 5 |
-| `popups` | rules for the popup surfaces of the window | sysc does not model popups | 6 |
-| `variable-refresh-rate` | the output runs at a variable refresh rate | output-level, needs the wlroots commit path | 6 |
-| `baba-is-float`, `tiled-state` | the Baba Is You game's quirks | niche, not for this tranche | 6 |
+| `popups` | opacity, corner radius and background effect of the window's xdg popups | applied in slice 6 | 6 |
+| `variable-refresh-rate` | turns on-demand VRR on for the output that shows the window | output VRR, which M15 owns; still warns (`sysc-2265`) | M15 |
+| `baba-is-float` | bobs the window up and down | applied in slice 6 | 6 |
+| `tiled-state` | overrides the xdg tiled state derived from the decoration mode | applied in slice 6 | 6 |
 
 ### 2.3 `window-rule` — the match properties
 
@@ -98,11 +105,10 @@ more, and an unknown match property is a hard error.
 
 ### 2.4 `layer-rule`
 
-Supported today: `match` / `exclude` on `namespace`, and
-`place-within-backdrop` (applied in `internal/wlr/layer.go`). Missing:
-`opacity`, `block-out-from`, `shadow`, `geometry-corner-radius`,
-`background-effect`, `popups`, `baba-is-float`, and the match properties
-`at-startup` and `layer`. Slice 5.
+Every key Niri has is parsed and applied: `match` / `exclude` on
+`namespace`, `at-startup` and `layer` (slice 6), `place-within-backdrop`,
+`opacity`, `block-out-from`, `shadow`, `geometry-corner-radius` and
+`background-effect` (slice 5c), `popups` and `baba-is-float` (slice 6).
 
 ### 2.5 `workspace` and the `layout` section
 
@@ -119,6 +125,11 @@ The `layout` section supports `gaps`, `default-column-width`, `insert-hint`,
 `background-color`. The layout is per output today
 (`model.SetOutputGeometry(name, bounds, columnWidth, gap)`), so a
 per-workspace override needs new plumbing. Slice 4.
+
+Since 2026-11-07 every key of the layout part applies, config-wide and per
+workspace, except `background-color` (`sysc-2266`) and, inside
+`workspace.layout` only, `empty-workspace-above-first`, which Niri reads per
+output. See slice 6.
 
 ## 3. The slices
 
@@ -305,7 +316,8 @@ fullscreen window and the overview keep the full usable area, as in Niri.
 
 **Still open in slice 4:** the appearance keys of the layout part — `border`,
 `tab-indicator`, `focus-ring`, `shadow`, `background-color` — which belong to
-slice 5, and `always-center-single-column`, which still warns.
+slice 5, and `always-center-single-column`, which still warns. (Slice 5 left
+`background-color` out; slice 6 took `always-center-single-column`.)
 
 ### Slice 5 — the appearance properties
 
@@ -488,11 +500,95 @@ A layer newly blocked from screen capture does not close an open screenshot
 UI, as a window does. A window or layer drawn with a single-pixel buffer
 ignores rule opacity (the upstream bug above).
 
-### Slice 6 — the leftovers
+### Slice 6 — the leftovers (landed)
 
-`popups`, `variable-refresh-rate`, `baba-is-float`, `tiled-state`,
-`layer-rule.match`'s `at-startup` and `layer`. Some of these may end up
-rejected with a clear message rather than accepted and ignored.
+Landed on 2026-11-07 (`0e66117` to `e153b5c`). Every key was checked against
+Niri 26.04 first; none is rejected.
+
+- **`always-center-single-column`**, config-wide and per workspace: the view
+  keeps the focused column centred while the workspace has one column,
+  whatever `center-focused-column` says (Niri's
+  `is_centering_focused_column`). With a second column the fit reveal takes
+  over and scrolls only as far as it must, as Niri's does.
+- **`empty-workspace-above-first`**: the model's `reconcile` keeps an empty
+  workspace above the first one once an output has more than one, and
+  collapses two empty workspaces into one, as Niri's Monitor does. Turning the
+  flag on or off adds or drops that workspace at once. `reconcile` now also
+  runs when an output connects, so a named workspace is never first. Inside
+  `workspace.layout` the key keeps its warning: Niri parses it there and
+  ignores it.
+- **Layer `at-startup` and `layer` matches**: ANDed with the namespace within
+  one match line. The rules resolve again when a commit moves the surface to
+  another layer and when the startup window ends.
+- **`tiled-state`**: the tiled state was set in three places. One function,
+  `syncTiledState`, now follows Niri's `update_tiled_state`: the rule wins;
+  otherwise a negotiated xdg-decoration mode decides, and a window without one
+  follows prefer-no-csd or its KDE server decoration. The initial configure
+  takes the unmapped window's rules. An unchanged state sends no configure.
+- **`popups`** (window and layer rules): the xdg popups draw at the parent's
+  opacity times the popups opacity; a forced blur under a popup covers its
+  geometry and takes the popups corner radius. Input method popups are left
+  alone, as in Niri. An unknown key inside `popups` is an error.
+- **`baba-is-float`** (window and layer rules): Niri's `baba_is_float_offset`,
+  a 48th of the output height on a 3.6 second cycle, moving input with the
+  drawing. The view's tree position carries the bob and the layout reads
+  `layoutPosition`, the place without it, so position animations do not
+  drift.
+- **`is-window-cast-target`**, the audit: slice 3 made it always false because
+  the compositor had no window screencast. It has: a PipeWire cast can show a
+  window by id or as the dynamic target. As Niri's
+  `refresh_mapped_cast_window_rules`, a window is the target while any cast
+  shows it, active or not, and the rules resolve again when the set changes.
+- **`variable-refresh-rate`** moves to M15 (`sysc-2265`): the rule only
+  toggles on-demand VRR of an output, and sysc has no output VRR yet. It keeps
+  its `window-rule` warning.
+
+Found on the way and fixed: a popup's buffers arrive on its later commits,
+after the one opacity sync at its initial commit, so a popup that mapped after
+the window's open animation drew at full opacity (`TestPopupDrawsBesideItsParent`
+failed four of five lane 2 batch runs). The popup now syncs its parent's
+appearance on every commit, and the tree opacity walk reaches disabled nodes.
+Layer opacity now reaches a layer's popups too.
+
+Tests: `TestAlwaysCenterSingleColumnCentersALoneColumn` (layout);
+`TestWorkspaceAlwaysCenterSingleColumnFollowsTheConfig`,
+`TestEmptyWorkspaceAboveFirstKeepsAnEmptyWorkspaceOnTop` and
+`TestEmptyWorkspaceAboveFirstPrecedesNamedWorkspaces` (wm);
+`TestLayoutFlagsAreParsed`, `TestLayerRuleStateMatchesAreParsedAndEvaluated`,
+`TestNiriWindowRuleTiledStateIsParsedAndResolved`,
+`TestNiriPopupsRuleIsParsedAndResolved` and
+`TestNiriBabaIsFloatIsParsedAndResolved` (config);
+`TestWorkspaceLayoutReachesTheModelOptions` extended (server);
+`TestBobOffsetFollowsNiri` (wlr, pure); and in lane 2
+`TestLayoutFlagsReachTheModel`, `TestLayerRuleMatchesTheLayerAndTheStartup`,
+`TestWindowRuleTiledStateOverridesTheDecorationDefault`,
+`TestPopupsRuleDrawsPopupsWithTheirOwnOpacityAndBlur`,
+`TestBabaIsFloatBobsTheWindow` and
+`TestWindowRuleIsWindowCastTargetFollowsTheCasts`, which replaces
+`TestWindowRuleIsWindowCastTargetIsNeverTrue`. On 2026-11-07 in the laptop VM
+(lane 2): `internal/wlr` in two batches with only the four expected skips,
+`internal/server`, and `internal/config`, `layout`, `wm` and `cli` whole.
+
+Known differences: the bob does not reach the window switcher's previews,
+which Niri also bobs. The blur under a window still ignores
+`geometry-corner-radius`; only a popup's forced blur takes a radius. The
+workspace added by `empty-workspace-above-first` appears at once rather than
+through Niri's workspace switch.
+
+Still open in the tranche:
+
+- `layout.background-color` and `workspace.layout.background-color` still
+  warn (`sysc-2266`). Niri draws the fill below the background and bottom
+  layers and defaults to 25% grey where sysc shows black, so applying it
+  changes the look of every session without a wallpaper; the owner decides the
+  default. The owner's laptop config sets `"transparent"`, which already looks
+  right, but sysc's colour parser takes hex only and must learn that name
+  first.
+- `variable-refresh-rate`, in M15 (`sysc-2265`).
+
+Measured on 2026-11-07: the archThink's config prints 9 warnings, none from
+`window-rule` or `layer-rule`; the one tranche key among them is
+`layout.background-color`.
 
 ## 4. Rules
 
@@ -543,7 +639,8 @@ rejected with a clear message rather than accepted and ignored.
   `TestWorkspaceLayoutRejectsBadValues`. Slice 4b added
   `TestLayoutPresetsAreParsed`, `TestLayoutRejectsBadPresetValues`,
   `TestCenterFocusedColumnIsParsed` and `TestStrutsAreParsed`, re-targeted the
-  warning test at `always-center-single-column`, and taught
+  warning test at `always-center-single-column` (slice 6 moved it to
+  `empty-workspace-above-first`), and taught
   `TestNiriWindowRuleOpenKeysAreParsedAndResolved` and its reject twin the
   `scroll-factor` key.
 - `internal/wlr`: one test per key that the compositor applies it, next to the
