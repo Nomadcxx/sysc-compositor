@@ -13,6 +13,12 @@ type workspaceState struct {
 	strip *layout.Workspace
 }
 
+// occupied reports whether the workspace holds windows or a name, which keeps
+// it alive while it is not active: Niri's has_windows_or_name.
+func (w *workspaceState) occupied() bool {
+	return w.name != nil || len(w.strip.WindowOrder()) != 0
+}
+
 // WorkspaceConfig declares one named workspace from the Niri KDL config.
 type WorkspaceConfig struct {
 	Name         string
@@ -33,6 +39,8 @@ type WorkspaceLayout struct {
 	DefaultColumnDisplay *layout.ColumnDisplay
 	// A nil mode keeps the config's policy.
 	CenterFocusedColumn *layout.CenterFocusedColumn
+	// A nil flag keeps the config's always-center-single-column.
+	AlwaysCenterSingleColumn *bool
 	// A nil strut set keeps the config's. When present it replaces the
 	// whole set, Niri's merge_clone, not one edge at a time.
 	Struts *layout.Struts
@@ -96,6 +104,12 @@ type Model struct {
 	presetWindowHeights []layout.PresetSize
 	defaultDisplay      layout.ColumnDisplay
 	centerFocusedColumn layout.CenterFocusedColumn
+	// alwaysCenterSingleColumn is the config-wide
+	// always-center-single-column.
+	alwaysCenterSingleColumn bool
+	// emptyWorkspaceAboveFirst keeps an empty workspace above the first one
+	// of every output, Niri's empty-workspace-above-first.
+	emptyWorkspaceAboveFirst bool
 	// struts is the config-wide layout.struts; the zero value reserves
 	// nothing and leaves each workspace on its output's full area.
 	struts layout.Struts
@@ -163,6 +177,7 @@ func (m *Model) AddOutput(name string, bounds layout.Bounds, columnWidth, gap in
 	out.workspaces = append(out.workspaces, m.newWorkspace(out))
 	m.outputs[name] = out
 	m.addConfiguredWorkspaces(out, !hadOutputs)
+	m.reconcile(out)
 	if m.focusedOutput == "" {
 		m.focusedOutput = name
 	}
@@ -287,6 +302,7 @@ func (m *Model) applyWorkspaceLayout(out *outputState, workspace *workspaceState
 	workspace.strip.SetPresetSizes(widths, heights)
 	workspace.strip.SetDefaultColumnDisplay(m.columnDisplay(workspace))
 	workspace.strip.SetCenterFocusedColumn(m.centerFocusedColumnFor(workspace))
+	workspace.strip.SetAlwaysCenterSingleColumn(m.alwaysCenterSingleColumnFor(workspace))
 	workspace.strip.SetTabSpace(m.tabSpaceFor(workspace))
 }
 
@@ -342,6 +358,15 @@ func (m *Model) centerFocusedColumnFor(workspace *workspaceState) layout.CenterF
 	return m.centerFocusedColumn
 }
 
+// alwaysCenterSingleColumnFor returns whether a workspace centers a lone
+// column: its own flag when it sets one, otherwise the config-wide one.
+func (m *Model) alwaysCenterSingleColumnFor(workspace *workspaceState) bool {
+	if override := m.workspaceLayout(workspace); override != nil && override.AlwaysCenterSingleColumn != nil {
+		return *override.AlwaysCenterSingleColumn
+	}
+	return m.alwaysCenterSingleColumn
+}
+
 // strutsFor returns the struts a workspace lays out inside: its own when it
 // sets them, otherwise the config-wide ones.
 func (m *Model) strutsFor(workspace *workspaceState) layout.Struts {
@@ -380,6 +405,29 @@ func (m *Model) SetCenterFocusedColumn(mode layout.CenterFocusedColumn) {
 	}
 	m.centerFocusedColumn = mode
 	m.reapplyWorkspaceLayout()
+}
+
+// SetAlwaysCenterSingleColumn sets whether the workspaces that do not set the
+// flag center a lone column.
+func (m *Model) SetAlwaysCenterSingleColumn(on bool) {
+	if m.alwaysCenterSingleColumn == on {
+		return
+	}
+	m.alwaysCenterSingleColumn = on
+	m.reapplyWorkspaceLayout()
+}
+
+// SetEmptyWorkspaceAboveFirst sets whether every output keeps an empty
+// workspace above its first one. The outputs add or drop that workspace at
+// once, as Niri's Monitor::update_config does.
+func (m *Model) SetEmptyWorkspaceAboveFirst(on bool) {
+	if m.emptyWorkspaceAboveFirst == on {
+		return
+	}
+	m.emptyWorkspaceAboveFirst = on
+	for _, name := range m.outputNames() {
+		m.reconcile(m.outputs[name])
+	}
 }
 
 // SetStruts sets the reserved edges of the layout area for the workspaces
@@ -470,7 +518,7 @@ func sameWorkspaceLayout(a, b *WorkspaceLayout) bool {
 	if !sameDisplayPtr(a.DefaultColumnDisplay, b.DefaultColumnDisplay) {
 		return false
 	}
-	if !sameStrutsPtr(a.Struts, b.Struts) {
+	if !sameStrutsPtr(a.Struts, b.Struts) || !sameBoolPtr(a.AlwaysCenterSingleColumn, b.AlwaysCenterSingleColumn) {
 		return false
 	}
 	return sameCenterPtr(a.CenterFocusedColumn, b.CenterFocusedColumn)
@@ -503,6 +551,13 @@ func samePresetSizes(a, b []layout.PresetSize) bool {
 }
 
 func sameDisplayPtr(a, b *layout.ColumnDisplay) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
+}
+
+func sameBoolPtr(a, b *bool) bool {
 	if a == nil || b == nil {
 		return a == nil && b == nil
 	}
@@ -2015,8 +2070,14 @@ func (m *Model) reconcile(out *outputState) {
 	if out.active >= len(out.workspaces) {
 		out.active = len(out.workspaces) - 1
 	}
-	for i := len(out.workspaces) - 2; i >= 0; i-- {
-		if i == out.active || out.workspaces[i].name != nil || len(out.workspaces[i].strip.WindowOrder()) != 0 {
+	// The empty workspace above the first one is kept, as Niri's
+	// clean_up_workspaces starts after it.
+	first := 0
+	if m.emptyWorkspaceAboveFirst {
+		first = 1
+	}
+	for i := len(out.workspaces) - 2; i >= first; i-- {
+		if i == out.active || out.workspaces[i].occupied() {
 			continue
 		}
 		out.workspaces = append(out.workspaces[:i], out.workspaces[i+1:]...)
@@ -2024,9 +2085,19 @@ func (m *Model) reconcile(out *outputState) {
 			out.active--
 		}
 	}
-	last := out.workspaces[len(out.workspaces)-1]
-	if last.name != nil || len(last.strip.WindowOrder()) != 0 {
+	if out.workspaces[len(out.workspaces)-1].occupied() {
 		out.workspaces = append(out.workspaces, m.newWorkspace(out))
+	}
+	if m.emptyWorkspaceAboveFirst {
+		switch {
+		case out.workspaces[0].occupied():
+			out.workspaces = slices.Insert(out.workspaces, 0, m.newWorkspace(out))
+			out.active++
+		case len(out.workspaces) == 2 && !out.workspaces[1].occupied():
+			// Both are empty: one empty workspace is enough.
+			out.workspaces = out.workspaces[:1]
+			out.active = 0
+		}
 	}
 	if id := out.workspaces[out.active].id; id != out.activeID {
 		if out.activeID != 0 {

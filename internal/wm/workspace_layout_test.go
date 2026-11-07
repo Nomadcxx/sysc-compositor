@@ -1,6 +1,7 @@
 package wm
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/Nomadcxx/sysc-compositor/internal/layout"
@@ -287,4 +288,105 @@ func TestConfigWideLayoutReachesLaterWorkspaces(t *testing.T) {
 	if got := window.Tile.Display; got != layout.ColumnDisplayTabbed {
 		t.Errorf("the display = %v, want the config's tabbed", got)
 	}
+}
+
+// TestWorkspaceAlwaysCenterSingleColumnFollowsTheConfig: the config-wide
+// always-center-single-column centers a lone column on every workspace, and a
+// workspace that turns it off keeps the fit reveal.
+func TestWorkspaceAlwaysCenterSingleColumnFollowsTheConfig(t *testing.T) {
+	off := false
+	m := New(WorkspaceConfig{Name: "fit", Layout: &WorkspaceLayout{AlwaysCenterSingleColumn: &off}})
+	m.AddOutput("eDP-1", layout.Bounds{Width: 1000, Height: 800}, 400, 16)
+	m.SetAlwaysCenterSingleColumn(true)
+	fit, _ := m.WorkspaceIDByName("fit")
+	var plain uint64
+	for _, workspace := range m.Snapshot().Workspaces {
+		if workspace.Name == nil {
+			plain = workspace.ID
+		}
+	}
+	if fit == 0 || plain == 0 {
+		t.Fatalf("workspaces = %+v, want a named and a plain one", m.Snapshot().Workspaces)
+	}
+	if !m.MapWindowToWorkspace(1, fit) || !m.MapWindowToWorkspace(2, plain) {
+		t.Fatal("MapWindowToWorkspace() = false, want true")
+	}
+	xs := map[uint64]int{}
+	for _, window := range m.Snapshot().Windows {
+		xs[window.WorkspaceID] = window.Tile.X
+	}
+	if got := xs[plain]; got != 300 {
+		t.Errorf("the X of the plain workspace = %d, want 300 (centered)", got)
+	}
+	if got := xs[fit]; got != 16 {
+		t.Errorf("the X of the named workspace = %d, want 16 (its own false)", got)
+	}
+}
+
+// TestEmptyWorkspaceAboveFirstKeepsAnEmptyWorkspaceOnTop follows Niri's
+// Monitor: with empty-workspace-above-first an output keeps an empty
+// workspace above its first one as soon as it has more than one, and two
+// empty workspaces collapse into one.
+func TestEmptyWorkspaceAboveFirstKeepsAnEmptyWorkspaceOnTop(t *testing.T) {
+	m := New()
+	m.SetEmptyWorkspaceAboveFirst(true)
+	m.AddOutput("eDP-1", layout.Bounds{Width: 1000, Height: 800}, 500, 16)
+	if got := len(workspaceIDs(m, "eDP-1")); got != 1 {
+		t.Fatalf("an empty output has %d workspaces, want 1", got)
+	}
+	if !m.MapWindow(1, "eDP-1") {
+		t.Fatal("MapWindow() = false")
+	}
+	assertWorkspaceShape := func(step string, want []int) {
+		t.Helper()
+		var got []int
+		for _, workspace := range m.Snapshot().Workspaces {
+			got = append(got, len(workspace.WindowIDs))
+		}
+		if !slices.Equal(got, want) {
+			t.Fatalf("%s: windows per workspace = %v, want %v", step, got, want)
+		}
+	}
+	assertWorkspaceShape("after the first window", []int{0, 1, 0})
+	if active := activeWorkspaceIndex(m); active != 2 {
+		t.Fatalf("the active workspace index = %d, want 2, the window's", active)
+	}
+
+	m.SetEmptyWorkspaceAboveFirst(false)
+	assertWorkspaceShape("with the flag off", []int{1, 0})
+	m.SetEmptyWorkspaceAboveFirst(true)
+	assertWorkspaceShape("with the flag on again", []int{0, 1, 0})
+
+	if !m.MoveWorkspaceUp() {
+		t.Fatal("MoveWorkspaceUp() = false")
+	}
+	assertWorkspaceShape("after moving the workspace up", []int{0, 1, 0})
+
+	m.RemoveWindow(1)
+	if !m.FocusWorkspace("eDP-1", 1) {
+		t.Fatal("FocusWorkspace() = false")
+	}
+	assertWorkspaceShape("after the last window closed", []int{0})
+}
+
+// TestEmptyWorkspaceAboveFirstPrecedesNamedWorkspaces: a named workspace is
+// never the first one when the flag is set, from the moment the output
+// connects.
+func TestEmptyWorkspaceAboveFirstPrecedesNamedWorkspaces(t *testing.T) {
+	m := New(WorkspaceConfig{Name: "mail"})
+	m.SetEmptyWorkspaceAboveFirst(true)
+	m.AddOutput("eDP-1", layout.Bounds{Width: 1000, Height: 800}, 500, 16)
+	workspaces := m.Snapshot().Workspaces
+	if len(workspaces) != 3 || workspaces[0].Name != nil || workspaces[1].Name == nil || workspaces[2].Name != nil {
+		t.Fatalf("workspaces = %+v, want empty, mail, empty", workspaces)
+	}
+}
+
+func activeWorkspaceIndex(m *Model) int {
+	for _, workspace := range m.Snapshot().Workspaces {
+		if workspace.IsActive {
+			return int(workspace.Index)
+		}
+	}
+	return 0
 }

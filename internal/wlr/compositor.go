@@ -404,11 +404,17 @@ type LayoutOptions struct {
 	PresetWindowHeights   []layout.PresetSize
 	DefaultColumnDisplay  layout.ColumnDisplay
 	CenterFocusedColumn   layout.CenterFocusedColumn
-	Struts                layout.Struts
-	InsertHint            config.InsertHint
-	FocusRing             config.FocusRing
-	Border                config.FocusRing
-	Shadow                config.Shadow
+	// AlwaysCenterSingleColumn centers a lone column whatever
+	// CenterFocusedColumn says.
+	AlwaysCenterSingleColumn bool
+	// EmptyWorkspaceAboveFirst keeps an empty workspace above the first one
+	// of every output.
+	EmptyWorkspaceAboveFirst bool
+	Struts                   layout.Struts
+	InsertHint               config.InsertHint
+	FocusRing                config.FocusRing
+	Border                   config.FocusRing
+	Shadow                   config.Shadow
 	// WorkspaceDecorations holds each named workspace's decoration parts,
 	// keyed by config.WorkspaceKey.
 	WorkspaceDecorations map[string]config.Decorations
@@ -460,6 +466,8 @@ func NewWith(opts Options) (*Compositor, error) {
 	c.model.SetPresetSizes(opts.Layout.PresetColumnWidths, opts.Layout.PresetWindowHeights)
 	c.model.SetDefaultColumnDisplay(opts.Layout.DefaultColumnDisplay)
 	c.model.SetCenterFocusedColumn(opts.Layout.CenterFocusedColumn)
+	c.model.SetAlwaysCenterSingleColumn(opts.Layout.AlwaysCenterSingleColumn)
+	c.model.SetEmptyWorkspaceAboveFirst(opts.Layout.EmptyWorkspaceAboveFirst)
 	c.model.SetStruts(opts.Layout.Struts)
 	c.model.SetTabSpace(opts.Layout.TabSpace)
 	c.cursorTheme, c.cursorSize = opts.CursorTheme, opts.CursorSize
@@ -734,6 +742,8 @@ func (c *Compositor) Reconfigure(opts Options) error {
 	c.model.SetPresetSizes(opts.Layout.PresetColumnWidths, opts.Layout.PresetWindowHeights)
 	c.model.SetDefaultColumnDisplay(opts.Layout.DefaultColumnDisplay)
 	c.model.SetCenterFocusedColumn(opts.Layout.CenterFocusedColumn)
+	c.model.SetAlwaysCenterSingleColumn(opts.Layout.AlwaysCenterSingleColumn)
+	c.model.SetEmptyWorkspaceAboveFirst(opts.Layout.EmptyWorkspaceAboveFirst)
 	c.model.SetStruts(opts.Layout.Struts)
 	c.model.SetTabSpace(opts.Layout.TabSpace)
 	c.overviewConfig = opts.Overview

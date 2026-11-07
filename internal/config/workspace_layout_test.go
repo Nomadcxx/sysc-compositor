@@ -74,19 +74,55 @@ workspace "fixed" {
 	}
 }
 
+// TestWorkspaceLayoutWarnsForTheKeysTheCompositorCannotApply: Niri parses
+// empty-workspace-above-first inside a workspace's layout but reads it only
+// per output, so it does nothing there; sysc names it instead of ignoring it.
 func TestWorkspaceLayoutWarnsForTheKeysTheCompositorCannotApply(t *testing.T) {
 	cfg, err := Parse("workspaces.kdl", []byte(`
 workspace "wide" {
     layout {
-        always-center-single-column
+        empty-workspace-above-first
     }
 }
 `))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(cfg.Warnings, []string{"workspace.layout.always-center-single-column"}) {
+	if !reflect.DeepEqual(cfg.Warnings, []string{"workspace.layout.empty-workspace-above-first"}) {
 		t.Fatalf("warnings = %q, want the unapplied key to be named", cfg.Warnings)
+	}
+}
+
+// TestLayoutFlagsAreParsed: always-center-single-column and
+// empty-workspace-above-first are Niri flags, set by the bare key and unset
+// with false, and a workspace may unset the first one.
+func TestLayoutFlagsAreParsed(t *testing.T) {
+	cfg, err := Parse("layout.kdl", []byte(`
+layout {
+    always-center-single-column
+    empty-workspace-above-first
+}
+workspace "fit" {
+    layout {
+        always-center-single-column false
+    }
+}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Warnings) != 0 {
+		t.Fatalf("warnings = %q, want none", cfg.Warnings)
+	}
+	if !cfg.Layout.AlwaysCenterSingleColumn || !cfg.Layout.EmptyWorkspaceAboveFirst {
+		t.Errorf("the layout flags = %t %t, want both set", cfg.Layout.AlwaysCenterSingleColumn, cfg.Layout.EmptyWorkspaceAboveFirst)
+	}
+	override := cfg.Workspaces[0].Layout.AlwaysCenterSingleColumn
+	if override == nil || *override {
+		t.Errorf("the workspace's always-center-single-column = %v, want false", override)
+	}
+	if _, err := Parse("layout.kdl", []byte(`layout { always-center-single-column "yes"; }`)); err == nil {
+		t.Error("a string flag value parsed, want an error")
 	}
 }
 
