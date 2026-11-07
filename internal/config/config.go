@@ -119,12 +119,18 @@ type Layout struct {
 	PresetWindowHeights   []PresetSize
 	DefaultColumnDisplay  ColumnDisplay
 	CenterFocusedColumn   CenterFocusedColumn
-	Struts                Struts
-	InsertHint            InsertHint
-	FocusRing             FocusRing
-	Border                FocusRing
-	Shadow                Shadow
-	TabIndicator          TabIndicator
+	// AlwaysCenterSingleColumn centers a lone column whatever
+	// CenterFocusedColumn says.
+	AlwaysCenterSingleColumn bool
+	// EmptyWorkspaceAboveFirst keeps an empty workspace above the first one
+	// of every output.
+	EmptyWorkspaceAboveFirst bool
+	Struts                   Struts
+	InsertHint               InsertHint
+	FocusRing                FocusRing
+	Border                   FocusRing
+	Shadow                   Shadow
+	TabIndicator             TabIndicator
 }
 
 // Struts holds the reserved edges of the layout area, Niri's layout.struts.
@@ -1007,6 +1013,16 @@ func (c *Config) layout(n *document.Node) error {
 				return fmt.Errorf("center-focused-column: %w", err)
 			}
 			c.Layout.CenterFocusedColumn = mode
+		case "always-center-single-column", "empty-workspace-above-first":
+			on, err := flagArg(child)
+			if err != nil {
+				return fmt.Errorf("%s: %w", nodeName(child), err)
+			}
+			if nodeName(child) == "always-center-single-column" {
+				c.Layout.AlwaysCenterSingleColumn = on
+			} else {
+				c.Layout.EmptyWorkspaceAboveFirst = on
+			}
 		case "struts":
 			struts, err := strutsBlock(child)
 			if err != nil {

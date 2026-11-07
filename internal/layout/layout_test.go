@@ -1052,3 +1052,30 @@ func TestCenterFocusedColumnOnOverflowFitsWhenTheColumnsFit(t *testing.T) {
 		t.Fatalf("placement = %+v, want X 16", placement)
 	}
 }
+
+// TestAlwaysCenterSingleColumnCentersALoneColumn: Niri's
+// always-center-single-column centers the focused column while the workspace
+// has one column, whatever center-focused-column says. Once a second column
+// opens, the fit reveal takes over and scrolls only as far as it must.
+func TestAlwaysCenterSingleColumnCentersALoneColumn(t *testing.T) {
+	ws := NewWorkspace(Bounds{Width: 1000, Height: 800}, 400, 16)
+	ws.SetAlwaysCenterSingleColumn(true)
+	ws.AddWindow(1)
+	if placement, _ := ws.Placement(1); placement.X != 300 {
+		t.Fatalf("placement = %+v, want the lone column centered at X 300", placement)
+	}
+	ws.AddWindow(2)
+	if placement, _ := ws.Placement(2); placement.X != 584 {
+		t.Fatalf("placement = %+v, want the second column fitted to the right edge at X 584", placement)
+	}
+	ws.RemoveWindow(2)
+	if placement, _ := ws.Placement(1); placement.X != 300 {
+		t.Fatalf("placement = %+v, want the column centered again at X 300", placement)
+	}
+	ws.SetAlwaysCenterSingleColumn(false)
+	ws.AddWindow(3)
+	ws.RemoveWindow(3)
+	if placement, _ := ws.Placement(1); placement.X != 168 {
+		t.Fatalf("placement = %+v, want the fitted view kept at X 168 with the flag off", placement)
+	}
+}

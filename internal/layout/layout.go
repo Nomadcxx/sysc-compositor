@@ -445,7 +445,10 @@ type Workspace struct {
 	presetWindowHeights []PresetSize
 	defaultDisplay      ColumnDisplay
 	centerFocusedColumn CenterFocusedColumn
-	tabSpace            TabSpace
+	// alwaysCenterSingleColumn centers a lone column whatever
+	// centerFocusedColumn says, Niri's always-center-single-column.
+	alwaysCenterSingleColumn bool
+	tabSpace                 TabSpace
 }
 
 const directionalMovePixels = 50
@@ -464,6 +467,19 @@ func (w *Workspace) SetTabSpace(space TabSpace) {
 // SetCenterFocusedColumn sets when the view centers the focused column.
 func (w *Workspace) SetCenterFocusedColumn(mode CenterFocusedColumn) {
 	w.centerFocusedColumn = mode
+}
+
+// SetAlwaysCenterSingleColumn sets whether the view centers the focused
+// column while the workspace has one column.
+func (w *Workspace) SetAlwaysCenterSingleColumn(on bool) {
+	w.alwaysCenterSingleColumn = on
+}
+
+// centeringFocusedColumn reports whether the view keeps the focused column
+// centered, Niri's is_centering_focused_column.
+func (w *Workspace) centeringFocusedColumn() bool {
+	return w.centerFocusedColumn == CenterFocusedColumnAlways ||
+		(w.alwaysCenterSingleColumn && len(w.columns) <= 1)
 }
 
 // NewWorkspace creates an empty workspace with fixed column width and gap.
@@ -1576,7 +1592,7 @@ func (w *Workspace) revealFocusedFrom(previous int) {
 		w.viewOffset = 0
 		return
 	}
-	if w.centerFocusedColumn == CenterFocusedColumnAlways ||
+	if w.centeringFocusedColumn() ||
 		(w.centerFocusedColumn == CenterFocusedColumnOnOverflow && w.focusOverflowsWith(previous)) {
 		w.centerFocusedView()
 		return

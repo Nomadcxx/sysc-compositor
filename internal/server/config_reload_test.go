@@ -191,22 +191,26 @@ func TestWorkspaceLayoutReachesTheModelOptions(t *testing.T) {
 	proportion := 0.75
 	display := config.ColumnDisplayNormal
 	centerNever := config.CenterFocusedColumnNever
+	alwaysCenterOff := false
 	cfg := &config.Config{
 		Layout: config.Layout{
-			PresetColumnWidths:   []config.PresetSize{{Value: 0.25}},
-			PresetWindowHeights:  []config.PresetSize{{Fixed: true, Value: 700}},
-			DefaultColumnDisplay: config.ColumnDisplayTabbed,
-			CenterFocusedColumn:  config.CenterFocusedColumnOnOverflow,
-			Struts:               config.Struts{Left: 10, Right: 10, Bottom: 32},
+			PresetColumnWidths:       []config.PresetSize{{Value: 0.25}},
+			PresetWindowHeights:      []config.PresetSize{{Fixed: true, Value: 700}},
+			DefaultColumnDisplay:     config.ColumnDisplayTabbed,
+			CenterFocusedColumn:      config.CenterFocusedColumnOnOverflow,
+			AlwaysCenterSingleColumn: true,
+			EmptyWorkspaceAboveFirst: true,
+			Struts:                   config.Struts{Left: 10, Right: 10, Bottom: 32},
 		},
 		Workspaces: []config.WorkspaceConfig{{
 			Name: "wide",
 			Layout: &config.WorkspaceLayout{
 				Gaps: &gaps, ColumnWidthProportion: &proportion,
-				PresetColumnWidths:   []config.PresetSize{{Fixed: true, Value: 600}},
-				DefaultColumnDisplay: &display,
-				CenterFocusedColumn:  &centerNever,
-				Struts:               &config.Struts{Top: 44},
+				PresetColumnWidths:       []config.PresetSize{{Fixed: true, Value: 600}},
+				DefaultColumnDisplay:     &display,
+				CenterFocusedColumn:      &centerNever,
+				AlwaysCenterSingleColumn: &alwaysCenterOff,
+				Struts:                   &config.Struts{Top: 44},
 			},
 		}},
 	}
@@ -224,6 +228,10 @@ func TestWorkspaceLayoutReachesTheModelOptions(t *testing.T) {
 	if options.Layout.CenterFocusedColumn != layout.CenterFocusedColumnOnOverflow {
 		t.Errorf("the centering policy = %v, want on-overflow", options.Layout.CenterFocusedColumn)
 	}
+	if !options.Layout.AlwaysCenterSingleColumn || !options.Layout.EmptyWorkspaceAboveFirst {
+		t.Errorf("the layout flags = %t %t, want both set",
+			options.Layout.AlwaysCenterSingleColumn, options.Layout.EmptyWorkspaceAboveFirst)
+	}
 	if options.Layout.Struts != (layout.Struts{Left: 10, Right: 10, Bottom: 32}) {
 		t.Errorf("the config struts = %+v, want left and right 10 and bottom 32", options.Layout.Struts)
 	}
@@ -236,6 +244,9 @@ func TestWorkspaceLayoutReachesTheModelOptions(t *testing.T) {
 	}
 	if workspace.Layout == nil {
 		t.Fatal("the workspace has no layout")
+	}
+	if flag := workspace.Layout.AlwaysCenterSingleColumn; flag == nil || *flag {
+		t.Errorf("the workspace's always-center-single-column = %v, want false", flag)
 	}
 	if workspace.Layout.Gaps == nil || *workspace.Layout.Gaps != 8 {
 		t.Errorf("the gaps = %+v, want 8", workspace.Layout.Gaps)

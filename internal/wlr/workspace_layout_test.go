@@ -1,6 +1,7 @@
 package wlr
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/Nomadcxx/sysc-compositor/internal/config"
@@ -150,6 +151,45 @@ func TestWorkspaceStrutsReachTheLayout(t *testing.T) {
 			t.Errorf("the tile X = %d, want %d: the column behind the reserved edge in %+v", window.Tile.X, want, bounds)
 		}
 		c.Terminate()
+	}
+	runClient(t, c, []string{"weston-terminal"}, nil, nil)
+}
+
+// TestLayoutFlagsReachTheModel: always-center-single-column centers the
+// first window of a workspace, and empty-workspace-above-first leaves an
+// empty workspace above the one the window opens on.
+func TestLayoutFlagsReachTheModel(t *testing.T) {
+	c := newNested(t)
+	if err := c.Reconfigure(Options{
+		Animations: config.Animations{Off: true},
+		Layout: &LayoutOptions{
+			Gaps: 16, FixedColumnWidth: 300,
+			AlwaysCenterSingleColumn: true, EmptyWorkspaceAboveFirst: true,
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	c.viewMapped = func(view *toplevelView) {
+		defer c.Terminate()
+		snapshot := c.WorkspaceSnapshot()
+		window, ok := findWindowSnapshot(snapshot.Windows, view.id)
+		if !ok {
+			t.Errorf("mapped window %d missing from the workspace snapshot", view.id)
+			return
+		}
+		bounds := c.layoutBox()
+		if want := bounds.x + (bounds.w-300)/2; window.Tile.X != want {
+			t.Errorf("the tile X = %d, want %d: the lone column centered in %+v", window.Tile.X, want, bounds)
+		}
+		var counts []int
+		for _, workspace := range snapshot.Workspaces {
+			if workspace.Output == window.Output {
+				counts = append(counts, len(workspace.WindowIDs))
+			}
+		}
+		if !slices.Equal(counts, []int{0, 1, 0}) {
+			t.Errorf("windows per workspace = %v, want an empty workspace above and below the window's", counts)
+		}
 	}
 	runClient(t, c, []string{"weston-terminal"}, nil, nil)
 }
