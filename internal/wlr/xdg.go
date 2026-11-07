@@ -87,7 +87,27 @@ static void sysc_layout_box(struct wlr_output_layout *layout, struct wlr_box *bo
 */
 import "C"
 
-import "unsafe"
+import (
+	"unsafe"
+
+	"github.com/Nomadcxx/sysc-compositor/internal/config"
+)
+
+// isXDGPopup reports whether a surface is an xdg popup.
+func isXDGPopup(surface *C.struct_wlr_surface) bool {
+	xdg := C.wlr_xdg_surface_try_from_wlr_surface(surface)
+	return xdg != nil && C.sysc_xdg_popup(xdg) != nil
+}
+
+// popupGeometry is an xdg popup's window geometry in its surface's
+// coordinates, when it set one.
+func popupGeometry(surface *C.struct_wlr_surface) (rect, bool) {
+	xdg := C.wlr_xdg_surface_try_from_wlr_surface(surface)
+	if xdg == nil || xdg.geometry.width <= 0 || xdg.geometry.height <= 0 {
+		return rect{}, false
+	}
+	return rect{int(xdg.geometry.x), int(xdg.geometry.y), int(xdg.geometry.width), int(xdg.geometry.height)}, true
+}
 
 // ensureSceneTree gives an xdg toplevel its tree in the windows layer. Popups
 // get theirs from handleNewPopup, under their parent.
@@ -147,7 +167,10 @@ func (c *Compositor) handleNewPopup(data unsafe.Pointer) {
 			// The new popup tree was created after the parent applied its
 			// per-buffer opacity, so bring its buffers under the same rule.
 			c.syncViewOpacity(view)
+		} else if layer := c.layerSurfaceForSurface(popup.parent); tree != nil && layer != nil {
+			c.applyLayerAppearance(layer)
 		}
+		c.syncRuleBackgroundEffects()
 		c.unconstrainPopup(popup)
 	})
 	reposition = AddListener(unsafe.Pointer(&popup.events.reposition), func(unsafe.Pointer) {
@@ -162,6 +185,38 @@ func (c *Compositor) handleNewPopup(data unsafe.Pointer) {
 		}
 	})
 	c.keep(commit, reposition, damage, destroy)
+}
+
+// popupsRuleFor is the popups part of the rules of the window or layer
+// surface a popup belongs to.
+func (c *Compositor) popupsRuleFor(surface *C.struct_wlr_surface) config.PopupsRule {
+	if view := c.viewForSurface(surface); view != nil {
+		return view.appearance.Popups
+	}
+	if layer := c.layerSurfaceForSurface(surface); layer != nil {
+		return layer.rules.Popups
+	}
+	return config.PopupsRule{}
+}
+
+// syncPopupOpacity draws the xdg popups of root with the parent's opacity
+// times their popups rule's, as Niri's render_popups. The walk over the
+// parent's tree has already given them the parent's opacity.
+func (c *Compositor) syncPopupOpacity(root *C.struct_wlr_surface, parentOpacity float64, rule *float64) {
+	if rule == nil {
+		return
+	}
+	opacity := parentOpacity * clampOpacity(*rule)
+	for popup := range c.popups {
+		if shellSurface(popup.base.surface) != root {
+			continue
+		}
+		// A nested popup's tree is inside its parent popup's, so it may be
+		// set twice, to the same value.
+		if tree := c.sceneTrees[unsafe.Pointer(popup.base)]; tree != nil {
+			sceneFXSetTreeOpacity(unsafe.Pointer(tree), opacity)
+		}
+	}
 }
 
 func (c *Compositor) clearPopupClips(view *toplevelView) {

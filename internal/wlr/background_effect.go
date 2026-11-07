@@ -29,6 +29,8 @@ import (
 	"runtime/cgo"
 	"slices"
 	"unsafe"
+
+	"github.com/Nomadcxx/sysc-compositor/internal/config"
 )
 
 type backgroundEffect struct {
@@ -131,6 +133,9 @@ func (c *Compositor) backgroundEffectFor(surface *C.struct_wlr_surface) *backgro
 // ruleBlur is the background-effect blur a window or layer rule sets for the
 // surface tree under root: nil follows the protocol region.
 func (c *Compositor) ruleBlur(root *C.struct_wlr_surface) *bool {
+	if isXDGPopup(root) {
+		return c.popupsRuleFor(root).BackgroundEffect.Blur
+	}
 	for _, view := range c.views {
 		if view.toplevel != nil && view.toplevel.base.surface == root {
 			return view.appearance.BackgroundEffect.Blur
@@ -156,6 +161,12 @@ func (c *Compositor) syncRuleBackgroundEffects() {
 	for _, layer := range c.layerOrder {
 		if blur := layer.rules.BackgroundEffect.Blur; layer.surface != nil && blur != nil && *blur {
 			c.backgroundEffectFor(layer.surface.surface)
+		}
+	}
+	for popup := range c.popups {
+		blur := c.popupsRuleFor(popup.base.surface).BackgroundEffect.Blur
+		if c.sceneTrees[unsafe.Pointer(popup.base)] != nil && blur != nil && *blur {
+			c.backgroundEffectFor(popup.base.surface)
 		}
 	}
 	for _, effect := range c.backgroundEffects {
@@ -218,8 +229,17 @@ func (c *Compositor) syncBackgroundEffect(effect *backgroundEffect, rebuild bool
 		return
 	}
 	region := effect.committed
+	// A forced blur under a popup covers its geometry and takes the popups
+	// rule's corners, as Niri's render_popups.
+	var corners *config.CornerRadius
 	if blur != nil && *blur && len(region) == 0 && effect.surface == effect.root {
 		region = []rect{{0, 0, int(effect.surface.current.width), int(effect.surface.current.height)}}
+		if isXDGPopup(effect.surface) {
+			if geometry, ok := popupGeometry(effect.surface); ok {
+				region[0] = geometry
+			}
+			corners = c.popupsRuleFor(effect.surface).GeometryCornerRadius
+		}
 	}
 	var surfaceNode *C.struct_wlr_scene_node
 	var parent *C.struct_wlr_scene_tree
@@ -239,6 +259,9 @@ func (c *Compositor) syncBackgroundEffect(effect *backgroundEffect, rebuild bool
 			}
 			sceneFXNodeSetPosition(node, int(x)+area.x, int(y)+area.y)
 			sceneFXPlaceBelow(node, unsafe.Pointer(surfaceNode))
+			if corners != nil {
+				sceneFXSetBlurCorners(node, sceneFXRadii(fitCornerRadii(*corners, float64(area.w), float64(area.h))))
+			}
 			effect.blurNodes = append(effect.blurNodes, node)
 			c.watchBlurNode(effect, node)
 		}

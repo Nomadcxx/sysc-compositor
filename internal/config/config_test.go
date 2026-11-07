@@ -1973,3 +1973,55 @@ window-rule {
 		t.Error("a string tiled-state parsed, want an error")
 	}
 }
+
+// TestNiriPopupsRuleIsParsedAndResolved: the popups part of a window or layer
+// rule merges field by field in rule order, as Niri's ResolvedPopupsRules.
+func TestNiriPopupsRuleIsParsedAndResolved(t *testing.T) {
+	cfg, err := Parse("popups.kdl", []byte(`
+window-rule {
+    popups {
+        opacity 0.5
+        geometry-corner-radius 6
+    }
+}
+window-rule {
+    match app-id="^menu$"
+    popups {
+        background-effect { blur true; }
+    }
+}
+layer-rule {
+    match namespace="^bar$"
+    popups { opacity 0.25; }
+}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Warnings) != 0 {
+		t.Fatalf("warnings = %q, want none", cfg.Warnings)
+	}
+	popups := cfg.ResolveWindowRules("menu", "", UnmappedWindowState(false)).Popups
+	if popups.Opacity == nil || *popups.Opacity != 0.5 {
+		t.Errorf("popup opacity = %v, want 0.5 kept from the first rule", popups.Opacity)
+	}
+	if popups.GeometryCornerRadius == nil || popups.GeometryCornerRadius[0] != 6 {
+		t.Errorf("popup corner radius = %+v, want 6", popups.GeometryCornerRadius)
+	}
+	if popups.BackgroundEffect.Blur == nil || !*popups.BackgroundEffect.Blur {
+		t.Errorf("popup blur = %v, want true", popups.BackgroundEffect.Blur)
+	}
+	if got := cfg.ResolveLayerRules("bar", LayerState{}).Popups.Opacity; got == nil || *got != 0.25 {
+		t.Errorf("layer popup opacity = %v, want 0.25", got)
+	}
+	for _, src := range []string{
+		`window-rule { popups { opacity "half"; } }`,
+		`window-rule { popups { geometry-corner-radius -1; } }`,
+		`layer-rule { popups 1; }`,
+		`window-rule { popups { shadow { on; }; }; }`,
+	} {
+		if _, err := Parse("bad.kdl", []byte(src)); err == nil {
+			t.Errorf("%s parsed, want an error", src)
+		}
+	}
+}
