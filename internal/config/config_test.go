@@ -1984,3 +1984,42 @@ layer-rule {
 		}
 	}
 }
+
+// TestNiriBabaIsFloatIsParsedAndResolved: baba-is-float applies to window
+// and layer rules, and the last matching rule wins.
+func TestNiriBabaIsFloatIsParsedAndResolved(t *testing.T) {
+	cfg, err := Parse("baba.kdl", []byte(`
+window-rule {
+    baba-is-float true
+}
+window-rule {
+    match app-id="^still$"
+    baba-is-float false
+}
+layer-rule {
+    match namespace="^bar$"
+    baba-is-float true
+}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Warnings) != 0 {
+		t.Fatalf("warnings = %q, want none", cfg.Warnings)
+	}
+	state := UnmappedWindowState(false)
+	if got := cfg.ResolveWindowRules("term", "", state).BabaIsFloat; got == nil || !*got {
+		t.Errorf("term baba-is-float = %v, want true", got)
+	}
+	if got := cfg.ResolveWindowRules("still", "", state).BabaIsFloat; got == nil || *got {
+		t.Errorf("still baba-is-float = %v, want false", got)
+	}
+	if !cfg.ResolveLayerRules("bar", LayerState{}).BabaIsFloat || cfg.ResolveLayerRules("other", LayerState{}).BabaIsFloat {
+		t.Error("the layer rule's baba-is-float did not reach only the bar")
+	}
+	for _, src := range []string{`window-rule { baba-is-float 1; }`, `layer-rule { baba-is-float "yes"; }`} {
+		if _, err := Parse("bad.kdl", []byte(src)); err == nil {
+			t.Errorf("%s parsed, want an error", src)
+		}
+	}
+}
