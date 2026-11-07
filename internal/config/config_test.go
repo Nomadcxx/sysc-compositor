@@ -420,7 +420,7 @@ layer-rule {
 	if got := cfg.ResolveWindowRules("x-terminal-test", "hidden", UnmappedWindowState(false)); got.OpenFloating != nil {
 		t.Errorf("excluded window got rules = %+v", got)
 	}
-	if !cfg.ResolveLayerRules("sysc-shell-panel").PlaceWithinBackdrop || cfg.ResolveLayerRules("other").PlaceWithinBackdrop {
+	if !cfg.ResolveLayerRules("sysc-shell-panel", LayerState{}).PlaceWithinBackdrop || cfg.ResolveLayerRules("other", LayerState{}).PlaceWithinBackdrop {
 		t.Error("layer namespace rule did not match only sysc-shell namespaces")
 	}
 }
@@ -733,7 +733,7 @@ window-rule {
 	if len(cfg.Warnings) != 0 {
 		t.Fatalf("supported layer rule keys produced warnings: %v", cfg.Warnings)
 	}
-	panel := cfg.ResolveLayerRules("panel")
+	panel := cfg.ResolveLayerRules("panel", LayerState{})
 	if panel.Opacity == nil || *panel.Opacity != 0.75 ||
 		panel.GeometryCornerRadius == nil || *panel.GeometryCornerRadius != (CornerRadius{8, 8, 8, 8}) ||
 		!panel.Shadow.On || panel.Shadow.Softness == nil || *panel.Shadow.Softness != 10 ||
@@ -744,7 +744,7 @@ window-rule {
 	if !panel.BlocksCapture(CaptureCast) || panel.BlocksCapture(CaptureScreen) || panel.BlocksCapture(CaptureDisplay) {
 		t.Error("block-out-from screencast should hide the layer from casts only")
 	}
-	if other := cfg.ResolveLayerRules("other"); other.Opacity != nil || other.Shadow.On || other.BlockOutFrom != nil {
+	if other := cfg.ResolveLayerRules("other", LayerState{}); other.Opacity != nil || other.Shadow.On || other.BlockOutFrom != nil {
 		t.Errorf("unmatched layer got rules = %+v", other)
 	}
 	if blur := cfg.ResolveWindowRules("a", "", UnmappedWindowState(false)).BackgroundEffect.Blur; blur == nil || !*blur {
@@ -1889,5 +1889,53 @@ func TestWindowRuleUnknownMatchPropertyIsRejected(t *testing.T) {
 	src := `window-rule { match is-unknown=true; }`
 	if _, err := Parse("bad-match.kdl", []byte(src)); err == nil || !strings.Contains(err.Error(), "unexpected match property") {
 		t.Errorf("Parse(%q) error = %v, want an unknown match property error", src, err)
+	}
+}
+
+// TestLayerRuleStateMatchesAreParsedAndEvaluated: a layer-rule match takes
+// Niri's at-startup and layer properties next to the namespace, and they are
+// ANDed within one match line.
+func TestLayerRuleStateMatchesAreParsedAndEvaluated(t *testing.T) {
+	cfg, err := Parse("layer-state.kdl", []byte(`
+layer-rule {
+    match namespace="^waybar$" layer="top"
+    opacity 0.5
+}
+layer-rule {
+    match at-startup=true
+    exclude layer="background"
+    place-within-backdrop true
+}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Warnings) != 0 {
+		t.Fatalf("warnings = %q, want none", cfg.Warnings)
+	}
+	top := LayerState{Layer: LayerTop}
+	if got := cfg.ResolveLayerRules("waybar", top).Opacity; got == nil || *got != 0.5 {
+		t.Errorf("waybar on top: opacity = %v, want 0.5", got)
+	}
+	if got := cfg.ResolveLayerRules("waybar", LayerState{Layer: LayerBottom}).Opacity; got != nil {
+		t.Errorf("waybar on bottom: opacity = %v, want none", *got)
+	}
+	if !cfg.ResolveLayerRules("panel", LayerState{Layer: LayerTop, AtStartup: true}).PlaceWithinBackdrop {
+		t.Error("a top layer at startup did not match at-startup=true")
+	}
+	if cfg.ResolveLayerRules("panel", top).PlaceWithinBackdrop {
+		t.Error("a layer after startup matched at-startup=true")
+	}
+	if cfg.ResolveLayerRules("wall", LayerState{Layer: LayerBackground, AtStartup: true}).PlaceWithinBackdrop {
+		t.Error("the excluded background layer matched")
+	}
+	for _, src := range []string{
+		`layer-rule { match layer="middle"; }`,
+		`layer-rule { match layer=1; }`,
+		`layer-rule { match at-startup="yes"; }`,
+	} {
+		if _, err := Parse("bad.kdl", []byte(src)); err == nil {
+			t.Errorf("%s parsed, want an error", src)
+		}
 	}
 }

@@ -229,9 +229,30 @@ type BackgroundEffectRule struct {
 	Blur *bool
 }
 
+// LayerMatch is one match or exclude line of a layer rule. Its properties are
+// ANDed; a nil property matches every surface.
 type LayerMatch struct {
-	Namespace   *regexp.Regexp
-	Unsupported bool
+	Namespace *regexp.Regexp
+	AtStartup *bool
+	Layer     *LayerName
+}
+
+// LayerName is a layer-shell layer by its Niri name.
+type LayerName string
+
+const (
+	LayerBackground LayerName = "background"
+	LayerBottom     LayerName = "bottom"
+	LayerTop        LayerName = "top"
+	LayerOverlay    LayerName = "overlay"
+)
+
+// LayerState is the state a layer rule is matched against besides the
+// namespace: the surface's current layer and whether the compositor is
+// still starting up.
+type LayerState struct {
+	Layer     LayerName
+	AtStartup bool
 }
 
 func (c *Config) ResolveWindowRules(appID, title string, state WindowState) WindowRuleResult {
@@ -359,14 +380,14 @@ func hasUnsupportedWindowMatch(matches []RuleMatch) bool {
 	return false
 }
 
-func (c *Config) ResolveLayerRules(namespace string) LayerRuleResult {
-	return ResolveLayerRules(c.LayerRules, namespace)
+func (c *Config) ResolveLayerRules(namespace string, state LayerState) LayerRuleResult {
+	return ResolveLayerRules(c.LayerRules, namespace, state)
 }
 
-func ResolveLayerRules(rules []LayerRule, namespace string) LayerRuleResult {
+func ResolveLayerRules(rules []LayerRule, namespace string, state LayerState) LayerRuleResult {
 	var result LayerRuleResult
 	for _, rule := range rules {
-		if !rule.matches(namespace) {
+		if !rule.matches(namespace, state) {
 			continue
 		}
 		if rule.PlaceWithinBackdrop != nil {
@@ -381,14 +402,11 @@ func ResolveLayerRules(rules []LayerRule, namespace string) LayerRuleResult {
 	return result
 }
 
-func (r LayerRule) matches(namespace string) bool {
-	if hasUnsupportedLayerMatch(r.Matches) || hasUnsupportedLayerMatch(r.Excludes) {
-		return false
-	}
+func (r LayerRule) matches(namespace string, state LayerState) bool {
 	if len(r.Matches) != 0 {
 		matched := false
 		for _, ruleMatch := range r.Matches {
-			if ruleMatch.matches(namespace) {
+			if ruleMatch.matches(namespace, state) {
 				matched = true
 				break
 			}
@@ -398,24 +416,17 @@ func (r LayerRule) matches(namespace string) bool {
 		}
 	}
 	for _, ruleMatch := range r.Excludes {
-		if ruleMatch.matches(namespace) {
+		if ruleMatch.matches(namespace, state) {
 			return false
 		}
 	}
 	return true
 }
 
-func (m LayerMatch) matches(namespace string) bool {
-	return !m.Unsupported && (m.Namespace == nil || m.Namespace.MatchString(namespace))
-}
-
-func hasUnsupportedLayerMatch(matches []LayerMatch) bool {
-	for _, match := range matches {
-		if match.Unsupported {
-			return true
-		}
-	}
-	return false
+func (m LayerMatch) matches(namespace string, state LayerState) bool {
+	return (m.Namespace == nil || m.Namespace.MatchString(namespace)) &&
+		(m.AtStartup == nil || *m.AtStartup == state.AtStartup) &&
+		(m.Layer == nil || *m.Layer == state.Layer)
 }
 
 func applyRuleValue[T any](target **T, value *T) {
@@ -844,9 +855,6 @@ func (c *Config) layerRule(node *document.Node) error {
 			} else {
 				rule.Excludes = append(rule.Excludes, match)
 			}
-			if match.Unsupported {
-				c.addWarning("layer-rule.match")
-			}
 		case "place-within-backdrop":
 			value, err := boolArg(child)
 			if err != nil {
@@ -910,15 +918,18 @@ func parseLayerMatch(node *document.Node) (LayerMatch, error) {
 			continue
 		}
 		switch key {
-		case "at-startup", "layer":
-			if key == "at-startup" {
-				if _, ok := property.Value.(bool); !ok {
-					return LayerMatch{}, fmt.Errorf("at-startup must be boolean")
-				}
-			} else if !ok {
-				return LayerMatch{}, fmt.Errorf("layer must be a string")
+		case "at-startup":
+			atStartup, ok := property.Value.(bool)
+			if !ok {
+				return LayerMatch{}, fmt.Errorf("at-startup must be boolean")
 			}
-			match.Unsupported = true
+			match.AtStartup = &atStartup
+		case "layer":
+			layer := LayerName(value)
+			if !ok || (layer != LayerBackground && layer != LayerBottom && layer != LayerTop && layer != LayerOverlay) {
+				return LayerMatch{}, fmt.Errorf("layer must be \"background\", \"bottom\", \"top\" or \"overlay\"")
+			}
+			match.Layer = &layer
 		default:
 			return LayerMatch{}, fmt.Errorf("unexpected match property `%s`", key)
 		}

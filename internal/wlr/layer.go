@@ -238,8 +238,8 @@ func (c *Compositor) handleNewLayerSurface(data unsafe.Pointer) {
 		layer:      layer,
 		output:     unsafe.Pointer(surface.output),
 		outputName: C.GoString(surface.output.name),
-		rules:      c.resolveLayerRules(C.GoString(surface.namespace)),
 	}
+	l.rules = c.resolveLayerRules(l)
 	key := unsafe.Pointer(surface.surface)
 	c.layerSurfaces[key] = l
 	c.layerOrder = append(c.layerOrder, l)
@@ -256,6 +256,9 @@ func (c *Compositor) handleNewLayerSurface(data unsafe.Pointer) {
 		if layer := sceneLayer(surface.current.layer); layer != l.layer {
 			l.layer = layer
 			C.sysc_reparent(l.tree, c.layerTrees[layer])
+			// A rule may match on the layer, as Niri's recompute on commit.
+			l.rules = c.resolveLayerRules(l)
+			c.syncRuleBackgroundEffects()
 		}
 		if surface.current.committed != 0 || bool(surface.initial_commit) {
 			c.arrangeLayers(l.output)
@@ -302,13 +305,24 @@ func (c *Compositor) handleNewLayerSurface(data unsafe.Pointer) {
 	})
 }
 
-func (c *Compositor) resolveLayerRules(namespace string) config.LayerRuleResult {
-	return config.ResolveLayerRules(c.layerRules, namespace)
+// resolveLayerRules matches the layer rules against the surface's namespace,
+// its layer and the startup window.
+func (c *Compositor) resolveLayerRules(l *layerSurface) config.LayerRuleResult {
+	state := config.LayerState{Layer: layerNames[l.layer], AtStartup: c.atStartup}
+	return config.ResolveLayerRules(c.layerRules, l.namespace(), state)
+}
+
+// layerNames are the Niri names of the stacking layers a layer surface uses.
+var layerNames = map[int]config.LayerName{
+	layerBackground: config.LayerBackground,
+	layerBottom:     config.LayerBottom,
+	layerTop:        config.LayerTop,
+	layerOverlay:    config.LayerOverlay,
 }
 
 func (c *Compositor) reapplyLayerRules() {
 	for _, layer := range c.layerOrder {
-		layer.rules = c.resolveLayerRules(C.GoString(layer.surface.namespace))
+		layer.rules = c.resolveLayerRules(layer)
 		c.applyLayerAppearance(layer)
 	}
 	c.syncRuleBackgroundEffects()
