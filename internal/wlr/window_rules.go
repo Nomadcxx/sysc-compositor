@@ -33,9 +33,7 @@ func (c *Compositor) ruleState(view *toplevelView, snapshot wm.Snapshot) config.
 			break
 		}
 	}
-	// Niri's is-window-cast-target is the window that an ongoing window
-	// screencast shows. The compositor has no window screencast protocol, so
-	// no window is ever the target of one.
+	state.IsWindowCastTarget = c.castTargetWindows[view.id]
 	if focused := c.keyboardFocusedView(); focused != nil && focused.id == view.id {
 		state.IsFocused = true
 	}
