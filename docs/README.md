@@ -6,7 +6,7 @@ A document that is not in this map is one the project will lose.
 Product contract: `plans/2026-10-02-sysc-compositor-design.md`. Workstreams and order:
 `plans/2026-10-02-orchestration.md`.
 
-Current continuation: [2026-11-06 handover](plans/2026-11-06-handover.md), with the
+Current continuation: [2026-11-07 handover](plans/2026-11-07-handover.md), with the
 [2026-11-05 implementation plan](plans/2026-11-05-handover.md) for the order and the rules.
 Owner order: finish compositor development and acceptance before resuming benchmarking.
 
@@ -29,7 +29,8 @@ executed until the owner schedules the milestone they belong to.
 | [plans/2026-10-02-m0-nested-tinywl.md](plans/2026-10-02-m0-nested-tinywl.md) | plan | M0, the first code in this repository: nested tinywl, one seat plus cursor. |
 | [plans/2026-10-02-sysc-launch.md](plans/2026-10-02-sysc-launch.md) | plan | Sibling workstream L0, executed in `/home/nomadx/sysc-launch`, not here. |
 | [plans/niri-parity-matrix.md](plans/niri-parity-matrix.md) | checklist | Remaining niri IPC and config parity. Fill this rather than expanding the design. |
-| [plans/2026-11-06-handover.md](plans/2026-11-06-handover.md) | handover | **Current state.** Touch and pointer settings merged; config slices 1–5 on draft #94 with four compositor tests not yet run; slice 6, integration, M15, acceptance and packaging next; leftover worktrees. |
+| [plans/2026-11-07-handover.md](plans/2026-11-07-handover.md) | handover | **Current state.** Slice 5 proven in lane 2 with its fixes; shell touch (sysc-shell #622) and input activity (#97) merged; compositor UI touch (#98) awaiting the owner's merge; slice 6, integration, M15, acceptance and packaging next; how to prove compositor tests in the laptop VM. |
+| [plans/2026-11-06-handover.md](plans/2026-11-06-handover.md) | handover | Superseded by the 2026-11-07 handover. Was: Touch and pointer settings merged; config slices 1–5 on draft #94 with four compositor tests not yet run; slice 6, integration, M15, acceptance and packaging next; leftover worktrees. |
 | [plans/2026-11-05-handover.md](plans/2026-11-05-handover.md) | handover / implementation plan | Implementation order and rules; its branch snapshot is superseded by the 2026-11-06 handover. Was: compositor first, benchmark deferred; verified branch/CI state, config appearance work, remaining M15 checkpoints, integration, acceptance and packaging gates. |
 | [plans/2026-11-03-handover.md](plans/2026-11-03-handover.md) | handover | The state after the sizing milestone and the bar work: the commit map on `main` and on the input branch, the laptop build and its rollback, the audits, the owner decisions in force (the attribution guard, the cherry-pick rule, the bar parity choice, the packaging deferral) and the open work in order. |
 | [plans/2026-10-28-release-readiness.md](plans/2026-10-28-release-readiness.md) | assessment | Release gates after capture and virtual input: remaining M12, M13–M15, session integration and hardware acceptance. |
