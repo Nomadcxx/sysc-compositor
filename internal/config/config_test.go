@@ -501,7 +501,7 @@ window-rule {
 	unsupported, err := Parse("unsupported-window-rule.kdl", []byte(`
 window-rule {
     opacity 0.5
-    baba-is-float true
+    variable-refresh-rate true
 }
 `))
 	if err != nil {
