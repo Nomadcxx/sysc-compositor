@@ -238,14 +238,22 @@ static void sysc_scene_scale_tree(struct wlr_scene_tree *tree,
 	wlr_scene_node_for_each_buffer(&tree->node, sysc_scale_scene_buffer, &context);
 }
 
-static void sysc_scene_set_buffer_opacity(struct wlr_scene_buffer *buffer,
-		int x, int y, void *data) {
-	(void)x; (void)y;
-	wlr_scene_buffer_set_opacity(buffer, *(float *)data);
+// The walk reaches disabled nodes too, unlike wlr_scene_node_for_each_buffer:
+// a popup's tree stays disabled until the popup maps, and its buffers must
+// already carry the parent's opacity then.
+static void sysc_scene_node_set_opacity(struct wlr_scene_node *node, float opacity) {
+	if (node->type == WLR_SCENE_NODE_BUFFER) {
+		wlr_scene_buffer_set_opacity(wlr_scene_buffer_from_node(node), opacity);
+	} else if (node->type == WLR_SCENE_NODE_TREE) {
+		struct wlr_scene_node *child;
+		wl_list_for_each(child, &wlr_scene_tree_from_node(node)->children, link) {
+			sysc_scene_node_set_opacity(child, opacity);
+		}
+	}
 }
 
 static void sysc_scene_tree_set_opacity(struct wlr_scene_tree *tree, float opacity) {
-	wlr_scene_node_for_each_buffer(&tree->node, sysc_scene_set_buffer_opacity, &opacity);
+	sysc_scene_node_set_opacity(&tree->node, opacity);
 }
 
 struct sysc_scene_opacity_ratio { float ratio; };

@@ -143,7 +143,7 @@ func (c *Compositor) trackXDGTree(xdgSurface *C.struct_wlr_xdg_surface, tree *C.
 func (c *Compositor) handleNewPopup(data unsafe.Pointer) {
 	popup := (*C.struct_wlr_xdg_popup)(data)
 	c.popups[popup] = struct{}{}
-	var commit, reposition, damage, destroy *Listener
+	var commit, appearance, reposition, damage, destroy *Listener
 	damage = AddListener(unsafe.Pointer(&popup.base.surface.events.commit), func(unsafe.Pointer) {
 		c.damageCaptureSources()
 	})
@@ -160,16 +160,25 @@ func (c *Compositor) handleNewPopup(data unsafe.Pointer) {
 			return
 		}
 		tree := c.trackXDGTree(popup.base, C.sysc_scene_xdg_create(parent, popup.base))
-		if view := c.viewForSurface(popup.parent); tree != nil && view != nil {
-			if view.clipToGeometry {
-				sceneFXSetSubsurfaceClip(unsafe.Pointer(&tree.node), false, 0, 0, 0, 0)
-			}
-			// The new popup tree was created after the parent applied its
-			// per-buffer opacity, so bring its buffers under the same rule.
-			c.syncViewOpacity(view)
-		} else if layer := c.layerSurfaceForSurface(popup.parent); tree != nil && layer != nil {
-			c.applyLayerAppearance(layer)
+		if view := c.viewForSurface(popup.parent); tree != nil && view != nil && view.clipToGeometry {
+			sceneFXSetSubsurfaceClip(unsafe.Pointer(&tree.node), false, 0, 0, 0, 0)
 		}
+		// The popup's tree was created after the parent applied its
+		// per-buffer opacity, and the scene adds the popup's buffers on its
+		// later commits. This listener follows the scene's own in the commit
+		// signal, so each new buffer comes under the parent's rules.
+		syncAppearance := func() {
+			if view := c.viewForSurface(popup.parent); view != nil {
+				c.syncViewOpacity(view)
+			} else if layer := c.layerSurfaceForSurface(popup.parent); layer != nil {
+				c.applyLayerAppearance(layer)
+			}
+		}
+		syncAppearance()
+		appearance = AddListener(unsafe.Pointer(&popup.base.surface.events.commit), func(unsafe.Pointer) {
+			syncAppearance()
+		})
+		c.keep(appearance)
 		c.syncRuleBackgroundEffects()
 		c.unconstrainPopup(popup)
 	})
@@ -178,7 +187,7 @@ func (c *Compositor) handleNewPopup(data unsafe.Pointer) {
 	})
 	destroy = AddListener(unsafe.Pointer(&popup.events.destroy), func(unsafe.Pointer) {
 		delete(c.popups, popup)
-		for _, l := range []*Listener{commit, reposition, damage, destroy} {
+		for _, l := range []*Listener{commit, appearance, reposition, damage, destroy} {
 			if l != nil {
 				c.drop(l)
 			}
