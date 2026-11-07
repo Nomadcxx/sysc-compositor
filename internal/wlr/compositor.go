@@ -147,6 +147,7 @@ type Compositor struct {
 	capture              *captureProtocol
 	pipewire             *pipeWire
 	casts                map[uint64]*screenCast
+	castTargetWindows    map[uint64]bool // the windows a cast shows, for is-window-cast-target
 	dynamicCastID        uint64
 	captureNodes         map[*C.struct_wlr_scene_node]*captureNodeOwner
 	xdgDecorationManager unsafe.Pointer

@@ -11,6 +11,7 @@ import (
 	"unsafe"
 
 	"github.com/Nomadcxx/sysc-compositor/internal/config"
+	"github.com/Nomadcxx/sysc-compositor/internal/ipc"
 	"github.com/Nomadcxx/sysc-compositor/internal/layout"
 	"github.com/Nomadcxx/sysc-compositor/internal/wlr/testclient"
 )
@@ -308,29 +309,34 @@ func TestWindowRuleIsActiveAppliesToTheActiveWindow(t *testing.T) {
 	runClient(t, c, []string{"weston-terminal"}, nil, nil)
 }
 
-// TestWindowRuleIsWindowCastTargetIsNeverTrue: the compositor has no window
-// screencast protocol, so no window is the target of one.
-func TestWindowRuleIsWindowCastTargetIsNeverTrue(t *testing.T) {
+// TestWindowRuleIsWindowCastTargetFollowsTheCasts: a window is the cast
+// target while a cast shows it, as Niri's refresh_mapped_cast_window_rules
+// reads it, and the rules are resolved again when the casts change. The
+// cast stands in for a PipeWire one; its stream is not needed for the match.
+func TestWindowRuleIsWindowCastTargetFollowsTheCasts(t *testing.T) {
 	c := newNested(t)
-	notTarget := false
-	openMaximized := true
+	target := true
+	opacity := 0.5
 	c.windowRules = []config.WindowRule{{
-		Matches:       []config.RuleMatch{{IsWindowCastTarget: &notTarget}},
-		OpenMaximized: &openMaximized,
+		Matches: []config.RuleMatch{{IsWindowCastTarget: &target}},
+		Opacity: &opacity,
 	}}
 	c.viewMapped = func(view *toplevelView) {
-		window, ok := findWindowSnapshot(c.WorkspaceSnapshot().Windows, view.id)
-		if !ok {
-			t.Errorf("mapped window %d missing from the workspace snapshot", view.id)
-			c.Terminate()
-			return
+		defer c.Terminate()
+		if view.appearance.Opacity != nil {
+			t.Errorf("an uncast window matched is-window-cast-target=true")
 		}
-		bounds := c.layoutBox()
-		want := bounds.w - 2*16
-		if window.Tile.Width != want {
-			t.Errorf("tile width = %d, want the maximized width %d", window.Tile.Width, want)
+		id := view.id
+		c.casts = map[uint64]*screenCast{1: {c: c, state: ipc.Cast{SessionID: 1, StreamID: 1, Target: ipc.CastTarget{WindowID: &id}}}}
+		c.castStateChanged()
+		if got := view.appearance.Opacity; got == nil || *got != opacity {
+			t.Errorf("cast window opacity = %v, want the rule's %v", got, opacity)
 		}
-		c.Terminate()
+		c.casts = nil
+		c.castStateChanged()
+		if view.appearance.Opacity != nil {
+			t.Errorf("the rule still matched after the cast stopped")
+		}
 	}
 	runClient(t, c, []string{"weston-terminal"}, nil, nil)
 }
