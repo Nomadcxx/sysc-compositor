@@ -236,9 +236,16 @@ Touch is not finished across the desktop. The gates below prove the compositor's
   handled tap, pinch zoom and scrolling on the previous candidate (`03f9274`).
 - Multi-finger gestures are not implemented. Each finger is tracked separately and delivered
   correctly, but pinch, rotate and swipe are Niri's gestures, not this milestone's.
-- Touch does not drive the compositor's own UI yet. The overview, the window switcher, the
-  screenshot UI, the colour picker, the exit dialog and the hotkey overlay only block a finger
-  while they are open, and a tap on a tab indicator does not switch tabs. Niri's `on_touch_down`
-  routes the screenshot UI and the MRU switcher.
+- **The compositor's own UI takes touch (2026-11-07)**, as Niri's `on_touch_down` routes it. The
+  first finger drives the screenshot UI, the window switcher, the exit dialog and the overview
+  through the pointer: the cursor goes to the finger and the finger is the left button, so a tap
+  confirms a switcher preview or cancels the switcher, selects an overview window, closes the exit
+  dialog, and a drag draws a screenshot selection. In the overview a finger over a top or overlay
+  layer surface goes to that surface instead. A touch down hides the hotkey overlay and is still
+  delivered. The colour picker takes no touch, as Niri's does not. Tests:
+  `internal/wlr/touch_ui_test.go`. Known differences: the cursor jumps to the finger, where Niri
+  hides it; the overview takes taps only, not Niri's touch drags; a second finger does not move a
+  screenshot selection; Mod with a finger does not start a move grab; a tab indicator tap waits for
+  the config branch, which owns the tab indicator.
 - Pinch and hold gestures count only as activity; they are not handled or forwarded to clients.
 - `input.touch`'s `calibration-matrix` still warns.

@@ -4,10 +4,12 @@ package wlr
 #cgo pkg-config: wlroots-0.20 wayland-server
 #cgo CFLAGS: -DWLR_USE_UNSTABLE
 
+#include <linux/input-event-codes.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <wayland-server-core.h>
 #include <wayland-util.h>
+#include <wlr/types/wlr_cursor.h>
 #include <wlr/types/wlr_input_device.h>
 #include <wlr/types/wlr_output.h>
 #include <wlr/types/wlr_output_layout.h>
@@ -106,6 +108,9 @@ func (c *Compositor) removeTouch(device unsafe.Pointer) {
 		return
 	}
 	fmt.Fprintf(os.Stderr, "sysc-compositor: touch device removed: %s\n", touchDeviceName(touch.device))
+	if c.touchUI != nil && c.touchUI.source == device {
+		c.touchUIUp(nowMsec())
+	}
 	c.endTouchPoints(nowMsec())
 	for _, listener := range touch.listeners {
 		c.drop(listener)
@@ -189,11 +194,19 @@ func (c *Compositor) handleTouchDown(data unsafe.Pointer) {
 		fmt.Fprintf(os.Stderr, "sysc-compositor: touch down dropped: the session is locked\n")
 		return
 	}
-	if c.modalUIOpen() {
+	lx, ly := c.touchLayoutPoint(touch, float64(event.x), float64(event.y))
+	// Niri hides the hotkey overlay on a touch down and still delivers it.
+	if c.hotkeyOverlay.open {
+		c.hideHotkeyOverlay()
+	}
+	if c.touchUI == nil && c.touchDrivesUI(lx, ly) {
+		c.touchUIDown(unsafe.Pointer(&touch.base), int32(event.touch_id), event.time_msec, lx, ly)
+		return
+	}
+	if c.modalUIOpen() && !c.touchReachesOverviewLayer(lx, ly) {
 		fmt.Fprintf(os.Stderr, "sysc-compositor: touch down dropped: a modal surface is open\n")
 		return
 	}
-	lx, ly := c.touchLayoutPoint(touch, float64(event.x), float64(event.y))
 	surface, sx, sy := c.surfaceAt(lx, ly)
 	if surface == nil {
 		fmt.Fprintf(os.Stderr, "sysc-compositor: touch down dropped: no surface under the finger\n")
@@ -236,11 +249,15 @@ func (c *Compositor) handleTouchMotion(data unsafe.Pointer) {
 		return
 	}
 	c.userActivity(true)
+	lx, ly := c.touchLayoutPoint(touch, float64(event.x), float64(event.y))
+	if c.touchUI != nil && c.touchUI.id == int32(event.touch_id) {
+		c.touchUIMove(event.time_msec, lx, ly)
+		return
+	}
 	point := c.touchPoints[int32(event.touch_id)]
 	if point == nil || point.surface == nil {
 		return
 	}
-	lx, ly := c.touchLayoutPoint(touch, float64(event.x), float64(event.y))
 	C.wlr_seat_touch_notify_motion(c.seat, event.time_msec, event.touch_id,
 		C.double(lx)-point.xOffset, C.double(ly)-point.yOffset)
 }
@@ -250,6 +267,10 @@ func (c *Compositor) handleTouchUp(data unsafe.Pointer) {
 	event := (*C.struct_wlr_touch_up_event)(data)
 	if c.touchDevices[unsafe.Pointer(&event.touch.base)] != nil {
 		c.userActivity(false)
+	}
+	if c.touchUI != nil && c.touchUI.id == int32(event.touch_id) {
+		c.touchUIUp(event.time_msec)
+		return
 	}
 	point := c.touchPoints[int32(event.touch_id)]
 	if point == nil {
@@ -264,6 +285,7 @@ func (c *Compositor) handleTouchUp(data unsafe.Pointer) {
 // does.
 func (c *Compositor) handleTouchCancel(data unsafe.Pointer) {
 	event := (*C.struct_wlr_touch_cancel_event)(data)
+	c.touchUIUp(event.time_msec)
 	c.endTouchPoints(event.time_msec)
 }
 
@@ -326,4 +348,60 @@ func (c *Compositor) setTouchConfig(cfg config.Touch) {
 		c.endTouchPoints(nowMsec())
 	}
 	c.refreshCapabilities()
+}
+
+// touchUIFinger is the finger that drives the compositor's own UI.
+type touchUIFinger struct {
+	id     int32
+	source unsafe.Pointer
+}
+
+// touchDrivesUI reports whether a finger landing at layout coordinates goes
+// to the compositor's own UI, as Niri's on_touch_down routes it: the
+// screenshot UI, the window switcher and the overview, except over a top or
+// overlay layer surface, which takes the finger itself. The exit dialog
+// closes on any press, a finger's too.
+func (c *Compositor) touchDrivesUI(lx, ly float64) bool {
+	if c.pickColor != nil {
+		return false
+	}
+	return c.shotUI != nil || c.switcher.isOpen() || c.exitDialog.open ||
+		c.overviewShown() && !c.upperLayerAt(lx, ly)
+}
+
+// touchReachesOverviewLayer reports whether a finger in the overview, with
+// no other modal UI up, lands on a top or overlay layer surface.
+func (c *Compositor) touchReachesOverviewLayer(lx, ly float64) bool {
+	return c.pickColor == nil && c.shotUI == nil && !c.switcher.isOpen() && !c.exitDialog.open &&
+		c.overviewShown() && c.upperLayerAt(lx, ly)
+}
+
+// touchUIDown takes the pointer to the finger and presses the left button
+// there, so the UI acts as it does for a click. A tablet pen drives the same
+// UI the same way.
+func (c *Compositor) touchUIDown(source unsafe.Pointer, id int32, timeMsec C.uint32_t, lx, ly float64) {
+	c.touchUI = &touchUIFinger{id: id, source: source}
+	c.touchUIMove(timeMsec, lx, ly)
+	c.deliverPointerButton(source, timeMsec, C.BTN_LEFT, C.WL_POINTER_BUTTON_STATE_PRESSED)
+}
+
+// touchUIMove drags the pointer with the finger.
+func (c *Compositor) touchUIMove(timeMsec C.uint32_t, lx, ly float64) {
+	C.wlr_cursor_warp_closest(c.cursor, nil, C.double(lx), C.double(ly))
+	c.damageCapturePointers()
+	if c.shotUIMotion() || c.switcherMotion() {
+		return
+	}
+	c.processCursorMotion(timeMsec)
+	C.wlr_seat_pointer_notify_frame(c.seat)
+}
+
+// touchUIUp releases the button the finger pressed. A cancel releases it too.
+func (c *Compositor) touchUIUp(timeMsec C.uint32_t) {
+	finger := c.touchUI
+	if finger == nil {
+		return
+	}
+	c.touchUI = nil
+	c.deliverPointerButton(finger.source, timeMsec, C.BTN_LEFT, C.WL_POINTER_BUTTON_STATE_RELEASED)
 }
