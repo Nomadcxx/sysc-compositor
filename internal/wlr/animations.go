@@ -226,6 +226,9 @@ func (c *Compositor) syncViewOpacity(view *toplevelView) {
 		opacity = 0
 	}
 	sceneFXSetTreeOpacity(view.sceneNode(), opacity)
+	if view.toplevel != nil {
+		c.syncPopupOpacity(view.toplevel.base.surface, opacity, view.appearance.Popups.Opacity)
+	}
 }
 
 func (c *Compositor) startWindowOpen(view *toplevelView) {

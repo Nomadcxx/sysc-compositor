@@ -162,6 +162,7 @@ type WindowRule struct {
 	BackgroundEffect         BackgroundEffectRule
 	// TiledState nil derives the tiled state from the decoration mode.
 	TiledState *bool
+	Popups     PopupsRule
 }
 
 type WindowRuleResult struct {
@@ -196,6 +197,7 @@ type WindowRuleResult struct {
 	BackgroundEffect         BackgroundEffectRule
 	// TiledState nil derives the tiled state from the decoration mode.
 	TiledState *bool
+	Popups     PopupsRule
 }
 
 type LayerRule struct {
@@ -209,6 +211,7 @@ type LayerRule struct {
 	// Shadow merges over the layout's shadow turned off, as in Niri.
 	Shadow           ShadowRule
 	BackgroundEffect BackgroundEffectRule
+	Popups           PopupsRule
 }
 
 // LayerRuleResult is every matching layer rule laid over the last, in order.
@@ -219,6 +222,24 @@ type LayerRuleResult struct {
 	GeometryCornerRadius *CornerRadius
 	Shadow               ShadowRule
 	BackgroundEffect     BackgroundEffectRule
+	Popups               PopupsRule
+}
+
+// PopupsRule is Niri's popups part: the xdg popups of a window or layer
+// surface draw with this opacity on top of their parent's, and a blur under
+// them takes this corner radius. A nil field keeps the earlier rule's.
+type PopupsRule struct {
+	// Opacity is clamped to [0, 1] when the popup is rendered.
+	Opacity              *float64
+	GeometryCornerRadius *CornerRadius
+	BackgroundEffect     BackgroundEffectRule
+}
+
+func (r PopupsRule) merge(part PopupsRule) PopupsRule {
+	applyRuleValue(&r.Opacity, part.Opacity)
+	applyRuleValue(&r.GeometryCornerRadius, part.GeometryCornerRadius)
+	r.BackgroundEffect.Blur = cmp.Or(part.BackgroundEffect.Blur, r.BackgroundEffect.Blur)
+	return r
 }
 
 // BlocksCapture is WindowRuleResult.BlocksCapture for a layer.
@@ -293,6 +314,7 @@ func ResolveWindowRules(rules []WindowRule, appID, title string, state WindowSta
 		result.BackgroundEffect.Blur = cmp.Or(rule.BackgroundEffect.Blur, result.BackgroundEffect.Blur)
 		applyRuleValue(&result.DrawBorderWithBackground, rule.DrawBorderWithBackground)
 		applyRuleValue(&result.TiledState, rule.TiledState)
+		result.Popups = result.Popups.merge(rule.Popups)
 	}
 	return result
 }
@@ -403,6 +425,7 @@ func ResolveLayerRules(rules []LayerRule, namespace string, state LayerState) La
 		applyRuleValue(&result.GeometryCornerRadius, rule.GeometryCornerRadius)
 		result.Shadow = result.Shadow.merge(rule.Shadow)
 		result.BackgroundEffect.Blur = cmp.Or(rule.BackgroundEffect.Blur, result.BackgroundEffect.Blur)
+		result.Popups = result.Popups.merge(rule.Popups)
 	}
 	return result
 }
@@ -722,6 +745,12 @@ func (c *Config) windowRule(node *document.Node) error {
 			if err == nil {
 				rule.BackgroundEffect.Blur = cmp.Or(part.Blur, rule.BackgroundEffect.Blur)
 			}
+		case "popups":
+			var part PopupsRule
+			part, err = c.popupsRule(child, "window-rule.popups")
+			if err == nil {
+				rule.Popups = rule.Popups.merge(part)
+			}
 		default:
 			c.addWarning("window-rule")
 		}
@@ -899,6 +928,12 @@ func (c *Config) layerRule(node *document.Node) error {
 				return fmt.Errorf("background-effect: %w", err)
 			}
 			rule.BackgroundEffect.Blur = cmp.Or(part.Blur, rule.BackgroundEffect.Blur)
+		case "popups":
+			part, err := c.popupsRule(child, "layer-rule.popups")
+			if err != nil {
+				return fmt.Errorf("popups: %w", err)
+			}
+			rule.Popups = rule.Popups.merge(part)
 		default:
 			c.addWarning("layer-rule")
 		}
@@ -1066,6 +1101,37 @@ func blockOutFromArg(node *document.Node) (string, error) {
 		return "", fmt.Errorf("expected screen-capture or screencast")
 	}
 	return value[0], nil
+}
+
+// popupsRule parses Niri's popups part of a window or layer rule.
+func (c *Config) popupsRule(node *document.Node, prefix string) (PopupsRule, error) {
+	var rule PopupsRule
+	if len(node.Arguments) != 0 || len(node.Properties) != 0 {
+		return rule, fmt.Errorf("popups takes child nodes only")
+	}
+	for _, child := range node.Children {
+		var err error
+		switch nodeName(child) {
+		case "opacity":
+			var value float64
+			value, err = numberArg(child)
+			rule.Opacity = &value
+		case "geometry-corner-radius":
+			var value CornerRadius
+			value, err = parseCornerRadius(child)
+			rule.GeometryCornerRadius = &value
+		case "background-effect":
+			var part BackgroundEffectRule
+			part, err = c.backgroundEffectRule(child, prefix+".background-effect")
+			rule.BackgroundEffect.Blur = cmp.Or(part.Blur, rule.BackgroundEffect.Blur)
+		default:
+			err = fmt.Errorf("unexpected key")
+		}
+		if err != nil {
+			return PopupsRule{}, fmt.Errorf("%s: %w", nodeName(child), err)
+		}
+	}
+	return rule, nil
 }
 
 // backgroundEffectRule parses Niri's background-effect part. xray, noise and

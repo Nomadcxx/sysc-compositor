@@ -347,6 +347,7 @@ func (c *Compositor) applyLayerAppearance(l *layerSurface) {
 		opacity = clampOpacity(*l.rules.Opacity)
 	}
 	sceneFXSetTreeOpacity(unsafe.Pointer(l.tree), opacity)
+	c.syncPopupOpacity(l.surface.surface, opacity, l.rules.Popups.Opacity)
 
 	width, height := int(l.surface.surface.current.width), int(l.surface.surface.current.height)
 	var radii config.CornerRadius

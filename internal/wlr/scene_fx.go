@@ -439,6 +439,14 @@ static void sysc_scene_blur_box(struct wlr_scene_node *node, int *x, int *y, int
 	*height = blur->height;
 }
 
+static void sysc_scene_blur_set_corners(struct wlr_scene_node *node, int tl, int tr, int br, int bl) {
+	wlr_scene_blur_set_corner_radii(wlr_scene_blur_from_node(node), corner_radii_new(tl, tr, br, bl));
+}
+
+static int sysc_scene_blur_top_left_corner(struct wlr_scene_node *node) {
+	return wlr_scene_blur_from_node(node)->corners.top_left;
+}
+
 static void *sysc_scene_node_destroy_signal(struct wlr_scene_node *node) {
 	return &node->events.destroy;
 }
@@ -654,6 +662,16 @@ func sceneFXNodeDestroy(node unsafe.Pointer) {
 func sceneFXSetWindowCorners(node, surface unsafe.Pointer, radii [4]uint16) {
 	C.sysc_scene_set_window_corners((*C.struct_wlr_scene_node)(node), (*C.struct_wlr_surface)(surface),
 		C.int(radii[0]), C.int(radii[1]), C.int(radii[2]), C.int(radii[3]))
+}
+
+func sceneFXSetBlurCorners(node unsafe.Pointer, radii [4]uint16) {
+	C.sysc_scene_blur_set_corners((*C.struct_wlr_scene_node)(node),
+		C.int(radii[0]), C.int(radii[1]), C.int(radii[2]), C.int(radii[3]))
+}
+
+// sceneFXBlurTopLeftCorner is a blur node's top-left corner radius.
+func sceneFXBlurTopLeftCorner(node unsafe.Pointer) int {
+	return int(C.sysc_scene_blur_top_left_corner((*C.struct_wlr_scene_node)(node)))
 }
 
 // sceneFXBlurBox is a blur node's position in its parent and its size.
