@@ -204,6 +204,7 @@ type toplevelView struct {
 	cornerRadii             config.CornerRadius
 	clipToGeometry          bool
 	presentationOpacity     float64
+	bobY                    int // the baba-is-float offset below the view's place
 	openAnimationStarted    bool
 	openAnimationFinished   bool
 	presentationVisible     bool
@@ -1711,10 +1712,17 @@ func (v *toplevelView) treePosition() (int, int) {
 	return int(x), int(y)
 }
 
+// layoutPosition is where the layout puts the view: its tree position
+// without the baba-is-float offset.
+func (v *toplevelView) layoutPosition() (int, int) {
+	x, y := v.treePosition()
+	return x, y - v.bobY
+}
+
 // placeView moves a view's window-geometry origin to (x, y) in layout
-// coordinates, for tests.
+// coordinates.
 func (c *Compositor) placeView(view *toplevelView, x, y int) {
-	C.sysc_scene_tree_set_position(view.tree, C.int(x), C.int(y))
+	C.sysc_scene_tree_set_position(view.tree, C.int(x), C.int(y+view.bobY))
 	c.syncViewDecorations(view)
 }
 

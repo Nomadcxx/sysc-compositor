@@ -49,6 +49,7 @@ import "C"
 import (
 	"math"
 	"slices"
+	"time"
 	"unsafe"
 
 	"github.com/Nomadcxx/sysc-compositor/internal/config"
@@ -90,6 +91,8 @@ type layerSurface struct {
 	rules      config.LayerRuleResult
 	shadowNode unsafe.Pointer
 	listeners  []*Listener
+	// bobY is the baba-is-float offset the tree is drawn at below its place.
+	bobY int
 }
 
 type LayerKind uint8
@@ -273,6 +276,7 @@ func (c *Compositor) handleNewLayerSurface(data unsafe.Pointer) {
 	add(unsafe.Pointer(&surface.surface.events._map), func(unsafe.Pointer) {
 		c.arrangeLayers(l.output)
 		c.syncRuleBackgroundEffects()
+		c.scheduleAnimationTick()
 		if snapshotKeyboardMode(int(surface.current.keyboard_interactive)) == LayerKeyboardOnDemandMode {
 			c.onDemandLayerFocus = l
 			c.setActiveOutputName(l.outputName)
@@ -326,6 +330,7 @@ func (c *Compositor) reapplyLayerRules() {
 		c.applyLayerAppearance(layer)
 	}
 	c.syncRuleBackgroundEffects()
+	c.syncBobbing(time.Now())
 }
 
 func (l *layerSurface) namespace() string { return C.GoString(l.surface.namespace) }
@@ -411,11 +416,24 @@ func (c *Compositor) arrangeLayers(output unsafe.Pointer) {
 					continue
 				}
 				C.sysc_layer_configure(l.scene, &full, &usable)
+				// The configure put the tree back in its place.
+				if l.bobY != 0 {
+					C.wlr_scene_node_set_position(&l.tree.node, l.tree.node.x, l.tree.node.y+C.int(l.bobY))
+				}
 			}
 		}
 	}
 	c.usable[output] = rect{int(usable.x), int(usable.y), int(usable.width), int(usable.height)}
 	c.syncWorkspaceOutput(output)
+}
+
+// setLayerBob draws a layer surface bob below its place.
+func (l *layerSurface) setLayerBob(bob int) {
+	if bob == l.bobY || l.tree == nil {
+		return
+	}
+	C.wlr_scene_node_set_position(&l.tree.node, l.tree.node.x, l.tree.node.y+C.int(bob-l.bobY))
+	l.bobY = bob
 }
 
 // closeOutputLayers tells every layer surface on an output that is going away

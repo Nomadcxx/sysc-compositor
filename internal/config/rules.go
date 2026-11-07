@@ -162,7 +162,9 @@ type WindowRule struct {
 	BackgroundEffect         BackgroundEffectRule
 	// TiledState nil derives the tiled state from the decoration mode.
 	TiledState *bool
-	Popups     PopupsRule
+	// BabaIsFloat bobs the window up and down, Niri's baba-is-float.
+	BabaIsFloat *bool
+	Popups      PopupsRule
 }
 
 type WindowRuleResult struct {
@@ -197,7 +199,9 @@ type WindowRuleResult struct {
 	BackgroundEffect         BackgroundEffectRule
 	// TiledState nil derives the tiled state from the decoration mode.
 	TiledState *bool
-	Popups     PopupsRule
+	// BabaIsFloat bobs the window up and down, Niri's baba-is-float.
+	BabaIsFloat *bool
+	Popups      PopupsRule
 }
 
 type LayerRule struct {
@@ -212,6 +216,7 @@ type LayerRule struct {
 	Shadow           ShadowRule
 	BackgroundEffect BackgroundEffectRule
 	Popups           PopupsRule
+	BabaIsFloat      *bool
 }
 
 // LayerRuleResult is every matching layer rule laid over the last, in order.
@@ -223,6 +228,8 @@ type LayerRuleResult struct {
 	Shadow               ShadowRule
 	BackgroundEffect     BackgroundEffectRule
 	Popups               PopupsRule
+	// BabaIsFloat bobs the surface up and down, Niri's baba-is-float.
+	BabaIsFloat bool
 }
 
 // PopupsRule is Niri's popups part: the xdg popups of a window or layer
@@ -314,6 +321,7 @@ func ResolveWindowRules(rules []WindowRule, appID, title string, state WindowSta
 		result.BackgroundEffect.Blur = cmp.Or(rule.BackgroundEffect.Blur, result.BackgroundEffect.Blur)
 		applyRuleValue(&result.DrawBorderWithBackground, rule.DrawBorderWithBackground)
 		applyRuleValue(&result.TiledState, rule.TiledState)
+		applyRuleValue(&result.BabaIsFloat, rule.BabaIsFloat)
 		result.Popups = result.Popups.merge(rule.Popups)
 	}
 	return result
@@ -419,6 +427,9 @@ func ResolveLayerRules(rules []LayerRule, namespace string, state LayerState) La
 		}
 		if rule.PlaceWithinBackdrop != nil {
 			result.PlaceWithinBackdrop = *rule.PlaceWithinBackdrop
+		}
+		if rule.BabaIsFloat != nil {
+			result.BabaIsFloat = *rule.BabaIsFloat
 		}
 		applyRuleValue(&result.Opacity, rule.Opacity)
 		applyRuleValue(&result.BlockOutFrom, rule.BlockOutFrom)
@@ -698,7 +709,7 @@ func (c *Config) windowRule(node *document.Node) error {
 			if err == nil {
 				rule.Opacity = &value
 			}
-		case "clip-to-geometry", "draw-border-with-background", "tiled-state":
+		case "clip-to-geometry", "draw-border-with-background", "tiled-state", "baba-is-float":
 			var value bool
 			value, err = boolArg(child)
 			if err == nil {
@@ -707,8 +718,10 @@ func (c *Config) windowRule(node *document.Node) error {
 					rule.ClipToGeometry = &value
 				case "draw-border-with-background":
 					rule.DrawBorderWithBackground = &value
-				default:
+				case "tiled-state":
 					rule.TiledState = &value
+				default:
+					rule.BabaIsFloat = &value
 				}
 			}
 		case "focus-ring", "border":
@@ -892,12 +905,16 @@ func (c *Config) layerRule(node *document.Node) error {
 			} else {
 				rule.Excludes = append(rule.Excludes, match)
 			}
-		case "place-within-backdrop":
+		case "place-within-backdrop", "baba-is-float":
 			value, err := boolArg(child)
 			if err != nil {
-				return fmt.Errorf("place-within-backdrop: %w", err)
+				return fmt.Errorf("%s: %w", nodeName(child), err)
 			}
-			rule.PlaceWithinBackdrop = &value
+			if nodeName(child) == "place-within-backdrop" {
+				rule.PlaceWithinBackdrop = &value
+			} else {
+				rule.BabaIsFloat = &value
+			}
 		case "opacity":
 			value, err := numberArg(child)
 			if err != nil {

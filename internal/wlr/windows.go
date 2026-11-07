@@ -255,6 +255,7 @@ func (c *Compositor) reapplyWindowRules() {
 		}
 		c.syncViewOpacity(view)
 	}
+	c.syncBobbing(time.Now())
 	// A rule that changes the border width resizes the window inside its tile.
 	if resized {
 		c.applyWorkspaceModel()

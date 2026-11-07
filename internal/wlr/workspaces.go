@@ -363,6 +363,8 @@ func (c *Compositor) applyWorkspaceModel() {
 	if c.model == nil {
 		return
 	}
+	// A window that maps with baba-is-float starts the clock that bobs it.
+	defer c.scheduleAnimationTick()
 	for _, view := range c.views {
 		c.syncWorkspaceWindowSizeHints(view)
 	}
@@ -453,7 +455,7 @@ func (c *Compositor) applyWorkspaceModel() {
 			if targetWidth > 0 && targetHeight > 0 {
 				C.sysc_workspace_set_size(view.toplevel, C.int(targetWidth), C.int(targetHeight))
 			}
-			x, y := view.treePosition()
+			x, y := view.layoutPosition()
 			height := c.workspaceBounds(window.Output).Height
 			if height <= 0 {
 				height = 1
@@ -497,7 +499,7 @@ func (c *Compositor) applyWorkspaceModel() {
 				geometry := view.geometry()
 				if targetWidth != geometry.w || targetHeight != geometry.h {
 					kind = c.animationConfig.WindowResize
-				} else if currentX, currentY := view.treePosition(); targetX != currentX && targetY == currentY {
+				} else if currentX, currentY := view.layoutPosition(); targetX != currentX && targetY == currentY {
 					kind = c.animationConfig.HorizontalViewMovement
 				}
 				if oldVisible && oldOutput == window.Output {
@@ -521,7 +523,7 @@ func (c *Compositor) applyWorkspaceModel() {
 		}
 		if view.fullscreen {
 			if bounds, ok := c.outputLayoutBounds(window.Output); ok {
-				if x, y := view.treePosition(); x != bounds.X || y != bounds.Y {
+				if x, y := view.layoutPosition(); x != bounds.X || y != bounds.Y {
 					c.setViewScenePosition(view, bounds.X, bounds.Y)
 				}
 				if int(view.toplevel.scheduled.width) != bounds.Width || int(view.toplevel.scheduled.height) != bounds.Height {
