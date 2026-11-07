@@ -8,13 +8,26 @@ package wlr
 #include <wlr/types/wlr_server_decoration.h>
 #include <wlr/util/edges.h>
 
+// wlr_xdg_toplevel_set_tiled schedules a configure every time, so an
+// unchanged state is left alone.
 static void sysc_xdg_toplevel_set_tiled_edges(struct wlr_xdg_toplevel *toplevel,
 		uint32_t tiled_edges) {
-	if (toplevel->base->initialized) {
-		wlr_xdg_toplevel_set_tiled(toplevel, tiled_edges);
-	} else {
+	if (!toplevel->base->initialized) {
 		toplevel->scheduled.tiled = tiled_edges;
+	} else if (toplevel->scheduled.tiled != tiled_edges) {
+		wlr_xdg_toplevel_set_tiled(toplevel, tiled_edges);
 	}
+}
+
+static bool sysc_kde_decoration_is_server(struct wlr_server_decoration_manager *manager,
+		struct wlr_surface *surface) {
+	struct wlr_server_decoration *decoration;
+	wl_list_for_each(decoration, &manager->decorations, link) {
+		if (decoration->surface == surface) {
+			return decoration->mode == WLR_SERVER_DECORATION_MANAGER_MODE_SERVER;
+		}
+	}
+	return false;
 }
 
 static void sysc_xdg_decoration_set_initial_preference(
@@ -26,8 +39,6 @@ static void sysc_xdg_decoration_set_initial_preference(
 	} else {
 		decoration->scheduled_mode = mode;
 	}
-	sysc_xdg_toplevel_set_tiled_edges(decoration->toplevel,
-		WLR_EDGE_TOP | WLR_EDGE_RIGHT | WLR_EDGE_BOTTOM | WLR_EDGE_LEFT);
 }
 
 static void sysc_xdg_decoration_apply_request(
@@ -42,9 +53,6 @@ static void sysc_xdg_decoration_apply_request(
 	} else {
 		decoration->scheduled_mode = mode;
 	}
-	uint32_t tiled_edges = mode == WLR_XDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE ?
-		WLR_EDGE_TOP | WLR_EDGE_RIGHT | WLR_EDGE_BOTTOM | WLR_EDGE_LEFT : WLR_EDGE_NONE;
-	sysc_xdg_toplevel_set_tiled_edges(decoration->toplevel, tiled_edges);
 }
 */
 import "C"
@@ -106,9 +114,16 @@ func (c *Compositor) handleNewDecoration(data unsafe.Pointer) {
 		c.toplevelDecorations = make(map[*C.struct_wlr_xdg_toplevel]*C.struct_wlr_xdg_toplevel_decoration_v1)
 	}
 	c.toplevelDecorations[decoration.toplevel] = decoration
+	syncTiled := func() {
+		if view := c.views[unsafe.Pointer(decoration.toplevel)]; view != nil {
+			c.syncTiledState(view)
+		}
+	}
+	syncTiled()
 	var requestMode, destroy *Listener
 	requestMode = AddListener(unsafe.Pointer(&decoration.events.request_mode), func(unsafe.Pointer) {
 		C.sysc_xdg_decoration_apply_request(decoration, C.bool(c.preferNoCSD))
+		syncTiled()
 	})
 	destroy = AddListener(unsafe.Pointer(&decoration.events.destroy), func(unsafe.Pointer) {
 		delete(c.toplevelDecorations, decoration.toplevel)
@@ -123,4 +138,32 @@ func (c *Compositor) handleNewDecoration(data unsafe.Pointer) {
 func (c *Compositor) serverSideDecorated(view *toplevelView) bool {
 	decoration := c.toplevelDecorations[view.toplevel]
 	return decoration != nil && decoration.current.mode == C.WLR_XDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE
+}
+
+// syncTiledState tells a toplevel whether it is tiled, Niri's
+// update_tiled_state. A tiled client drops its rounded corners and shadows,
+// even one that ignores the decoration protocols. A tiled-state rule decides
+// when it is set. Otherwise a window that negotiated an xdg-decoration mode
+// is tiled when that mode is server-side, and any other window follows
+// prefer-no-csd or its KDE server decoration.
+func (c *Compositor) syncTiledState(view *toplevelView) {
+	if view == nil || view.toplevel == nil {
+		return
+	}
+	tiled := c.preferNoCSD
+	decoration := c.toplevelDecorations[view.toplevel]
+	switch {
+	case view.appearance.TiledState != nil:
+		tiled = *view.appearance.TiledState
+	case decoration != nil && decoration.scheduled_mode != C.WLR_XDG_TOPLEVEL_DECORATION_V1_MODE_NONE:
+		tiled = decoration.scheduled_mode == C.WLR_XDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE
+	case c.kdeDecorationManager != nil && bool(C.sysc_kde_decoration_is_server(
+		(*C.struct_wlr_server_decoration_manager)(c.kdeDecorationManager), view.toplevel.base.surface)):
+		tiled = true
+	}
+	edges := C.uint32_t(C.WLR_EDGE_NONE)
+	if tiled {
+		edges = C.WLR_EDGE_TOP | C.WLR_EDGE_RIGHT | C.WLR_EDGE_BOTTOM | C.WLR_EDGE_LEFT
+	}
+	C.sysc_xdg_toplevel_set_tiled_edges(view.toplevel, edges)
 }

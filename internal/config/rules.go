@@ -160,6 +160,8 @@ type WindowRule struct {
 	// DrawBorderWithBackground nil means true for a client-side decorated window.
 	DrawBorderWithBackground *bool
 	BackgroundEffect         BackgroundEffectRule
+	// TiledState nil derives the tiled state from the decoration mode.
+	TiledState *bool
 }
 
 type WindowRuleResult struct {
@@ -192,6 +194,8 @@ type WindowRuleResult struct {
 	// DrawBorderWithBackground nil means true for a client-side decorated window.
 	DrawBorderWithBackground *bool
 	BackgroundEffect         BackgroundEffectRule
+	// TiledState nil derives the tiled state from the decoration mode.
+	TiledState *bool
 }
 
 type LayerRule struct {
@@ -288,6 +292,7 @@ func ResolveWindowRules(rules []WindowRule, appID, title string, state WindowSta
 		result.Decorations = result.Decorations.merge(rule.Decorations)
 		result.BackgroundEffect.Blur = cmp.Or(rule.BackgroundEffect.Blur, result.BackgroundEffect.Blur)
 		applyRuleValue(&result.DrawBorderWithBackground, rule.DrawBorderWithBackground)
+		applyRuleValue(&result.TiledState, rule.TiledState)
 	}
 	return result
 }
@@ -670,14 +675,17 @@ func (c *Config) windowRule(node *document.Node) error {
 			if err == nil {
 				rule.Opacity = &value
 			}
-		case "clip-to-geometry", "draw-border-with-background":
+		case "clip-to-geometry", "draw-border-with-background", "tiled-state":
 			var value bool
 			value, err = boolArg(child)
 			if err == nil {
-				if nodeName(child) == "clip-to-geometry" {
+				switch nodeName(child) {
+				case "clip-to-geometry":
 					rule.ClipToGeometry = &value
-				} else {
+				case "draw-border-with-background":
 					rule.DrawBorderWithBackground = &value
+				default:
+					rule.TiledState = &value
 				}
 			}
 		case "focus-ring", "border":
