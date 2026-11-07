@@ -508,6 +508,48 @@ layer-rule {
 	}
 }
 
+// TestLayerRuleMatchesTheLayerAndTheStartup: a layer rule may match on the
+// surface's layer and on the startup window, as Niri's layer-rule match
+// does. The rule stops matching when the startup window ends.
+func TestLayerRuleMatchesTheLayerAndTheStartup(t *testing.T) {
+	cfg, err := config.Parse("layer-state.kdl", []byte(`
+layer-rule {
+    match layer="background" at-startup=true
+    opacity 0.5
+}
+layer-rule {
+    match layer="top"
+    opacity 0.25
+}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := newNestedWith(t, Options{LayerRules: cfg.LayerRules})
+	var checked bool
+	pollThenStop(c, func() bool {
+		for _, layer := range c.layerOrder {
+			if _, _, mapped := layer.mappedSize(); !mapped || layer.layer != layerBackground {
+				continue
+			}
+			checked = true
+			if layer.rules.Opacity == nil || *layer.rules.Opacity != 0.5 {
+				t.Errorf("background layer opacity at startup = %v, want 0.5", layer.rules.Opacity)
+			}
+			c.startupElapsed()
+			if layer.rules.Opacity != nil {
+				t.Errorf("background layer opacity after startup = %v, want none", *layer.rules.Opacity)
+			}
+			return true
+		}
+		return false
+	})
+	runClient(t, c, []string{"swaybg", "-m", "fill", "-i", solidPNG(t, color.NRGBA{R: 0x33, G: 0x66, B: 0x99, A: 255})}, nil, nil)
+	if !checked {
+		t.Fatal("swaybg never mapped a background layer surface")
+	}
+}
+
 // solidPNG writes a 16x16 image of one colour and returns its path.
 func solidPNG(t *testing.T, fill color.NRGBA) string {
 	t.Helper()

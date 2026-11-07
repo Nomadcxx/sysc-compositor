@@ -49,11 +49,12 @@ func (c *Compositor) armStartupTimer() {
 	}
 }
 
-// startupElapsed ends the startup window and reads the window rules again, so
-// that a rule with at-startup stops matching.
+// startupElapsed ends the startup window and reads the window and layer rules
+// again, so that a rule with at-startup stops matching.
 func (c *Compositor) startupElapsed() {
 	c.atStartup = false
 	c.reapplyWindowRules()
+	c.reapplyLayerRules()
 }
 
 func (c *Compositor) stopStartupTimer() {
