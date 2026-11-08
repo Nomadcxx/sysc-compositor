@@ -7,6 +7,28 @@ import (
 	"github.com/Nomadcxx/sysc-compositor/internal/wm"
 )
 
+// addConfigurableTestOutput adds a headless output and returns its name:
+// wlroots numbers headless outputs across the whole test process.
+func addConfigurableTestOutput(t *testing.T, c *Compositor) string {
+	t.Helper()
+	before := map[string]bool{}
+	for _, output := range c.OutputSnapshot() {
+		before[output.Name] = true
+	}
+	headless, err := addHeadlessTestOutput(c, 800, 600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(headless.destroy)
+	for _, output := range c.OutputSnapshot() {
+		if !before[output.Name] {
+			return output.Name
+		}
+	}
+	t.Fatal("the headless output did not appear")
+	return ""
+}
+
 func outputSnapshotNamed(c *Compositor, name string) (OutputSnapshot, bool) {
 	for _, output := range c.OutputSnapshot() {
 		if output.Name == name {
@@ -38,10 +60,11 @@ func TestOutputConfigAppliesEachOutputsSection(t *testing.T) {
 		}
 	}
 	two := 2.0
+	name := addConfigurableTestOutput(t, c)
 	sections := func(side config.OutputPosition, primaryMode *config.OutputMode) []config.OutputConfig {
 		return []config.OutputConfig{
 			{Name: primary.Name, Mode: primaryMode, Position: &config.OutputPosition{}},
-			{Name: "HEADLESS-1", Mode: &config.OutputMode{Width: 1280, Height: 720, Refresh: 60, Custom: true},
+			{Name: name, Mode: &config.OutputMode{Width: 1280, Height: 720, Refresh: 60, Custom: true},
 				Scale: &two, Transform: config.Transform90, Position: &side, VRR: &config.VRR{}},
 		}
 	}
@@ -52,11 +75,6 @@ func TestOutputConfigAppliesEachOutputsSection(t *testing.T) {
 	if err := c.Reconfigure(Options{Outputs: sections(config.OutputPosition{X: 5000, Y: 50}, primaryMode)}); err != nil {
 		t.Fatal(err)
 	}
-	headless, err := addHeadlessTestOutput(c, 800, 600)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(headless.destroy)
 
 	primary, _ = outputSnapshotNamed(c, primary.Name)
 	if target != nil {
@@ -67,16 +85,16 @@ func TestOutputConfigAppliesEachOutputsSection(t *testing.T) {
 	if primary.Logical == nil || primary.Logical.X != 0 || primary.Logical.Y != 0 {
 		t.Errorf("%s logical = %+v, want it at 0,0", primary.Name, primary.Logical)
 	}
-	side, ok := outputSnapshotNamed(c, "HEADLESS-1")
+	side, ok := outputSnapshotNamed(c, name)
 	if !ok || side.Logical == nil {
-		t.Fatalf("HEADLESS-1 = %+v, want an enabled output", side)
+		t.Fatalf("%s = %+v, want an enabled output", name, side)
 	}
 	// 1280x720 turned 90 degrees at scale 2.
 	if got := *side.Logical; got != (LogicalOutputSnapshot{X: 5000, Y: 50, Width: 360, Height: 640, Scale: 2, Transform: uint32(config.Transform90)}) {
-		t.Errorf("HEADLESS-1 logical = %+v, want 360x640 at 5000,50, scale 2, turned 90", got)
+		t.Errorf("%s logical = %+v, want 360x640 at 5000,50, scale 2, turned 90", name, got)
 	}
 	if side.VRREnabled {
-		t.Error("HEADLESS-1 has VRR on, which headless outputs cannot do")
+		t.Errorf("%s has VRR on, which headless outputs cannot do", name)
 	}
 
 	// An overlapping position falls back to the right of the placed outputs;
@@ -86,9 +104,9 @@ func TestOutputConfigAppliesEachOutputsSection(t *testing.T) {
 		t.Fatal(err)
 	}
 	primary, _ = outputSnapshotNamed(c, primary.Name)
-	side, _ = outputSnapshotNamed(c, "HEADLESS-1")
+	side, _ = outputSnapshotNamed(c, name)
 	if side.Logical == nil || primary.Logical == nil || side.Logical.X != int32(primary.Logical.Width) || side.Logical.Y != 0 {
-		t.Errorf("HEADLESS-1 logical = %+v next to %+v, want it placed right of %s", side.Logical, primary.Logical, primary.Name)
+		t.Errorf("%s logical = %+v next to %+v, want it placed right of %s", name, side.Logical, primary.Logical, primary.Name)
 	}
 	if index, _ := pickOutputMode(outputModeChoicesOf(primary), nil); index >= 0 &&
 		(primary.CurrentMode == nil || int(*primary.CurrentMode) != index) {
@@ -110,19 +128,15 @@ func outputModeChoicesOf(output OutputSnapshot) []outputModeChoice {
 // logical box. focus-at-startup picks the focused output.
 func TestOutputConfigOffTakesTheOutputAwayAndBack(t *testing.T) {
 	c := newNested(t)
-	workspaces := []wm.WorkspaceConfig{{Name: "side", OpenOnOutput: "HEADLESS-1"}}
-	on := []config.OutputConfig{{Name: "HEADLESS-1", FocusAtStartup: true}}
+	name := addConfigurableTestOutput(t, c)
+	workspaces := []wm.WorkspaceConfig{{Name: "side", OpenOnOutput: name}}
+	on := []config.OutputConfig{{Name: name, FocusAtStartup: true}}
 	if err := c.Reconfigure(Options{Workspaces: workspaces, Outputs: on}); err != nil {
 		t.Fatal(err)
 	}
-	headless, err := addHeadlessTestOutput(c, 800, 600)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(headless.destroy)
 	c.focusDefaultOutput()
-	if got := c.FocusedOutputName(); got != "HEADLESS-1" {
-		t.Errorf("focused output = %q, want the focus-at-startup HEADLESS-1", got)
+	if got := c.FocusedOutputName(); got != name {
+		t.Errorf("focused output = %q, want the focus-at-startup %s", got, name)
 	}
 	sideOutput := func() string {
 		for _, workspace := range c.WorkspaceSnapshot().Workspaces {
@@ -132,32 +146,32 @@ func TestOutputConfigOffTakesTheOutputAwayAndBack(t *testing.T) {
 		}
 		return ""
 	}
-	if got := sideOutput(); got != "HEADLESS-1" {
-		t.Fatalf("workspace side is on %q, want HEADLESS-1", got)
+	if got := sideOutput(); got != name {
+		t.Fatalf("workspace side is on %q, want %s", got, name)
 	}
 	enabled := c.EnabledOutputs()
 
 	if err := c.Reconfigure(Options{Workspaces: workspaces,
-		Outputs: []config.OutputConfig{{Name: "HEADLESS-1", Off: true}}}); err != nil {
+		Outputs: []config.OutputConfig{{Name: name, Off: true}}}); err != nil {
 		t.Fatal(err)
 	}
 	if got := c.EnabledOutputs(); got != enabled-1 {
 		t.Errorf("enabled outputs = %d after off, want %d", got, enabled-1)
 	}
-	if side, ok := outputSnapshotNamed(c, "HEADLESS-1"); !ok || side.Logical != nil || side.CurrentMode != nil {
-		t.Errorf("HEADLESS-1 after off = %+v (listed %t), want it listed with no logical box or mode", side, ok)
+	if side, ok := outputSnapshotNamed(c, name); !ok || side.Logical != nil || side.CurrentMode != nil {
+		t.Errorf("%s after off = %+v (listed %t), want it listed with no logical box or mode", name, side, ok)
 	}
-	if got := sideOutput(); got == "HEADLESS-1" || got == "" {
+	if got := sideOutput(); got == name || got == "" {
 		t.Errorf("workspace side is on %q after off, want it moved to the other output", got)
 	}
 
 	if err := c.Reconfigure(Options{Workspaces: workspaces, Outputs: on}); err != nil {
 		t.Fatal(err)
 	}
-	if side, ok := outputSnapshotNamed(c, "HEADLESS-1"); !ok || side.Logical == nil {
-		t.Errorf("HEADLESS-1 after on = %+v, want it back in the layout", side)
+	if side, ok := outputSnapshotNamed(c, name); !ok || side.Logical == nil {
+		t.Errorf("%s after on = %+v, want it back in the layout", name, side)
 	}
-	if got := sideOutput(); got != "HEADLESS-1" {
-		t.Errorf("workspace side is on %q after on, want it back on HEADLESS-1", got)
+	if got := sideOutput(); got != name {
+		t.Errorf("workspace side is on %q after on, want it back on %s", got, name)
 	}
 }

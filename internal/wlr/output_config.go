@@ -230,12 +230,13 @@ func (c *Compositor) placeOutputs() {
 		pointers = append(pointers, pointer)
 		placements = append(placements, placement)
 	}
+	// Every output is placed explicitly, even where it already is: wlroots
+	// moves an output it placed itself (wlr_output_layout_add_auto) whenever
+	// the layout changes.
 	for i, position := range placeOutputs(placements) {
 		pointer := pointers[i]
-		if c.outputLayoutBox(pointer).Min != position {
-			C.sysc_output_place(c.layout, (*C.struct_wlr_scene_output)(unsafe.Pointer(c.sceneOutputs[pointer])),
-				(*C.struct_wlr_output)(pointer), C.int(position.X), C.int(position.Y))
-		}
+		C.sysc_output_place(c.layout, (*C.struct_wlr_scene_output)(unsafe.Pointer(c.sceneOutputs[pointer])),
+			(*C.struct_wlr_output)(pointer), C.int(position.X), C.int(position.Y))
 		c.outputGeometryChanged(pointer)
 	}
 }
