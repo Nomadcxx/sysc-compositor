@@ -428,6 +428,7 @@ struct sysc_idle_client {
 	int im_keys, im_modifiers, im_keymaps, im_rate, im_delay;
 	uint32_t im_last_key, im_last_state;
 	int pointer_buttons, pointer_axes;
+	double pointer_axis_sum;
 	struct wl_proxy *wm_base, *notifier, *inhibit_manager, *cursor_shape_manager;
 	struct wl_proxy *effect_manager, *effect;
 	struct wl_proxy *tearing_manager, *tearing;
@@ -598,6 +599,7 @@ static void sysc_pointer_button(void *data, struct wl_pointer *pointer, uint32_t
 static void sysc_pointer_axis(void *data, struct wl_pointer *pointer, uint32_t time,
 		uint32_t axis, wl_fixed_t value) {
 	((struct sysc_idle_client *)data)->pointer_axes++;
+	((struct sysc_idle_client *)data)->pointer_axis_sum += wl_fixed_to_double(value);
 }
 static const struct wl_pointer_listener sysc_pointer_listener = {
 	.enter = sysc_pointer_enter,
@@ -1502,7 +1504,9 @@ type InputEvents struct {
 	GrabKeys, GrabModifiers, GrabKeymaps, RepeatRate, RepeatDelay int
 	LastKey, GrabLastKey, GrabLastState                           uint32
 	KeyboardEnters                                                int
-	EnterKeys                                                     []uint32
+	// PointerAxisSum adds up the values of every wl_pointer.axis event.
+	PointerAxisSum float64
+	EnterKeys      []uint32
 }
 
 func (c *ToplevelClient) SyncInput() error {
@@ -1527,7 +1531,7 @@ func (c *ToplevelClient) InputEvents() InputEvents {
 	}
 	return InputEvents{Presses: int(c.state.key_presses), Releases: int(c.state.key_releases), Modifiers: int(c.state.keyboard_modifiers),
 		KeyboardEnters: int(c.state.keyboard_enters), EnterKeys: keys,
-		PointerButtons: int(c.state.pointer_buttons), PointerAxes: int(c.state.pointer_axes), GrabKeys: int(c.state.im_keys),
+		PointerButtons: int(c.state.pointer_buttons), PointerAxes: int(c.state.pointer_axes), PointerAxisSum: float64(c.state.pointer_axis_sum), GrabKeys: int(c.state.im_keys),
 		GrabModifiers: int(c.state.im_modifiers), GrabKeymaps: int(c.state.im_keymaps), RepeatRate: int(c.state.im_rate), RepeatDelay: int(c.state.im_delay),
 		LastKey: uint32(c.state.last_key), GrabLastKey: uint32(c.state.im_last_key), GrabLastState: uint32(c.state.im_last_state)}
 }
