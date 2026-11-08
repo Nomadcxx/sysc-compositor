@@ -68,6 +68,11 @@ func (c *Compositor) syncWorkspaceOutput(output unsafe.Pointer) {
 	} else {
 		c.model.SetOutputGeometry(name, bounds, width, c.layoutOptions.Gaps)
 	}
+	var override *wm.WorkspaceLayout
+	if section := c.outputConfig(output); section != nil {
+		override = WorkspaceLayoutFromConfig(section.Layout, c.layoutOptions.TabIndicator)
+	}
+	c.model.SetOutputLayout(name, override)
 	c.applyWorkspaceModel()
 	if added && c.model.Snapshot().FocusedOutput == name {
 		c.activateWorkspaceFocus()

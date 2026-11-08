@@ -21,7 +21,7 @@ func (s *Server) StartSessionDBus() {
 		return
 	}
 	if s.portal == nil {
-		portal, err := session.StartPortal(session.PortalHooks{Screenshot: s.portalScreenshot, PickColor: s.portalPickColor, OpenWayland: s.portalOpenWayland})
+		portal, err := session.StartPortal(session.PortalHooks{Screenshot: s.portalScreenshot, PickColor: s.portalPickColor, OpenWayland: s.portalOpenWayland, ConfigureOutputs: s.portalConfigureOutputs})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "sysc-compositor: portal services: %v\n", err)
 		} else {
@@ -74,6 +74,31 @@ func (s *Server) StartSessionDBus() {
 		return
 	}
 	s.sessionDBus = watcher
+}
+
+func (s *Server) portalConfigureOutputs(ctx context.Context, serial uint32, changes []config.OutputConfig, verify bool) error {
+	done := make(chan error, 1)
+	if err := s.c.Post(func() {
+		if ctx.Err() != nil {
+			done <- ctx.Err()
+			return
+		}
+		if s.portal == nil || s.portal.CurrentDisplaySerial() != serial {
+			done <- errors.New("stale monitor configuration serial")
+			return
+		}
+		done <- s.c.ConfigureOutputs(changes, verify)
+	}); err != nil {
+		return err
+	}
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-s.stopping:
+		return errStopping
+	}
 }
 
 func (s *Server) startPortalScreenCast(portal *session.Portal) {

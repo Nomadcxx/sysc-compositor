@@ -44,6 +44,7 @@ type Config struct {
 	HotkeyOverlay     HotkeyOverlay
 	RecentWindows     RecentWindows
 	Workspaces        []WorkspaceConfig
+	Outputs           []OutputConfig // in file order; FindOutput takes the first match
 	WindowRules       []WindowRule
 	LayerRules        []LayerRule
 	Animations        Animations
@@ -673,6 +674,8 @@ func decode(name string, nodes []*document.Node) (*Config, error) {
 			err = c.switchEvents(n)
 		case "workspace":
 			err = c.workspace(n)
+		case "output":
+			err = c.output(n)
 		case "window-rule":
 			err = c.windowRule(n)
 		case "layer-rule":

@@ -8,6 +8,7 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/Nomadcxx/sysc-compositor/internal/config"
 	"github.com/godbus/dbus/v5"
 	"github.com/godbus/dbus/v5/introspect"
 	"github.com/godbus/dbus/v5/prop"
@@ -28,9 +29,10 @@ const (
 // result and must return when ctx is cancelled. OpenWayland borrows fd for the
 // duration of its call; the compositor duplicates it before native ownership.
 type PortalHooks struct {
-	Screenshot  func(ctx context.Context, includePointer bool) (string, error)
-	PickColor   func(ctx context.Context) ([3]float64, error)
-	OpenWayland func(ctx context.Context, fd int) error
+	ConfigureOutputs func(ctx context.Context, serial uint32, changes []config.OutputConfig, verify bool) error
+	Screenshot       func(ctx context.Context, includePointer bool) (string, error)
+	PickColor        func(ctx context.Context) ([3]float64, error)
+	OpenWayland      func(ctx context.Context, fd int) error
 }
 
 type serviceReplyID struct {
@@ -141,7 +143,7 @@ func connectPortal(address string, hooks PortalHooks) (*Portal, error) {
 		if item.name == displayConfigName {
 			props := prop.Map{displayConfigName: {"PowerSaveMode": {Value: int32(-1), Writable: true, Emit: prop.EmitFalse, Callback: func(*prop.Change) *dbus.Error {
 				return unsupported("Output power changes through DisplayConfig are unsupported")
-			}}, "PanelOrientationManaged": {Value: false, Emit: prop.EmitFalse}, "ApplyMonitorsConfigAllowed": {Value: false, Emit: prop.EmitFalse}, "NightLightSupported": {Value: false, Emit: prop.EmitFalse}}}
+			}}, "PanelOrientationManaged": {Value: false, Emit: prop.EmitFalse}, "ApplyMonitorsConfigAllowed": {Value: hooks.ConfigureOutputs != nil, Emit: prop.EmitFalse}, "NightLightSupported": {Value: false, Emit: prop.EmitFalse}}}
 			properties, err := prop.Export(conn, item.path, props)
 			if err != nil {
 				return fail(err)

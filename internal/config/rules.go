@@ -155,7 +155,8 @@ type WindowRule struct {
 	DefaultFloatingPosition *FloatingPosition
 	// ScrollFactor scales the scroll events delivered to the window, Niri's
 	// scroll-factor; nil means one.
-	ScrollFactor *float64
+	ScrollFactor        *float64
+	VariableRefreshRate *bool
 	// Decorations merge field by field over the window's workspace layout,
 	// and over each other in rule order.
 	Decorations
@@ -192,7 +193,8 @@ type WindowRuleResult struct {
 	DefaultFloatingPosition *FloatingPosition
 	// ScrollFactor scales the scroll events delivered to the window, Niri's
 	// scroll-factor; nil means one.
-	ScrollFactor *float64
+	ScrollFactor        *float64
+	VariableRefreshRate *bool
 	// Decorations merge field by field over the window's workspace layout,
 	// and over each other in rule order.
 	Decorations
@@ -319,6 +321,7 @@ func ResolveWindowRules(rules []WindowRule, appID, title string, state WindowSta
 		applyRuleValue(&result.DefaultColumnDisplay, rule.DefaultColumnDisplay)
 		applyRuleValue(&result.DefaultFloatingPosition, rule.DefaultFloatingPosition)
 		applyRuleValue(&result.ScrollFactor, rule.ScrollFactor)
+		applyRuleValue(&result.VariableRefreshRate, rule.VariableRefreshRate)
 		result.Decorations = result.Decorations.merge(rule.Decorations)
 		result.BackgroundEffect.Blur = cmp.Or(rule.BackgroundEffect.Blur, result.BackgroundEffect.Blur)
 		applyRuleValue(&result.DrawBorderWithBackground, rule.DrawBorderWithBackground)
@@ -502,7 +505,7 @@ func (c *Config) workspace(node *document.Node) error {
 			}
 			workspace.OpenOnOutput = value[0]
 		case "layout":
-			layout, err := c.workspaceLayout(child)
+			layout, err := c.workspaceLayout(child, "workspace.layout.")
 			if err != nil {
 				return err
 			}
@@ -517,7 +520,8 @@ func (c *Config) workspace(node *document.Node) error {
 
 // workspaceLayout parses the layout part of a workspace. Niri merges it over
 // the layout of the output, so only the keys it sets override the output's.
-func (c *Config) workspaceLayout(node *document.Node) (*WorkspaceLayout, error) {
+// prefix names the section in warnings.
+func (c *Config) workspaceLayout(node *document.Node, prefix string) (*WorkspaceLayout, error) {
 	layout := &WorkspaceLayout{}
 	for _, child := range node.Children {
 		switch nodeName(child) {
@@ -583,7 +587,7 @@ func (c *Config) workspaceLayout(node *document.Node) (*WorkspaceLayout, error) 
 			}
 			layout.Struts = &struts
 		case "focus-ring", "border":
-			rule, err := c.borderRule(child, "workspace.layout."+nodeName(child))
+			rule, err := c.borderRule(child, prefix+nodeName(child))
 			if err != nil {
 				return nil, fmt.Errorf("%s: %w", nodeName(child), err)
 			}
@@ -599,7 +603,7 @@ func (c *Config) workspaceLayout(node *document.Node) (*WorkspaceLayout, error) 
 			}
 			layout.Shadow = layout.Shadow.merge(rule)
 		case "tab-indicator":
-			part, err := c.tabIndicatorPart(child, "workspace.layout.tab-indicator", false)
+			part, err := c.tabIndicatorPart(child, prefix+"tab-indicator", false)
 			if err != nil {
 				return nil, fmt.Errorf("tab-indicator: %w", err)
 			}
@@ -611,7 +615,7 @@ func (c *Config) workspaceLayout(node *document.Node) (*WorkspaceLayout, error) 
 			}
 			layout.BackgroundColor = &color
 		default:
-			c.addWarning("workspace.layout." + nodeName(child))
+			c.addWarning(prefix + nodeName(child))
 		}
 	}
 	return layout, nil
@@ -717,7 +721,7 @@ func (c *Config) windowRule(node *document.Node) error {
 			if err == nil {
 				rule.Opacity = &value
 			}
-		case "clip-to-geometry", "draw-border-with-background", "tiled-state", "baba-is-float":
+		case "clip-to-geometry", "draw-border-with-background", "tiled-state", "baba-is-float", "variable-refresh-rate":
 			var value bool
 			value, err = boolArg(child)
 			if err == nil {
@@ -728,6 +732,8 @@ func (c *Config) windowRule(node *document.Node) error {
 					rule.DrawBorderWithBackground = &value
 				case "tiled-state":
 					rule.TiledState = &value
+				case "variable-refresh-rate":
+					rule.VariableRefreshRate = &value
 				default:
 					rule.BabaIsFloat = &value
 				}

@@ -585,10 +585,14 @@ func (c *Compositor) updateHotCorner() {
 	if !ok {
 		return
 	}
+	configured := c.hotCorners
+	if section := c.outputConfigByName(output); section != nil && section.HotCorners != nil {
+		configured = *section.HotCorners
+	}
 	corners := wm.HotCorners{
-		TopLeft: c.hotCorners.TopLeft, TopRight: c.hotCorners.TopRight,
-		BottomLeft: c.hotCorners.BottomLeft, BottomRight: c.hotCorners.BottomRight,
-		Off: c.hotCorners.Off,
+		TopLeft: configured.TopLeft, TopRight: configured.TopRight,
+		BottomLeft: configured.BottomLeft, BottomRight: configured.BottomRight,
+		Off: configured.Off,
 	}
 	if c.hotCornerTracker.Update(output, bounds, float64(c.cursor.x), float64(c.cursor.y), corners) {
 		c.ToggleOverview()

@@ -374,6 +374,7 @@ func (c *Compositor) ScreenshotScreen(writeToDisk, showPointer bool, path string
 	if showPointer {
 		c.drawOutputPointer(img, target)
 	}
+	img = uprightCastFrame(img, uint32((*C.struct_wlr_output)(target).transform))
 	c.saveScreenshot(img, writeToDisk, path)
 	return nil
 }
@@ -403,6 +404,7 @@ func (c *Compositor) ScreenshotScreenResult(ctx context.Context, showPointer boo
 	if showPointer {
 		c.drawOutputPointer(img, target)
 	}
+	img = uprightCastFrame(img, uint32((*C.struct_wlr_output)(target).transform))
 	path := ""
 	if c.screenshotPattern != nil {
 		path, _ = expandScreenshotPath(*c.screenshotPattern)

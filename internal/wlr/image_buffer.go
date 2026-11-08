@@ -5,6 +5,7 @@ package wlr
 #cgo CFLAGS: -DWLR_USE_UNSTABLE
 
 #include <stdlib.h>
+#include <string.h>
 #include <drm_fourcc.h>
 #include <wlr/interfaces/wlr_buffer.h>
 #include <scenefx/types/wlr_scene.h>
@@ -15,6 +16,7 @@ struct sysc_image_buffer {
 	struct wlr_buffer base;
 	void *data;
 	size_t stride;
+	uint32_t format;
 };
 
 static void sysc_image_buffer_destroy(struct wlr_buffer *wlr_buffer) {
@@ -32,7 +34,7 @@ static bool sysc_image_buffer_begin(struct wlr_buffer *wlr_buffer, uint32_t flag
 	struct sysc_image_buffer *buffer = wl_container_of(wlr_buffer, buffer, base);
 	*data = buffer->data;
 	// Go's image.RGBA is premultiplied R, G, B, A bytes: little-endian ABGR.
-	*format = DRM_FORMAT_ABGR8888;
+	*format = buffer->format;
 	*stride = buffer->stride;
 	return true;
 }
@@ -56,7 +58,26 @@ static struct wlr_buffer *sysc_image_buffer_create(void *data, int width, int he
 	wlr_buffer_init(&buffer->base, &sysc_image_buffer_impl, width, height);
 	buffer->data = data;
 	buffer->stride = stride;
+	buffer->format = DRM_FORMAT_ABGR8888;
 	return &buffer->base;
+}
+
+static struct wlr_buffer *sysc_image_buffer_copy(struct wlr_buffer *source) {
+	void *data;
+	uint32_t format;
+	size_t stride;
+	if (!wlr_buffer_begin_data_ptr_access(source,WLR_BUFFER_DATA_PTR_ACCESS_READ,&data,&format,&stride)) return NULL;
+	struct wlr_buffer *copy = NULL;
+	if (source->height > 0 && stride > 0 && stride <= (64*1024*1024)/(size_t)source->height) {
+		void *pixels = malloc(stride*source->height);
+		if (pixels != NULL) {
+			memcpy(pixels,data,stride*source->height);
+			copy = sysc_image_buffer_create(pixels,source->width,source->height,stride);
+			if (copy != NULL) ((struct sysc_image_buffer *)copy)->format = format;
+		}
+	}
+	wlr_buffer_end_data_ptr_access(source);
+	return copy;
 }
 
 static void sysc_scene_image_place(struct wlr_scene_buffer *node, int x, int y,
@@ -87,6 +108,13 @@ import (
 	"image"
 	"unsafe"
 )
+
+// copyBufferPixels retains SHM contents independently of wl_buffer.release.
+// ponytail: copies the full buffer (64 MiB ceiling); use damage-region copies
+// if SHM-heavy workloads make the extra memcpy measurable.
+func copyBufferPixels(source *C.struct_wlr_buffer) *C.struct_wlr_buffer {
+	return C.sysc_image_buffer_copy(source)
+}
 
 // sceneImage puts a copy of img under parent as a buffer node at its
 // physical size; sceneImagePlace sets where and how big it is drawn.

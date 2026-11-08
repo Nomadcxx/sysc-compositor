@@ -32,6 +32,9 @@ func (c *Compositor) syncBackgroundColors() {
 	}
 	for output := range c.sceneOutputs {
 		color := c.layoutOptions.BackgroundColor
+		if section := c.outputConfig(output); section != nil && section.Layout != nil && section.Layout.BackgroundColor != nil {
+			color = *section.Layout.BackgroundColor
+		}
 		if name := active[outputName(output)]; name != nil {
 			if override, ok := c.layoutOptions.WorkspaceBackgroundColors[config.WorkspaceKey(*name)]; ok {
 				color = override

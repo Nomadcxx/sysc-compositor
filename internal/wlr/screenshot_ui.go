@@ -17,12 +17,13 @@ static void *sysc_shot_tree_create(void *parent, void *below) {
 	return tree;
 }
 
-static bool sysc_shot_frame(void *tree, struct wlr_buffer *buffer, int x, int y, int w, int h) {
+static bool sysc_shot_frame(void *tree, struct wlr_buffer *buffer, int x, int y, int w, int h, uint32_t transform) {
 	struct wlr_scene_buffer *node = wlr_scene_buffer_create(tree, buffer);
 	if (node == NULL) {
 		return false;
 	}
 	wlr_scene_buffer_set_dest_size(node, w, h);
+	wlr_scene_buffer_set_transform(node,transform);
 	wlr_scene_node_set_position(&node->node, x, y);
 	return true;
 }
@@ -72,9 +73,10 @@ type screenshotUI struct {
 const evdevButtonLeft = 0x110
 
 type frozenFrame struct {
-	buffer *C.struct_wlr_buffer
-	box    image.Rectangle // the output's layout box
-	scale  float64
+	buffer    *C.struct_wlr_buffer
+	box       image.Rectangle // the output's layout box
+	scale     float64
+	transform uint32
 	// The pointer as it was, on the output it was over: its image and
 	// where that lands in the frame's pixels.
 	pointer     *image.RGBA
@@ -115,11 +117,12 @@ func (c *Compositor) Screenshot(showPointer bool, path string) error {
 			continue
 		}
 		box := c.outputLayoutBox(pointer)
-		if !bool(C.sysc_shot_frame(tree, buffer, C.int(box.Min.X), C.int(box.Min.Y), C.int(box.Dx()), C.int(box.Dy()))) {
+		transform := uint32((*C.struct_wlr_output)(pointer).transform)
+		if !bool(C.sysc_shot_frame(tree, buffer, C.int(box.Min.X), C.int(box.Min.Y), C.int(box.Dx()), C.int(box.Dy()), C.uint32_t(transform))) {
 			C.wlr_buffer_unlock(buffer)
 			continue
 		}
-		ui.frames[pointer] = &frozenFrame{buffer: buffer, box: box, scale: float64((*C.struct_wlr_output)(pointer).scale)}
+		ui.frames[pointer] = &frozenFrame{buffer: buffer, box: box, scale: float64((*C.struct_wlr_output)(pointer).scale), transform: transform}
 	}
 	if len(ui.frames) == 0 {
 		C.sysc_shot_tree_destroy(tree)
@@ -188,6 +191,9 @@ func (c *Compositor) freezePointer(ui *screenshotUI) {
 // placeShotHint draws the two help panels for one output, bottom centre.
 func (c *Compositor) placeShotHint(pointer unsafe.Pointer, frame *frozenFrame, tree unsafe.Pointer) {
 	w, h := outputPixelSize(pointer)
+	if frame.transform&1 != 0 {
+		w, h = h, w
+	}
 	for i, shown := range []bool{false, true} {
 		img, err := ui.ScreenshotHint(shown, frame.scale)
 		if err != nil {
@@ -323,7 +329,22 @@ func (c *Compositor) confirmScreenshot(writeToDisk bool) {
 	sel := ui.selection.Intersect(frame.box).Sub(frame.box.Min)
 	box := image.Rect(int(float64(sel.Min.X)*frame.scale), int(float64(sel.Min.Y)*frame.scale),
 		int(float64(sel.Max.X)*frame.scale), int(float64(sel.Max.Y)*frame.scale))
-	img, err := c.readBuffer(frame.buffer, box)
+	size := image.Pt(int(frame.buffer.width), int(frame.buffer.height))
+	upright := size
+	if frame.transform&1 != 0 {
+		upright.X, upright.Y = upright.Y, upright.X
+	}
+	box = box.Intersect(image.Rectangle{Max: upright})
+	if box.Empty() {
+		c.closeScreenshotUI()
+		return
+	}
+	a, b := outputPointToBuffer(box.Min, size, frame.transform), outputPointToBuffer(box.Max.Sub(image.Pt(1, 1)), size, frame.transform)
+	raw := image.Rect(min(a.X, b.X), min(a.Y, b.Y), max(a.X, b.X)+1, max(a.Y, b.Y)+1)
+	img, err := c.readBuffer(frame.buffer, raw)
+	if err == nil {
+		img = uprightCastFrame(img, frame.transform)
+	}
 	path := ui.path
 	if err == nil && ui.showPointer && frame.pointer != nil {
 		at := frame.pointerAt.Sub(box.Min)

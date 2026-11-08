@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -15,6 +16,33 @@ import (
 	"github.com/Nomadcxx/sysc-compositor/internal/wlr"
 	"github.com/Nomadcxx/sysc-compositor/internal/wm"
 )
+
+func TestNiriOutputChangeWaitsForResult(t *testing.T) {
+	for _, result := range []string{"Applied", "OutputWasMissing", "failure"} {
+		called := false
+		h := niriHandler{configureOutput: func(request ipc.OutputRequest) (string, error) {
+			called = true
+			if request.Name != "DP-1" || string(request.Action) != `"Off"` {
+				t.Fatalf("request = %+v", request)
+			}
+			if result == "failure" {
+				return "", errors.New("refused")
+			}
+			return result, nil
+		}}
+		reply, after := h.handle(ipc.Request{Name: "Output", Output: &ipc.OutputRequest{Name: "DP-1", Action: json.RawMessage(`"Off"`)}})
+		if !called || after != nil {
+			t.Fatal("output change was not completed before reply")
+		}
+		if result == "failure" {
+			if reply.Err != "refused" {
+				t.Fatalf("reply = %+v", reply)
+			}
+		} else if string(reply.Ok) != string(ipc.SuccessValue("OutputConfigChanged", result)) {
+			t.Fatalf("reply = %+v", reply)
+		}
+	}
+}
 
 func TestNiriOutputSnapshotConversion(t *testing.T) {
 	serial := "123"

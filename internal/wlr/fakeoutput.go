@@ -6,6 +6,10 @@ package wlr
 
 #include <wlr/backend/headless.h>
 #include <wlr/render/wlr_renderer.h>
+
+static void sysc_test_renderer_lost(struct wlr_renderer *renderer) {
+	wl_signal_emit_mutable(&renderer->events.lost,renderer);
+}
 #include <wlr/render/color.h>
 #include <wlr/types/wlr_gamma_control_v1.h>
 #include <wlr/types/wlr_output.h>
@@ -63,6 +67,8 @@ import (
 	"errors"
 	"unsafe"
 )
+
+func forceRendererLossForTest(c *Compositor) { C.sysc_test_renderer_lost(c.renderer) }
 
 // headlessTestBackend adds deterministic outputs to compositor tests that
 // need more than the nested Wayland backend's single output.

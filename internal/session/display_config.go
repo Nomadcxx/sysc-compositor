@@ -1,12 +1,14 @@
 package session
 
 import (
+	"fmt"
 	"math"
 	"reflect"
 	"slices"
 	"strconv"
 	"strings"
 
+	"github.com/Nomadcxx/sysc-compositor/internal/config"
 	"github.com/Nomadcxx/sysc-compositor/internal/ipc"
 	"github.com/godbus/dbus/v5"
 )
@@ -44,10 +46,11 @@ type LogicalMonitorConfiguration struct {
 	Monitors  []MonitorConfiguration
 }
 type displayState struct {
-	Serial   uint32
-	Monitors []Monitor
-	Logical  []LogicalMonitor
-	Geometry map[string]ipc.LogicalOutput
+	Serial      uint32
+	Monitors    []Monitor
+	Logical     []LogicalMonitor
+	Geometry    map[string]ipc.LogicalOutput
+	CustomModes map[string]string
 }
 
 type portalDisplayConfig struct{ p *Portal }
@@ -59,16 +62,80 @@ func (s portalDisplayConfig) GetCurrentState() (uint32, []Monitor, []LogicalMoni
 	return state.Serial, state.Monitors, state.Logical, map[string]dbus.Variant{"layout-mode": dbus.MakeVariant(uint32(1))}, nil
 }
 func (s portalDisplayConfig) ApplyMonitorsConfig(serial, method uint32, logical []LogicalMonitorConfiguration, properties map[string]dbus.Variant) *dbus.Error {
-	// Output mutation is owned by M15. Do not let a portal mistake a no-op for
-	// applied hardware state, or advertise an output-management capability.
-	return unsupported("Applying monitor configuration is not supported")
+	if s.p.hooks.ConfigureOutputs == nil {
+		return unsupported("Applying monitor configuration is not available")
+	}
+	s.p.mu.Lock()
+	state := s.p.state
+	s.p.mu.Unlock()
+	invalid := func(message string) *dbus.Error {
+		return dbus.NewError("org.freedesktop.DBus.Error.InvalidArgs", []any{message})
+	}
+	if serial != state.Serial {
+		return invalid("stale monitor configuration serial")
+	}
+	if method > 2 {
+		return invalid("unknown configuration method")
+	}
+	if len(logical) == 0 {
+		return invalid("at least one output must be enabled")
+	}
+	if mode, ok := properties["layout-mode"]; ok && mode.Value() != uint32(1) {
+		return invalid("only logical layout mode is supported")
+	}
+	seen := map[string]bool{}
+	var changes []config.OutputConfig
+	for _, group := range logical {
+		if len(group.Monitors) != 1 {
+			return invalid("each logical monitor must contain exactly one physical monitor")
+		}
+		if math.IsNaN(group.Scale) || math.IsInf(group.Scale, 0) || group.Scale <= 0 || group.Scale > 10 || group.Transform > 7 {
+			return invalid("invalid monitor scale or transform")
+		}
+		monitor := group.Monitors[0]
+		if seen[monitor.Connector] {
+			return invalid("duplicate monitor")
+		}
+		seen[monitor.Connector] = true
+		var mode *config.OutputMode
+		for _, connected := range state.Monitors {
+			if connected.Names.Connector != monitor.Connector {
+				continue
+			}
+			for _, advertised := range connected.Modes {
+				if advertised.ID == monitor.Mode {
+					mode = &config.OutputMode{Width: int(advertised.Width), Height: int(advertised.Height), Refresh: advertised.RefreshRate, Custom: state.CustomModes[monitor.Connector] == monitor.Mode}
+				}
+			}
+		}
+		if mode == nil {
+			return invalid(fmt.Sprintf("unknown monitor or mode: %s %s", monitor.Connector, monitor.Mode))
+		}
+		scale := group.Scale
+		changes = append(changes, config.OutputConfig{Name: monitor.Connector, Mode: mode, Scale: &scale, Transform: config.Transform(group.Transform), Position: &config.OutputPosition{X: int(group.X), Y: int(group.Y)}})
+	}
+	for _, monitor := range state.Monitors {
+		if !seen[monitor.Names.Connector] {
+			changes = append(changes, config.OutputConfig{Name: monitor.Names.Connector, Off: true})
+		}
+	}
+	if err := s.p.hooks.ConfigureOutputs(s.p.ctx, serial, changes, method == 0); err != nil {
+		return dbus.NewError("org.freedesktop.DBus.Error.Failed", []any{err.Error()})
+	}
+	return nil
+}
+
+func (p *Portal) CurrentDisplaySerial() uint32 {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.state.Serial
 }
 
 // Update consumes immutable IPC snapshots on the compositor thread. The D-Bus
 // representation owns its maps/slices, so neither readers nor callers share a
 // mutable compositor object. Signals follow the new snapshot.
 func (p *Portal) Update(outputs map[string]ipc.Output, windows []ipc.Window) {
-	state := displayState{Monitors: []Monitor{}, Logical: []LogicalMonitor{}, Geometry: map[string]ipc.LogicalOutput{}}
+	state := displayState{Monitors: []Monitor{}, Logical: []LogicalMonitor{}, Geometry: map[string]ipc.LogicalOutput{}, CustomModes: map[string]string{}}
 	names := make([]string, 0, len(outputs))
 	for name := range outputs {
 		names = append(names, name)
@@ -100,6 +167,9 @@ func (p *Portal) Update(outputs map[string]ipc.Output, windows []ipc.Window) {
 			monitor.Modes = append(monitor.Modes, MonitorMode{ID: strconv.Itoa(int(mode.Width)) + "x" + strconv.Itoa(int(mode.Height)) + "@" + strconv.FormatFloat(hz, 'f', 3, 64), Width: int32(mode.Width), Height: int32(mode.Height), RefreshRate: hz, PreferredScale: 1, SupportedScales: supportedScales(mode.Width, mode.Height), Properties: properties})
 		}
 		state.Monitors = append(state.Monitors, monitor)
+		if output.IsCustomMode && output.CurrentMode != nil && int(*output.CurrentMode) < len(monitor.Modes) {
+			state.CustomModes[name] = monitor.Modes[*output.CurrentMode].ID
+		}
 		if logical := output.Logical; logical != nil {
 			state.Geometry[name] = *logical
 			transform := uint32(0)

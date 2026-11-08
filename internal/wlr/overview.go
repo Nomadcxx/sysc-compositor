@@ -294,6 +294,9 @@ func (c *Compositor) syncOverviewScene() {
 			continue
 		}
 		color := c.overviewConfig.BackdropColor
+		if section := c.outputConfigByName(name); section != nil && section.BackdropColor != nil {
+			color = *section.BackdropColor
+		}
 		var rgba [4]C.float
 		rgba[0] = C.float(color.R * color.A * progress)
 		rgba[1] = C.float(color.G * color.A * progress)
