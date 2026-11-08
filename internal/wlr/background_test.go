@@ -13,8 +13,8 @@ import (
 // TestBackgroundColorFillsTheOutputBelowTheBackgroundLayer: background-color
 // fills the output under its background layer surfaces, in the active
 // workspace's colour over the layout's, and follows workspace switches and
-// reloads, as Niri's workspace background does. A half-opaque swaybg shows
-// the fill through it.
+// reloads, as Niri's workspace background does. A half-opaque wallpaper
+// shows the fill through it.
 func TestBackgroundColorFillsTheOutputBelowTheBackgroundLayer(t *testing.T) {
 	red, green := config.Color{R: 1, A: 1}, config.Color{G: 1, A: 1}
 	half := 0.5
@@ -36,7 +36,13 @@ func TestBackgroundColorFillsTheOutputBelowTheBackgroundLayer(t *testing.T) {
 	c := newNestedWith(t, options(red))
 	var checked bool
 	pollThenStop(c, func() bool {
-		if placed := mappedOn(c.layerPlacements(), layerBackground); placed == nil {
+		wallpaper := false
+		for _, layer := range c.layerOrder {
+			if width, _, mapped := layer.mappedSize(); layer.namespace() == "wallpaper" && mapped && width > 0 {
+				wallpaper = true
+			}
+		}
+		if !wallpaper {
 			return false
 		}
 		checked = true
@@ -74,7 +80,9 @@ func TestBackgroundColorFillsTheOutputBelowTheBackgroundLayer(t *testing.T) {
 		}
 		return true
 	})
-	runClient(t, c, []string{"swaybg", "-c", "#336699"}, nil, nil)
+	// An image, not swaybg -c: opacity does not reach the colour of the
+	// single-pixel buffer that draws (see TestLayerRuleAppearanceAndBlockOut).
+	runClient(t, c, []string{"swaybg", "-m", "fill", "-i", solidPNG(t, color.NRGBA{R: 0x33, G: 0x66, B: 0x99, A: 255})}, nil, nil)
 	if !checked {
 		t.Fatal("swaybg never mapped a background layer surface")
 	}
