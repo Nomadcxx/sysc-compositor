@@ -4,10 +4,11 @@
 - Bead: `sysc-2231`
 - Branch: `feat/config-surface-20261103`
 - Execution snapshot: slices 1–6 are implemented on draft PR #94 (5b and 5c
-  on 2026-11-06, 6 on 2026-11-07) and pass lane 2 in the laptop VM. Two keys
-  remain, each tracked: `variable-refresh-rate` (M15 outputs, `sysc-2265`)
-  and `layout.background-color` (owner decision on the default,
-  `sysc-2266`). See the execution records below and the
+  on 2026-11-06, 6 on 2026-11-07) and pass lane 2 in the laptop VM; #99
+  carried them onto main on 2026-11-08. Slice 7 (`background-color`,
+  `sysc-2266`) followed on 2026-11-08. One key remains:
+  `variable-refresh-rate` (M15 outputs, `sysc-2265`). See the execution
+  records below and the
   [2026-11-05 continuation plan](2026-11-05-handover.md). Implemented on this
   branch does not mean merged.
 - Reference: niri v26.04 in `/home/nomadx/references/niri`
@@ -126,10 +127,9 @@ The `layout` section supports `gaps`, `default-column-width`, `insert-hint`,
 (`model.SetOutputGeometry(name, bounds, columnWidth, gap)`), so a
 per-workspace override needs new plumbing. Slice 4.
 
-Since 2026-11-07 every key of the layout part applies, config-wide and per
-workspace, except `background-color` (`sysc-2266`) and, inside
-`workspace.layout` only, `empty-workspace-above-first`, which Niri reads per
-output. See slice 6.
+Since 2026-11-08 every key of the layout part applies, config-wide and per
+workspace, except `empty-workspace-above-first` inside `workspace.layout`,
+which Niri reads per output. See slices 6 and 7.
 
 ## 3. The slices
 
@@ -575,20 +575,40 @@ which Niri also bobs. The blur under a window still ignores
 workspace added by `empty-workspace-above-first` appears at once rather than
 through Niri's workspace switch.
 
-Still open in the tranche:
-
-- `layout.background-color` and `workspace.layout.background-color` still
-  warn (`sysc-2266`). Niri draws the fill below the background and bottom
-  layers and defaults to 25% grey where sysc shows black, so applying it
-  changes the look of every session without a wallpaper; the owner decides the
-  default. The owner's laptop config sets `"transparent"`, which already looks
-  right, but sysc's colour parser takes hex only and must learn that name
-  first.
-- `variable-refresh-rate`, in M15 (`sysc-2265`).
+Still open in the tranche: `variable-refresh-rate`, in M15 (`sysc-2265`).
+Slice 7 below took `background-color`.
 
 Measured on 2026-11-07: the archThink's config prints 9 warnings, none from
 `window-rule` or `layer-rule`; the one tranche key among them is
 `layout.background-color`.
+
+### Slice 7 — `background-color` (landed 2026-11-08)
+
+`sysc-2266`. `layout.background-color` and `workspace.layout.background-color`
+parse a hex colour or the CSS name `"transparent"`. `colorArg` accepts
+`"transparent"` for every colour key, as Niri's CSS parser does; other CSS
+names still fail. Each output gets one fill just below the background layer
+tree, in the colour of its active workspace, or the layout's colour when that
+workspace sets none. `applyWorkspaceModel` re-syncs it, so it follows
+workspace switches, output changes and reloads. A transparent colour draws
+nothing, and the black clear colour shows.
+
+**Owner decision, 2026-11-08: the default stays black**, a recorded
+difference from Niri's `rgba(0.25, 0.25, 0.25, 1)` (Mango uses `#323232`,
+Hyprland `#111111`). Sessions without a wallpaper look as before, and the
+lane-2 pixel tests that assume black stay as they are.
+
+Tests: `TestBackgroundColorIsParsed` (config);
+`TestWorkspaceLayoutReachesTheModelOptions` extended (server); and in lane 2
+`TestBackgroundColorFillsTheOutputBelowTheBackgroundLayer`, where a
+half-opaque `swaybg` blends with the layout's colour, then with a workspace's,
+then with black after a reload to transparent.
+
+Known differences: the fill belongs to the output, not the workspace, so it
+changes at once on a workspace switch instead of sliding with the workspace,
+and the overview's workspace thumbnails do not draw it. With
+`"transparent"`, Niri shows the overview backdrop under the workspace; sysc
+draws the backdrop only in the overview and shows black.
 
 ## 4. Rules
 

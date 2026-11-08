@@ -519,10 +519,12 @@ func (c *Compositor) createAppearanceTrees() bool {
 	c.windowBorderTree = C.wlr_scene_tree_create(&c.scene.tree)
 	c.windowFocusTree = C.wlr_scene_tree_create(&c.scene.tree)
 	c.tabIndicatorTree = C.wlr_scene_tree_create(&c.scene.tree)
+	c.backgroundTree = C.wlr_scene_tree_create(&c.scene.tree)
 	if c.windowShadowTree == nil || c.windowAnimationTree == nil || c.windowBorderTree == nil ||
-		c.windowFocusTree == nil || c.tabIndicatorTree == nil {
+		c.windowFocusTree == nil || c.tabIndicatorTree == nil || c.backgroundTree == nil {
 		return false
 	}
+	C.wlr_scene_node_place_below(&c.backgroundTree.node, &c.layerTrees[layerBackground].node)
 	C.wlr_scene_node_place_below(&c.windowShadowTree.node, &c.layerTrees[layerWindows].node)
 	C.wlr_scene_node_place_below(&c.windowAnimationTree.node, &c.layerTrees[layerWindows].node)
 	C.wlr_scene_node_place_below(&c.windowBorderTree.node, &c.layerTrees[layerWindows].node)

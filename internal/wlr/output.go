@@ -262,6 +262,11 @@ func (c *Compositor) outputNameAt(x, y float64) string {
 	return C.GoString(output.name)
 }
 
+// outputName is the connector name of a wlr_output.
+func outputName(output unsafe.Pointer) string {
+	return C.GoString((*C.struct_wlr_output)(output).name)
+}
+
 // outputNameForView infers a view's output from its center, with the active
 // output as the M4 fallback while views have no independent output placement.
 func (c *Compositor) outputNameForView(view *toplevelView) string {

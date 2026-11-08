@@ -161,6 +161,8 @@ type Compositor struct {
 	tabIndicatorTree    *C.struct_wlr_scene_tree
 	tabIndicatorNodes   []unsafe.Pointer
 	tabIndicatorHits    []tabIndicatorHit
+	backgroundTree      *C.struct_wlr_scene_tree
+	backgroundNodes     map[unsafe.Pointer]unsafe.Pointer // background-color fill per wlr_output
 	windowFocusTree     *C.struct_wlr_scene_tree
 	overviewTree        *C.struct_wlr_scene_tree
 	insertHintTree      *C.struct_wlr_scene_tree
@@ -432,6 +434,12 @@ type LayoutOptions struct {
 	TabIndicator         config.TabIndicator
 	// TabSpace is the room the tab indicator keeps inside a tabbed column.
 	TabSpace layout.TabSpace
+	// BackgroundColor fills each output below its background layer surfaces;
+	// the zero colour is transparent and draws nothing.
+	BackgroundColor config.Color
+	// WorkspaceBackgroundColors holds the background-color of each named
+	// workspace that sets one, keyed by config.WorkspaceKey.
+	WorkspaceBackgroundColors map[string]config.Color
 }
 
 // ErrNestedTestNeedsConsent is what NewWith returns inside a test binary unless
@@ -712,7 +720,7 @@ func normalizeOptions(opts Options) Options {
 			Gaps: defaults.Layout.Gaps, ColumnWidthProportion: 0.5,
 			InsertHint: defaults.Layout.InsertHint, FocusRing: defaults.Layout.FocusRing,
 			Border: defaults.Layout.Border, Shadow: defaults.Layout.Shadow,
-			TabIndicator: defaults.Layout.TabIndicator,
+			TabIndicator: defaults.Layout.TabIndicator, BackgroundColor: defaults.Layout.BackgroundColor,
 		}
 	}
 	if opts.CursorTheme == "" {

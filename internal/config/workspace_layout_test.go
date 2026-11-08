@@ -126,6 +126,54 @@ workspace "fit" {
 	}
 }
 
+// TestBackgroundColorIsParsed: background-color takes a hex colour or CSS
+// "transparent" config-wide and per workspace. sysc keeps black as the
+// default where Niri uses 25% grey (sysc-2266).
+func TestBackgroundColorIsParsed(t *testing.T) {
+	if got := Default().Layout.BackgroundColor; got != (Color{0, 0, 0, 1}) {
+		t.Errorf("default background-color = %v, want opaque black", got)
+	}
+	cfg, err := Parse("background.kdl", []byte(`
+layout {
+    background-color "transparent"
+}
+workspace "lit" {
+    layout {
+        background-color "#336699"
+    }
+}
+workspace "plain" {
+    layout {
+        gaps 4
+    }
+}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Warnings) != 0 {
+		t.Fatalf("warnings = %q, want none", cfg.Warnings)
+	}
+	if cfg.Layout.BackgroundColor != (Color{}) {
+		t.Errorf("layout background-color = %v, want transparent", cfg.Layout.BackgroundColor)
+	}
+	want := Color{0x33 / 255.0, 0x66 / 255.0, 0x99 / 255.0, 1}
+	if got := cfg.Workspaces[0].Layout.BackgroundColor; got == nil || *got != want {
+		t.Errorf("workspace background-color = %v, want %v", got, want)
+	}
+	if got := cfg.Workspaces[1].Layout.BackgroundColor; got != nil {
+		t.Errorf("a workspace without background-color = %v, want nil", *got)
+	}
+	for _, src := range []string{
+		`layout { background-color "rebeccapurple"; }`,
+		`workspace "x" { layout { background-color 12; } }`,
+	} {
+		if _, err := Parse("bad-background.kdl", []byte(src)); err == nil {
+			t.Errorf("Parse(%q) error = nil, want a rejection", src)
+		}
+	}
+}
+
 func TestWorkspaceLayoutRejectsBadValues(t *testing.T) {
 	for _, src := range []string{
 		`workspace "wide" { layout { gaps -4; } }`,

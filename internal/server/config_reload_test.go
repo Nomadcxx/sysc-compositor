@@ -192,6 +192,7 @@ func TestWorkspaceLayoutReachesTheModelOptions(t *testing.T) {
 	display := config.ColumnDisplayNormal
 	centerNever := config.CenterFocusedColumnNever
 	alwaysCenterOff := false
+	green := config.Color{G: 1, A: 1}
 	cfg := &config.Config{
 		Layout: config.Layout{
 			PresetColumnWidths:       []config.PresetSize{{Value: 0.25}},
@@ -201,6 +202,7 @@ func TestWorkspaceLayoutReachesTheModelOptions(t *testing.T) {
 			AlwaysCenterSingleColumn: true,
 			EmptyWorkspaceAboveFirst: true,
 			Struts:                   config.Struts{Left: 10, Right: 10, Bottom: 32},
+			BackgroundColor:          config.Color{R: 1, A: 1},
 		},
 		Workspaces: []config.WorkspaceConfig{{
 			Name: "wide",
@@ -211,10 +213,17 @@ func TestWorkspaceLayoutReachesTheModelOptions(t *testing.T) {
 				CenterFocusedColumn:      &centerNever,
 				AlwaysCenterSingleColumn: &alwaysCenterOff,
 				Struts:                   &config.Struts{Top: 44},
+				BackgroundColor:          &green,
 			},
 		}},
 	}
 	options := compositorOptions(cfg, nil)
+	if options.Layout.BackgroundColor != (config.Color{R: 1, A: 1}) {
+		t.Errorf("the background-color = %v, want red", options.Layout.BackgroundColor)
+	}
+	if got, ok := options.Layout.WorkspaceBackgroundColors[config.WorkspaceKey("wide")]; !ok || got != green {
+		t.Errorf("the workspace background-color = %v (set %t), want green", got, ok)
+	}
 	if len(options.Layout.PresetColumnWidths) != 1 || options.Layout.PresetColumnWidths[0] != (layout.PresetSize{Value: 0.25}) {
 		t.Errorf("the preset column widths = %+v, want 0.25", options.Layout.PresetColumnWidths)
 	}

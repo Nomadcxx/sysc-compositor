@@ -131,6 +131,9 @@ type Layout struct {
 	Border                   FocusRing
 	Shadow                   Shadow
 	TabIndicator             TabIndicator
+	// BackgroundColor fills each output below its background layer surfaces.
+	// sysc defaults to black where Niri uses 25% grey (sysc-2266).
+	BackgroundColor Color
 }
 
 // Struts holds the reserved edges of the layout area, Niri's layout.struts.
@@ -550,8 +553,9 @@ func Default() *Config {
 				InactiveColor: Color{80.0 / 255, 80.0 / 255, 80.0 / 255, 1}, UrgentColor: Color{155.0 / 255, 0, 0, 1}},
 			Border: FocusRing{Off: true, Width: 4, ActiveColor: Color{1, 200.0 / 255, 127.0 / 255, 1},
 				InactiveColor: Color{80.0 / 255, 80.0 / 255, 80.0 / 255, 1}, UrgentColor: Color{155.0 / 255, 0, 0, 1}},
-			Shadow:       Shadow{Softness: 30, Spread: 5, OffsetY: 5, Color: Color{0, 0, 0, 119.0 / 255}},
-			TabIndicator: TabIndicator{Gap: 5, Width: 4, Length: 0.5, Position: TabIndicatorLeft}},
+			Shadow:          Shadow{Softness: 30, Spread: 5, OffsetY: 5, Color: Color{0, 0, 0, 119.0 / 255}},
+			TabIndicator:    TabIndicator{Gap: 5, Width: 4, Length: 0.5, Position: TabIndicatorLeft},
+			BackgroundColor: Color{0, 0, 0, 1}},
 		Overview:          Overview{Zoom: 0.5, BackdropColor: Color{0.15, 0.15, 0.15, 1}},
 		Gestures:          Gestures{DNDEdgeViewScroll: DNDEdgeViewScroll{TriggerWidth: 30, DelayMS: 100, MaxSpeed: 1500}},
 		Cursor:            Cursor{Theme: "default", Size: 24},
@@ -1055,6 +1059,12 @@ func (c *Config) layout(n *document.Node) error {
 				return fmt.Errorf("tab-indicator: %w", err)
 			}
 			c.Layout.TabIndicator = c.Layout.TabIndicator.Merged(part)
+		case "background-color":
+			color, err := colorArg(child)
+			if err != nil {
+				return fmt.Errorf("background-color: %w", err)
+			}
+			c.Layout.BackgroundColor = color
 		default:
 			c.addWarning("layout." + nodeName(child))
 		}
@@ -1636,6 +1646,9 @@ func colorArg(n *document.Node) (Color, error) {
 		if len(n.Children) != 0 || len(n.Properties) != 0 {
 			return Color{}, fmt.Errorf("color cannot have children or properties")
 		}
+		if value == "transparent" {
+			return Color{}, nil
+		}
 		return parseHexColor(value)
 	}
 	if len(n.Arguments) != 4 || len(n.Children) != 0 || len(n.Properties) != 0 {
@@ -1652,7 +1665,7 @@ func colorArg(n *document.Node) (Color, error) {
 	return Color{components[0], components[1], components[2], components[3]}, nil
 }
 
-// ponytail: hex forms cover this config's colors; CSS names and rgb()/hsl() need a parser dependency.
+// ponytail: hex forms and "transparent" (in colorArg) cover this config's colors; other CSS names and rgb()/hsl() need a parser dependency.
 func parseHexColor(value string) (Color, error) {
 	if len(value) < 2 || value[0] != '#' {
 		return Color{}, fmt.Errorf("color %q must use #RGB, #RGBA, #RRGGBB, or #RRGGBBAA", value)
