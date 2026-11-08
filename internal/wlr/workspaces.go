@@ -29,7 +29,6 @@ static void sysc_workspace_set_size(struct wlr_xdg_toplevel *toplevel, int width
 import "C"
 
 import (
-	"math"
 	"unsafe"
 
 	"github.com/Nomadcxx/sysc-compositor/internal/layout"
@@ -57,7 +56,12 @@ func (c *Compositor) syncWorkspaceOutput(output unsafe.Pointer) {
 		usable = rect{int(full.x), int(full.y), int(full.width), int(full.height)}
 	}
 	bounds := layout.Bounds{X: usable.x, Y: usable.y, Width: usable.w, Height: usable.h}
-	width := c.defaultColumnWidth(bounds.Width)
+	// Niri derives the default column width from the working area, so the
+	// config-wide struts come off the width first. A workspace that overrides
+	// the struts still starts from this output-derived default; the gap with
+	// Niri is recorded in the plan doc.
+	strutted := c.layoutOptions.Struts.Inset(bounds)
+	width := c.defaultColumnWidth(strutted.Width)
 	added := false
 	if !c.hasWorkspaceOutput(name) {
 		added = c.model.AddOutput(name, bounds, width, c.layoutOptions.Gaps)
@@ -218,6 +222,9 @@ func (c *Compositor) SetWindowUrgent(id uint64, urgent bool) bool {
 		return false
 	}
 	c.notifyStateChanged()
+	// A rule that matches on the urgency has to be read again now that the
+	// urgency moved.
+	c.reapplyWindowRules()
 	return true
 }
 
@@ -226,6 +233,7 @@ func (c *Compositor) ToggleWindowUrgent(id uint64) bool {
 		return false
 	}
 	c.notifyStateChanged()
+	c.reapplyWindowRules()
 	return true
 }
 
@@ -325,6 +333,13 @@ func (c *Compositor) windowSceneTarget(view *toplevelView, window wm.WindowSnaps
 	if !placement.Floating {
 		x += (placement.Width - geometry.w) / 2
 		y += (placement.Height - geometry.h) / 2
+		// The tile holds the border, so the window is configured smaller.
+		// ponytail: a floating window keeps its rectangle and draws the border
+		// outside it; Niri sizes the floating tile to hold the border.
+		if border := view.borderWidth(); border > 0 && placement.Width > 0 && placement.Height > 0 {
+			width = max(1, placement.Width-2*border)
+			height = max(1, placement.Height-2*border)
+		}
 	}
 	if window.Fullscreen {
 		if bounds, ok := c.outputLayoutBounds(window.Output); ok {
@@ -341,18 +356,15 @@ func (c *Compositor) defaultColumnWidth(available int) int {
 	if c.layoutOptions.FixedColumnWidth > 0 {
 		return c.layoutOptions.FixedColumnWidth
 	}
-	proportion := c.layoutOptions.ColumnWidthProportion
-	if proportion <= 0 {
-		proportion = 0.5
-	}
-	width := (float64(available-c.layoutOptions.Gaps) * proportion) - float64(c.layoutOptions.Gaps)
-	return max(1, int(math.Round(width)))
+	return layout.ColumnWidthPixels(available, c.layoutOptions.Gaps, c.layoutOptions.ColumnWidthProportion)
 }
 
 func (c *Compositor) applyWorkspaceModel() {
 	if c.model == nil {
 		return
 	}
+	// A window that maps with baba-is-float starts the clock that bobs it.
+	defer c.scheduleAnimationTick()
 	for _, view := range c.views {
 		c.syncWorkspaceWindowSizeHints(view)
 	}
@@ -362,6 +374,7 @@ func (c *Compositor) applyWorkspaceModel() {
 		activeWorkspaceByID[workspace.ID] = workspace.IsActive
 	}
 	activeWindowIDs := activeWindowIDsForWorkspaces(snapshot.Workspaces)
+	workspaceNames := workspaceNamesByID(snapshot.Workspaces)
 	nextActive := make(map[string]activeWorkspace)
 	switched := make(map[string]int)
 	for _, workspace := range snapshot.Workspaces {
@@ -421,7 +434,10 @@ func (c *Compositor) applyWorkspaceModel() {
 			visible = fullscreen == view
 		}
 		view.fullscreen = window.Fullscreen
+		view.maximized, view.floating = window.Tile.Maximized, window.Tile.Floating
+		view.urgent = window.IsUrgent
 		view.workspaceID = window.WorkspaceID
+		c.resolveViewDecorations(view, workspaceNames[window.WorkspaceID])
 		view.workspaceIndex = workspaceIndex(snapshot.Workspaces, window.WorkspaceID)
 		view.outputName = window.Output
 		targetX, targetY, targetWidth, targetHeight := c.windowSceneTarget(view, window)
@@ -439,7 +455,7 @@ func (c *Compositor) applyWorkspaceModel() {
 			if targetWidth > 0 && targetHeight > 0 {
 				C.sysc_workspace_set_size(view.toplevel, C.int(targetWidth), C.int(targetHeight))
 			}
-			x, y := view.treePosition()
+			x, y := view.layoutPosition()
 			height := c.workspaceBounds(window.Output).Height
 			if height <= 0 {
 				height = 1
@@ -483,7 +499,7 @@ func (c *Compositor) applyWorkspaceModel() {
 				geometry := view.geometry()
 				if targetWidth != geometry.w || targetHeight != geometry.h {
 					kind = c.animationConfig.WindowResize
-				} else if currentX, currentY := view.treePosition(); targetX != currentX && targetY == currentY {
+				} else if currentX, currentY := view.layoutPosition(); targetX != currentX && targetY == currentY {
 					kind = c.animationConfig.HorizontalViewMovement
 				}
 				if oldVisible && oldOutput == window.Output {
@@ -507,7 +523,7 @@ func (c *Compositor) applyWorkspaceModel() {
 		}
 		if view.fullscreen {
 			if bounds, ok := c.outputLayoutBounds(window.Output); ok {
-				if x, y := view.treePosition(); x != bounds.X || y != bounds.Y {
+				if x, y := view.layoutPosition(); x != bounds.X || y != bounds.Y {
 					c.setViewScenePosition(view, bounds.X, bounds.Y)
 				}
 				if int(view.toplevel.scheduled.width) != bounds.Width || int(view.toplevel.scheduled.height) != bounds.Height {
@@ -528,6 +544,8 @@ func (c *Compositor) applyWorkspaceModel() {
 			c.syncViewDecorations(view)
 		}
 	}
+	c.syncTabIndicators()
+	c.syncRuleBackgroundEffects()
 	// Workspace activation can change while the mapped-window snapshots stay
 	// identical, especially when switching between empty workspaces.
 	c.syncOverviewScene()
@@ -538,10 +556,62 @@ func (c *Compositor) syncWorkspaceWindowSizeHints(view *toplevelView) bool {
 	if c.model == nil || view == nil || view.toplevel == nil || !view.mapped {
 		return false
 	}
+	minWidth, maxWidth, minHeight, maxHeight := c.windowSizeHints(view)
+	return c.model.SetWindowSizeHints(view.id, minWidth, maxWidth, minHeight, maxHeight)
+}
+
+// windowSizeHints amends the client's size hints with the window rule's
+// limits, the way Niri's min-width, max-width, min-height and max-height do:
+// a rule can only raise the client's minimum and lower the client's maximum,
+// and it gives a window without a maximum the rule's maximum.
+func (c *Compositor) windowSizeHints(view *toplevelView) (int, int, int, int) {
 	current := view.toplevel.current
-	return c.model.SetWindowSizeHints(view.id,
-		int(current.min_width), int(current.max_width),
-		int(current.min_height), int(current.max_height))
+	minWidth, maxWidth := int(current.min_width), int(current.max_width)
+	minHeight, maxHeight := int(current.min_height), int(current.max_height)
+	appearance := view.appearance
+	if appearance.MinWidth != nil {
+		minWidth = max(minWidth, *appearance.MinWidth)
+	}
+	if appearance.MinHeight != nil {
+		minHeight = max(minHeight, *appearance.MinHeight)
+	}
+	if appearance.MaxWidth != nil {
+		switch {
+		case maxWidth == 0:
+			maxWidth = *appearance.MaxWidth
+		case *appearance.MaxWidth > 0:
+			maxWidth = min(maxWidth, *appearance.MaxWidth)
+		}
+	}
+	if appearance.MaxHeight != nil {
+		switch {
+		case maxHeight == 0:
+			maxHeight = *appearance.MaxHeight
+		case *appearance.MaxHeight > 0:
+			maxHeight = min(maxHeight, *appearance.MaxHeight)
+		}
+	}
+	// The tile holds the border on each side, as Niri's tile min and max
+	// sizes do; an unbounded maximum stays unbounded.
+	if border := view.borderWidth(); border > 0 && !view.floating {
+		minWidth, minHeight = max(1, minWidth)+2*border, max(1, minHeight)+2*border
+		if maxWidth > 0 {
+			maxWidth += 2 * border
+		}
+		if maxHeight > 0 {
+			maxHeight += 2 * border
+		}
+	}
+	return minWidth, maxWidth, minHeight, maxHeight
+}
+
+// workspaceNamesByID maps each named workspace's ID to its name.
+func workspaceNamesByID(workspaces []wm.WorkspaceSnapshot) map[uint64]*string {
+	names := make(map[uint64]*string, len(workspaces))
+	for _, workspace := range workspaces {
+		names[workspace.ID] = workspace.Name
+	}
+	return names
 }
 
 func (c *Compositor) activateWorkspaceFocus() {

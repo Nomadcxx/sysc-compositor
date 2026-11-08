@@ -187,16 +187,24 @@ func (g pointerGrab) resizeOptions() layout.ResizeOptions {
 }
 
 type toplevelView struct {
-	captureIdentity         *captureIdentity
-	foreign                 *foreignToplevel
-	toplevel                *C.struct_wlr_xdg_toplevel
-	tree                    *C.struct_wlr_scene_tree
-	appearance              config.WindowRuleResult
-	shadowNode              unsafe.Pointer
-	focusRingNode           unsafe.Pointer
+	captureIdentity *captureIdentity
+	foreign         *foreignToplevel
+	toplevel        *C.struct_wlr_xdg_toplevel
+	tree            *C.struct_wlr_scene_tree
+	appearance      config.WindowRuleResult
+	shadowNode      unsafe.Pointer
+	focusRingNode   unsafe.Pointer
+	// borderNode draws the border, or the focus ring's background when the
+	// border is off. It sits below the windows, the focus ring above them.
+	borderNode              unsafe.Pointer
+	decorations             viewDecorations
+	urgent                  bool
+	maximized               bool
+	floating                bool
 	cornerRadii             config.CornerRadius
 	clipToGeometry          bool
 	presentationOpacity     float64
+	bobY                    int // the baba-is-float offset below the view's place
 	openAnimationStarted    bool
 	openAnimationFinished   bool
 	presentationVisible     bool
@@ -1028,6 +1036,11 @@ func (c *Compositor) deliverPointerButton(source unsafe.Pointer, timeMsec C.uint
 		}
 	}
 
+	if pressed && c.tabIndicatorButton(float64(c.cursor.x), float64(c.cursor.y)) {
+		c.consumedPointerButtons[button] = true
+		C.wlr_seat_pointer_notify_frame(c.seat)
+		return
+	}
 	if pressed {
 		c.focusSurfaceAtCursor()
 	}
@@ -1052,11 +1065,20 @@ func (c *Compositor) handleCursorAxis(data unsafe.Pointer) {
 	// Niri treats a continuous scroll, such as a trackpoint's, as a touchpad's.
 	finger := event.source == C.WL_POINTER_AXIS_SOURCE_FINGER || event.source == C.WL_POINTER_AXIS_SOURCE_CONTINUOUS
 	horizontal := event.orientation == C.WL_POINTER_AXIS_HORIZONTAL_SCROLL
-	delta, v120 := scaleAxis(c.pointerScrollFactor(unsafe.Pointer(event.pointer), finger), horizontal, float64(event.delta), int32(event.delta_discrete))
+	factor := c.pointerScrollFactor(unsafe.Pointer(event.pointer), finger)
+	delta, v120 := scaleAxis(factor, horizontal, float64(event.delta), int32(event.delta_discrete))
 	if c.overviewScrollGesture(finger, horizontal, delta) ||
 		c.scrollBinds(event.source == C.WL_POINTER_AXIS_SOURCE_WHEEL, finger,
 			horizontal, delta, v120) {
 		return
+	}
+	// Niri multiplies the scroll-factor of the window under the pointer into
+	// the device's for the scroll that reaches the client. The binds above saw
+	// the device's factor only. The product scales the raw event once.
+	if view := c.viewForSurface(c.seat.pointer_state.focused_surface); view != nil && view.appearance.ScrollFactor != nil {
+		factor.Vertical *= *view.appearance.ScrollFactor
+		factor.Horizontal *= *view.appearance.ScrollFactor
+		delta, v120 = scaleAxis(factor, horizontal, float64(event.delta), int32(event.delta_discrete))
 	}
 	C.wlr_seat_pointer_notify_axis(c.seat, event.time_msec,
 		event.orientation, C.double(delta), C.int32_t(v120),
@@ -1199,6 +1221,9 @@ func (c *Compositor) focusView(view *toplevelView) {
 		c.notifyWindowStateChanged()
 	}
 	c.syncFocusRings()
+	// A rule that matches on the focus has to be read again now that the
+	// focus moved.
+	c.reapplyWindowRules()
 }
 
 func (c *Compositor) focusSurfaceAtCursor() {
@@ -1446,9 +1471,12 @@ func (c *Compositor) handleNewToplevel(data unsafe.Pointer) {
 			return
 		}
 		c.drop(initialCommit)
-		if c.preferNoCSD && !bool(toplevel.requested.fullscreen) {
-			C.wlr_xdg_toplevel_set_tiled(toplevel,
-				C.uint32_t(C.WLR_EDGE_TOP|C.WLR_EDGE_RIGHT|C.WLR_EDGE_BOTTOM|C.WLR_EDGE_LEFT))
+		// Niri sets the tiled state for the initial configure from the rules
+		// of the unmapped window.
+		view.appearance = config.ResolveWindowRules(c.windowRules,
+			cString(toplevel.app_id), cString(toplevel.title), config.UnmappedWindowState(c.atStartup))
+		if !bool(toplevel.requested.fullscreen) {
+			c.syncTiledState(view)
 		}
 		// kitty --start-as=fullscreen asks before its first commit.
 		if bool(toplevel.requested.fullscreen) {
@@ -1472,12 +1500,16 @@ func (c *Compositor) handleNewToplevel(data unsafe.Pointer) {
 			c.applyFullscreen(view)
 		}
 	})
-	add(unsafe.Pointer(&toplevel.events.set_title), func(unsafe.Pointer) {
+	// Niri resolves the window rules again when the title or app-id changes
+	// (app_id_changed, title_changed); an unmapped window's are resolved at map.
+	identityChanged := func(unsafe.Pointer) {
+		if view.mapped {
+			c.reapplyWindowRules()
+		}
 		c.notifyWindowStateChanged()
-	})
-	add(unsafe.Pointer(&toplevel.events.set_app_id), func(unsafe.Pointer) {
-		c.notifyWindowStateChanged()
-	})
+	}
+	add(unsafe.Pointer(&toplevel.events.set_title), identityChanged)
+	add(unsafe.Pointer(&toplevel.events.set_app_id), identityChanged)
 	// wlroots clears a seat's pointer focus when the surface is destroyed,
 	// never on unmap, and a destroyed toplevel unmaps first.
 	add(unsafe.Pointer(&toplevel.base.surface.events.unmap), func(unsafe.Pointer) {
@@ -1511,6 +1543,8 @@ func (c *Compositor) handleNewToplevel(data unsafe.Pointer) {
 		if c.model != nil {
 			c.model.RemoveWindow(view.id)
 			c.applyWorkspaceModel()
+			// The workspace may have a different active window now.
+			c.reapplyWindowRules()
 		}
 		c.switcherWindowGone(view.id)
 		c.releaseView(view)
@@ -1549,7 +1583,9 @@ func (c *Compositor) handleNewToplevel(data unsafe.Pointer) {
 		newlyMapped := !view.mapped
 		view.mapped = true
 		if newlyMapped {
+			var previousFocus uint64
 			if c.model != nil {
+				previousFocus, _ = c.model.ActiveWindow()
 				clientFullscreen := bool(toplevel.current.fullscreen) || bool(toplevel.requested.fullscreen)
 				if !view.rulesApplied {
 					c.mapWindowWithRules(view, clientFullscreen)
@@ -1563,8 +1599,15 @@ func (c *Compositor) handleNewToplevel(data unsafe.Pointer) {
 				}
 			}
 			// Niri activates newly mapped windows (ActivateWindow::Smart); its
-			// dialog and activation-token heuristics come with M5.
-			c.focusView(view)
+			// dialog and activation-token heuristics come with M5. A rule with
+			// open-focused false keeps the focus where it is.
+			if c.opensFocused(view) {
+				c.focusView(view)
+			} else if previousFocus != 0 && previousFocus != view.id {
+				// The new window took the model's focus when it mapped, so the
+				// window that had it gets it back.
+				c.model.FocusWindow(previousFocus)
+			}
 		}
 		if c.syncWorkspaceWindowSizeHints(view) {
 			c.applyWorkspaceModel()
@@ -1669,10 +1712,17 @@ func (v *toplevelView) treePosition() (int, int) {
 	return int(x), int(y)
 }
 
+// layoutPosition is where the layout puts the view: its tree position
+// without the baba-is-float offset.
+func (v *toplevelView) layoutPosition() (int, int) {
+	x, y := v.treePosition()
+	return x, y - v.bobY
+}
+
 // placeView moves a view's window-geometry origin to (x, y) in layout
-// coordinates, for tests.
+// coordinates.
 func (c *Compositor) placeView(view *toplevelView, x, y int) {
-	C.sysc_scene_tree_set_position(view.tree, C.int(x), C.int(y))
+	C.sysc_scene_tree_set_position(view.tree, C.int(x), C.int(y+view.bobY))
 	c.syncViewDecorations(view)
 }
 
@@ -1756,6 +1806,8 @@ func (c *Compositor) handleToplevelDestroy(view *toplevelView) {
 	}
 	if c.model != nil {
 		c.model.DestroyWindow(view.id)
+		// The workspace may have a different active window now.
+		c.reapplyWindowRules()
 	}
 	view.mapped = false
 	c.dropOverviewSurfaceListeners(view, nil)

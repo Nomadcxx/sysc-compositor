@@ -30,7 +30,7 @@ type activeWorkspace struct {
 }
 
 func (c *Compositor) scheduleAnimationTick() {
-	if c.animationTimer != nil || len(c.animations) == 0 {
+	if c.animationTimer != nil || len(c.animations) == 0 && !c.bobbing() {
 		return
 	}
 	c.animationTimer = time.AfterFunc(animationFrame, func() {
@@ -55,8 +55,13 @@ func (c *Compositor) tickAnimations(now time.Time) {
 		}
 		current.set(current.spring.ValueAt(elapsed))
 	}
+	c.syncBobbing(now)
 	if c.switcher.dirty {
 		c.syncSwitcher()
+	}
+	// Drawn tabs follow their column while it moves.
+	if len(c.tabIndicatorHits) > 0 {
+		c.syncTabIndicators()
 	}
 	c.damageCaptureSources()
 	c.scheduleAnimationTick()
@@ -149,7 +154,7 @@ func (c *Compositor) animateViewPosition(view *toplevelView, x, y int, kind conf
 	if view == nil || view.tree == nil {
 		return
 	}
-	currentX, currentY := view.treePosition()
+	currentX, currentY := view.layoutPosition()
 	xKey := animationKey{owner: view.id, property: "x"}
 	yKey := animationKey{owner: view.id, property: "y"}
 	if kind.Off || kind.Spring == nil || c.animationConfig.Off {
@@ -172,13 +177,13 @@ func (c *Compositor) animateViewPosition(view *toplevelView, x, y int, kind conf
 	}
 	if currentX != x || c.hasAnimation(xKey) {
 		c.animateValue(xKey, kind, float64(currentX), float64(x), 0, func(value float64) {
-			_, py := view.treePosition()
+			_, py := view.layoutPosition()
 			c.setViewScenePosition(view, int(math.Round(value)), py)
 		}, finish)
 	}
 	if currentY != y || c.hasAnimation(yKey) {
 		c.animateValue(yKey, kind, float64(currentY), float64(y), 0, func(value float64) {
-			px, _ := view.treePosition()
+			px, _ := view.layoutPosition()
 			c.setViewScenePosition(view, px, int(math.Round(value)))
 		}, finish)
 	}
@@ -187,10 +192,13 @@ func (c *Compositor) animateViewPosition(view *toplevelView, x, y int, kind conf
 	}
 }
 
+// setViewScenePosition puts the view where the layout says, plus its
+// baba-is-float offset.
 func (c *Compositor) setViewScenePosition(view *toplevelView, x, y int) {
 	if view == nil || view.tree == nil {
 		return
 	}
+	y += view.bobY
 	sceneFXNodeSetPosition(unsafe.Pointer(&view.tree.node), x, y)
 	if view.resizeSnapshot != nil {
 		sceneFXTreeSetPosition(view.resizeSnapshot, x, y)
@@ -213,11 +221,18 @@ func (c *Compositor) setViewSceneEnabled(view *toplevelView, enabled bool) {
 // by disabling the node, so the window stays hit-testable and keeps getting
 // frame callbacks during the resize spring.
 func (c *Compositor) syncViewOpacity(view *toplevelView) {
-	opacity := view.presentationOpacity
+	ruleOpacity := 1.0
+	if !view.fullscreen && view.appearance.Opacity != nil {
+		ruleOpacity = clampOpacity(*view.appearance.Opacity)
+	}
+	opacity := clampOpacity(view.presentationOpacity) * ruleOpacity
 	if view.resizeSnapshot != nil {
 		opacity = 0
 	}
 	sceneFXSetTreeOpacity(view.sceneNode(), opacity)
+	if view.toplevel != nil {
+		c.syncPopupOpacity(view.toplevel.base.surface, opacity, view.appearance.Popups.Opacity)
+	}
 }
 
 func (c *Compositor) startWindowOpen(view *toplevelView) {

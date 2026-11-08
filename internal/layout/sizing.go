@@ -46,13 +46,161 @@ func ParseSizeChange(arg string) (SizeChange, error) {
 	return SizeChange{Fixed: value, Relative: relative}, nil
 }
 
-// presetColumnWidths are the column widths Niri cycles through, as a share of
-// the working width.
-var presetColumnWidths = []float64{1.0 / 3.0, 0.5, 2.0 / 3.0}
+// PresetSize is one size of a preset cycle: a fixed pixel size, or a share of
+// the working size.
+type PresetSize struct {
+	Fixed bool
+	Value float64
+}
 
-// presetWindowHeights are the window heights Niri cycles through, as a share
-// of the working height.
-var presetWindowHeights = []float64{1.0 / 3.0, 0.5, 2.0 / 3.0}
+// defaultPresetSizes are the presets Niri cycles through when the config does
+// not list any, as a share of the working size.
+var defaultPresetSizes = []PresetSize{
+	{Value: 1.0 / 3.0},
+	{Value: 0.5},
+	{Value: 2.0 / 3.0},
+}
+
+// SetPresetSizes sets the preset sizes that SwitchPresetColumnWidth and
+// SwitchPresetWindowHeight cycle through. An empty list keeps Niri's default
+// presets.
+func (w *Workspace) SetPresetSizes(columnWidths, windowHeights []PresetSize) {
+	w.presetColumnWidths = columnWidths
+	w.presetWindowHeights = windowHeights
+}
+
+// columnPresets returns the preset column widths of the workspace, falling back
+// to the default presets when the config does not list any.
+func (w *Workspace) columnPresets() []PresetSize {
+	if len(w.presetColumnWidths) == 0 {
+		return defaultPresetSizes
+	}
+	return w.presetColumnWidths
+}
+
+// windowPresets returns the preset window heights of the workspace, falling
+// back to the default presets when the config does not list any.
+func (w *Workspace) windowPresets() []PresetSize {
+	if len(w.presetWindowHeights) == 0 {
+		return defaultPresetSizes
+	}
+	return w.presetWindowHeights
+}
+
+// presetPixels turns a preset into pixels against the working size. A fixed
+// preset is its own pixel size, a proportional one takes the same share math as
+// a proportional column width.
+func (w *Workspace) presetPixels(preset PresetSize, working int) int {
+	target := int(preset.Value)
+	if !preset.Fixed {
+		target = w.proportionPixels(preset.Value, working)
+	}
+	if working <= 0 {
+		return target
+	}
+	return min(max(1, target), working)
+}
+
+// ColumnWidthPixels returns the width of a column that takes the given share
+// of the available width, with the gaps around it.
+func ColumnWidthPixels(available, gap int, proportion float64) int {
+	if available <= 0 {
+		return 0
+	}
+	if proportion <= 0 {
+		proportion = 0.5
+	}
+	width := (float64(available-gap) * proportion) - float64(gap)
+	return max(1, int(math.Round(width)))
+}
+
+// MaximizeColumn makes the column that holds a window take the whole working
+// width, the way Niri's open-maximized does. The window id of zero means the
+// focused window.
+func (w *Workspace) MaximizeColumn(id uint64) bool {
+	columnIndex, _, ok := w.windowTile(id)
+	if !ok {
+		return false
+	}
+	column := &w.columns[columnIndex]
+	if column.fullWidth {
+		return false
+	}
+	column.fullWidth = true
+	column.presetWidth = false
+	w.revealFocused()
+	return true
+}
+
+// MaximizeWindowToEdges makes a window fill the height of its column and its
+// column the whole working width, the way Niri's open-maximized-to-edges
+// does. The window id of zero means the focused window.
+func (w *Workspace) MaximizeWindowToEdges(id uint64) bool {
+	columnIndex, tileIndex, ok := w.windowTile(id)
+	if !ok {
+		return false
+	}
+	column := &w.columns[columnIndex]
+	tile := &column.tiles[tileIndex]
+	if tile.maximized {
+		return false
+	}
+	tile.maximized = true
+	column.presetWidth = false
+	w.revealFocused()
+	return true
+}
+
+// SetColumnDisplayFor sets the display mode of the column that holds a
+// window, the way Niri's default-column-display does. The window id of zero
+// means the focused window.
+func (w *Workspace) SetColumnDisplayFor(id uint64, display ColumnDisplay) bool {
+	columnIndex, _, ok := w.windowTile(id)
+	if !ok || display > ColumnDisplayTabbed {
+		return false
+	}
+	column := &w.columns[columnIndex]
+	if column.display == display {
+		return false
+	}
+	column.display = display
+	return true
+}
+
+// SetFloatingPosition puts a window at a position inside the working area,
+// the way Niri's default-floating-position does. A window that is not
+// floating yet keeps the position for the day it floats.
+func (w *Workspace) SetFloatingPosition(id uint64, position FloatingPosition) bool {
+	floatIndex := w.floatingIndexOf(id)
+	var tile *tileState
+	var bounds Bounds
+	if floatIndex >= 0 {
+		bounds = w.floating[floatIndex].bounds
+		tile = &w.floating[floatIndex].tile
+	} else {
+		columnIndex, tileIndex, ok := w.locationOf(id)
+		if !ok {
+			return false
+		}
+		tile = &w.columns[columnIndex].tiles[tileIndex]
+		if tile.hasFloatingBounds {
+			bounds = tile.floatingBounds
+		} else {
+			placement := w.placementAt(columnIndex, tileIndex)
+			bounds.Width, bounds.Height = placement.Width, placement.Height
+		}
+	}
+	x, y := position.resolve(w.bounds, bounds.Width, bounds.Height)
+	bounds.X, bounds.Y = x, y
+	if floatIndex >= 0 {
+		return w.SetFloatingGeometry(id, bounds)
+	}
+	if tile.hasFloatingBounds && tile.floatingBounds == bounds {
+		return false
+	}
+	tile.floatingBounds, tile.hasFloatingBounds = bounds, true
+	return true
+}
 
 // SetColumnWidth sets the focused column's width, the way Niri's
 // set-column-width does.
@@ -85,6 +233,7 @@ func (w *Workspace) SwitchPresetColumnWidth(backwards bool) bool {
 	if w.focused < 0 || w.focused >= len(w.columns) {
 		return false
 	}
+	presets := w.columnPresets()
 	column := &w.columns[w.focused]
 	current := w.columnWidthAt(w.focused)
 	index := -1
@@ -94,17 +243,17 @@ func (w *Workspace) SwitchPresetColumnWidth(backwards bool) bool {
 	var next int
 	if index >= 0 {
 		if backwards {
-			next = (index + len(presetColumnWidths) - 1) % len(presetColumnWidths)
+			next = (index + len(presets) - 1) % len(presets)
 		} else {
-			next = (index + 1) % len(presetColumnWidths)
+			next = (index + 1) % len(presets)
 		}
 	} else {
-		next = w.presetIndex(presetColumnWidths, current, w.bounds.Width, backwards)
+		next = w.presetIndex(presets, current, w.bounds.Width, backwards)
 	}
 	column.presetWidth = true
 	column.presetWidthIdx = next
 	column.fullWidth = false
-	target := w.proportionPixels(presetColumnWidths[next], w.bounds.Width)
+	target := w.presetPixels(presets[next], w.bounds.Width)
 	column.width = target
 	if target == w.columnWidth {
 		column.width = 0
@@ -305,6 +454,7 @@ func (w *Workspace) SwitchPresetWindowHeight(id uint64, backwards bool) bool {
 	}
 	current := w.windowHeightAt(columnIndex, tileIndex)
 	tile := &w.columns[columnIndex].tiles[tileIndex]
+	presets := w.windowPresets()
 	index := -1
 	if tile.presetHeight && !tile.maximized {
 		index = tile.presetHeightIdx
@@ -312,17 +462,17 @@ func (w *Workspace) SwitchPresetWindowHeight(id uint64, backwards bool) bool {
 	var next int
 	if index >= 0 {
 		if backwards {
-			next = (index + len(presetWindowHeights) - 1) % len(presetWindowHeights)
+			next = (index + len(presets) - 1) % len(presets)
 		} else {
-			next = (index + 1) % len(presetWindowHeights)
+			next = (index + 1) % len(presets)
 		}
 	} else {
-		next = w.presetIndex(presetWindowHeights, current, w.bounds.Height, backwards)
+		next = w.presetIndex(presets, current, w.bounds.Height, backwards)
 	}
 	tile.presetHeight = true
 	tile.presetHeightIdx = next
 	tile.maximized = false
-	target := w.proportionPixels(presetWindowHeights[next], w.bounds.Height)
+	target := w.presetPixels(presets[next], w.bounds.Height)
 	tile.height = target
 	return true
 }
@@ -360,19 +510,20 @@ func (w *Workspace) resolveSize(change SizeChange, current, working int) (int, b
 
 // presetIndex picks the preset to use for a column or window that is not on a
 // preset yet: the first preset larger than the current size, or the last one
-// smaller than it, wrapping around. Niri allows one pixel of slack for
+// smaller than it, wrapping around. Presets compare in pixels so a cycle can
+// mix fixed and proportional sizes, and Niri allows one pixel of slack for
 // fractional scaling.
-func (w *Workspace) presetIndex(presets []float64, current, working int, backwards bool) int {
+func (w *Workspace) presetIndex(presets []PresetSize, current, working int, backwards bool) int {
 	if backwards {
 		for index := len(presets) - 1; index >= 0; index-- {
-			if w.proportionPixels(presets[index], working)+1 < current {
+			if w.presetPixels(presets[index], working)+1 < current {
 				return index
 			}
 		}
 		return len(presets) - 1
 	}
 	for index, preset := range presets {
-		if current+1 < w.proportionPixels(preset, working) {
+		if current+1 < w.presetPixels(preset, working) {
 			return index
 		}
 	}

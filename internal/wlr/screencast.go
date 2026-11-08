@@ -13,6 +13,7 @@ import (
 	"errors"
 	"image"
 	"image/draw"
+	"maps"
 	"slices"
 	"unsafe"
 
@@ -353,6 +354,18 @@ func (c *Compositor) syncCasts() {
 }
 
 func (c *Compositor) castStateChanged() {
+	// Niri's is-window-cast-target: a window is the target while any cast
+	// shows it, active or not. The rules are read again when that set moves.
+	targets := make(map[uint64]bool)
+	for _, s := range c.casts {
+		if id := s.state.Target.WindowID; id != nil {
+			targets[*id] = true
+		}
+	}
+	if !maps.Equal(targets, c.castTargetWindows) {
+		c.castTargetWindows = targets
+		c.reapplyWindowRules()
+	}
 	if c.stateChanged != nil {
 		c.stateChanged()
 	}

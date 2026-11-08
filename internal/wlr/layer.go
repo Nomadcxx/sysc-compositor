@@ -47,7 +47,9 @@ static void sysc_tree_coords_layer(struct wlr_scene_tree *tree, int *x, int *y) 
 import "C"
 
 import (
+	"math"
 	"slices"
+	"time"
 	"unsafe"
 
 	"github.com/Nomadcxx/sysc-compositor/internal/config"
@@ -80,14 +82,17 @@ func sceneLayer(layer C.enum_zwlr_layer_shell_v1_layer) int {
 
 // layerSurface is one layer-shell surface the compositor draws.
 type layerSurface struct {
-	surface             *C.struct_wlr_layer_surface_v1
-	scene               *C.struct_wlr_scene_layer_surface_v1
-	tree                *C.struct_wlr_scene_tree
-	layer               int
-	output              unsafe.Pointer // *wlr_output
-	outputName          string
-	placeWithinBackdrop bool
-	listeners           []*Listener
+	surface    *C.struct_wlr_layer_surface_v1
+	scene      *C.struct_wlr_scene_layer_surface_v1
+	tree       *C.struct_wlr_scene_tree
+	layer      int
+	output     unsafe.Pointer // *wlr_output
+	outputName string
+	rules      config.LayerRuleResult
+	shadowNode unsafe.Pointer
+	listeners  []*Listener
+	// bobY is the baba-is-float offset the tree is drawn at below its place.
+	bobY int
 }
 
 type LayerKind uint8
@@ -230,14 +235,14 @@ func (c *Compositor) handleNewLayerSurface(data unsafe.Pointer) {
 		return
 	}
 	l := &layerSurface{
-		surface:             surface,
-		scene:               scene,
-		tree:                scene.tree,
-		layer:               layer,
-		output:              unsafe.Pointer(surface.output),
-		outputName:          C.GoString(surface.output.name),
-		placeWithinBackdrop: c.resolveLayerRules(C.GoString(surface.namespace)),
+		surface:    surface,
+		scene:      scene,
+		tree:       scene.tree,
+		layer:      layer,
+		output:     unsafe.Pointer(surface.output),
+		outputName: C.GoString(surface.output.name),
 	}
+	l.rules = c.resolveLayerRules(l)
 	key := unsafe.Pointer(surface.surface)
 	c.layerSurfaces[key] = l
 	c.layerOrder = append(c.layerOrder, l)
@@ -254,10 +259,14 @@ func (c *Compositor) handleNewLayerSurface(data unsafe.Pointer) {
 		if layer := sceneLayer(surface.current.layer); layer != l.layer {
 			l.layer = layer
 			C.sysc_reparent(l.tree, c.layerTrees[layer])
+			// A rule may match on the layer, as Niri's recompute on commit.
+			l.rules = c.resolveLayerRules(l)
+			c.syncRuleBackgroundEffects()
 		}
 		if surface.current.committed != 0 || bool(surface.initial_commit) {
 			c.arrangeLayers(l.output)
 		}
+		c.applyLayerAppearance(l)
 		c.updateKeyboardFocus()
 		c.notifyStateChanged()
 	})
@@ -266,6 +275,8 @@ func (c *Compositor) handleNewLayerSurface(data unsafe.Pointer) {
 	// changes no layer state, so map and unmap both re-arrange.
 	add(unsafe.Pointer(&surface.surface.events._map), func(unsafe.Pointer) {
 		c.arrangeLayers(l.output)
+		c.syncRuleBackgroundEffects()
+		c.scheduleAnimationTick()
 		if snapshotKeyboardMode(int(surface.current.keyboard_interactive)) == LayerKeyboardOnDemandMode {
 			c.onDemandLayerFocus = l
 			c.setActiveOutputName(l.outputName)
@@ -298,14 +309,81 @@ func (c *Compositor) handleNewLayerSurface(data unsafe.Pointer) {
 	})
 }
 
-func (c *Compositor) resolveLayerRules(namespace string) bool {
-	return config.ResolveLayerRules(c.layerRules, namespace)
+// resolveLayerRules matches the layer rules against the surface's namespace,
+// its layer and the startup window.
+func (c *Compositor) resolveLayerRules(l *layerSurface) config.LayerRuleResult {
+	state := config.LayerState{Layer: layerNames[l.layer], AtStartup: c.atStartup}
+	return config.ResolveLayerRules(c.layerRules, l.namespace(), state)
+}
+
+// layerNames are the Niri names of the stacking layers a layer surface uses.
+var layerNames = map[int]config.LayerName{
+	layerBackground: config.LayerBackground,
+	layerBottom:     config.LayerBottom,
+	layerTop:        config.LayerTop,
+	layerOverlay:    config.LayerOverlay,
 }
 
 func (c *Compositor) reapplyLayerRules() {
 	for _, layer := range c.layerOrder {
-		layer.placeWithinBackdrop = c.resolveLayerRules(C.GoString(layer.surface.namespace))
+		layer.rules = c.resolveLayerRules(layer)
+		c.applyLayerAppearance(layer)
 	}
+	c.syncRuleBackgroundEffects()
+	c.syncBobbing(time.Now())
+}
+
+func (l *layerSurface) namespace() string { return C.GoString(l.surface.namespace) }
+
+// mappedSize is the surface's size, and whether it is mapped.
+func (l *layerSurface) mappedSize() (width, height int, mapped bool) {
+	surface := l.surface.surface
+	return int(surface.current.width), int(surface.current.height), bool(surface.mapped)
+}
+
+// applyLayerAppearance draws a layer surface's rule opacity, corners and
+// shadow, as Niri's mapped layer does.
+func (c *Compositor) applyLayerAppearance(l *layerSurface) {
+	if l == nil || l.tree == nil || l.surface == nil || l.surface.surface == nil {
+		return
+	}
+	opacity := 1.0
+	if l.rules.Opacity != nil {
+		opacity = clampOpacity(*l.rules.Opacity)
+	}
+	sceneFXSetTreeOpacity(unsafe.Pointer(l.tree), opacity)
+	c.syncPopupOpacity(l.surface.surface, opacity, l.rules.Popups.Opacity)
+
+	width, height := int(l.surface.surface.current.width), int(l.surface.surface.current.height)
+	var radii config.CornerRadius
+	if l.rules.GeometryCornerRadius != nil {
+		radii = fitCornerRadii(*l.rules.GeometryCornerRadius, float64(width), float64(height))
+	}
+	sceneFXSetWindowCorners(unsafe.Pointer(&l.tree.node), unsafe.Pointer(l.surface.surface), sceneFXRadii(radii))
+
+	// Niri starts a layer's shadow from the layout's, turned off.
+	shadow := c.layoutOptions.Shadow
+	shadow.On = false
+	shadow = shadow.Merged(l.rules.Shadow)
+	if shadow.On && l.shadowNode == nil {
+		l.shadowNode = sceneFXCreateShadow(unsafe.Pointer(l.tree), 1, 1, 0, shadow.Softness,
+			premultipliedColor(shadow.Color))
+		sceneFXNodeLowerToBottom(l.shadowNode)
+	}
+	if l.shadowNode == nil {
+		return
+	}
+	style := makeShadowRenderStyle(shadow, radii, true)
+	inset := style.inset
+	offsetX, offsetY := int(math.Round(shadow.OffsetX)), int(math.Round(shadow.OffsetY))
+	sceneFXShadowUpdate(l.shadowNode, -inset+offsetX, -inset+offsetY,
+		max(1, width+2*inset), max(1, height+2*inset), style.radius, style.blurSigma, style.color)
+	if shadow.DrawBehindWindow {
+		sceneFXShadowClip(l.shadowNode, 0, 0, 0, 0, [4]uint16{})
+	} else {
+		sceneFXShadowClip(l.shadowNode, inset-offsetX, inset-offsetY, width, height, sceneFXRadii(radii))
+	}
+	sceneFXSetNodeEnabled(l.shadowNode, shadow.On && width > 0 && height > 0)
 }
 
 // defaultOutput is the output under the pointer, else any enabled output.
@@ -338,11 +416,24 @@ func (c *Compositor) arrangeLayers(output unsafe.Pointer) {
 					continue
 				}
 				C.sysc_layer_configure(l.scene, &full, &usable)
+				// The configure put the tree back in its place.
+				if l.bobY != 0 {
+					C.wlr_scene_node_set_position(&l.tree.node, l.tree.node.x, l.tree.node.y+C.int(l.bobY))
+				}
 			}
 		}
 	}
 	c.usable[output] = rect{int(usable.x), int(usable.y), int(usable.width), int(usable.height)}
 	c.syncWorkspaceOutput(output)
+}
+
+// setLayerBob draws a layer surface bob below its place.
+func (l *layerSurface) setLayerBob(bob int) {
+	if bob == l.bobY || l.tree == nil {
+		return
+	}
+	C.wlr_scene_node_set_position(&l.tree.node, l.tree.node.x, l.tree.node.y+C.int(bob-l.bobY))
+	l.bobY = bob
 }
 
 // closeOutputLayers tells every layer surface on an output that is going away
@@ -373,7 +464,7 @@ func (c *Compositor) layerPlacements() []layerPlacement {
 			layer:               l.layer,
 			namespace:           C.GoString(l.surface.namespace),
 			mapped:              bool(l.surface.surface.mapped),
-			placeWithinBackdrop: l.placeWithinBackdrop,
+			placeWithinBackdrop: l.rules.PlaceWithinBackdrop,
 			box: rect{int(x), int(y),
 				int(l.surface.current.actual_width), int(l.surface.current.actual_height)},
 		})

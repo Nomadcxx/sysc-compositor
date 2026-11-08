@@ -353,7 +353,7 @@ func TestConfiguredLaptopNiriM8Values(t *testing.T) {
 			t.Errorf("laptop animation %d = %+v, want spring %+v", i, got, want)
 		}
 	}
-	appearance := cfg.ResolveWindowRules("test-app", "test-title")
+	appearance := cfg.ResolveWindowRules("test-app", "test-title", UnmappedWindowState(false))
 	if appearance.GeometryCornerRadius == nil || *appearance.GeometryCornerRadius != (CornerRadius{20, 20, 20, 20}) ||
 		appearance.ClipToGeometry == nil || !*appearance.ClipToGeometry {
 		t.Errorf("laptop window geometry appearance = %+v", appearance)
@@ -408,7 +408,7 @@ layer-rule {
 	if !reflect.DeepEqual(cfg.Workspaces, []WorkspaceConfig{{Name: "Work", OpenOnOutput: "DP-1"}}) {
 		t.Errorf("workspaces = %+v", cfg.Workspaces)
 	}
-	resolved := cfg.ResolveWindowRules("x-terminal-test", "open dialog")
+	resolved := cfg.ResolveWindowRules("x-terminal-test", "open dialog", UnmappedWindowState(false))
 	if resolved.OpenFloating == nil || *resolved.OpenFloating || resolved.OpenFullscreen == nil || !*resolved.OpenFullscreen ||
 		resolved.OpenOnWorkspace == nil || *resolved.OpenOnWorkspace != "Work" || resolved.OpenOnOutput == nil || *resolved.OpenOnOutput != "DP-1" {
 		t.Errorf("ordered window rule result = %+v", resolved)
@@ -417,10 +417,10 @@ layer-rule {
 		resolved.DefaultWindowHeight == nil || !resolved.DefaultWindowHeight.Fixed || resolved.DefaultWindowHeight.Value != 480 {
 		t.Errorf("default sizes = %+v, %+v", resolved.DefaultColumnWidth, resolved.DefaultWindowHeight)
 	}
-	if got := cfg.ResolveWindowRules("x-terminal-test", "hidden"); got.OpenFloating != nil {
+	if got := cfg.ResolveWindowRules("x-terminal-test", "hidden", UnmappedWindowState(false)); got.OpenFloating != nil {
 		t.Errorf("excluded window got rules = %+v", got)
 	}
-	if !cfg.ResolveLayerRules("sysc-shell-panel") || cfg.ResolveLayerRules("other") {
+	if !cfg.ResolveLayerRules("sysc-shell-panel", LayerState{}).PlaceWithinBackdrop || cfg.ResolveLayerRules("other", LayerState{}).PlaceWithinBackdrop {
 		t.Error("layer namespace rule did not match only sysc-shell namespaces")
 	}
 }
@@ -439,10 +439,341 @@ window-rule {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result := cfg.ResolveWindowRules("app", "title")
+	result := cfg.ResolveWindowRules("app", "title", UnmappedWindowState(false))
 	if result.DefaultColumnWidth == nil || result.DefaultColumnWidth.Value != 0 ||
 		result.DefaultWindowHeight == nil || result.DefaultWindowHeight.Value != 10000 {
 		t.Fatalf("clamped proportion rules = %+v", result)
+	}
+}
+
+func TestNiriWindowRuleOpacityIsParsedAndResolved(t *testing.T) {
+	cfg, err := Parse("window-rule-opacity.kdl", []byte(`
+window-rule {
+    match app-id="test"
+    opacity 0.25
+}
+window-rule {
+    match app-id="test" title="dialog"
+    opacity 0.75
+}
+window-rule {
+    match app-id="transparent"
+    opacity 0
+}
+window-rule {
+    match app-id="clamped"
+    opacity 1.5
+}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Warnings) != 0 {
+		t.Fatalf("supported opacity rules produced warnings: %v", cfg.Warnings)
+	}
+	for _, tc := range []struct {
+		app, title string
+		want       float64
+		wantSet    bool
+	}{
+		{app: "test", title: "dialog", want: 0.75, wantSet: true},
+		{app: "test", title: "other", want: 0.25, wantSet: true},
+		{app: "transparent", wantSet: true},
+		{app: "clamped", want: 1.5, wantSet: true},
+		{app: "no-match"},
+	} {
+		got := cfg.ResolveWindowRules(tc.app, tc.title, UnmappedWindowState(false)).Opacity
+		if (got != nil) != tc.wantSet || got != nil && *got != tc.want {
+			t.Errorf("opacity for %q/%q = %v, want %v", tc.app, tc.title, got, tc.want)
+		}
+	}
+
+	for _, src := range []string{
+		`window-rule { opacity "invalid"; }`,
+		`window-rule { opacity NaN; }`,
+		`window-rule { opacity 1e999; }`,
+	} {
+		if _, err := Parse("bad-opacity.kdl", []byte(src)); err == nil {
+			t.Errorf("accepted malformed or non-finite opacity: %s", src)
+		}
+	}
+
+	unsupported, err := Parse("unsupported-window-rule.kdl", []byte(`
+window-rule {
+    opacity 0.5
+    variable-refresh-rate true
+}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(unsupported.Warnings, "window-rule") {
+		t.Errorf("unsupported rule key lost its warning after opacity support: %v", unsupported.Warnings)
+	}
+}
+
+func TestNiriDecorationPartsMergeAcrossLayoutWorkspaceAndRules(t *testing.T) {
+	cfg, err := Parse("decorations.kdl", []byte(`
+layout {
+    focus-ring {
+        urgent-color "#ff00ff"
+    }
+    border {
+        on
+        width 2
+        inactive-color "#202020"
+    }
+    shadow {
+        inactive-color "#00000040"
+        draw-behind-window true
+        offset x=3
+    }
+}
+workspace "thick" {
+    layout {
+        border { width 8; }
+        focus-ring { off; }
+        shadow { on; softness 10; }
+    }
+}
+window-rule {
+    match app-id="a"
+    border { active-color "#ff0000"; }
+    focus-ring { width 6; }
+}
+window-rule {
+    match app-id="a" title="t"
+    border { off; }
+    shadow { on; color "#00ff00"; }
+    draw-border-with-background false
+}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Warnings) != 0 {
+		t.Fatalf("supported decoration keys produced warnings: %v", cfg.Warnings)
+	}
+
+	red, green := Color{1, 0, 0, 1}, Color{0, 1, 0, 1}
+	defaults := Default().Layout
+	ring, border, shadow := cfg.Layout.FocusRing, cfg.Layout.Border, cfg.Layout.Shadow
+	if want := (FocusRing{Width: 4, ActiveColor: defaults.FocusRing.ActiveColor,
+		InactiveColor: defaults.FocusRing.InactiveColor, UrgentColor: Color{1, 0, 1, 1}}); ring != want {
+		t.Errorf("layout focus ring = %+v, want %+v", ring, want)
+	}
+	if want := (FocusRing{Width: 2, ActiveColor: defaults.Border.ActiveColor,
+		InactiveColor: Color{0x20 / 255.0, 0x20 / 255.0, 0x20 / 255.0, 1},
+		UrgentColor:   defaults.Border.UrgentColor}); border != want {
+		t.Errorf("layout border = %+v, want %+v", border, want)
+	}
+	if shadow.On || !shadow.DrawBehindWindow || shadow.OffsetX != 3 || shadow.OffsetY != 0 ||
+		shadow.InactiveColor == nil || *shadow.InactiveColor != (Color{0, 0, 0, 0x40 / 255.0}) {
+		t.Errorf("layout shadow = %+v, want off, drawn behind, offset 3,0 and an inactive colour", shadow)
+	}
+	if !defaults.Border.Off || defaults.Border.Width != 4 ||
+		defaults.Border.ActiveColor != (Color{1, 200 / 255.0, 127 / 255.0, 1}) ||
+		defaults.FocusRing.UrgentColor != (Color{155 / 255.0, 0, 0, 1}) {
+		t.Errorf("defaults = border %+v ring %+v, want Niri's", defaults.Border, defaults.FocusRing)
+	}
+
+	workspace := cfg.Workspaces[0].Layout
+	if workspace == nil || workspace.Border.Width == nil || *workspace.Border.Width != 8 ||
+		workspace.Border.On || workspace.Border.Off || workspace.Border.ActiveColor != nil ||
+		!workspace.FocusRing.Off || !workspace.Shadow.On || workspace.Shadow.Softness == nil ||
+		*workspace.Shadow.Softness != 10 {
+		t.Fatalf("workspace layout = %+v, want only the set fields", workspace)
+	}
+
+	rules := cfg.ResolveWindowRules("a", "t", UnmappedWindowState(false))
+	if !rules.Border.Off || rules.Border.ActiveColor == nil || *rules.Border.ActiveColor != red ||
+		rules.FocusRing.Width == nil || *rules.FocusRing.Width != 6 ||
+		!rules.Shadow.On || rules.Shadow.Color == nil || *rules.Shadow.Color != green ||
+		rules.DrawBorderWithBackground == nil || *rules.DrawBorderWithBackground {
+		t.Errorf("rules for a/t = %+v, want the parts merged in rule order", rules)
+	}
+
+	// The rule's one colour keeps the workspace's width and the layout's other colours.
+	got := border.Merged(workspace.Border).Merged(cfg.ResolveWindowRules("a", "", UnmappedWindowState(false)).Border)
+	if got.Off || got.Width != 8 || got.ActiveColor != red || got.InactiveColor != border.InactiveColor {
+		t.Errorf("merged border = %+v, want on, width 8, red active and the layout's inactive colour", got)
+	}
+	if got := border.Merged(workspace.Border).Merged(rules.Border); !got.Off {
+		t.Errorf("a rule's off did not turn the border off: %+v", got)
+	}
+	if got := ring.Merged(workspace.FocusRing).Merged(rules.FocusRing); !got.Off || got.Width != 6 {
+		t.Errorf("merged focus ring = %+v, want off with width 6", got)
+	}
+	if got := ring.Merged(BorderRule{On: true}); got.Off {
+		t.Errorf("on did not turn the focus ring back on: %+v", got)
+	}
+	gotShadow := shadow.Merged(workspace.Shadow).Merged(rules.Shadow)
+	if !gotShadow.On || gotShadow.Softness != 10 || gotShadow.Color != green || !gotShadow.DrawBehindWindow {
+		t.Errorf("merged shadow = %+v, want on, softness 10, green and drawn behind", gotShadow)
+	}
+
+	gradients, err := Parse("gradients.kdl", []byte(`
+layout { border { active-gradient from="#000" to="#fff"; }; }
+window-rule { focus-ring { urgent-gradient from="#000" to="#fff"; }; }
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(gradients.Warnings, "layout.border.active-gradient") ||
+		!slices.Contains(gradients.Warnings, "window-rule.focus-ring.urgent-gradient") {
+		t.Errorf("gradient warnings = %v, want each gradient named", gradients.Warnings)
+	}
+
+	for src, want := range map[string]string{
+		`window-rule { border { width -1; }; }`:                 "width",
+		`window-rule { shadow { softness 2000; }; }`:            "softness",
+		`window-rule { draw-border-with-background "yes"; }`:    "boolean",
+		`workspace "w" { layout { focus-ring { size 1; }; }; }`: "unexpected node",
+		`layout { border 1 {}; }`:                               "takes child",
+	} {
+		if _, err := Parse("bad-decoration.kdl", []byte(src)); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("Parse(%q) error = %v, want containing %q", src, err, want)
+		}
+	}
+}
+
+func TestNiriTabIndicatorIsParsedAndMerged(t *testing.T) {
+	cfg, err := Parse("tab-indicator.kdl", []byte(`
+layout {
+    tab-indicator {
+        hide-when-single-tab
+        place-within-column false
+        gap -2
+        width 6
+        length total-proportion=1.0
+        position "top"
+        gaps-between-tabs 2
+        corner-radius 3
+        active-color "#ff0000"
+    }
+}
+workspace "w" {
+    layout {
+        tab-indicator { place-within-column; width 10; }
+    }
+}
+window-rule {
+    match app-id="a"
+    tab-indicator { urgent-color "#0000ff"; }
+}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Warnings) != 0 {
+		t.Fatalf("supported tab indicator keys produced warnings: %v", cfg.Warnings)
+	}
+	red, blue := Color{1, 0, 0, 1}, Color{0, 0, 1, 1}
+	if got := Default().Layout.TabIndicator; got.Off || got.Gap != 5 || got.Width != 4 || got.Length != 0.5 ||
+		got.Position != TabIndicatorLeft || got.ActiveColor != nil {
+		t.Errorf("default tab indicator = %+v, want Niri's", got)
+	}
+	got := cfg.Layout.TabIndicator
+	if got.Off || !got.HideWhenSingleTab || got.PlaceWithinColumn || got.Gap != -2 || got.Width != 6 ||
+		got.Length != 1 || got.Position != TabIndicatorTop || got.GapsBetweenTabs != 2 || got.CornerRadius != 3 ||
+		got.ActiveColor == nil || *got.ActiveColor != red || got.InactiveColor != nil {
+		t.Errorf("layout tab indicator = %+v", got)
+	}
+	merged := got.Merged(cfg.Workspaces[0].Layout.TabIndicator)
+	if !merged.PlaceWithinColumn || merged.Width != 10 || merged.Gap != -2 || !merged.HideWhenSingleTab {
+		t.Errorf("workspace tab indicator = %+v, want place-within-column and width 10 over the layout", merged)
+	}
+	rule := cfg.ResolveWindowRules("a", "", UnmappedWindowState(false)).TabIndicator
+	if withRule := merged.Merged(rule); withRule.UrgentColor == nil || *withRule.UrgentColor != blue ||
+		*withRule.ActiveColor != red || withRule.Width != 10 {
+		t.Errorf("rule tab indicator = %+v, want the urgent colour over the workspace's", withRule)
+	}
+	if bare, err := Parse("length.kdl", []byte(`layout { tab-indicator { length; }; }`)); err != nil ||
+		bare.Layout.TabIndicator.Length != 0.5 {
+		t.Errorf("length without total-proportion = %v, %v; want Niri's 0.5", bare, err)
+	}
+
+	for src, want := range map[string]string{
+		`window-rule { tab-indicator { width 4; }; }`:           "unexpected node",
+		`layout { tab-indicator { position "middle"; }; }`:      "position",
+		`layout { tab-indicator { width -1; }; }`:               "width",
+		`layout { tab-indicator { hide-when-single-tab 1; }; }`: "boolean",
+		`layout { tab-indicator { length proportion=1; }; }`:    "length",
+	} {
+		if _, err := Parse("bad-tab-indicator.kdl", []byte(src)); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("Parse(%q) error = %v, want containing %q", src, err, want)
+		}
+	}
+}
+
+func TestNiriLayerRuleAppearanceIsParsedAndResolved(t *testing.T) {
+	cfg, err := Parse("layer-rules.kdl", []byte(`
+layer-rule {
+    match namespace="^panel$"
+    opacity 0.5
+    geometry-corner-radius 8
+    shadow { on; softness 10; }
+    block-out-from "screencast"
+    background-effect { blur true; }
+}
+layer-rule {
+    match namespace="^panel$"
+    opacity 0.75
+    shadow { spread 2; }
+    background-effect { blur false; }
+}
+window-rule {
+    match app-id="a"
+    background-effect { blur true; }
+}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Warnings) != 0 {
+		t.Fatalf("supported layer rule keys produced warnings: %v", cfg.Warnings)
+	}
+	panel := cfg.ResolveLayerRules("panel", LayerState{})
+	if panel.Opacity == nil || *panel.Opacity != 0.75 ||
+		panel.GeometryCornerRadius == nil || *panel.GeometryCornerRadius != (CornerRadius{8, 8, 8, 8}) ||
+		!panel.Shadow.On || panel.Shadow.Softness == nil || *panel.Shadow.Softness != 10 ||
+		panel.Shadow.Spread == nil || *panel.Shadow.Spread != 2 ||
+		panel.BackgroundEffect.Blur == nil || *panel.BackgroundEffect.Blur {
+		t.Errorf("panel layer rules = %+v, want the later rule over the earlier, field by field", panel)
+	}
+	if !panel.BlocksCapture(CaptureCast) || panel.BlocksCapture(CaptureScreen) || panel.BlocksCapture(CaptureDisplay) {
+		t.Error("block-out-from screencast should hide the layer from casts only")
+	}
+	if other := cfg.ResolveLayerRules("other", LayerState{}); other.Opacity != nil || other.Shadow.On || other.BlockOutFrom != nil {
+		t.Errorf("unmatched layer got rules = %+v", other)
+	}
+	if blur := cfg.ResolveWindowRules("a", "", UnmappedWindowState(false)).BackgroundEffect.Blur; blur == nil || !*blur {
+		t.Errorf("window-rule background-effect blur = %v, want true", blur)
+	}
+
+	unsupported, err := Parse("effects.kdl", []byte(`
+layer-rule { background-effect { xray false; noise 0.1; }; }
+window-rule { background-effect { saturation 2; }; }
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"layer-rule.background-effect.xray", "layer-rule.background-effect.noise",
+		"window-rule.background-effect.saturation"} {
+		if !slices.Contains(unsupported.Warnings, want) {
+			t.Errorf("warnings = %v, want %q", unsupported.Warnings, want)
+		}
+	}
+	for src, want := range map[string]string{
+		`layer-rule { opacity "x"; }`:                        "opacity",
+		`layer-rule { block-out-from "everything"; }`:        "screen-capture or screencast",
+		`window-rule { background-effect { blur 1; }; }`:     "boolean",
+		`layer-rule { background-effect { glow true; }; }`:   "unexpected node",
+		`window-rule { background-effect { noise 2000; }; }`: "noise",
+	} {
+		if _, err := Parse("bad-layer-rule.kdl", []byte(src)); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("Parse(%q) error = %v, want containing %q", src, err, want)
+		}
 	}
 }
 
@@ -627,7 +958,7 @@ window-rule {
 			t.Errorf("%s animation = %+v, want spring %+v", name, got[name], params)
 		}
 	}
-	if got := cfg.ResolveWindowRules("app", "title"); got.GeometryCornerRadius == nil || *got.GeometryCornerRadius != (CornerRadius{20, 20, 20, 20}) ||
+	if got := cfg.ResolveWindowRules("app", "title", UnmappedWindowState(false)); got.GeometryCornerRadius == nil || *got.GeometryCornerRadius != (CornerRadius{20, 20, 20, 20}) ||
 		got.ClipToGeometry == nil || !*got.ClipToGeometry {
 		t.Errorf("window appearance rule = %+v", got)
 	}
@@ -648,11 +979,11 @@ window-rule {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := cfg.ResolveWindowRules("other", "title"); got.GeometryCornerRadius == nil || *got.GeometryCornerRadius != (CornerRadius{1, 2, 3, 4}) ||
+	if got := cfg.ResolveWindowRules("other", "title", UnmappedWindowState(false)); got.GeometryCornerRadius == nil || *got.GeometryCornerRadius != (CornerRadius{1, 2, 3, 4}) ||
 		got.ClipToGeometry == nil || *got.ClipToGeometry {
 		t.Errorf("general window appearance = %+v", got)
 	}
-	if got := cfg.ResolveWindowRules("special", "title"); got.GeometryCornerRadius == nil || *got.GeometryCornerRadius != (CornerRadius{20, 20, 20, 20}) ||
+	if got := cfg.ResolveWindowRules("special", "title", UnmappedWindowState(false)); got.GeometryCornerRadius == nil || *got.GeometryCornerRadius != (CornerRadius{20, 20, 20, 20}) ||
 		got.ClipToGeometry == nil || !*got.ClipToGeometry {
 		t.Errorf("last matching window appearance = %+v", got)
 	}
@@ -1367,6 +1698,369 @@ binds {
 	for _, name := range cfg.UnappliedActions {
 		if slices.Contains(part1, name) {
 			t.Errorf("default config still leaves %s unapplied", name)
+		}
+	}
+}
+
+func TestNiriWindowRuleOpenKeysAreParsedAndResolved(t *testing.T) {
+	cfg, err := Parse("open-rules.kdl", []byte(`
+window-rule {
+    match app-id="firefox"
+    open-maximized true
+    open-maximized-to-edges true
+    open-focused false
+    min-width 400
+    max-width 1200
+    min-height 300
+    max-height 900
+    default-column-display "tabbed"
+    default-floating-position x=100 y=50 relative-to="bottom-right"
+    scroll-factor 0.5
+}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Warnings) != 0 {
+		t.Fatalf("the window rule keys of Niri still warn: %v", cfg.Warnings)
+	}
+	resolved := cfg.ResolveWindowRules("firefox", "page", UnmappedWindowState(false))
+	if resolved.OpenMaximized == nil || !*resolved.OpenMaximized {
+		t.Errorf("open-maximized = %+v, want true", resolved.OpenMaximized)
+	}
+	if resolved.OpenMaximizedToEdges == nil || !*resolved.OpenMaximizedToEdges {
+		t.Errorf("open-maximized-to-edges = %+v, want true", resolved.OpenMaximizedToEdges)
+	}
+	if resolved.OpenFocused == nil || *resolved.OpenFocused {
+		t.Errorf("open-focused = %+v, want false", resolved.OpenFocused)
+	}
+	if resolved.MinWidth == nil || *resolved.MinWidth != 400 || resolved.MaxWidth == nil || *resolved.MaxWidth != 1200 {
+		t.Errorf("width limits = %+v, %+v, want 400 and 1200", resolved.MinWidth, resolved.MaxWidth)
+	}
+	if resolved.MinHeight == nil || *resolved.MinHeight != 300 || resolved.MaxHeight == nil || *resolved.MaxHeight != 900 {
+		t.Errorf("height limits = %+v, %+v, want 300 and 900", resolved.MinHeight, resolved.MaxHeight)
+	}
+	if resolved.DefaultColumnDisplay == nil || *resolved.DefaultColumnDisplay != ColumnDisplayTabbed {
+		t.Errorf("default-column-display = %+v, want tabbed", resolved.DefaultColumnDisplay)
+	}
+	position := resolved.DefaultFloatingPosition
+	if position == nil || position.X != 100 || position.Y != 50 || position.RelativeTo != RelativeToBottomRight {
+		t.Errorf("default-floating-position = %+v, want x=100 y=50 relative to bottom-right", position)
+	}
+	if resolved.ScrollFactor == nil || *resolved.ScrollFactor != 0.5 {
+		t.Errorf("scroll-factor = %+v, want 0.5", resolved.ScrollFactor)
+	}
+	if other := cfg.ResolveWindowRules("other", "page", UnmappedWindowState(false)); other.OpenMaximized != nil {
+		t.Errorf("a window that does not match got rules = %+v", other)
+	}
+}
+
+func TestNiriWindowRuleOpenKeysRejectBadValues(t *testing.T) {
+	for src, want := range map[string]string{
+		`window-rule { min-width -5; }`:                                      "whole number",
+		`window-rule { max-width 70000; }`:                                   "whole number",
+		`window-rule { open-maximized "yes"; }`:                              "boolean",
+		`window-rule { default-column-display "weird"; }`:                    "normal or tabbed",
+		`window-rule { default-floating-position x="left"; }`:                "must be a number",
+		`window-rule { default-floating-position relative-to="middle"; }`:    "relative-to must be one of",
+		`window-rule { default-floating-position x=1 y=2 sideways="left"; }`: "unexpected default-floating-position property",
+		`window-rule { scroll-factor 200; }`:                                 "greater than 0",
+		`window-rule { scroll-factor 0; }`:                                   "greater than 0",
+		`window-rule { scroll-factor "fast"; }`:                              "number",
+	} {
+		if _, err := Parse("bad-open-rules.kdl", []byte(src)); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("Parse(%q) error = %v, want containing %q", src, err, want)
+		}
+	}
+}
+
+func TestWindowRuleStatePropertiesAreParsed(t *testing.T) {
+	cfg, err := Parse("state-rules.kdl", []byte(`
+window-rule {
+    match is-focused=true
+    match is-urgent=true
+    match is-active-in-column=true
+    match is-floating=true
+    match at-startup=true
+    open-maximized true
+}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Warnings) != 0 {
+		t.Fatalf("the state match properties still warn: %v", cfg.Warnings)
+	}
+	if len(cfg.WindowRules) != 1 {
+		t.Fatalf("window rules = %d, want 1", len(cfg.WindowRules))
+	}
+	matches := cfg.WindowRules[0].Matches
+	if len(matches) != 5 {
+		t.Fatalf("match lines = %d, want 5", len(matches))
+	}
+	for i, want := range []struct {
+		name string
+		got  *bool
+	}{
+		{"is-focused", matches[0].IsFocused},
+		{"is-urgent", matches[1].IsUrgent},
+		{"is-active-in-column", matches[2].IsActiveInColumn},
+		{"is-floating", matches[3].IsFloating},
+		{"at-startup", matches[4].AtStartup},
+	} {
+		if want.got == nil {
+			t.Errorf("match line %d did not parse %s", i, want.name)
+			continue
+		}
+		if !*want.got {
+			t.Errorf("match line %d parsed %s = false, want true", i, want.name)
+		}
+	}
+}
+
+func TestWindowRuleStatePropertiesMatchTheWindowState(t *testing.T) {
+	for _, tc := range []struct {
+		match string
+		state WindowState
+		want  bool
+	}{
+		{"is-focused=true", WindowState{IsFocused: true}, true},
+		{"is-focused=true", WindowState{IsFocused: false}, false},
+		{"is-focused=false", WindowState{IsFocused: false}, true},
+		{"is-urgent=true", WindowState{IsUrgent: true}, true},
+		{"is-urgent=true", WindowState{IsUrgent: false}, false},
+		{"is-active-in-column=true", WindowState{IsActiveInColumn: true}, true},
+		{"is-active-in-column=true", WindowState{IsActiveInColumn: false}, false},
+		{"is-floating=true", WindowState{IsFloating: true}, true},
+		{"is-floating=true", WindowState{IsFloating: false}, false},
+		{"at-startup=true", WindowState{AtStartup: true}, true},
+		{"at-startup=true", WindowState{AtStartup: false}, false},
+	} {
+		src := "window-rule {\n    match " + tc.match + "\n    open-maximized true\n}\n"
+		cfg, err := Parse("state-rule.kdl", []byte(src))
+		if err != nil {
+			t.Fatalf("Parse(%q): %v", src, err)
+		}
+		if len(cfg.Warnings) != 0 {
+			t.Fatalf("Parse(%q) warned: %v", src, cfg.Warnings)
+		}
+		resolved := cfg.ResolveWindowRules("app", "title", tc.state)
+		got := resolved.OpenMaximized != nil && *resolved.OpenMaximized
+		if got != tc.want {
+			t.Errorf("match %s against %+v applied = %v, want %v", tc.match, tc.state, got, tc.want)
+		}
+	}
+}
+
+func TestWindowRuleActiveAndCastTargetPropertiesAreParsed(t *testing.T) {
+	cfg, err := Parse("active-rule.kdl", []byte(`
+window-rule {
+    match is-active=true
+    open-maximized true
+}
+window-rule {
+    match is-window-cast-target=false
+    open-floating true
+}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Warnings) != 0 {
+		t.Fatalf("the active and cast target match properties still warn: %v", cfg.Warnings)
+	}
+	active := cfg.ResolveWindowRules("app", "title", WindowState{IsActive: true, IsActiveInColumn: true})
+	if active.OpenMaximized == nil {
+		t.Errorf("the active window rule did not apply to an active window")
+	}
+	if active.OpenFloating == nil {
+		t.Errorf("the cast target rule did not apply to a window that is not a cast target")
+	}
+	other := cfg.ResolveWindowRules("app", "title", WindowState{IsActiveInColumn: true})
+	if other.OpenMaximized != nil {
+		t.Errorf("the active window rule applied to a window that is not active: %+v", other.OpenMaximized)
+	}
+	if other.OpenFloating == nil {
+		t.Errorf("the cast target rule did not apply to a window that is not a cast target")
+	}
+}
+
+func TestWindowRuleUnknownMatchPropertyIsRejected(t *testing.T) {
+	src := `window-rule { match is-unknown=true; }`
+	if _, err := Parse("bad-match.kdl", []byte(src)); err == nil || !strings.Contains(err.Error(), "unexpected match property") {
+		t.Errorf("Parse(%q) error = %v, want an unknown match property error", src, err)
+	}
+}
+
+// TestLayerRuleStateMatchesAreParsedAndEvaluated: a layer-rule match takes
+// Niri's at-startup and layer properties next to the namespace, and they are
+// ANDed within one match line.
+func TestLayerRuleStateMatchesAreParsedAndEvaluated(t *testing.T) {
+	cfg, err := Parse("layer-state.kdl", []byte(`
+layer-rule {
+    match namespace="^waybar$" layer="top"
+    opacity 0.5
+}
+layer-rule {
+    match at-startup=true
+    exclude layer="background"
+    place-within-backdrop true
+}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Warnings) != 0 {
+		t.Fatalf("warnings = %q, want none", cfg.Warnings)
+	}
+	top := LayerState{Layer: LayerTop}
+	if got := cfg.ResolveLayerRules("waybar", top).Opacity; got == nil || *got != 0.5 {
+		t.Errorf("waybar on top: opacity = %v, want 0.5", got)
+	}
+	if got := cfg.ResolveLayerRules("waybar", LayerState{Layer: LayerBottom}).Opacity; got != nil {
+		t.Errorf("waybar on bottom: opacity = %v, want none", *got)
+	}
+	if !cfg.ResolveLayerRules("panel", LayerState{Layer: LayerTop, AtStartup: true}).PlaceWithinBackdrop {
+		t.Error("a top layer at startup did not match at-startup=true")
+	}
+	if cfg.ResolveLayerRules("panel", top).PlaceWithinBackdrop {
+		t.Error("a layer after startup matched at-startup=true")
+	}
+	if cfg.ResolveLayerRules("wall", LayerState{Layer: LayerBackground, AtStartup: true}).PlaceWithinBackdrop {
+		t.Error("the excluded background layer matched")
+	}
+	for _, src := range []string{
+		`layer-rule { match layer="middle"; }`,
+		`layer-rule { match layer=1; }`,
+		`layer-rule { match at-startup="yes"; }`,
+	} {
+		if _, err := Parse("bad.kdl", []byte(src)); err == nil {
+			t.Errorf("%s parsed, want an error", src)
+		}
+	}
+}
+
+// TestNiriWindowRuleTiledStateIsParsedAndResolved: tiled-state overrides the
+// tiled state the compositor would derive from the decoration mode, and the
+// last matching rule wins.
+func TestNiriWindowRuleTiledStateIsParsedAndResolved(t *testing.T) {
+	cfg, err := Parse("tiled.kdl", []byte(`
+window-rule {
+    tiled-state true
+}
+window-rule {
+    match app-id="^round$"
+    tiled-state false
+}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Warnings) != 0 {
+		t.Fatalf("warnings = %q, want none", cfg.Warnings)
+	}
+	state := UnmappedWindowState(false)
+	if got := cfg.ResolveWindowRules("term", "", state).TiledState; got == nil || !*got {
+		t.Errorf("term tiled-state = %v, want true", got)
+	}
+	if got := cfg.ResolveWindowRules("round", "", state).TiledState; got == nil || *got {
+		t.Errorf("round tiled-state = %v, want false", got)
+	}
+	if got := ResolveWindowRules(nil, "term", "", state).TiledState; got != nil {
+		t.Errorf("no rule: tiled-state = %v, want unset", *got)
+	}
+	if _, err := Parse("bad.kdl", []byte(`window-rule { tiled-state "yes"; }`)); err == nil {
+		t.Error("a string tiled-state parsed, want an error")
+	}
+}
+
+// TestNiriPopupsRuleIsParsedAndResolved: the popups part of a window or layer
+// rule merges field by field in rule order, as Niri's ResolvedPopupsRules.
+func TestNiriPopupsRuleIsParsedAndResolved(t *testing.T) {
+	cfg, err := Parse("popups.kdl", []byte(`
+window-rule {
+    popups {
+        opacity 0.5
+        geometry-corner-radius 6
+    }
+}
+window-rule {
+    match app-id="^menu$"
+    popups {
+        background-effect { blur true; }
+    }
+}
+layer-rule {
+    match namespace="^bar$"
+    popups { opacity 0.25; }
+}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Warnings) != 0 {
+		t.Fatalf("warnings = %q, want none", cfg.Warnings)
+	}
+	popups := cfg.ResolveWindowRules("menu", "", UnmappedWindowState(false)).Popups
+	if popups.Opacity == nil || *popups.Opacity != 0.5 {
+		t.Errorf("popup opacity = %v, want 0.5 kept from the first rule", popups.Opacity)
+	}
+	if popups.GeometryCornerRadius == nil || popups.GeometryCornerRadius[0] != 6 {
+		t.Errorf("popup corner radius = %+v, want 6", popups.GeometryCornerRadius)
+	}
+	if popups.BackgroundEffect.Blur == nil || !*popups.BackgroundEffect.Blur {
+		t.Errorf("popup blur = %v, want true", popups.BackgroundEffect.Blur)
+	}
+	if got := cfg.ResolveLayerRules("bar", LayerState{}).Popups.Opacity; got == nil || *got != 0.25 {
+		t.Errorf("layer popup opacity = %v, want 0.25", got)
+	}
+	for _, src := range []string{
+		`window-rule { popups { opacity "half"; } }`,
+		`window-rule { popups { geometry-corner-radius -1; } }`,
+		`layer-rule { popups 1; }`,
+		`window-rule { popups { shadow { on; }; }; }`,
+	} {
+		if _, err := Parse("bad.kdl", []byte(src)); err == nil {
+			t.Errorf("%s parsed, want an error", src)
+		}
+	}
+}
+
+// TestNiriBabaIsFloatIsParsedAndResolved: baba-is-float applies to window
+// and layer rules, and the last matching rule wins.
+func TestNiriBabaIsFloatIsParsedAndResolved(t *testing.T) {
+	cfg, err := Parse("baba.kdl", []byte(`
+window-rule {
+    baba-is-float true
+}
+window-rule {
+    match app-id="^still$"
+    baba-is-float false
+}
+layer-rule {
+    match namespace="^bar$"
+    baba-is-float true
+}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Warnings) != 0 {
+		t.Fatalf("warnings = %q, want none", cfg.Warnings)
+	}
+	state := UnmappedWindowState(false)
+	if got := cfg.ResolveWindowRules("term", "", state).BabaIsFloat; got == nil || !*got {
+		t.Errorf("term baba-is-float = %v, want true", got)
+	}
+	if got := cfg.ResolveWindowRules("still", "", state).BabaIsFloat; got == nil || *got {
+		t.Errorf("still baba-is-float = %v, want false", got)
+	}
+	if !cfg.ResolveLayerRules("bar", LayerState{}).BabaIsFloat || cfg.ResolveLayerRules("other", LayerState{}).BabaIsFloat {
+		t.Error("the layer rule's baba-is-float did not reach only the bar")
+	}
+	for _, src := range []string{`window-rule { baba-is-float 1; }`, `layer-rule { baba-is-float "yes"; }`} {
+		if _, err := Parse("bad.kdl", []byte(src)); err == nil {
+			t.Errorf("%s parsed, want an error", src)
 		}
 	}
 }

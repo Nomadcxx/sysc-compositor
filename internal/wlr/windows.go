@@ -122,9 +122,15 @@ func (c *Compositor) mapWindowWithRules(view *toplevelView, clientFullscreen boo
 	if c.model == nil || view == nil || view.toplevel == nil {
 		return
 	}
+	// The window is not on screen yet, so the rules are matched against the
+	// state of an unmapped window, the way Niri does.
 	result := config.ResolveWindowRules(c.windowRules,
-		cString(view.toplevel.app_id), cString(view.toplevel.title))
+		cString(view.toplevel.app_id), cString(view.toplevel.title),
+		config.UnmappedWindowState(c.atStartup))
 	view.appearance = result
+	c.syncTiledState(view)
+	// The workspace's part joins when the model places the window.
+	c.resolveViewDecorations(view, nil)
 	output := c.model.Snapshot().FocusedOutput
 	if output == "" {
 		output = c.FocusedOutputName()
@@ -188,16 +194,80 @@ func (c *Compositor) mapWindowWithRules(view *toplevelView, clientFullscreen boo
 			break
 		}
 	}
+	// The maximized rules come after the default sizes, so that a maximized
+	// column keeps the whole working width.
+	if result.OpenMaximized != nil && *result.OpenMaximized {
+		c.model.MaximizeColumnFor(view.id)
+	}
+	if result.OpenMaximizedToEdges != nil && *result.OpenMaximizedToEdges {
+		c.model.MaximizeWindowToEdgesFor(view.id)
+	}
+	if result.DefaultColumnDisplay != nil {
+		if display, ok := columnDisplay(*result.DefaultColumnDisplay); ok {
+			c.model.SetColumnDisplayFor(view.id, display)
+		}
+	}
+	if result.DefaultFloatingPosition != nil {
+		c.model.SetFloatingPositionFor(view.id, layout.FloatingPosition{
+			X:          result.DefaultFloatingPosition.X,
+			Y:          result.DefaultFloatingPosition.Y,
+			RelativeTo: layout.RelativeTo(result.DefaultFloatingPosition.RelativeTo),
+		})
+	}
 }
 
+// columnDisplay maps the config's column display name to the layout's.
+func columnDisplay(display config.ColumnDisplay) (layout.ColumnDisplay, bool) {
+	switch display {
+	case config.ColumnDisplayNormal:
+		return layout.ColumnDisplayNormal, true
+	case config.ColumnDisplayTabbed:
+		return layout.ColumnDisplayTabbed, true
+	}
+	return layout.ColumnDisplayNormal, false
+}
+
+// reapplyWindowRules resolves the window rules again for every mapped view.
+// The rules that match on the window's state have to be read again when that
+// state moves, so the resolution reads the state of each window.
 func (c *Compositor) reapplyWindowRules() {
+	if c.model == nil {
+		return
+	}
+	snapshot := c.model.Snapshot()
+	workspaceNames := workspaceNamesByID(snapshot.Workspaces)
+	urgent := make(map[uint64]bool, len(snapshot.Windows))
+	for _, window := range snapshot.Windows {
+		urgent[window.ID] = window.IsUrgent
+	}
+	resized := false
 	for _, view := range c.views {
 		if view == nil || view.toplevel == nil {
 			continue
 		}
 		view.appearance = config.ResolveWindowRules(c.windowRules,
-			cString(view.toplevel.app_id), cString(view.toplevel.title))
+			cString(view.toplevel.app_id), cString(view.toplevel.title),
+			c.ruleState(view, snapshot))
+		c.syncTiledState(view)
+		view.urgent = urgent[view.id]
+		if c.resolveViewDecorations(view, workspaceNames[view.workspaceID]) {
+			resized = true
+		}
+		c.syncViewOpacity(view)
 	}
+	c.syncBobbing(time.Now())
+	// A rule that changes the border width resizes the window inside its tile.
+	if resized {
+		c.applyWorkspaceModel()
+		return
+	}
+	for _, view := range c.views {
+		if view != nil && view.toplevel != nil && view.mapped {
+			c.applyViewAppearance(view)
+		}
+	}
+	c.syncTabIndicators()
+	c.syncRuleBackgroundEffects()
 }
 
 func (c *Compositor) mapWindowAfterUnmap(view *toplevelView, output string, clientFullscreen bool) {
@@ -216,6 +286,18 @@ func (c *Compositor) keyboardFocusedView() *toplevelView {
 		return nil
 	}
 	return c.viewForSurface(c.seat.keyboard_state.focused_surface)
+}
+
+// opensFocused reports whether a newly mapped window takes the focus. A rule
+// with open-focused false leaves the focus where it is.
+func (c *Compositor) opensFocused(view *toplevelView) bool {
+	if view == nil {
+		return true
+	}
+	if focused := view.appearance.OpenFocused; focused != nil && !*focused {
+		return false
+	}
+	return true
 }
 
 // recordWindowFocus stamps a newly focused window. A window focused before
@@ -408,6 +490,9 @@ func (c *Compositor) SetWindowFloating(id uint64, floating bool) bool {
 		}
 		c.applyWorkspaceModel()
 		c.activateWorkspaceFocus()
+		// A rule that matches on the floating state has to be read again now
+		// that the window changed layer.
+		c.reapplyWindowRules()
 		return true
 	}
 	return false

@@ -129,6 +129,7 @@ import (
 	"github.com/Nomadcxx/sysc-compositor/internal/a11y"
 	"github.com/Nomadcxx/sysc-compositor/internal/bind"
 	"github.com/Nomadcxx/sysc-compositor/internal/config"
+	"github.com/Nomadcxx/sysc-compositor/internal/layout"
 	"github.com/Nomadcxx/sysc-compositor/internal/wm"
 )
 
@@ -146,23 +147,31 @@ type Compositor struct {
 	capture              *captureProtocol
 	pipewire             *pipeWire
 	casts                map[uint64]*screenCast
+	castTargetWindows    map[uint64]bool // the windows a cast shows, for is-window-cast-target
 	dynamicCastID        uint64
 	captureNodes         map[*C.struct_wlr_scene_node]*captureNodeOwner
 	xdgDecorationManager unsafe.Pointer
 	kdeDecorationManager unsafe.Pointer
-	windowShadowTree     *C.struct_wlr_scene_tree
-	windowAnimationTree  *C.struct_wlr_scene_tree
-	windowFocusTree      *C.struct_wlr_scene_tree
-	overviewTree         *C.struct_wlr_scene_tree
-	insertHintTree       *C.struct_wlr_scene_tree
-	insertHintNode       *C.struct_wlr_scene_rect
-	seat                 *C.struct_wlr_seat
-	pointerGestures      *C.struct_wlr_pointer_gestures_v1
-	xdgShell             *C.struct_wlr_xdg_shell
-	xdgActivation        *C.struct_wlr_xdg_activation_v1
-	layerShell           *C.struct_wlr_layer_shell_v1
-	socketName           string
-	listeners            map[*Listener]struct{}
+	// toplevelDecorations maps each xdg toplevel to its xdg-decoration
+	// object, which tells whether the window is server-side decorated.
+	toplevelDecorations map[*C.struct_wlr_xdg_toplevel]*C.struct_wlr_xdg_toplevel_decoration_v1
+	windowShadowTree    *C.struct_wlr_scene_tree
+	windowAnimationTree *C.struct_wlr_scene_tree
+	windowBorderTree    *C.struct_wlr_scene_tree
+	tabIndicatorTree    *C.struct_wlr_scene_tree
+	tabIndicatorNodes   []unsafe.Pointer
+	tabIndicatorHits    []tabIndicatorHit
+	windowFocusTree     *C.struct_wlr_scene_tree
+	overviewTree        *C.struct_wlr_scene_tree
+	insertHintTree      *C.struct_wlr_scene_tree
+	insertHintNode      *C.struct_wlr_scene_rect
+	seat                *C.struct_wlr_seat
+	pointerGestures     *C.struct_wlr_pointer_gestures_v1
+	xdgShell            *C.struct_wlr_xdg_shell
+	xdgActivation       *C.struct_wlr_xdg_activation_v1
+	layerShell          *C.struct_wlr_layer_shell_v1
+	socketName          string
+	listeners           map[*Listener]struct{}
 	// tearingControl records each surface's presentation hint. Frames stay
 	// vsynced whatever the hint: Niri never tears, and Mango and Hyprland
 	// tear only after a config opt-in that Niri's KDL has no node for.
@@ -252,14 +261,19 @@ type Compositor struct {
 	keyboardRepeatToken     uintptr
 	keyboardRepeatBinding   bind.Binding
 	keyboardRepeatInterval  int
-	inputDestroyListeners   map[unsafe.Pointer]*Listener
-	modifiers               uint32
-	focusedView             *toplevelView
-	onDemandLayerFocus      *layerSurface
-	pointerGrab             *pointerGrab
-	grabView                *toplevelView
-	grabButton              uint32
-	pressedPointerButtons   map[uint32]bool
+	// atStartup is true during the compositor's first minute. Niri's
+	// at-startup window rules match while it holds.
+	atStartup             bool
+	startupTimerSource    *C.struct_wl_event_source
+	startupTimerToken     uintptr
+	inputDestroyListeners map[unsafe.Pointer]*Listener
+	modifiers             uint32
+	focusedView           *toplevelView
+	onDemandLayerFocus    *layerSurface
+	pointerGrab           *pointerGrab
+	grabView              *toplevelView
+	grabButton            uint32
+	pressedPointerButtons map[uint32]bool
 	// pointerBinds is the scroll and mouse bind state (pointer_binds.go).
 	pointerBinds           pointerBindState
 	pointerSerialButtons   map[uint32]uint32
@@ -397,9 +411,27 @@ type LayoutOptions struct {
 	Gaps                  int
 	ColumnWidthProportion float64
 	FixedColumnWidth      int
-	InsertHint            config.InsertHint
-	FocusRing             config.FocusRing
-	Shadow                config.Shadow
+	PresetColumnWidths    []layout.PresetSize
+	PresetWindowHeights   []layout.PresetSize
+	DefaultColumnDisplay  layout.ColumnDisplay
+	CenterFocusedColumn   layout.CenterFocusedColumn
+	// AlwaysCenterSingleColumn centers a lone column whatever
+	// CenterFocusedColumn says.
+	AlwaysCenterSingleColumn bool
+	// EmptyWorkspaceAboveFirst keeps an empty workspace above the first one
+	// of every output.
+	EmptyWorkspaceAboveFirst bool
+	Struts                   layout.Struts
+	InsertHint               config.InsertHint
+	FocusRing                config.FocusRing
+	Border                   config.FocusRing
+	Shadow                   config.Shadow
+	// WorkspaceDecorations holds each named workspace's decoration parts,
+	// keyed by config.WorkspaceKey.
+	WorkspaceDecorations map[string]config.Decorations
+	TabIndicator         config.TabIndicator
+	// TabSpace is the room the tab indicator keeps inside a tabbed column.
+	TabSpace layout.TabSpace
 }
 
 // ErrNestedTestNeedsConsent is what NewWith returns inside a test binary unless
@@ -444,8 +476,16 @@ func NewWith(opts Options) (*Compositor, error) {
 	c.windowRules = slices.Clone(opts.WindowRules)
 	c.layerRules = slices.Clone(opts.LayerRules)
 	c.layoutOptions = *opts.Layout
+	c.model.SetPresetSizes(opts.Layout.PresetColumnWidths, opts.Layout.PresetWindowHeights)
+	c.model.SetDefaultColumnDisplay(opts.Layout.DefaultColumnDisplay)
+	c.model.SetCenterFocusedColumn(opts.Layout.CenterFocusedColumn)
+	c.model.SetAlwaysCenterSingleColumn(opts.Layout.AlwaysCenterSingleColumn)
+	c.model.SetEmptyWorkspaceAboveFirst(opts.Layout.EmptyWorkspaceAboveFirst)
+	c.model.SetStruts(opts.Layout.Struts)
+	c.model.SetTabSpace(opts.Layout.TabSpace)
 	c.cursorTheme, c.cursorSize = opts.CursorTheme, opts.CursorSize
 	c.keyboardConfig = opts.Keyboard
+	c.atStartup = true
 
 	c.display = C.wl_display_create()
 	if c.display == nil {
@@ -459,6 +499,7 @@ func NewWith(opts Options) (*Compositor, error) {
 	c.socketName = C.GoString(name)
 
 	c.loop = C.wl_display_get_event_loop(c.display)
+	c.armStartupTimer()
 	c.listeners = map[*Listener]struct{}{}
 	c.sceneOutputs = map[unsafe.Pointer]*C.struct_wlr_scene_output{}
 	c.mapped = map[unsafe.Pointer]bool{}
@@ -670,7 +711,8 @@ func normalizeOptions(opts Options) Options {
 		opts.Layout = &LayoutOptions{
 			Gaps: defaults.Layout.Gaps, ColumnWidthProportion: 0.5,
 			InsertHint: defaults.Layout.InsertHint, FocusRing: defaults.Layout.FocusRing,
-			Shadow: defaults.Layout.Shadow,
+			Border: defaults.Layout.Border, Shadow: defaults.Layout.Shadow,
+			TabIndicator: defaults.Layout.TabIndicator,
 		}
 	}
 	if opts.CursorTheme == "" {
@@ -712,6 +754,13 @@ func (c *Compositor) Reconfigure(opts Options) error {
 		c.bindings[i].Chord = c.bindings[i].Chord.ResolveMod(c.modKey)
 	}
 	c.layoutOptions = *opts.Layout
+	c.model.SetPresetSizes(opts.Layout.PresetColumnWidths, opts.Layout.PresetWindowHeights)
+	c.model.SetDefaultColumnDisplay(opts.Layout.DefaultColumnDisplay)
+	c.model.SetCenterFocusedColumn(opts.Layout.CenterFocusedColumn)
+	c.model.SetAlwaysCenterSingleColumn(opts.Layout.AlwaysCenterSingleColumn)
+	c.model.SetEmptyWorkspaceAboveFirst(opts.Layout.EmptyWorkspaceAboveFirst)
+	c.model.SetStruts(opts.Layout.Struts)
+	c.model.SetTabSpace(opts.Layout.TabSpace)
 	c.overviewConfig = opts.Overview
 	c.setTabletConfig(opts.Tablet)
 	c.setPointerConfig(opts.Pointers)
@@ -739,10 +788,7 @@ func (c *Compositor) Reconfigure(opts Options) error {
 	if c.dndScroll != nil {
 		c.stopDndEdgeScroll(c.dndScroll)
 	}
-	workspaces := make([]wm.WorkspaceConfig, len(opts.Workspaces))
-	for i, workspace := range opts.Workspaces {
-		workspaces[i] = wm.WorkspaceConfig{Name: workspace.Name, OpenOnOutput: workspace.OpenOnOutput}
-	}
+	workspaces := slices.Clone(opts.Workspaces)
 	c.model.SetWorkspaceConfig(workspaces)
 	c.reapplyWindowRules()
 	c.reapplyLayerRules()
@@ -848,6 +894,7 @@ func (c *Compositor) Destroy() {
 	c.destroyCapturePrivacy()
 	c.destroyVirtualInputGuard()
 	c.stopKeyboardRepeat()
+	c.stopStartupTimer()
 	if c.focusTimer != nil {
 		c.focusTimer.Stop()
 		c.focusTimer = nil

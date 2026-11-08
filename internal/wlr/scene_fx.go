@@ -112,6 +112,35 @@ static void sysc_scene_rect_update_ring_node(struct wlr_scene_node *node,
 	wlr_scene_rect_set_clipped_region(rect, clip);
 }
 
+static void sysc_scene_rect_update_fill_node(struct wlr_scene_node *node,
+		int x, int y, int width, int height,
+		int tl, int tr, int br, int bl, const float color[static 4]) {
+	struct wlr_scene_rect *rect = wlr_scene_rect_from_node(node);
+	wlr_scene_node_set_position(node, x, y);
+	wlr_scene_rect_set_size(rect, width, height);
+	wlr_scene_rect_set_color(rect, color);
+	wlr_scene_rect_set_corner_radii(rect, corner_radii_new(tl, tr, br, bl));
+	wlr_scene_rect_set_clipped_region(rect, clipped_region_get_default());
+}
+
+static void sysc_scene_shadow_set_clip_node(struct wlr_scene_node *node,
+		int x, int y, int width, int height, int tl, int tr, int br, int bl) {
+	struct clipped_region clip = clipped_region_get_default();
+	if (width > 0 && height > 0) {
+		clip.area = (struct wlr_box){ .x = x, .y = y, .width = width, .height = height };
+		clip.corners = corner_radii_new(tl, tr, br, bl);
+	}
+	wlr_scene_shadow_set_clipped_region(wlr_scene_shadow_from_node(node), clip);
+}
+
+static int sysc_scene_rect_clip_width(struct wlr_scene_node *node) {
+	return wlr_scene_rect_from_node(node)->clipped_region.area.width;
+}
+
+static int sysc_scene_shadow_clip_width(struct wlr_scene_node *node) {
+	return wlr_scene_shadow_from_node(node)->clipped_region.area.width;
+}
+
 struct sysc_scene_clone_context {
 	struct wlr_scene_tree *tree;
 	int origin_x, origin_y;
@@ -209,14 +238,22 @@ static void sysc_scene_scale_tree(struct wlr_scene_tree *tree,
 	wlr_scene_node_for_each_buffer(&tree->node, sysc_scale_scene_buffer, &context);
 }
 
-static void sysc_scene_set_buffer_opacity(struct wlr_scene_buffer *buffer,
-		int x, int y, void *data) {
-	(void)x; (void)y;
-	wlr_scene_buffer_set_opacity(buffer, *(float *)data);
+// The walk reaches disabled nodes too, unlike wlr_scene_node_for_each_buffer:
+// a popup's tree stays disabled until the popup maps, and its buffers must
+// already carry the parent's opacity then.
+static void sysc_scene_node_set_opacity(struct wlr_scene_node *node, float opacity) {
+	if (node->type == WLR_SCENE_NODE_BUFFER) {
+		wlr_scene_buffer_set_opacity(wlr_scene_buffer_from_node(node), opacity);
+	} else if (node->type == WLR_SCENE_NODE_TREE) {
+		struct wlr_scene_node *child;
+		wl_list_for_each(child, &wlr_scene_tree_from_node(node)->children, link) {
+			sysc_scene_node_set_opacity(child, opacity);
+		}
+	}
 }
 
 static void sysc_scene_tree_set_opacity(struct wlr_scene_tree *tree, float opacity) {
-	wlr_scene_node_for_each_buffer(&tree->node, sysc_scene_set_buffer_opacity, &opacity);
+	sysc_scene_node_set_opacity(&tree->node, opacity);
 }
 
 struct sysc_scene_opacity_ratio { float ratio; };
@@ -410,6 +447,14 @@ static void sysc_scene_blur_box(struct wlr_scene_node *node, int *x, int *y, int
 	*height = blur->height;
 }
 
+static void sysc_scene_blur_set_corners(struct wlr_scene_node *node, int tl, int tr, int br, int bl) {
+	wlr_scene_blur_set_corner_radii(wlr_scene_blur_from_node(node), corner_radii_new(tl, tr, br, bl));
+}
+
+static int sysc_scene_blur_top_left_corner(struct wlr_scene_node *node) {
+	return wlr_scene_blur_from_node(node)->corners.top_left;
+}
+
 static void *sysc_scene_node_destroy_signal(struct wlr_scene_node *node) {
 	return &node->events.destroy;
 }
@@ -471,13 +516,18 @@ func createSceneFXRenderer(backend unsafe.Pointer) unsafe.Pointer {
 func (c *Compositor) createAppearanceTrees() bool {
 	c.windowShadowTree = C.wlr_scene_tree_create(&c.scene.tree)
 	c.windowAnimationTree = C.wlr_scene_tree_create(&c.scene.tree)
+	c.windowBorderTree = C.wlr_scene_tree_create(&c.scene.tree)
 	c.windowFocusTree = C.wlr_scene_tree_create(&c.scene.tree)
-	if c.windowShadowTree == nil || c.windowAnimationTree == nil || c.windowFocusTree == nil {
+	c.tabIndicatorTree = C.wlr_scene_tree_create(&c.scene.tree)
+	if c.windowShadowTree == nil || c.windowAnimationTree == nil || c.windowBorderTree == nil ||
+		c.windowFocusTree == nil || c.tabIndicatorTree == nil {
 		return false
 	}
 	C.wlr_scene_node_place_below(&c.windowShadowTree.node, &c.layerTrees[layerWindows].node)
 	C.wlr_scene_node_place_below(&c.windowAnimationTree.node, &c.layerTrees[layerWindows].node)
+	C.wlr_scene_node_place_below(&c.windowBorderTree.node, &c.layerTrees[layerWindows].node)
 	C.wlr_scene_node_place_below(&c.windowFocusTree.node, &c.layerTrees[layerTop].node)
+	C.wlr_scene_node_place_below(&c.tabIndicatorTree.node, &c.layerTrees[layerTop].node)
 	return true
 }
 
@@ -535,6 +585,47 @@ func sceneFXRectUpdateRing(node unsafe.Pointer, x, y, width, height, border int,
 		C.int(inner[0]), C.int(inner[1]), C.int(inner[2]), C.int(inner[3]), &rgba[0])
 }
 
+// sceneFXRectIgnoreInput keeps a drawn rectangle out of pointer hit tests,
+// so the surface under it still takes the pointer.
+func sceneFXRectIgnoreInput(node unsafe.Pointer) {
+	if node != nil {
+		C.wlr_scene_rect_from_node((*C.struct_wlr_scene_node)(node)).accepts_input = false
+	}
+}
+
+// sceneFXNodeLowerToBottom puts a node under its siblings.
+func sceneFXNodeLowerToBottom(node unsafe.Pointer) {
+	if node != nil {
+		C.wlr_scene_node_lower_to_bottom((*C.struct_wlr_scene_node)(node))
+	}
+}
+
+// sceneFXRectUpdateFill draws the whole rectangle, with no cut-out.
+func sceneFXRectUpdateFill(node unsafe.Pointer, x, y, width, height int, radii [4]uint16, color [4]float32) {
+	rgba := [4]C.float{C.float(color[0]), C.float(color[1]), C.float(color[2]), C.float(color[3])}
+	C.sysc_scene_rect_update_fill_node((*C.struct_wlr_scene_node)(node),
+		C.int(x), C.int(y), C.int(width), C.int(height),
+		C.int(radii[0]), C.int(radii[1]), C.int(radii[2]), C.int(radii[3]), &rgba[0])
+}
+
+// sceneFXShadowClip cuts the shadow out of a node-relative rectangle; an empty
+// rectangle removes the cut-out.
+func sceneFXShadowClip(node unsafe.Pointer, x, y, width, height int, radii [4]uint16) {
+	C.sysc_scene_shadow_set_clip_node((*C.struct_wlr_scene_node)(node),
+		C.int(x), C.int(y), C.int(width), C.int(height),
+		C.int(radii[0]), C.int(radii[1]), C.int(radii[2]), C.int(radii[3]))
+}
+
+// sceneFXRectClipWidth and sceneFXShadowClipWidth report the width of a node's
+// cut-out, zero when it has none.
+func sceneFXRectClipWidth(node unsafe.Pointer) int {
+	return int(C.sysc_scene_rect_clip_width((*C.struct_wlr_scene_node)(node)))
+}
+
+func sceneFXShadowClipWidth(node unsafe.Pointer) int {
+	return int(C.sysc_scene_shadow_clip_width((*C.struct_wlr_scene_node)(node)))
+}
+
 func sceneFXShadowUpdate(node unsafe.Pointer, x, y, width, height, radius int, softness float64, color [4]float32) {
 	shadow := (*C.struct_wlr_scene_shadow)(node)
 	rgba := [4]C.float{C.float(color[0]), C.float(color[1]), C.float(color[2]), C.float(color[3])}
@@ -579,6 +670,16 @@ func sceneFXNodeDestroy(node unsafe.Pointer) {
 func sceneFXSetWindowCorners(node, surface unsafe.Pointer, radii [4]uint16) {
 	C.sysc_scene_set_window_corners((*C.struct_wlr_scene_node)(node), (*C.struct_wlr_surface)(surface),
 		C.int(radii[0]), C.int(radii[1]), C.int(radii[2]), C.int(radii[3]))
+}
+
+func sceneFXSetBlurCorners(node unsafe.Pointer, radii [4]uint16) {
+	C.sysc_scene_blur_set_corners((*C.struct_wlr_scene_node)(node),
+		C.int(radii[0]), C.int(radii[1]), C.int(radii[2]), C.int(radii[3]))
+}
+
+// sceneFXBlurTopLeftCorner is a blur node's top-left corner radius.
+func sceneFXBlurTopLeftCorner(node unsafe.Pointer) int {
+	return int(C.sysc_scene_blur_top_left_corner((*C.struct_wlr_scene_node)(node)))
 }
 
 // sceneFXBlurBox is a blur node's position in its parent and its size.

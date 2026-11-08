@@ -68,8 +68,15 @@ func walkCaptureScene(node *C.struct_wlr_scene_node, visit func(*C.struct_wlr_sc
 }
 
 func (c *Compositor) viewBlocksCapture(view *toplevelView, target config.CaptureTarget) bool {
-	return view != nil && view.toplevel != nil && config.ResolveWindowRules(c.windowRules,
-		cString(view.toplevel.app_id), cString(view.toplevel.title)).BlocksCapture(target)
+	if view == nil || view.toplevel == nil {
+		return false
+	}
+	state := config.UnmappedWindowState(c.atStartup)
+	if c.model != nil {
+		state = c.ruleState(view, c.model.Snapshot())
+	}
+	return config.ResolveWindowRules(c.windowRules,
+		cString(view.toplevel.app_id), cString(view.toplevel.title), state).BlocksCapture(target)
 }
 
 func (c *Compositor) rememberCaptureNodes(view *toplevelView) {
@@ -119,7 +126,8 @@ func (c *Compositor) syncCapturePrivacy() {
 	}
 	for _, owner := range c.captureNodes {
 		identity := owner.identity
-		blocked := config.ResolveWindowRules(c.windowRules, identity.appID, identity.title).BlocksCapture(config.CaptureScreen)
+		blocked := config.ResolveWindowRules(c.windowRules, identity.appID, identity.title,
+			config.UnmappedWindowState(c.atStartup)).BlocksCapture(config.CaptureScreen)
 		if blocked && !identity.blocked {
 			c.closeScreenshotUI()
 		}
@@ -159,8 +167,19 @@ func (c *Compositor) beginCapturePrivacy(target config.CaptureTarget) (func(), e
 	blocked := make(map[*C.struct_wlr_scene_node]bool)
 	for node, owner := range c.captureNodes {
 		identity := owner.identity
-		if config.ResolveWindowRules(c.windowRules, identity.appID, identity.title).BlocksCapture(target) {
+		if config.ResolveWindowRules(c.windowRules, identity.appID, identity.title,
+			config.UnmappedWindowState(c.atStartup)).BlocksCapture(target) {
 			blocked[node] = true
+		}
+	}
+	// A layer rule's block-out-from masks the layer surface's buffers too.
+	for _, layer := range c.layerOrder {
+		if layer.tree != nil && layer.rules.BlocksCapture(target) {
+			walkCaptureScene(&layer.tree.node, func(node *C.struct_wlr_scene_node) {
+				if node._type == C.WLR_SCENE_NODE_BUFFER {
+					blocked[node] = true
+				}
+			})
 		}
 	}
 	var masks []captureMask

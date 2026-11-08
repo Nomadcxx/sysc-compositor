@@ -29,6 +29,8 @@ import (
 	"runtime/cgo"
 	"slices"
 	"unsafe"
+
+	"github.com/Nomadcxx/sysc-compositor/internal/config"
 )
 
 type backgroundEffect struct {
@@ -43,8 +45,10 @@ type backgroundEffect struct {
 	blurNodes      []unsafe.Pointer
 	// blurGone listens for each blur node's destruction: the nodes are
 	// children of the window's scene tree, which can be destroyed first.
-	blurGone       map[unsafe.Pointer]*Listener
-	blurParent     unsafe.Pointer
+	blurGone   map[unsafe.Pointer]*Listener
+	blurParent unsafe.Pointer
+	// ruleBlur is the rule blur last drawn, to redraw when a rule changes it.
+	ruleBlur       *bool
 	commit         *Listener
 	rootCommit     *Listener
 	surfaceDestroy *Listener
@@ -73,12 +77,27 @@ func (c *Compositor) getBackgroundEffect(manager *C.struct_wl_resource, id uint3
 	if surface == nil {
 		return
 	}
-	key := unsafe.Pointer(surface)
-	effect := c.backgroundEffects[key]
-	if effect != nil && effect.resource != nil {
+	if effect := c.backgroundEffects[unsafe.Pointer(surface)]; effect != nil && effect.resource != nil {
 		C.sysc_bg_post_duplicate(manager)
 		return
 	}
+	effect := c.backgroundEffectFor(surface)
+	resourceHandle := cgo.NewHandle(effect)
+	resource := C.sysc_bg_surface_create(C.wl_resource_get_client(manager),
+		C.uint32_t(C.wl_resource_get_version(manager)), C.uint32_t(id), C.uintptr_t(resourceHandle))
+	if resource == nil {
+		resourceHandle.Delete()
+		return
+	}
+	effect.resource = resource
+	effect.resourceHandle = uintptr(resourceHandle)
+}
+
+// backgroundEffectFor returns the surface's effect, creating it: for the
+// ext-background-effect protocol, or for a rule that forces a blur.
+func (c *Compositor) backgroundEffectFor(surface *C.struct_wlr_surface) *backgroundEffect {
+	key := unsafe.Pointer(surface)
+	effect := c.backgroundEffects[key]
 	if effect == nil {
 		effect = &backgroundEffect{c: c, surface: surface, root: C.wlr_surface_get_root_surface(surface)}
 		c.backgroundEffects[key] = effect
@@ -108,15 +127,59 @@ func (c *Compositor) getBackgroundEffect(manager *C.struct_wl_resource, id uint3
 		}
 		c.keep(effect.commit, effect.surfaceDestroy, effect.rootCommit)
 	}
-	resourceHandle := cgo.NewHandle(effect)
-	resource := C.sysc_bg_surface_create(C.wl_resource_get_client(manager),
-		C.uint32_t(C.wl_resource_get_version(manager)), C.uint32_t(id), C.uintptr_t(resourceHandle))
-	if resource == nil {
-		resourceHandle.Delete()
+	return effect
+}
+
+// ruleBlur is the background-effect blur a window or layer rule sets for the
+// surface tree under root: nil follows the protocol region.
+func (c *Compositor) ruleBlur(root *C.struct_wlr_surface) *bool {
+	if isXDGPopup(root) {
+		return c.popupsRuleFor(root).BackgroundEffect.Blur
+	}
+	for _, view := range c.views {
+		if view.toplevel != nil && view.toplevel.base.surface == root {
+			return view.appearance.BackgroundEffect.Blur
+		}
+	}
+	if layer := c.layerSurfaces[unsafe.Pointer(root)]; layer != nil {
+		return layer.rules.BackgroundEffect.Blur
+	}
+	return nil
+}
+
+// syncRuleBackgroundEffects gives every mapped window and layer surface whose
+// rule forces a blur an effect, and redraws the effects whose rule changed.
+func (c *Compositor) syncRuleBackgroundEffects() {
+	if c.backgroundEffects == nil {
 		return
 	}
-	effect.resource = resource
-	effect.resourceHandle = uintptr(resourceHandle)
+	for _, view := range c.views {
+		if blur := view.appearance.BackgroundEffect.Blur; view.mapped && view.toplevel != nil && blur != nil && *blur {
+			c.backgroundEffectFor(view.toplevel.base.surface)
+		}
+	}
+	for _, layer := range c.layerOrder {
+		if blur := layer.rules.BackgroundEffect.Blur; layer.surface != nil && blur != nil && *blur {
+			c.backgroundEffectFor(layer.surface.surface)
+		}
+	}
+	for popup := range c.popups {
+		blur := c.popupsRuleFor(popup.base.surface).BackgroundEffect.Blur
+		if c.sceneTrees[unsafe.Pointer(popup.base)] != nil && blur != nil && *blur {
+			c.backgroundEffectFor(popup.base.surface)
+		}
+	}
+	for _, effect := range c.backgroundEffects {
+		blur := c.ruleBlur(effect.root)
+		if !sameBool(blur, effect.ruleBlur) {
+			effect.ruleBlur = blur
+			c.syncBackgroundEffect(effect, true)
+		}
+	}
+}
+
+func sameBool(a, b *bool) bool {
+	return a == nil && b == nil || a != nil && b != nil && *a == *b
 }
 
 func (e *backgroundEffect) setRegion(resource, region *C.struct_wl_resource) {
@@ -158,9 +221,25 @@ func (c *Compositor) applyBlurConfig() {
 }
 
 func (c *Compositor) syncBackgroundEffect(effect *backgroundEffect, rebuild bool) {
-	if effect.surface == nil || c.blurConfig.Off {
+	// Niri's background-effect blur: false never blurs, true blurs the whole
+	// surface when the client asked for no region.
+	blur := c.ruleBlur(effect.root)
+	if effect.surface == nil || c.blurConfig.Off || blur != nil && !*blur {
 		c.clearBackgroundEffectNodes(effect)
 		return
+	}
+	region := effect.committed
+	// A forced blur under a popup covers its geometry and takes the popups
+	// rule's corners, as Niri's render_popups.
+	var corners *config.CornerRadius
+	if blur != nil && *blur && len(region) == 0 && effect.surface == effect.root {
+		region = []rect{{0, 0, int(effect.surface.current.width), int(effect.surface.current.height)}}
+		if isXDGPopup(effect.surface) {
+			if geometry, ok := popupGeometry(effect.surface); ok {
+				region[0] = geometry
+			}
+			corners = c.popupsRuleFor(effect.surface).GeometryCornerRadius
+		}
 	}
 	var surfaceNode *C.struct_wlr_scene_node
 	var parent *C.struct_wlr_scene_tree
@@ -169,7 +248,7 @@ func (c *Compositor) syncBackgroundEffect(effect *backgroundEffect, rebuild bool
 		c.clearBackgroundEffectNodes(effect)
 		return
 	}
-	clipped := clipSurfaceRegion(effect.committed, int(effect.surface.current.width), int(effect.surface.current.height))
+	clipped := clipSurfaceRegion(region, int(effect.surface.current.width), int(effect.surface.current.height))
 	parentPointer := unsafe.Pointer(parent)
 	if rebuild || effect.blurParent != parentPointer || len(effect.blurNodes) != len(clipped) {
 		c.clearBackgroundEffectNodes(effect)
@@ -180,6 +259,9 @@ func (c *Compositor) syncBackgroundEffect(effect *backgroundEffect, rebuild bool
 			}
 			sceneFXNodeSetPosition(node, int(x)+area.x, int(y)+area.y)
 			sceneFXPlaceBelow(node, unsafe.Pointer(surfaceNode))
+			if corners != nil {
+				sceneFXSetBlurCorners(node, sceneFXRadii(fitCornerRadii(*corners, float64(area.w), float64(area.h))))
+			}
 			effect.blurNodes = append(effect.blurNodes, node)
 			c.watchBlurNode(effect, node)
 		}
