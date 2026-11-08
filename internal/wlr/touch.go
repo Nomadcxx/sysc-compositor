@@ -207,6 +207,12 @@ func (c *Compositor) handleTouchDown(data unsafe.Pointer) {
 		fmt.Fprintf(os.Stderr, "sysc-compositor: touch down dropped: a modal surface is open\n")
 		return
 	}
+	// A tab is Niri's activation hit: the finger activates the tab's window
+	// and nothing is delivered.
+	if c.tabIndicatorButton(lx, ly) {
+		fmt.Fprintf(os.Stderr, "sysc-compositor: touch down id=%d activated a tab\n", int32(event.touch_id))
+		return
+	}
 	surface, sx, sy := c.surfaceAt(lx, ly)
 	if surface == nil {
 		fmt.Fprintf(os.Stderr, "sysc-compositor: touch down dropped: no surface under the finger\n")

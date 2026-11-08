@@ -455,7 +455,7 @@ rule precedence and click activation; passes in lane 2, 2026-11-07).
 
 Known differences: no open animation; the room kept within the column comes
 out of the column's width where Niri adds it to a fixed width; a touch on a
-tab does not activate it; the click test calls the hit directly rather than
+tab activates it since the integration with main (untested by a device); the click test calls the hit directly rather than
 driving a pointer device. Gradients still warn.
 
 #### Slice 5c — background effects and layer appearance (landed)
