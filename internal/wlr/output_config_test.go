@@ -97,16 +97,20 @@ func TestOutputConfigAppliesEachOutputsSection(t *testing.T) {
 		t.Errorf("%s has VRR on, which headless outputs cannot do", name)
 	}
 
-	// An overlapping position falls back to the right of the placed outputs;
-	// a mode the output lacks falls back to its preferred mode.
+	// Configured outputs are placed in name order, and the headless output
+	// (it has a make) comes first, so the primary output's 0,0 now overlaps it
+	// and the primary goes right of it. A mode the output lacks falls back to
+	// its preferred mode.
 	if err := c.Reconfigure(Options{Outputs: sections(config.OutputPosition{X: 10, Y: 10},
 		&config.OutputMode{Width: 123, Height: 45})}); err != nil {
 		t.Fatal(err)
 	}
 	primary, _ = outputSnapshotNamed(c, primary.Name)
 	side, _ = outputSnapshotNamed(c, name)
-	if side.Logical == nil || primary.Logical == nil || side.Logical.X != int32(primary.Logical.Width) || side.Logical.Y != 0 {
-		t.Errorf("%s logical = %+v next to %+v, want it placed right of %s", name, side.Logical, primary.Logical, primary.Name)
+	if side.Logical == nil || primary.Logical == nil || side.Logical.X != 10 || side.Logical.Y != 10 ||
+		primary.Logical.X != 10+int32(side.Logical.Width) || primary.Logical.Y != 0 {
+		t.Errorf("%s logical = %+v, %s logical = %+v; want %s at 10,10 and %s right of it",
+			name, side.Logical, primary.Name, primary.Logical, name, primary.Name)
 	}
 	if index, _ := pickOutputMode(outputModeChoicesOf(primary), nil); index >= 0 &&
 		(primary.CurrentMode == nil || int(*primary.CurrentMode) != index) {
@@ -123,9 +127,9 @@ func outputModeChoicesOf(output OutputSnapshot) []outputModeChoice {
 }
 
 // TestOutputConfigOffTakesTheOutputAwayAndBack: off takes the output out of
-// the layout as an unplug does, its workspace moves away and comes back when
-// the output is turned on again, as Niri's do; the output stays listed with no
-// logical box. focus-at-startup picks the focused output.
+// the layout as an unplug does, and its named workspace comes back when the
+// output is turned on again; the output stays listed with no logical box, as
+// in Niri. focus-at-startup picks the focused output.
 func TestOutputConfigOffTakesTheOutputAwayAndBack(t *testing.T) {
 	c := newNested(t)
 	name := addConfigurableTestOutput(t, c)
@@ -161,8 +165,10 @@ func TestOutputConfigOffTakesTheOutputAwayAndBack(t *testing.T) {
 	if side, ok := outputSnapshotNamed(c, name); !ok || side.Logical != nil || side.CurrentMode != nil {
 		t.Errorf("%s after off = %+v (listed %t), want it listed with no logical box or mode", name, side, ok)
 	}
-	if got := sideOutput(); got == name || got == "" {
-		t.Errorf("workspace side is on %q after off, want it moved to the other output", got)
+	// As on an unplug, sysc moves the windows away and brings the named
+	// workspace back with its output; Niri moves the workspace itself.
+	if got := sideOutput(); got == name {
+		t.Errorf("workspace side is still on %s after off", name)
 	}
 
 	if err := c.Reconfigure(Options{Workspaces: workspaces, Outputs: on}); err != nil {
