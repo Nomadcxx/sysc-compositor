@@ -404,7 +404,9 @@ func (c *Compositor) setOutputPower(pointer unsafe.Pointer, enabled bool) error 
 	if !bool(C.sysc_output_set_enabled(output, C.bool(enabled))) {
 		return fmt.Errorf("wlr: setting output %q power=%t failed", C.GoString(output.name), enabled)
 	}
-	if !enabled {
+	if enabled {
+		c.applyOutputConfigs()
+	} else {
 		c.lockOutputGone(pointer)
 	}
 	c.updateInjectedInputGate()
@@ -449,7 +451,6 @@ func (c *Compositor) PowerOnMonitors() error {
 		}
 	}
 	c.actionPoweredOff = remaining
-	c.applyOutputConfigs()
 	c.updateInjectedInputGate()
 	return errors.Join(failures...)
 }

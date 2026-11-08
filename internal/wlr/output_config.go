@@ -128,9 +128,10 @@ func (c *Compositor) applyOutputConfig(pointer unsafe.Pointer) {
 		c.turnOutputOff(pointer)
 		return
 	}
-	// PowerOffMonitors keeps the outputs it turned off as they were;
-	// PowerOnMonitors applies the config when it turns them back on.
-	if _, poweredOff := c.actionPoweredOff[pointer]; poweredOff && !c.outputIsEnabled(pointer) {
+	// Power is not config: an output that PowerOffMonitors or a power
+	// management client turned off stays off, and setOutputPower applies the
+	// config when it turns the output back on.
+	if _, adopted := c.sceneOutputs[pointer]; adopted && !c.outputIsEnabled(pointer) {
 		return
 	}
 	var target *config.OutputMode

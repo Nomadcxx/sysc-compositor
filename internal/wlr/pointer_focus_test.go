@@ -96,7 +96,15 @@ func pointerScene(t *testing.T, c *Compositor, scene func(v *toplevelView, p *fa
 			return
 		}
 		mapped = true
+		// The window maps on the focused output, which need not sit at the
+		// layout's origin: Niri places outputs in name order.
 		box := c.layoutBox()
+		for output := range c.sceneOutputs {
+			if outputName(output) == c.FocusedOutputName() {
+				origin := c.outputLayoutBox(output).Min
+				box.x, box.y = origin.X, origin.Y
+			}
+		}
 		c.placeView(v, box.x, box.y)
 		if pointer = c.addFakePointer(); pointer == nil {
 			t.Error("could not attach the test pointer")
