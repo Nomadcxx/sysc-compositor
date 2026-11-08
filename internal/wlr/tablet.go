@@ -399,49 +399,11 @@ func (c *Compositor) tabletOutput() *C.struct_wlr_output {
 		return nil
 	}
 	for pointer := range c.sceneOutputs {
-		output := (*C.struct_wlr_output)(pointer)
-		if c.outputIsEnabled(pointer) && outputNameMatches(c.tabletConfig.MapToOutput,
-			C.GoString(output.name), cString(output.make), cString(output.model), cString(output.serial)) {
-			return output
+		if c.outputIsEnabled(pointer) && outputIdentity(pointer).Matches(c.tabletConfig.MapToOutput) {
+			return (*C.struct_wlr_output)(pointer)
 		}
 	}
 	return nil
-}
-
-// outputNameMatches is Niri's output name match: the connector, or "make
-// model serial" with Unknown for a missing part, ignoring ASCII case.
-func outputNameMatches(target, connector, make, model, serial string) bool {
-	if asciiEqualFold(target, connector) {
-		return true
-	}
-	if make == "" && model == "" && serial == "" {
-		return false
-	}
-	unknown := func(s string) string {
-		if s == "" {
-			return "Unknown"
-		}
-		return s
-	}
-	return asciiEqualFold(target, unknown(make)+" "+unknown(model)+" "+unknown(serial))
-}
-
-func asciiEqualFold(a, b string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	lower := func(c byte) byte {
-		if 'A' <= c && c <= 'Z' {
-			return c + 'a' - 'A'
-		}
-		return c
-	}
-	for i := 0; i < len(a); i++ {
-		if lower(a[i]) != lower(b[i]) {
-			return false
-		}
-	}
-	return true
 }
 
 func (c *Compositor) addTabletPad(device *C.struct_wlr_input_device) bool {

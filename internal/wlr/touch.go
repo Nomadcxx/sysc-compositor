@@ -127,19 +127,15 @@ func (c *Compositor) touchOutput(device *C.struct_wlr_touch) *C.struct_wlr_outpu
 	if device != nil && device.output_name != nil {
 		name := C.GoString(device.output_name)
 		for pointer := range c.sceneOutputs {
-			output := (*C.struct_wlr_output)(pointer)
-			if c.outputIsEnabled(pointer) && outputNameMatches(name,
-				C.GoString(output.name), cString(output.make), cString(output.model), cString(output.serial)) {
-				return output
+			if c.outputIsEnabled(pointer) && outputIdentity(pointer).Matches(name) {
+				return (*C.struct_wlr_output)(pointer)
 			}
 		}
 	}
 	if c.touchConfig.MapToOutput != "" {
 		for pointer := range c.sceneOutputs {
-			output := (*C.struct_wlr_output)(pointer)
-			if c.outputIsEnabled(pointer) && outputNameMatches(c.touchConfig.MapToOutput,
-				C.GoString(output.name), cString(output.make), cString(output.model), cString(output.serial)) {
-				return output
+			if c.outputIsEnabled(pointer) && outputIdentity(pointer).Matches(c.touchConfig.MapToOutput) {
+				return (*C.struct_wlr_output)(pointer)
 			}
 		}
 	}

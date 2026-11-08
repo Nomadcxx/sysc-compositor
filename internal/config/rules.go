@@ -502,7 +502,7 @@ func (c *Config) workspace(node *document.Node) error {
 			}
 			workspace.OpenOnOutput = value[0]
 		case "layout":
-			layout, err := c.workspaceLayout(child)
+			layout, err := c.workspaceLayout(child, "workspace.layout.")
 			if err != nil {
 				return err
 			}
@@ -517,7 +517,8 @@ func (c *Config) workspace(node *document.Node) error {
 
 // workspaceLayout parses the layout part of a workspace. Niri merges it over
 // the layout of the output, so only the keys it sets override the output's.
-func (c *Config) workspaceLayout(node *document.Node) (*WorkspaceLayout, error) {
+// prefix names the section in warnings.
+func (c *Config) workspaceLayout(node *document.Node, prefix string) (*WorkspaceLayout, error) {
 	layout := &WorkspaceLayout{}
 	for _, child := range node.Children {
 		switch nodeName(child) {
@@ -583,7 +584,7 @@ func (c *Config) workspaceLayout(node *document.Node) (*WorkspaceLayout, error) 
 			}
 			layout.Struts = &struts
 		case "focus-ring", "border":
-			rule, err := c.borderRule(child, "workspace.layout."+nodeName(child))
+			rule, err := c.borderRule(child, prefix+nodeName(child))
 			if err != nil {
 				return nil, fmt.Errorf("%s: %w", nodeName(child), err)
 			}
@@ -599,7 +600,7 @@ func (c *Config) workspaceLayout(node *document.Node) (*WorkspaceLayout, error) 
 			}
 			layout.Shadow = layout.Shadow.merge(rule)
 		case "tab-indicator":
-			part, err := c.tabIndicatorPart(child, "workspace.layout.tab-indicator", false)
+			part, err := c.tabIndicatorPart(child, prefix+"tab-indicator", false)
 			if err != nil {
 				return nil, fmt.Errorf("tab-indicator: %w", err)
 			}
@@ -611,7 +612,7 @@ func (c *Config) workspaceLayout(node *document.Node) (*WorkspaceLayout, error) 
 			}
 			layout.BackgroundColor = &color
 		default:
-			c.addWarning("workspace.layout." + nodeName(child))
+			c.addWarning(prefix + nodeName(child))
 		}
 	}
 	return layout, nil

@@ -202,6 +202,8 @@ import (
 	"sort"
 	"time"
 	"unsafe"
+
+	"github.com/Nomadcxx/sysc-compositor/internal/config"
 )
 
 type OutputModeSnapshot struct {
@@ -265,6 +267,13 @@ func (c *Compositor) outputNameAt(x, y float64) string {
 // outputName is the connector name of a wlr_output.
 func outputName(output unsafe.Pointer) string {
 	return C.GoString((*C.struct_wlr_output)(output).name)
+}
+
+// outputIdentity is what a config section name is matched against.
+func outputIdentity(pointer unsafe.Pointer) config.OutputName {
+	output := (*C.struct_wlr_output)(pointer)
+	return config.OutputName{Connector: C.GoString(output.name), Make: cString(output.make),
+		Model: cString(output.model), Serial: cString(output.serial)}
 }
 
 // outputNameForView infers a view's output from its center, with the active
