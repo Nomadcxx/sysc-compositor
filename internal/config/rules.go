@@ -34,6 +34,8 @@ type WorkspaceLayout struct {
 	// A nil strut set keeps the output's. When present it replaces the
 	// whole set, Niri's merge_clone of the struct, not one edge at a time.
 	Struts *Struts
+	// A nil colour keeps the output's background-color.
+	BackgroundColor *Color
 	// Decorations merge over the layout's, field by field.
 	Decorations
 }
@@ -602,6 +604,12 @@ func (c *Config) workspaceLayout(node *document.Node) (*WorkspaceLayout, error) 
 				return nil, fmt.Errorf("tab-indicator: %w", err)
 			}
 			layout.TabIndicator = layout.TabIndicator.merge(part)
+		case "background-color":
+			color, err := colorArg(child)
+			if err != nil {
+				return nil, fmt.Errorf("background-color: %w", err)
+			}
+			layout.BackgroundColor = &color
 		default:
 			c.addWarning("workspace.layout." + nodeName(child))
 		}

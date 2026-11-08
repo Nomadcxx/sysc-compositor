@@ -53,6 +53,8 @@ func compositorOptions(cfg *config.Config, locale *config.Keyboard) wlr.Options 
 			FocusRing:                cfg.Layout.FocusRing, Border: cfg.Layout.Border, Shadow: cfg.Layout.Shadow,
 			WorkspaceDecorations: workspaceDecorations(cfg.Workspaces),
 			TabIndicator:         cfg.Layout.TabIndicator, TabSpace: tabSpace(cfg.Layout.TabIndicator),
+			BackgroundColor:           cfg.Layout.BackgroundColor,
+			WorkspaceBackgroundColors: workspaceBackgroundColors(cfg.Workspaces),
 		},
 		CursorTheme: cfg.Cursor.Theme, CursorSize: cfg.Cursor.Size, Binds: cfg.Binds,
 		Overview: cfg.Overview, Gestures: cfg.Gestures, Animations: cfg.Animations, Blur: cfg.Blur,
@@ -96,6 +98,18 @@ func workspaceDecorations(workspaces []config.WorkspaceConfig) map[string]config
 		}
 	}
 	return parts
+}
+
+// workspaceBackgroundColors keys the background-color of each named workspace
+// that sets one by its folded name.
+func workspaceBackgroundColors(workspaces []config.WorkspaceConfig) map[string]config.Color {
+	colors := make(map[string]config.Color)
+	for _, workspace := range workspaces {
+		if workspace.Layout != nil && workspace.Layout.BackgroundColor != nil {
+			colors[config.WorkspaceKey(workspace.Name)] = *workspace.Layout.BackgroundColor
+		}
+	}
+	return colors
 }
 
 // presetSizes converts config preset sizes for the layout. A nil list stays

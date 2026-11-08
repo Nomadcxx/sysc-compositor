@@ -545,6 +545,7 @@ func (c *Compositor) applyWorkspaceModel() {
 		}
 	}
 	c.syncTabIndicators()
+	c.syncBackgroundColors()
 	c.syncRuleBackgroundEffects()
 	// Workspace activation can change while the mapped-window snapshots stay
 	// identical, especially when switching between empty workspaces.
