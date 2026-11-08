@@ -1,11 +1,106 @@
 package wlr
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/Nomadcxx/sysc-compositor/internal/config"
+	"github.com/Nomadcxx/sysc-compositor/internal/ipc"
 	"github.com/Nomadcxx/sysc-compositor/internal/wm"
 )
+
+func TestOutputRequestsAreTransientAndValidateBeforeApplying(t *testing.T) {
+	c := newNested(t)
+	name := addConfigurableTestOutput(t, c)
+	change := func(name, action string) (string, error) {
+		return c.ConfigureOutput(ipc.OutputRequest{Name: name, Action: json.RawMessage(action)})
+	}
+	for _, action := range []string{`{"CustomMode":{"mode":{"width":1280,"height":720,"refresh":60}}}`, `{"Scale":{"scale":{"Specific":2}}}`, `{"Transform":{"transform":"90"}}`, `{"Position":{"position":{"Specific":{"x":5000,"y":50}}}}`} {
+		if result, err := change(name, action); err != nil || result != "Applied" {
+			t.Fatalf("%s: %s, %v", action, result, err)
+		}
+	}
+	before, _ := outputSnapshotNamed(c, name)
+	if before.Logical == nil || before.Logical.Scale != 2 || before.Logical.Transform != 1 || before.Logical.X != 5000 || before.Logical.Y != 50 || before.Logical.Width != 360 {
+		t.Fatalf("output = %+v", before)
+	}
+	if _, err := change(name, `{"Mode":{"mode":{"Specific":{"width":65535,"height":65535,"refresh":60}}}}`); err == nil {
+		t.Fatal("unsupported mode succeeded")
+	}
+	after, _ := outputSnapshotNamed(c, name)
+	if after.Logical == nil || *after.Logical != *before.Logical {
+		t.Fatalf("rejected change moved output: %+v", after)
+	}
+	if _, err := change(name, `"Off"`); err != nil {
+		t.Fatal(err)
+	}
+	if output, _ := outputSnapshotNamed(c, name); output.Logical != nil {
+		t.Fatal("off output still has a logical box")
+	}
+	if _, err := change(name, `"On"`); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := change("missing-connector", `"Off"`); err != nil || result != "OutputWasMissing" {
+		t.Fatalf("missing output: %s, %v", result, err)
+	}
+	if err := c.Reconfigure(Options{}); err != nil {
+		t.Fatal(err)
+	}
+	after, _ = outputSnapshotNamed(c, name)
+	if after.Logical == nil || after.Logical.Scale != 1 || after.Logical.Transform != 0 || after.Logical.X == 5000 {
+		t.Fatalf("reload kept transient change: %+v", after)
+	}
+}
+
+func TestOutputRequestUsesADisconnectedOutputsIdentity(t *testing.T) {
+	c := newNested(t)
+	name := addConfigurableTestOutput(t, c)
+	if err := c.Reconfigure(Options{Outputs: []config.OutputConfig{{Name: name}}}); err != nil {
+		t.Fatal(err)
+	}
+	// Headless outputs have no EDID; model the cached identity of a physical panel.
+	identity := c.knownOutputs[name]
+	identity.Make, identity.Model, identity.Serial = "Acme", "Panel", "42"
+	c.knownOutputs[name] = identity
+	parts := []string{identity.Make, identity.Model, identity.Serial}
+	for i := range parts {
+		if parts[i] == "" {
+			parts[i] = "Unknown"
+		}
+	}
+	for pointer := range c.backendOutputs {
+		if outputName(pointer) == name {
+			destroyOutput(pointer)
+			break
+		}
+	}
+	result, err := c.ConfigureOutput(ipc.OutputRequest{Name: strings.Join(parts, " "), Action: json.RawMessage(`"Off"`)})
+	if err != nil || result != "OutputWasMissing" || len(c.outputConfigs) != 1 || !c.outputConfigs[0].Off {
+		t.Fatalf("disconnected edit: result=%s err=%v configs=%+v", result, err, c.outputConfigs)
+	}
+}
+
+func TestOutputModelineAppliesOnNativeAndHeadlessOutputs(t *testing.T) {
+	c := newNested(t)
+	headless := addConfigurableTestOutput(t, c)
+	names := []string{headless}
+	for pointer := range c.backendOutputs {
+		if outputName(pointer) != headless {
+			names = append(names, outputName(pointer))
+		}
+	}
+	for _, name := range names {
+		_, err := c.ConfigureOutput(ipc.OutputRequest{Name: name, Action: json.RawMessage(`{"Modeline":{"clock":148.5,"hdisplay":1920,"hsync_start":2008,"hsync_end":2052,"htotal":2200,"vdisplay":1080,"vsync_start":1084,"vsync_end":1089,"vtotal":1125,"hsync_polarity":"PHSync","vsync_polarity":"PVSync"}}`)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		output, _ := outputSnapshotNamed(c, name)
+		if output.CurrentMode == nil || output.Modes[*output.CurrentMode].Width != 1920 || output.Modes[*output.CurrentMode].Height != 1080 || output.Modes[*output.CurrentMode].RefreshRate != 60000 {
+			t.Fatalf("%s modeline mode = %+v", name, output)
+		}
+	}
+}
 
 // addConfigurableTestOutput adds a headless output and returns its name:
 // wlroots numbers headless outputs across the whole test process.
@@ -165,8 +260,7 @@ func TestOutputConfigOffTakesTheOutputAwayAndBack(t *testing.T) {
 	if side, ok := outputSnapshotNamed(c, name); !ok || side.Logical != nil || side.CurrentMode != nil {
 		t.Errorf("%s after off = %+v (listed %t), want it listed with no logical box or mode", name, side, ok)
 	}
-	// As on an unplug, sysc moves the windows away and brings the named
-	// workspace back with its output; Niri moves the workspace itself.
+	// As on an unplug, move the workspace itself to the remaining output.
 	if got := sideOutput(); got == name {
 		t.Errorf("workspace side is still on %s after off", name)
 	}

@@ -873,8 +873,8 @@ func TestReconnectedOutputRemapsWindowsLeftWithoutAnOutput(t *testing.T) {
 	if len(snapshot.Windows) != 1 || snapshot.Windows[0].ID != 1 {
 		t.Fatalf("windows after output reconnect = %+v, want window 1 mapped", snapshot.Windows)
 	}
-	if snapshot.Windows[0].WorkspaceID == oldWorkspaceID || snapshot.Windows[0].Output != "HDMI-A-1" {
-		t.Fatalf("reconnected window = %+v, want a new HDMI-A-1 workspace", snapshot.Windows[0])
+	if snapshot.Windows[0].WorkspaceID != oldWorkspaceID || snapshot.Windows[0].Output != "HDMI-A-1" {
+		t.Fatalf("reconnected window = %+v, want its retained workspace on HDMI-A-1", snapshot.Windows[0])
 	}
 	if len(snapshot.Workspaces) != 2 || snapshot.Workspaces[1].IsActive || len(snapshot.Workspaces[1].WindowIDs) != 0 {
 		t.Fatalf("workspaces after remap = %+v, want a trailing empty workspace", snapshot.Workspaces)

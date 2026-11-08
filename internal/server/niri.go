@@ -45,11 +45,12 @@ func Version() string {
 type niriHandler struct {
 	// quit runs Niri's Quit after the reply is written: the exit dialog
 	// asks first unless skipConfirmation is set.
-	quit       func(skipConfirmation bool)
-	spawn      spawner
-	snapshot   func() niriSnapshot
-	stream     func(net.Conn)
-	postAction func(ipc.Action, uint64) error
+	quit            func(skipConfirmation bool)
+	spawn           spawner
+	snapshot        func() niriSnapshot
+	stream          func(net.Conn)
+	postAction      func(ipc.Action, uint64) error
+	configureOutput func(ipc.OutputRequest) (string, error)
 }
 
 // niriSnapshot contains only plain Go wire data, never wlroots objects.
@@ -258,9 +259,13 @@ func toNiriWindow(window wlr.WindowInfo, tile wm.WindowSnapshot, output ipc.Outp
 func toNiriWorkspaces(model wm.Snapshot) []ipc.Workspace {
 	workspaces := make([]ipc.Workspace, 0, len(model.Workspaces))
 	for _, workspace := range model.Workspaces {
-		output := workspace.Output
+		var output *string
+		if workspace.Output != "" {
+			name := workspace.Output
+			output = &name
+		}
 		workspaces = append(workspaces, ipc.Workspace{
-			ID: workspace.ID, Idx: workspace.Index, Name: clonePointer(workspace.Name), Output: &output,
+			ID: workspace.ID, Idx: workspace.Index, Name: clonePointer(workspace.Name), Output: output,
 			IsUrgent: workspace.IsUrgent, IsActive: workspace.IsActive, IsFocused: workspace.IsFocused,
 			ActiveWindowID: clonePointer(workspace.ActiveWindowID),
 		})
@@ -314,6 +319,15 @@ func toNiriLayer(layer wlr.LayerSnapshot) ipc.LayerSurface {
 
 func (h niriHandler) handle(r ipc.Request) (ipc.Reply, func()) {
 	switch r.Name {
+	case "Output":
+		if r.Output == nil || h.configureOutput == nil {
+			return ipc.Unimplemented("Output"), nil
+		}
+		result, err := h.configureOutput(*r.Output)
+		if err != nil {
+			return ipc.Reply{Err: err.Error()}, nil
+		}
+		return ipc.Reply{Ok: ipc.SuccessValue("OutputConfigChanged", result)}, nil
 	case "Version":
 		return ipc.Reply{Ok: ipc.VersionResponse(Version())}, nil
 	case "ReturnError":

@@ -25,7 +25,7 @@ type Request struct {
 }
 
 // OutputRequest is Niri's temporary per-output configuration request. The
-// action remains raw until M15 owns applying output changes.
+// action keeps the validated, externally tagged OutputAction wire value.
 type OutputRequest struct {
 	Name   string
 	Action json.RawMessage

@@ -155,7 +155,8 @@ type WindowRule struct {
 	DefaultFloatingPosition *FloatingPosition
 	// ScrollFactor scales the scroll events delivered to the window, Niri's
 	// scroll-factor; nil means one.
-	ScrollFactor *float64
+	ScrollFactor        *float64
+	VariableRefreshRate *bool
 	// Decorations merge field by field over the window's workspace layout,
 	// and over each other in rule order.
 	Decorations
@@ -192,7 +193,8 @@ type WindowRuleResult struct {
 	DefaultFloatingPosition *FloatingPosition
 	// ScrollFactor scales the scroll events delivered to the window, Niri's
 	// scroll-factor; nil means one.
-	ScrollFactor *float64
+	ScrollFactor        *float64
+	VariableRefreshRate *bool
 	// Decorations merge field by field over the window's workspace layout,
 	// and over each other in rule order.
 	Decorations
@@ -319,6 +321,7 @@ func ResolveWindowRules(rules []WindowRule, appID, title string, state WindowSta
 		applyRuleValue(&result.DefaultColumnDisplay, rule.DefaultColumnDisplay)
 		applyRuleValue(&result.DefaultFloatingPosition, rule.DefaultFloatingPosition)
 		applyRuleValue(&result.ScrollFactor, rule.ScrollFactor)
+		applyRuleValue(&result.VariableRefreshRate, rule.VariableRefreshRate)
 		result.Decorations = result.Decorations.merge(rule.Decorations)
 		result.BackgroundEffect.Blur = cmp.Or(rule.BackgroundEffect.Blur, result.BackgroundEffect.Blur)
 		applyRuleValue(&result.DrawBorderWithBackground, rule.DrawBorderWithBackground)
@@ -718,7 +721,7 @@ func (c *Config) windowRule(node *document.Node) error {
 			if err == nil {
 				rule.Opacity = &value
 			}
-		case "clip-to-geometry", "draw-border-with-background", "tiled-state", "baba-is-float":
+		case "clip-to-geometry", "draw-border-with-background", "tiled-state", "baba-is-float", "variable-refresh-rate":
 			var value bool
 			value, err = boolArg(child)
 			if err == nil {
@@ -729,6 +732,8 @@ func (c *Config) windowRule(node *document.Node) error {
 					rule.DrawBorderWithBackground = &value
 				case "tiled-state":
 					rule.TiledState = &value
+				case "variable-refresh-rate":
+					rule.VariableRefreshRate = &value
 				default:
 					rule.BabaIsFloat = &value
 				}

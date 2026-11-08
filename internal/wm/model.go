@@ -2,15 +2,19 @@
 package wm
 
 import (
+	"github.com/Nomadcxx/sysc-compositor/internal/config"
+	"reflect"
 	"slices"
 
 	"github.com/Nomadcxx/sysc-compositor/internal/layout"
 )
 
 type workspaceState struct {
-	id    uint64
-	name  *string
-	strip *layout.Workspace
+	originalOutput string
+	outputLayout   *WorkspaceLayout
+	id             uint64
+	name           *string
+	strip          *layout.Workspace
 }
 
 // occupied reports whether the workspace holds windows or a name, which keeps
@@ -29,6 +33,8 @@ type WorkspaceConfig struct {
 // WorkspaceLayout holds the layout overrides a workspace sets. A nil field
 // means the workspace keeps the value of its output.
 type WorkspaceLayout struct {
+	ConfigTabIndicator    *config.TabIndicator
+	TabIndicatorPart      config.TabIndicatorPart
 	Gaps                  *int
 	ColumnWidthProportion *float64
 	FixedColumnWidth      *int
@@ -49,6 +55,7 @@ type WorkspaceLayout struct {
 }
 
 type outputState struct {
+	layout      *WorkspaceLayout
 	name        string
 	bounds      layout.Bounds
 	columnWidth int
@@ -83,20 +90,22 @@ type fullscreenRestore struct {
 
 // Model tracks windows, layouts, and dynamic per-output workspaces.
 type Model struct {
-	outputs         map[string]*outputState
-	windows         map[uint64]windowState
-	overview        overviewState
-	windowDrag      *WindowDrag
-	resizedWindows  map[uint64]windowSize
-	floatingWindows map[uint64]layout.Bounds
-	fullscreenFloat map[uint64]fullscreenRestore
-	fullscreen      map[uint64]bool
-	windowedFull    map[uint64]bool
-	urgent          map[uint64]bool
-	sizeHints       map[uint64]windowSizeHints
-	focusedOutput   string
-	nextWorkspaceID uint64
-	workspaceConfig []WorkspaceConfig
+	detached            *outputState
+	lastActiveWorkspace map[string]uint64
+	outputs             map[string]*outputState
+	windows             map[uint64]windowState
+	overview            overviewState
+	windowDrag          *WindowDrag
+	resizedWindows      map[uint64]windowSize
+	floatingWindows     map[uint64]layout.Bounds
+	fullscreenFloat     map[uint64]fullscreenRestore
+	fullscreen          map[uint64]bool
+	windowedFull        map[uint64]bool
+	urgent              map[uint64]bool
+	sizeHints           map[uint64]windowSizeHints
+	focusedOutput       string
+	nextWorkspaceID     uint64
+	workspaceConfig     []WorkspaceConfig
 	// presetColumnWidths, presetWindowHeights, defaultDisplay and
 	// centerFocusedColumn are the config-wide layout values; the workspaces
 	// without their own override use them.
@@ -174,8 +183,40 @@ func (m *Model) AddOutput(name string, bounds layout.Bounds, columnWidth, gap in
 	}
 	hadOutputs := len(m.outputs) != 0
 	out := &outputState{name: name, bounds: bounds, columnWidth: columnWidth, gap: gap}
-	out.workspaces = append(out.workspaces, m.newWorkspace(out))
 	m.outputs[name] = out
+	if m.detached != nil {
+		out.workspaces = append(out.workspaces, m.detached.workspaces...)
+		m.detached = nil
+	} else {
+		for _, sourceName := range m.outputNames() {
+			if sourceName == name {
+				continue
+			}
+			source := m.outputs[sourceName]
+			for i := 0; i < len(source.workspaces); {
+				workspace := source.workspaces[i]
+				if !equalName(workspace.originalOutput, name) || !workspace.occupied() {
+					i++
+					continue
+				}
+				out.workspaces = append(out.workspaces, workspace)
+				source.workspaces = append(source.workspaces[:i], source.workspaces[i+1:]...)
+				if i <= source.active {
+					source.active--
+				}
+			}
+			m.reconcile(source)
+		}
+	}
+	for _, workspace := range out.workspaces {
+		m.attachWorkspace(out, workspace)
+	}
+	out.workspaces = append(out.workspaces, m.newWorkspace(out))
+	for i, workspace := range out.workspaces {
+		if workspace.id == m.lastActiveWorkspace[name] {
+			out.active = i
+		}
+	}
 	m.addConfiguredWorkspaces(out, !hadOutputs)
 	m.reconcile(out)
 	if m.focusedOutput == "" {
@@ -195,51 +236,54 @@ func (m *Model) AddOutput(name string, bounds layout.Bounds, columnWidth, gap in
 	return true
 }
 
-// RemoveOutput removes its workspaces and moves mapped windows to another
-// connected output's active workspace when one remains.
+// RemoveOutput moves whole workspaces to the focused surviving output. The
+// original output and active workspace survive until that output returns.
 func (m *Model) RemoveOutput(name string) {
 	out := m.outputs[name]
 	if out == nil {
 		return
 	}
-	var moved []uint64
-	floating := make(map[uint64]layout.Bounds)
-	for _, workspace := range out.workspaces {
-		moved = append(moved, workspace.strip.WindowOrder()...)
-		for _, placement := range workspace.strip.Placements() {
-			if placement.Floating {
-				floating[placement.ID] = layout.Bounds{
-					X: placement.X, Y: placement.Y, Width: placement.Width, Height: placement.Height,
-				}
-			}
-		}
+	if m.lastActiveWorkspace == nil {
+		m.lastActiveWorkspace = map[string]uint64{}
 	}
-	slices.Sort(moved)
+	m.lastActiveWorkspace[name] = out.workspaces[out.active].id
 	delete(m.outputs, name)
-	for _, id := range moved {
-		delete(m.windows, id)
-	}
 	if m.focusedOutput == name {
 		m.focusedOutput = m.firstOutput()
 	}
 	target := m.outputs[m.focusedOutput]
 	if target == nil {
-		target = m.outputs[m.firstOutput()]
+		target = &outputState{bounds: out.bounds, columnWidth: out.columnWidth, gap: out.gap}
+		m.detached = target
 	}
-	for _, id := range moved {
-		if m.focusedOutput != "" {
-			if target != nil {
-				m.remapFullscreenFloating(id, target.bounds)
-			}
-			if bounds, ok := floating[id]; ok && target != nil {
-				m.floatingWindows[id] = layout.RemapFloatingBounds(out.bounds, target.bounds, bounds)
-			}
-			m.mapWindow(id, m.focusedOutput)
-		} else {
-			m.windows[id] = windowState{}
+	insert := max(0, len(target.workspaces)-1)
+	for _, workspace := range out.workspaces {
+		if !workspace.occupied() {
+			continue
 		}
+		m.attachWorkspace(target, workspace)
+		target.workspaces = slices.Insert(target.workspaces, insert, workspace)
+		if insert <= target.active && len(target.workspaces) > 1 {
+			target.active++
+		}
+		insert++
 	}
+	m.reconcile(target)
 	m.clearFocusedUrgency()
+}
+
+// attachWorkspace transfers geometry and the window membership together.
+func (m *Model) attachWorkspace(out *outputState, workspace *workspaceState) {
+	m.applyWorkspaceLayout(out, workspace)
+	for _, placement := range workspace.strip.Placements() {
+		id := placement.ID
+		m.windows[id] = windowState{output: out.name, workspaceID: workspace.id}
+		if placement.Floating {
+			m.floatingWindows[id] = layout.Bounds{X: placement.X, Y: placement.Y, Width: placement.Width, Height: placement.Height}
+		}
+		m.remapFullscreenFloating(id, out.bounds)
+		m.syncFullscreenFloatingGeometry(id)
+	}
 }
 
 // SetOutputGeometry updates the viewport used by each workspace on an output.
@@ -296,6 +340,7 @@ func (m *Model) workspaceBounds(out *outputState, workspace *workspaceState) lay
 // the geometry of its output with its own overrides, the preset sizes, the
 // default column display and the centering policy.
 func (m *Model) applyWorkspaceLayout(out *outputState, workspace *workspaceState) {
+	workspace.outputLayout = out.layout
 	width, gap := m.workspaceGeometry(out, workspace)
 	workspace.strip.SetGeometry(m.workspaceBounds(out, workspace), width, gap)
 	widths, heights := m.presetSizes(workspace)
@@ -453,15 +498,18 @@ func (m *Model) reapplyWorkspaceLayout() {
 
 // workspaceLayout returns the layout override of a named workspace.
 func (m *Model) workspaceLayout(workspace *workspaceState) *WorkspaceLayout {
-	if workspace == nil || workspace.name == nil {
+	if workspace == nil {
 		return nil
+	}
+	if workspace.name == nil {
+		return workspace.outputLayout
 	}
 	for _, config := range m.workspaceConfig {
 		if equalName(config.Name, *workspace.name) {
-			return config.Layout
+			return workspace.outputLayout.merged(config.Layout)
 		}
 	}
-	return nil
+	return workspace.outputLayout
 }
 
 // SetWorkspaceConfig adds newly configured named workspaces to live outputs.
@@ -495,87 +543,11 @@ func sameWorkspaceConfig(a, b []WorkspaceConfig) bool {
 		if a[i].Name != b[i].Name || a[i].OpenOnOutput != b[i].OpenOnOutput {
 			return false
 		}
-		if !sameWorkspaceLayout(a[i].Layout, b[i].Layout) {
+		if !reflect.DeepEqual(a[i].Layout, b[i].Layout) {
 			return false
 		}
 	}
 	return true
-}
-
-// sameWorkspaceLayout compares two workspace layouts by value.
-func sameWorkspaceLayout(a, b *WorkspaceLayout) bool {
-	if a == nil || b == nil {
-		return a == nil && b == nil
-	}
-	if !sameIntPtr(a.Gaps, b.Gaps) || !sameFloatPtr(a.ColumnWidthProportion, b.ColumnWidthProportion) ||
-		!sameIntPtr(a.FixedColumnWidth, b.FixedColumnWidth) {
-		return false
-	}
-	if !samePresetSizes(a.PresetColumnWidths, b.PresetColumnWidths) ||
-		!samePresetSizes(a.PresetWindowHeights, b.PresetWindowHeights) {
-		return false
-	}
-	if !sameDisplayPtr(a.DefaultColumnDisplay, b.DefaultColumnDisplay) {
-		return false
-	}
-	if !sameStrutsPtr(a.Struts, b.Struts) || !sameBoolPtr(a.AlwaysCenterSingleColumn, b.AlwaysCenterSingleColumn) {
-		return false
-	}
-	return sameCenterPtr(a.CenterFocusedColumn, b.CenterFocusedColumn)
-}
-
-// sameStrutsPtr compares two strut sets. A nil set keeps the config's struts,
-// so it differs from any set, even an all-zero one.
-func sameStrutsPtr(a, b *layout.Struts) bool {
-	if a == nil || b == nil {
-		return a == nil && b == nil
-	}
-	return *a == *b
-}
-
-func sameIntPtr(a, b *int) bool {
-	if a == nil || b == nil {
-		return a == nil && b == nil
-	}
-	return *a == *b
-}
-
-// samePresetSizes compares two preset lists by value. A nil list keeps the
-// config's list while an empty one resets to the defaults, so the two are
-// different.
-func samePresetSizes(a, b []layout.PresetSize) bool {
-	if (a == nil) != (b == nil) {
-		return false
-	}
-	return slices.Equal(a, b)
-}
-
-func sameDisplayPtr(a, b *layout.ColumnDisplay) bool {
-	if a == nil || b == nil {
-		return a == nil && b == nil
-	}
-	return *a == *b
-}
-
-func sameBoolPtr(a, b *bool) bool {
-	if a == nil || b == nil {
-		return a == nil && b == nil
-	}
-	return *a == *b
-}
-
-func sameCenterPtr(a, b *layout.CenterFocusedColumn) bool {
-	if a == nil || b == nil {
-		return a == nil && b == nil
-	}
-	return *a == *b
-}
-
-func sameFloatPtr(a, b *float64) bool {
-	if a == nil || b == nil {
-		return a == nil && b == nil
-	}
-	return *a == *b
 }
 
 // MapWindow places a new window on the requested output, or on the focused
@@ -591,7 +563,12 @@ func (m *Model) MapWindow(id uint64, output string) bool {
 		output = m.firstOutput()
 	}
 	if output == "" {
-		return false
+		if m.detached == nil {
+			return false
+		}
+		m.mapWindowOnWorkspace(id, m.detached, m.detached.workspaces[m.detached.active])
+		m.reconcile(m.detached)
+		return true
 	}
 	m.mapWindow(id, output)
 	m.focusedOutput = output
@@ -717,6 +694,9 @@ func (m *Model) RemoveWindow(id uint64) (uint64, bool) {
 	}
 	delete(m.windows, id)
 	out := m.outputs[state.output]
+	if out == nil {
+		out = m.detached
+	}
 	if out == nil {
 		return 0, true
 	}
@@ -1477,6 +1457,7 @@ func (m *Model) MoveWorkspaceToOutput(id uint64, output string) bool {
 	// workspace that carries its own overrides keeps them on the new output
 	// instead of reverting to the target's raw defaults.
 	m.applyWorkspaceLayout(target, workspace)
+	workspace.originalOutput = target.name
 
 	source.workspaces = append(source.workspaces[:sourceIndex], source.workspaces[sourceIndex+1:]...)
 	if source.active > sourceIndex {
@@ -1546,6 +1527,13 @@ func (m *Model) workspaceLocation(id uint64) (*outputState, int, *workspaceState
 		for index, workspace := range output.workspaces {
 			if workspace.id == id {
 				return output, index, workspace
+			}
+		}
+	}
+	if m.detached != nil {
+		for i, workspace := range m.detached.workspaces {
+			if workspace.id == id {
+				return m.detached, i, workspace
 			}
 		}
 	}
@@ -2019,9 +2007,15 @@ func (m *Model) ActiveWindow() (uint64, bool) {
 // Snapshot returns workspaces and windows in stable output/workspace order.
 func (m *Model) Snapshot() Snapshot {
 	names := m.outputNames()
+	if m.detached != nil {
+		names = append(names, "")
+	}
 	snapshot := Snapshot{FocusedOutput: m.focusedOutput, OverviewOpen: m.overview.open}
 	for _, name := range names {
 		out := m.outputs[name]
+		if out == nil {
+			out = m.detached
+		}
 		for i, workspace := range out.workspaces {
 			index := i + 1
 			if index > 255 {
@@ -2035,8 +2029,8 @@ func (m *Model) Snapshot() Snapshot {
 			workspaceSnapshot := WorkspaceSnapshot{
 				ID: workspace.id, Index: uint8(index), Output: name,
 				Name:      cloneName(workspace.name),
-				IsActive:  i == out.active,
-				IsFocused: name == m.focusedOutput && i == out.active,
+				IsActive:  name != "" && i == out.active,
+				IsFocused: name != "" && name == m.focusedOutput && i == out.active,
 				WindowIDs: windowIDs,
 			}
 			for _, id := range windowIDs {
@@ -2137,12 +2131,26 @@ func (m *Model) workspaceByID(id uint64) *workspaceState {
 			}
 		}
 	}
+	if m.detached != nil {
+		for _, workspace := range m.detached.workspaces {
+			if workspace.id == id {
+				return workspace
+			}
+		}
+	}
 	return nil
 }
 
 func (m *Model) workspaceByName(name string) *workspaceState {
 	for _, output := range m.outputs {
 		for _, workspace := range output.workspaces {
+			if workspace.name != nil && equalName(*workspace.name, name) {
+				return workspace
+			}
+		}
+	}
+	if m.detached != nil {
+		for _, workspace := range m.detached.workspaces {
 			if workspace.name != nil && equalName(*workspace.name, name) {
 				return workspace
 			}
@@ -2182,8 +2190,9 @@ func (m *Model) newWorkspace(out *outputState) *workspaceState {
 	id := m.nextWorkspaceID
 	m.nextWorkspaceID++
 	workspace := &workspaceState{
-		id:    id,
-		strip: layout.NewWorkspace(out.bounds, out.columnWidth, out.gap),
+		originalOutput: out.name,
+		id:             id,
+		strip:          layout.NewWorkspace(out.bounds, out.columnWidth, out.gap),
 	}
 	// The config-wide layout may have been set before this output existed and
 	// a plain workspace never goes through SetWorkspaceConfig, so apply the

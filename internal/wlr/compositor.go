@@ -12,6 +12,7 @@ package wlr
 #include <wlr/backend/wayland.h>
 #include <wlr/render/allocator.h>
 #include <wlr/render/wlr_renderer.h>
+#include <wlr/types/wlr_output_management_v1.h>
 #include <wlr/types/wlr_compositor.h>
 #include <wlr/types/wlr_cursor.h>
 #include <wlr/types/wlr_input_device.h>
@@ -136,22 +137,28 @@ import (
 // Compositor holds the wlroots object graph for one running server. Every
 // method must be called on the thread that ran LockOSThread.
 type Compositor struct {
-	display              *C.struct_wl_display
-	backend              *C.struct_wlr_backend
-	session              *C.struct_wlr_session
-	renderer             *C.struct_wlr_renderer
-	alloc                *C.struct_wlr_allocator
-	comp                 *C.struct_wlr_compositor
-	layout               *C.struct_wlr_output_layout
-	scene                *C.struct_wlr_scene
-	capture              *captureProtocol
-	pipewire             *pipeWire
-	casts                map[uint64]*screenCast
-	castTargetWindows    map[uint64]bool // the windows a cast shows, for is-window-cast-target
-	dynamicCastID        uint64
-	captureNodes         map[*C.struct_wlr_scene_node]*captureNodeOwner
-	xdgDecorationManager unsafe.Pointer
-	kdeDecorationManager unsafe.Pointer
+	knownOutputs           map[string]config.OutputName
+	applyingOutputConfigs  bool
+	display                *C.struct_wl_display
+	backend                *C.struct_wlr_backend
+	session                *C.struct_wlr_session
+	renderer               *C.struct_wlr_renderer
+	rendererLost           *Listener
+	rendererRecoveryQueued bool
+	rendererBuffers        map[*C.struct_wlr_client_buffer]*rendererBuffer
+	rendererSurfaces       map[*C.struct_wlr_surface]*rendererSurface
+	alloc                  *C.struct_wlr_allocator
+	comp                   *C.struct_wlr_compositor
+	layout                 *C.struct_wlr_output_layout
+	scene                  *C.struct_wlr_scene
+	capture                *captureProtocol
+	pipewire               *pipeWire
+	casts                  map[uint64]*screenCast
+	castTargetWindows      map[uint64]bool // the windows a cast shows, for is-window-cast-target
+	dynamicCastID          uint64
+	captureNodes           map[*C.struct_wlr_scene_node]*captureNodeOwner
+	xdgDecorationManager   unsafe.Pointer
+	kdeDecorationManager   unsafe.Pointer
 	// toplevelDecorations maps each xdg toplevel to its xdg-decoration
 	// object, which tells whether the window is server-side decorated.
 	toplevelDecorations map[*C.struct_wlr_xdg_toplevel]*C.struct_wlr_xdg_toplevel_decoration_v1
@@ -327,8 +334,13 @@ type Compositor struct {
 	// backendOutputs is every output the backend announced, sceneOutputs only
 	// those in the layout; an output the config turns off is only here.
 	// outputConfigs is the output sections applyOutputConfigs follows.
-	backendOutputs map[unsafe.Pointer]struct{}
-	outputConfigs  []config.OutputConfig
+	backendOutputs      map[unsafe.Pointer]struct{}
+	outputConfigs       []config.OutputConfig
+	outputManager       *C.struct_wlr_output_manager_v1
+	outputLogger        *C.struct_wl_protocol_logger
+	outputLoggerToken   uintptr
+	outputProtocolEdits map[*C.struct_wlr_output_configuration_v1]*outputProtocolEdit
+	vrrRequested        map[unsafe.Pointer]bool
 
 	// The session lock (lock.go). lock is the live locker, or nil; the
 	// session can stay sealed (sessionLocked) with no locker after a crash.
@@ -622,6 +634,9 @@ func NewWith(opts Options) (*Compositor, error) {
 	if !c.createIdle() {
 		return nil, errors.New("idle notify or idle inhibit manager create failed")
 	}
+	if !c.createOutputManagement() {
+		return nil, errors.New("output management or power manager create failed")
+	}
 	if !c.createCursorShape() {
 		return nil, errors.New("wlr_cursor_shape_manager_v1_create failed")
 	}
@@ -700,6 +715,8 @@ func NewWith(opts Options) (*Compositor, error) {
 	if err := c.startPost(); err != nil {
 		return nil, err
 	}
+	c.watchRendererLoss()
+	c.watchRendererBuffers()
 	if !bool(C.wlr_backend_start(c.backend)) {
 		return nil, errors.New("wlr_backend_start failed")
 	}
@@ -854,6 +871,9 @@ func (c *Compositor) WorkspaceSnapshot() wm.Snapshot {
 }
 
 func (c *Compositor) notifyStateChanged() {
+	if c.applyingOutputConfigs {
+		return
+	}
 	c.syncCasts()
 	c.syncCapturePrivacy()
 	c.syncCaptureSources()
@@ -909,6 +929,8 @@ func (c *Compositor) Terminate() {
 // Destroy releases the compositor. Listeners added through AddListener are
 // removed first so no token outlives its wl_signal.
 func (c *Compositor) Destroy() {
+	c.stopOutputProtocolEdits()
+	c.finishRendererBuffers()
 	c.stopPipeWire()
 	c.finishColorPick([3]float64{}, ErrClosed)
 	c.destroyCaptureSources()

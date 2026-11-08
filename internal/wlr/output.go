@@ -60,6 +60,14 @@ static void sysc_output_logical(struct wlr_output_layout *layout,
 	*transform = output->transform;
 }
 #include <wlr/types/wlr_xcursor_manager.h>
+#include <wlr/backend/drm.h>
+#include <xf86drmMode.h>
+#include <drm_mode.h>
+
+static bool sysc_output_current_mode_custom(struct wlr_output *output) {
+	return output->current_mode != NULL && wlr_output_is_drm(output) &&
+		(wlr_drm_mode_get_info(output->current_mode)->type & DRM_MODE_TYPE_USERDEF) != 0;
+}
 
 // sysc_apply_requested_state commits the state a backend asked for: the host
 // compositor resizing the nested window, for example. It reports the size the
@@ -373,6 +381,9 @@ func (c *Compositor) OutputSnapshot() []OutputSnapshot {
 			info.CurrentMode = &index
 			info.IsCustomMode = true
 		}
+		if bool(C.sysc_output_current_mode_custom(output)) {
+			info.IsCustomMode = true
+		}
 		var x, y, width, height C.int32_t
 		var scale C.float
 		var transform C.uint32_t
@@ -503,6 +514,11 @@ func (c *Compositor) handleNewOutput(data unsafe.Pointer) {
 		return
 	}
 	c.backendOutputs[data] = struct{}{}
+	if c.knownOutputs == nil {
+		c.knownOutputs = map[string]config.OutputName{}
+	}
+	identity := outputIdentity(data)
+	c.knownOutputs[identity.Connector] = identity
 
 	// The scene output is looked up by the signal's payload. M0 keyed a map
 	// by the listener's own pointer, so no frame ever found its scene output
@@ -515,6 +531,7 @@ func (c *Compositor) handleNewOutput(data unsafe.Pointer) {
 		if C.sysc_repaint_scene_output(so) {
 			c.drawn++
 		}
+		c.syncOutputVRR(data)
 		c.lockFrameDone(data)
 		c.updateIdleInhibit()
 	})
@@ -549,11 +566,16 @@ func (c *Compositor) handleNewOutput(data unsafe.Pointer) {
 			c.retireOutput(data)
 		}
 		delete(c.backendOutputs, data)
+		delete(c.vrrRequested, data)
+		c.placeOutputs()
+		c.publishOutputConfiguration()
 		delete(c.actionPoweredOff, data)
 		c.drop(frame)
 		c.drop(request)
 		c.drop(commit)
 		c.drop(destroy)
+		c.updateInjectedInputGate()
+		c.refreshState()
 		if bool(C.wlr_backend_is_wl(output.backend)) && len(c.sceneOutputs) == 0 {
 			c.Terminate()
 		}
@@ -589,15 +611,27 @@ func (c *Compositor) adoptOutput(pointer unsafe.Pointer) {
 
 // outputGeometryChanged lets what lives on an output follow a new box.
 func (c *Compositor) outputGeometryChanged(pointer unsafe.Pointer) {
+	if c.shotUI != nil {
+		if frame := c.shotUI.frames[pointer]; frame != nil {
+			output := (*C.struct_wlr_output)(pointer)
+			if frame.box != c.outputLayoutBox(pointer) || frame.scale != float64(output.scale) || frame.transform != uint32(output.transform) || frame.buffer.width != output.width || frame.buffer.height != output.height {
+				c.closeScreenshotUI()
+			}
+		}
+	}
 	c.arrangeLayers(pointer)
 	c.arrangeLockOutput(pointer)
 	c.syncHotkeyOverlay()
 	c.refreshState()
+	c.publishOutputConfiguration()
 }
 
 // retireOutput forgets an output's scene output and what lives on it, as an
 // unplug does. The caller destroys or releases the scene output.
 func (c *Compositor) retireOutput(pointer unsafe.Pointer) {
+	if c.shotUI != nil && c.shotUI.frames[pointer] != nil {
+		c.closeScreenshotUI()
+	}
 	c.closeOutputLayers(pointer)
 	delete(c.sceneOutputs, pointer)
 	delete(c.usable, pointer)

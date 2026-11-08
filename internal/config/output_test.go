@@ -78,14 +78,28 @@ output "HDMI-A-1" {
 	if third.Mode == nil || *third.Mode != (OutputMode{Width: 1280, Height: 720}) || third.Transform != TransformNormal {
 		t.Errorf("third = %+v, want 1280x720 with no refresh and the normal transform", third)
 	}
-	// The keys a later slice applies still warn.
 	for _, key := range []string{"output.modeline", "output.backdrop-color", "output.hot-corners", "output.layout"} {
-		if !slices.Contains(cfg.Warnings, key) {
-			t.Errorf("warnings = %q, want %q", cfg.Warnings, key)
+		if slices.Contains(cfg.Warnings, key) {
+			t.Errorf("applied key still warns: %s", key)
 		}
 	}
 	if slices.Contains(cfg.Warnings, "output") {
 		t.Errorf("warnings = %q, want the output section itself applied", cfg.Warnings)
+	}
+}
+
+func TestWindowRuleVRRResolvesWithoutWarning(t *testing.T) {
+	cfg, err := Parse("vrr.kdl", []byte("window-rule { variable-refresh-rate true; }\nwindow-rule { match app-id=\"off\"; variable-refresh-rate false; }"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Warnings) != 0 {
+		t.Fatalf("warnings = %v", cfg.Warnings)
+	}
+	on := ResolveWindowRules(cfg.WindowRules, "on", "", WindowState{})
+	off := ResolveWindowRules(cfg.WindowRules, "off", "", WindowState{})
+	if on.VariableRefreshRate == nil || !*on.VariableRefreshRate || off.VariableRefreshRate == nil || *off.VariableRefreshRate {
+		t.Fatalf("VRR rules on=%+v off=%+v", on, off)
 	}
 }
 
@@ -96,6 +110,10 @@ func TestOutputSectionRejectsBadValues(t *testing.T) {
 		`output "DP-1" { transform "sideways"; }`,
 		`output "DP-1" { position x=1; }`,
 		`output "DP-1" { mode "1920by1080"; }`,
+		`output "DP-1" { mode "0x1080"; }`,
+		`output "DP-1" { mode "1920x1080@NaN"; }`,
+		`output "DP-1" { mode "1920x1080@-60"; }`,
+		`output "DP-1" { modeline -1 1920 2048 2248 2576 1080 1083 1088 1120 "-hsync" "+vsync"; }`,
 		`output "DP-1" { mode custom=true "1920x1080"; }`,
 		`output "DP-1" { mode custom=true "1920x1080@0"; }`,
 		`output "DP-1" { modeline 173.00 1920 1900 2248 2576 1080 1083 1088 1120 "-hsync" "+vsync"; }`,

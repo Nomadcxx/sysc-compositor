@@ -3,6 +3,7 @@ package config
 import (
 	"cmp"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -107,6 +108,12 @@ func ParseOutputMode(value string) (OutputMode, error) {
 		if mode.Refresh, err = strconv.ParseFloat(refresh, 64); err != nil {
 			return OutputMode{}, fmt.Errorf("mode %q: error parsing refresh rate", value)
 		}
+		if math.IsNaN(mode.Refresh) || math.IsInf(mode.Refresh, 0) || mode.Refresh <= 0 || mode.Refresh > float64(math.MaxInt32)/1000 {
+			return OutputMode{}, fmt.Errorf("mode %q: invalid refresh rate", value)
+		}
+	}
+	if mode.Width == 0 || mode.Height == 0 {
+		return OutputMode{}, fmt.Errorf("mode %q: dimensions must be above 0", value)
 	}
 	return mode, nil
 }
@@ -222,7 +229,6 @@ func (c *Config) output(n *document.Node) error {
 				return fmt.Errorf("modeline: %w", err)
 			}
 			output.Modeline = &modeline
-			c.addWarning("output.modeline")
 		case "variable-refresh-rate":
 			vrr, err := vrrNode(child)
 			if err != nil {
@@ -238,7 +244,6 @@ func (c *Config) output(n *document.Node) error {
 				backgroundColor = &color
 			} else {
 				output.BackdropColor = &color
-				c.addWarning("output.backdrop-color")
 			}
 		case "hot-corners":
 			corners, err := parseHotCorners(child)
@@ -246,14 +251,12 @@ func (c *Config) output(n *document.Node) error {
 				return fmt.Errorf("hot-corners: %w", err)
 			}
 			output.HotCorners = &corners
-			c.addWarning("output.hot-corners")
 		case "layout":
 			layout, err := c.workspaceLayout(child, "output.layout.")
 			if err != nil {
 				return err
 			}
 			output.Layout = layout
-			c.addWarning("output.layout")
 		default:
 			return fmt.Errorf("unexpected output child `%s`", name)
 		}
@@ -263,7 +266,6 @@ func (c *Config) output(n *document.Node) error {
 	if backgroundColor != nil {
 		if output.Layout == nil {
 			output.Layout = &WorkspaceLayout{}
-			c.addWarning("output.layout")
 		}
 		if output.Layout.BackgroundColor == nil {
 			output.Layout.BackgroundColor = backgroundColor
@@ -331,6 +333,9 @@ func modelineNode(n *document.Node) (Modeline, error) {
 		m.Clock = float64(clock)
 	default:
 		return Modeline{}, fmt.Errorf("the clock must be a number")
+	}
+	if math.IsNaN(m.Clock) || math.IsInf(m.Clock, 0) || m.Clock <= 0 || m.Clock > float64(math.MaxUint32)/1000 {
+		return Modeline{}, fmt.Errorf("the clock must be positive and fit a DRM pixel clock")
 	}
 	timings := []*int{&m.HDisplay, &m.HSyncStart, &m.HSyncEnd, &m.HTotal,
 		&m.VDisplay, &m.VSyncStart, &m.VSyncEnd, &m.VTotal}

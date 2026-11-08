@@ -507,8 +507,8 @@ window-rule {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Contains(unsupported.Warnings, "window-rule") {
-		t.Errorf("unsupported rule key lost its warning after opacity support: %v", unsupported.Warnings)
+	if slices.Contains(unsupported.Warnings, "window-rule") {
+		t.Errorf("applied VRR rule still warns: %v", unsupported.Warnings)
 	}
 }
 

@@ -169,7 +169,8 @@ func (c *Compositor) syncTabIndicators() {
 		if name := names[key.workspace]; name != nil {
 			workspace = c.layoutOptions.WorkspaceDecorations[config.WorkspaceKey(*name)]
 		}
-		indicator := c.layoutOptions.TabIndicator.Merged(workspace.TabIndicator)
+		output := c.outputDecorations(c.outputNameForView(activeView))
+		indicator := c.layoutOptions.TabIndicator.Merged(output.TabIndicator).Merged(workspace.TabIndicator)
 		if indicator.Off || indicator.HideWhenSingleTab && len(tabs) == 1 {
 			continue
 		}

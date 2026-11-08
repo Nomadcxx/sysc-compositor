@@ -174,7 +174,7 @@ func (s *Server) refreshNiriState() {
 		}
 		outputName := niriWindowOutputName(tile.Output, focusedName, outputs)
 		output, connected := outputs[outputName]
-		if !connected {
+		if !connected && tile.Output != "" {
 			continue
 		}
 		windows = append(windows, toNiriWindow(window, tile, output))
@@ -252,6 +252,18 @@ func (s *Server) Run() error {
 	}
 	if s.niri != nil {
 		h := niriHandler{
+			configureOutput: func(request ipc.OutputRequest) (string, error) {
+				var result string
+				err := (controlSeat{c: s.c, stopping: s.stopping}).call(func() error {
+					var err error
+					result, err = s.c.ConfigureOutput(request)
+					return err
+				})
+				if err != nil {
+					return "", err
+				}
+				return result, nil
+			},
 			quit:  func(skip bool) { _ = s.c.Post(func() { s.c.Quit(skip) }) },
 			spawn: s.spawn, snapshot: s.state.snapshot,
 			stream: func(conn net.Conn) { s.state.serveEventStream(s.events, conn) },

@@ -103,6 +103,7 @@ type viewDecorations struct {
 // resolveViewDecorations resolves the window's decorations and reports whether
 // its border width changed, which resizes the window inside its tile.
 func (c *Compositor) resolveViewDecorations(view *toplevelView, workspaceName *string) bool {
+	output := c.outputDecorations(c.outputNameForView(view))
 	var workspace config.Decorations
 	if workspaceName != nil {
 		workspace = c.layoutOptions.WorkspaceDecorations[config.WorkspaceKey(*workspaceName)]
@@ -110,9 +111,9 @@ func (c *Compositor) resolveViewDecorations(view *toplevelView, workspaceName *s
 	window := view.appearance.Decorations
 	before := view.borderWidth()
 	view.decorations = viewDecorations{
-		ring:           c.layoutOptions.FocusRing.Merged(workspace.FocusRing).Merged(window.FocusRing),
-		border:         c.layoutOptions.Border.Merged(workspace.Border).Merged(window.Border),
-		shadow:         c.layoutOptions.Shadow.Merged(workspace.Shadow).Merged(window.Shadow),
+		ring:           c.layoutOptions.FocusRing.Merged(output.FocusRing).Merged(workspace.FocusRing).Merged(window.FocusRing),
+		border:         c.layoutOptions.Border.Merged(output.Border).Merged(workspace.Border).Merged(window.Border),
+		shadow:         c.layoutOptions.Shadow.Merged(output.Shadow).Merged(workspace.Shadow).Merged(window.Shadow),
 		withBackground: !c.serverSideDecorated(view),
 	}
 	if value := view.appearance.DrawBorderWithBackground; value != nil {
