@@ -114,8 +114,8 @@ static struct wlr_output *sysc_output_layout_at(struct wlr_output_layout *layout
 	return wlr_output_layout_output_at(layout, x, y);
 }
 
-// sysc_bring_output_up gives one backend output a renderer and turns it on at
-// its preferred mode.
+// sysc_output_init_render gives one backend output a renderer; the output
+// config (applyOutputConfig) then turns it on.
 //
 // The order is load-bearing. wlr_output_init_render must come first: the output
 // layout attaches the cursor to every output it holds, and
@@ -127,21 +127,9 @@ static struct wlr_output *sysc_output_layout_at(struct wlr_output_layout *layout
 // wrong is silent rather than fatal: the compositor advertises no wl_output,
 // the client connects, then exits with "no monitors available".
 // TestOutputsEnabled is the check that catches it.
-static bool sysc_bring_output_up(struct wlr_output *output,
+static bool sysc_output_init_render(struct wlr_output *output,
 		struct wlr_allocator *allocator, struct wlr_renderer *renderer) {
-	if (!wlr_output_init_render(output, allocator, renderer)) {
-		return false;
-	}
-	struct wlr_output_state state;
-	wlr_output_state_init(&state);
-	wlr_output_state_set_enabled(&state, true);
-	struct wlr_output_mode *mode = wlr_output_preferred_mode(output);
-	if (mode != NULL) {
-		wlr_output_state_set_mode(&state, mode);
-	}
-	bool ok = wlr_output_commit_state(output, &state);
-	wlr_output_state_finish(&state);
-	return ok;
+	return wlr_output_init_render(output, allocator, renderer);
 }
 
 // sysc_place_in_layout puts the output in the layout and mirrors that placement
@@ -269,6 +257,21 @@ func outputName(output unsafe.Pointer) string {
 	return C.GoString((*C.struct_wlr_output)(output).name)
 }
 
+// outputModeChoices lists the output's modes in the backend's order, the order
+// sysc_output_try_config indexes them in.
+func outputModeChoices(pointer unsafe.Pointer) []outputModeChoice {
+	output := (*C.struct_wlr_output)(pointer)
+	count := int(C.sysc_output_mode_count(output))
+	modes := make([]outputModeChoice, count)
+	for i := range modes {
+		var width, height, refresh C.int32_t
+		var preferred, current C.int
+		C.sysc_output_mode_at(output, C.size_t(i), &width, &height, &refresh, &preferred, &current)
+		modes[i] = outputModeChoice{width: int(width), height: int(height), refresh: int(refresh), preferred: preferred != 0}
+	}
+	return modes
+}
+
 // outputIdentity is what a config section name is matched against.
 func outputIdentity(pointer unsafe.Pointer) config.OutputName {
 	output := (*C.struct_wlr_output)(pointer)
@@ -313,12 +316,15 @@ func (c *Compositor) setActiveOutputName(focused string) {
 	c.reapplyWindowRules()
 }
 
-// OutputSnapshot copies the enabled outputs into plain Go values. Call it on
-// the compositor thread; IPC readers consume the resulting immutable copies.
+// OutputSnapshot copies the connected outputs into plain Go values. An output
+// the config turned off has its modes but no current mode and no logical
+// box, as in Niri. Call it on the compositor thread; IPC readers consume the
+// resulting immutable copies.
 func (c *Compositor) OutputSnapshot() []OutputSnapshot {
-	out := make([]OutputSnapshot, 0, len(c.sceneOutputs))
-	for pointer := range c.sceneOutputs {
+	out := make([]OutputSnapshot, 0, len(c.backendOutputs))
+	for pointer := range c.backendOutputs {
 		output := (*C.struct_wlr_output)(pointer)
+		_, adopted := c.sceneOutputs[pointer]
 		vrrSupported := bool(output.adaptive_sync_supported)
 		info := OutputSnapshot{
 			Name: C.GoString(output.name), Make: cString(output.make), Model: cString(output.model),
@@ -345,10 +351,14 @@ func (c *Compositor) OutputSnapshot() []OutputSnapshot {
 				Width: clampModeSize(width), Height: clampModeSize(height),
 				RefreshRate: uint32(max(0, int32(refresh))), Preferred: preferred != 0,
 			})
-			if current != 0 {
+			if current != 0 && adopted {
 				index := uint32(len(info.Modes) - 1)
 				info.CurrentMode = &index
 			}
+		}
+		if !adopted {
+			out = append(out, info)
+			continue
 		}
 		if info.CurrentMode == nil && output.width > 0 && output.height > 0 {
 			width, height := clampModeSize(output.width), clampModeSize(output.height)
@@ -439,6 +449,7 @@ func (c *Compositor) PowerOnMonitors() error {
 		}
 	}
 	c.actionPoweredOff = remaining
+	c.applyOutputConfigs()
 	c.updateInjectedInputGate()
 	return errors.Join(failures...)
 }
@@ -487,19 +498,19 @@ func clampModeSize(v C.int32_t) uint16 {
 // scene output so clients paint into the nested session rather than nowhere.
 func (c *Compositor) handleNewOutput(data unsafe.Pointer) {
 	output := (*C.struct_wlr_output)(data)
-	if !bool(C.sysc_bring_output_up(output, c.alloc, c.renderer)) {
+	if !bool(C.sysc_output_init_render(output, c.alloc, c.renderer)) {
 		return
 	}
-	so := C.sysc_place_in_layout(c.layout, c.scene, output)
-	if so == nil {
-		return
-	}
-	c.sceneOutputs[data] = so
+	c.backendOutputs[data] = struct{}{}
 
-	// The scene output is captured here. M0 keyed a map by the listener's
-	// own pointer, but callbacks receive the signal's payload, so no frame
-	// ever found its scene output and nothing was drawn.
+	// The scene output is looked up by the signal's payload. M0 keyed a map
+	// by the listener's own pointer, so no frame ever found its scene output
+	// and nothing was drawn. An output the config turned off has none.
 	frame := AddListener(unsafe.Pointer(&output.events.frame), func(unsafe.Pointer) {
+		so, adopted := c.sceneOutputs[data]
+		if !adopted {
+			return
+		}
 		if C.sysc_repaint_scene_output(so) {
 			c.drawn++
 		}
@@ -507,9 +518,6 @@ func (c *Compositor) handleNewOutput(data unsafe.Pointer) {
 		c.updateIdleInhibit()
 	})
 	c.keep(frame)
-	c.arrangeLayers(data)
-	c.arrangeLockOutput(data)
-	c.syncHotkeyOverlay()
 
 	// A nested output is sized by the host: Niri tiles the window and the
 	// backend asks for that size. Ignoring the request leaves the output at
@@ -527,26 +535,20 @@ func (c *Compositor) handleNewOutput(data unsafe.Pointer) {
 		if bool(C.sysc_commit_changed_enabled((*C.struct_wlr_output_event_commit)(event))) {
 			c.syncCaptureSources()
 		}
-		if bool(C.sysc_commit_changed_geometry((*C.struct_wlr_output_event_commit)(event))) {
-			c.arrangeLayers(data)
-			c.arrangeLockOutput(data)
-			c.syncHotkeyOverlay()
-			c.refreshState()
+		if _, adopted := c.sceneOutputs[data]; adopted &&
+			bool(C.sysc_commit_changed_geometry((*C.struct_wlr_output_event_commit)(event))) {
+			c.outputGeometryChanged(data)
 		}
 	})
 	c.keep(request, commit)
 
 	var destroy *Listener
 	destroy = AddListener(unsafe.Pointer(&output.events.destroy), func(unsafe.Pointer) {
-		name := C.GoString(output.name)
-		c.closeOutputLayers(data)
-		delete(c.sceneOutputs, data)
-		delete(c.usable, data)
-		c.lockOutputGone(data)
-		c.switcherOutputGone(data)
-		c.syncHotkeyOverlay()
-		c.removeWorkspaceOutput(name)
-		c.refreshState()
+		if _, adopted := c.sceneOutputs[data]; adopted {
+			c.retireOutput(data)
+		}
+		delete(c.backendOutputs, data)
+		delete(c.actionPoweredOff, data)
 		c.drop(frame)
 		c.drop(request)
 		c.drop(commit)
@@ -556,7 +558,8 @@ func (c *Compositor) handleNewOutput(data unsafe.Pointer) {
 		}
 	})
 	c.keep(destroy)
-	if c.powerOffActive {
+	c.applyOutputConfigs()
+	if _, adopted := c.sceneOutputs[data]; adopted && c.powerOffActive {
 		if err := c.setOutputPower(data, false); err != nil {
 			fmt.Fprintf(os.Stderr, "sysc-compositor: power off new output: %v\n", err)
 		} else {
@@ -567,6 +570,40 @@ func (c *Compositor) handleNewOutput(data unsafe.Pointer) {
 		}
 	}
 	c.updateInjectedInputGate()
+	c.refreshState()
+}
+
+// adoptOutput puts an enabled output in the layout and gives it a scene
+// output, so clients paint into it; placeOutputs then moves it where it
+// belongs.
+func (c *Compositor) adoptOutput(pointer unsafe.Pointer) {
+	so := C.sysc_place_in_layout(c.layout, c.scene, (*C.struct_wlr_output)(pointer))
+	if so == nil {
+		fmt.Fprintf(os.Stderr, "sysc-compositor: output %s: adding it to the layout failed\n", outputName(pointer))
+		return
+	}
+	c.sceneOutputs[pointer] = so
+	c.outputGeometryChanged(pointer)
+}
+
+// outputGeometryChanged lets what lives on an output follow a new box.
+func (c *Compositor) outputGeometryChanged(pointer unsafe.Pointer) {
+	c.arrangeLayers(pointer)
+	c.arrangeLockOutput(pointer)
+	c.syncHotkeyOverlay()
+	c.refreshState()
+}
+
+// retireOutput forgets an output's scene output and what lives on it, as an
+// unplug does. The caller destroys or releases the scene output.
+func (c *Compositor) retireOutput(pointer unsafe.Pointer) {
+	c.closeOutputLayers(pointer)
+	delete(c.sceneOutputs, pointer)
+	delete(c.usable, pointer)
+	c.lockOutputGone(pointer)
+	c.switcherOutputGone(pointer)
+	c.syncHotkeyOverlay()
+	c.removeWorkspaceOutput(outputName(pointer))
 	c.refreshState()
 }
 

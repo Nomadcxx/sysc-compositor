@@ -324,6 +324,12 @@ type Compositor struct {
 	powerOffActive   bool
 	actionPoweredOff map[unsafe.Pointer]struct{}
 
+	// backendOutputs is every output the backend announced, sceneOutputs only
+	// those in the layout; an output the config turns off is only here.
+	// outputConfigs is the output sections applyOutputConfigs follows.
+	backendOutputs map[unsafe.Pointer]struct{}
+	outputConfigs  []config.OutputConfig
+
 	// The session lock (lock.go). lock is the live locker, or nil; the
 	// session can stay sealed (sessionLocked) with no locker after a crash.
 	lock          *sessionLock
@@ -398,6 +404,8 @@ type Options struct {
 	Pointers     config.Pointers
 	Touch        config.Touch
 	PreferNoCSD  bool
+	// Outputs are the config's output sections; the first match wins.
+	Outputs []config.OutputConfig
 	// ScreenshotPath is the screenshot-path pattern, nil for clipboard only.
 	ScreenshotPath *string
 	// OverlayBinds and HotkeyOverlay feed the hotkey overlay;
@@ -510,6 +518,8 @@ func NewWith(opts Options) (*Compositor, error) {
 	c.armStartupTimer()
 	c.listeners = map[*Listener]struct{}{}
 	c.sceneOutputs = map[unsafe.Pointer]*C.struct_wlr_scene_output{}
+	c.backendOutputs = map[unsafe.Pointer]struct{}{}
+	c.outputConfigs = slices.Clone(opts.Outputs)
 	c.mapped = map[unsafe.Pointer]bool{}
 	c.sceneTrees = map[unsafe.Pointer]*C.struct_wlr_scene_tree{}
 	c.animations = map[animationKey]*runningAnimation{}
@@ -693,6 +703,7 @@ func NewWith(opts Options) (*Compositor, error) {
 	if !bool(C.wlr_backend_start(c.backend)) {
 		return nil, errors.New("wlr_backend_start failed")
 	}
+	c.focusDefaultOutput()
 	c.scheduleFrameFallback()
 	built = true
 	return c, nil
@@ -800,6 +811,8 @@ func (c *Compositor) Reconfigure(opts Options) error {
 	c.model.SetWorkspaceConfig(workspaces)
 	c.reapplyWindowRules()
 	c.reapplyLayerRules()
+	c.outputConfigs = slices.Clone(opts.Outputs)
+	c.applyOutputConfigs()
 	for output := range c.sceneOutputs {
 		c.syncWorkspaceOutput(output)
 	}
