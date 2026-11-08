@@ -1,6 +1,7 @@
 package wlr
 
 import (
+	"fmt"
 	"image"
 	"path/filepath"
 	"testing"
@@ -190,5 +191,47 @@ func TestTouchTapInTheSwitcherConfirmsTheWindow(t *testing.T) {
 				t.Error("a tap on a preview did not confirm its window")
 			}
 		})
+	})
+}
+
+// TestTouchTapOnATabActivatesItsWindow: a finger on a tab activates the tab's
+// window and is not delivered, as Niri's activation hit is on touch down.
+func TestTouchTapOnATabActivatesItsWindow(t *testing.T) {
+	c := newNested(t)
+	runTouchClients(t, c, 2, func(clients []*testclient.ToplevelClient, views []*toplevelView) {
+		var screen *fakeTouch
+		defer onCompositor(t, c, func() {
+			if screen != nil {
+				screen.remove()
+			}
+		})
+		onCompositor(t, c, func() { screen = c.addFakeTouch() })
+		for _, client := range clients {
+			if err := client.BindTouch(); err != nil {
+				t.Fatal(err)
+			}
+		}
+		onCompositor(t, c, func() {
+			if !c.FocusColumnLeft() || !c.ConsumeWindowIntoColumn() || !c.ToggleColumnTabbedDisplay() {
+				t.Fatal("could not stack the windows in one tabbed column")
+			}
+			if len(c.tabIndicatorHits) != 2 {
+				t.Fatalf("drawn tabs = %d, want 2", len(c.tabIndicatorHits))
+			}
+			var target tabIndicatorHit
+			for _, hit := range c.tabIndicatorHits {
+				if hit.id != c.focusedView.id {
+					target = hit
+				}
+			}
+			center := target.rect.Min.Add(target.rect.Max).Div(2)
+			tapAt(c, screen, float64(center.X)+0.5, float64(center.Y)+0.5)
+			if c.focusedView == nil || c.focusedView.id != target.id {
+				t.Error("a tap on the inactive tab did not activate its window")
+			}
+		})
+		for i, client := range clients {
+			expectNoNativeTouch(t, client, fmt.Sprintf("tab, client %d", i))
+		}
 	})
 }

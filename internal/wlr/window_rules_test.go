@@ -6,6 +6,7 @@ import (
 	"math"
 	"os"
 	"os/exec"
+	"regexp"
 	"testing"
 	"time"
 	"unsafe"
@@ -787,5 +788,54 @@ func TestWindowRuleOpacityChangesRenderedPixels(t *testing.T) {
 			}
 		})
 		assertPixel("opacity rule removal", readWindowPixel(), foreground)
+	})
+}
+
+// TestWindowRuleScrollFactorScalesTheWindowUnderThePointer: a wheel detent
+// over a window with scroll-factor 2 reaches it doubled, while the keyboard
+// focus is on another window, as Niri's on_pointer_axis takes the factor of
+// the window under the pointer.
+func TestWindowRuleScrollFactorScalesTheWindowUnderThePointer(t *testing.T) {
+	two := 2.0
+	rules := []config.WindowRule{{
+		Matches:      []config.RuleMatch{{AppID: regexp.MustCompile(`^fast$`)}},
+		ScrollFactor: &two,
+	}}
+	c := newNestedWith(t, Options{WindowRules: rules})
+	runTouchClients(t, c, 2, func(clients []*testclient.ToplevelClient, views []*toplevelView) {
+		var pointer *fakePointer
+		defer onCompositor(t, c, func() {
+			if pointer != nil {
+				pointer.remove()
+			}
+		})
+		if err := clients[0].SetIdentity("fast", "fast"); err != nil {
+			t.Fatal(err)
+		}
+		onCompositor(t, c, func() { pointer = c.addFakePointer() })
+		for _, client := range clients {
+			if err := client.SyncInput(); err != nil {
+				t.Fatal(err)
+			}
+		}
+		onCompositor(t, c, func() {
+			if views[0].appearance.ScrollFactor == nil {
+				t.Fatal("the scroll-factor rule did not match the window")
+			}
+			c.focusView(views[1])
+			c.applyPendingWindowFocus()
+			pointer.moveTo(c.viewCenter(views[0]))
+			pointer.wheelAt(1000, false, 120)
+			pointer.moveTo(c.viewCenter(views[1]))
+			pointer.wheelAt(1100, false, 120)
+		})
+		for i, want := range []float64{30, 15} {
+			if err := clients[i].SyncInput(); err != nil {
+				t.Fatal(err)
+			}
+			if got := clients[i].InputEvents().PointerAxisSum; got != want {
+				t.Errorf("client %d axis = %v, want %v", i, got, want)
+			}
+		}
 	})
 }
