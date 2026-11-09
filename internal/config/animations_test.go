@@ -22,6 +22,9 @@ func TestAnimationEasingSlowdownAndShadersAreParsed(t *testing.T) {
 	if cfg.Animations.ConfigNotificationOpenClose.Easing == nil || cfg.Animations.ScreenshotUIOpen.Easing == nil {
 		t.Fatal("UI easing omitted")
 	}
+	if len(cfg.Warnings) != 0 {
+		t.Fatalf("applied easing and shader settings warn: %v", cfg.Warnings)
+	}
 	for _, source := range []string{
 		`animations { window-open { curve "unknown"; }; }`,
 		`animations { window-open { curve "cubic-bezier" -0.1 0 1 1; }; }`,

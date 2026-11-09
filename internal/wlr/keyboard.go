@@ -771,6 +771,21 @@ func (c *Compositor) executeBindAction(action bind.Action) {
 		c.ToggleWindowRuleOpacity(nil)
 		return
 	}
+	switch action.Name {
+	case bind.ActionSwitchLayout:
+		index := uint8(action.Index)
+		c.SwitchLayout(action.LayoutTarget, &index)
+		return
+	case bind.ActionToggleDebugTint:
+		c.ToggleDebugTint()
+		return
+	case bind.ActionDebugToggleOpaqueRegions:
+		c.DebugToggleOpaqueRegions()
+		return
+	case bind.ActionDebugToggleDamage:
+		c.DebugToggleDamage()
+		return
+	}
 	if action.Name == bind.ActionFocusWorkspace {
 		if c.model == nil {
 			return

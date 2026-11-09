@@ -112,13 +112,13 @@ func TestParseReportsUnappliedBindActions(t *testing.T) {
 	cfg, err := Parse("bindings.kdl", []byte(`
 binds {
     Mod+Q { close-window; spawn "kitty"; }
-    Mod+W { toggle-debug-tint; }
+    Mod+W { an-action-sysc-does-not-apply; }
 }
 `))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(cfg.UnappliedActions, []string{"toggle-debug-tint"}) {
+	if !reflect.DeepEqual(cfg.UnappliedActions, []string{"an-action-sysc-does-not-apply"}) {
 		t.Fatalf("unapplied actions = %q, want unique action names in source order", cfg.UnappliedActions)
 	}
 	if len(cfg.Binds) != 1 || len(cfg.Binds[0].Actions) != 2 {

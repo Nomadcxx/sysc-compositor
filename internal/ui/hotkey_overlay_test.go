@@ -109,10 +109,12 @@ binds {
 
 func TestHotkeyOverlaySkipsActionsTheCompositorDoesNotApply(t *testing.T) {
 	title := "Something The Compositor Does Not Apply"
+	// Every Niri bind action applies now; the guard still holds for a name
+	// the compositor does not know.
 	binds := []config.OverlayBind{
 		{
 			Chord:  bind.Chord{Key: "x", Modifiers: bind.Modifiers(bind.ModifierSuper), UsesMod: true},
-			Action: "switch-preset-window-width",
+			Action: "an-action-sysc-does-not-apply",
 			Title:  &title,
 		},
 		{

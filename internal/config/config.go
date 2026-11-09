@@ -1255,7 +1255,6 @@ func (c *Config) parseAnimation(name string, node *document.Node) (Animation, er
 				return Animation{}, err
 			}
 			setting.CustomShader = &values[0]
-			c.addWarning("animations." + name + ".custom-shader")
 		default:
 			return Animation{}, fmt.Errorf("unexpected node `%s`", nodeName(child))
 		}

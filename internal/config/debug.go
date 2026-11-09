@@ -33,6 +33,15 @@ type Debug struct {
 
 type ConfigNotification struct{ DisableFailed bool }
 
+// debugUnapplied are the debug settings sysc parses but does not act on yet.
+// keep-max-bpc-unchanged is not one: Niri's Configuration: Debug Options
+// documents it as a deprecated no-op since 25.11.
+var debugUnapplied = map[string]bool{
+	"dbus-interfaces-in-non-session-instances": true,
+	"force-pipewire-invalid-modifier":          true,
+	"keep-laptop-panel-on-when-lid-is-closed":  true,
+}
+
 // debug merges fields across includes; only ignore-drm-device repeats inside
 // one block, and its paths append rather than replacing earlier paths.
 func (c *Config) debug(node *document.Node) error {
@@ -104,9 +113,7 @@ func (c *Config) debug(node *document.Node) error {
 			}
 			*field = value
 		}
-		// Niri's Configuration: Debug Options documents keep-max-bpc-unchanged
-		// as a deprecated no-op since 25.11; it needs no runtime implementation.
-		if name != "keep-max-bpc-unchanged" {
+		if debugUnapplied[name] {
 			c.addWarning("debug." + name)
 		}
 	}

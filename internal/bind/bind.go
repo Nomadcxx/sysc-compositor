@@ -69,6 +69,9 @@ type Action struct {
 	MRUFilter string
 	// Size is the size argument of set-column-width and set-window-height.
 	Size layout.SizeChange
+	// LayoutTarget is switch-layout's Niri target: Next, Prev, or Index with
+	// the layout in Index.
+	LayoutTarget string
 }
 
 type Binding struct {
@@ -93,6 +96,10 @@ const (
 	ActionSwitchPresetWindowWidth        = "switch-preset-window-width"
 	ActionSwitchPresetWindowWidthBack    = "switch-preset-window-width-back"
 	ActionToggleWindowRuleOpacity        = "toggle-window-rule-opacity"
+	ActionSwitchLayout                   = "switch-layout"
+	ActionToggleDebugTint                = "toggle-debug-tint"
+	ActionDebugToggleOpaqueRegions       = "debug-toggle-opaque-regions"
+	ActionDebugToggleDamage              = "debug-toggle-damage"
 	ActionCloseWindow                    = "close-window"
 	ActionSpawn                          = "spawn"
 	ActionSpawnSh                        = "spawn-sh"
@@ -486,7 +493,25 @@ func ParseAction(name string, args []string) (Action, bool, error) {
 		}
 		action.Size = size
 		return action, true, nil
+	case ActionSwitchLayout:
+		if len(args) != 1 {
+			return Action{}, true, fmt.Errorf(`switch-layout takes "next", "prev" or a layout index`)
+		}
+		switch args[0] {
+		case "next":
+			action.LayoutTarget = "Next"
+		case "prev":
+			action.LayoutTarget = "Prev"
+		default:
+			index, err := strconv.ParseUint(args[0], 10, 8)
+			if err != nil {
+				return Action{}, true, fmt.Errorf(`switch-layout takes "next", "prev" or a layout index`)
+			}
+			action.LayoutTarget, action.Index = "Index", int(index)
+		}
+		return action, true, nil
 	case ActionDoScreenTransition, ActionSwitchPresetWindowWidth, ActionSwitchPresetWindowWidthBack, ActionCenterWindow, ActionToggleWindowRuleOpacity, ActionSwitchPresetColumnWidth, ActionSwitchPresetColumnWidthBack,
+		ActionToggleDebugTint, ActionDebugToggleOpaqueRegions, ActionDebugToggleDamage,
 		ActionMaximizeColumn, ActionMaximizeWindowToEdges, ActionCenterColumn,
 		ActionCenterVisibleColumns, ActionExpandColumnToAvailableWidth,
 		ActionResetWindowHeight, ActionSwitchPresetWindowHeight,
@@ -521,7 +546,8 @@ func parseWorkspaceReference(action *Action, args []string) error {
 
 func IsSupportedAction(name string) bool {
 	switch name {
-	case ActionDoScreenTransition, ActionSetWindowWidth, ActionCenterWindow, ActionSwitchPresetWindowWidth, ActionSwitchPresetWindowWidthBack, ActionToggleWindowRuleOpacity:
+	case ActionDoScreenTransition, ActionSetWindowWidth, ActionCenterWindow, ActionSwitchPresetWindowWidth, ActionSwitchPresetWindowWidthBack, ActionToggleWindowRuleOpacity,
+		ActionSwitchLayout, ActionToggleDebugTint, ActionDebugToggleOpaqueRegions, ActionDebugToggleDamage:
 		return true
 	case ActionCloseWindow, ActionSpawn, ActionSpawnSh,
 		ActionFocusColumnLeft, ActionFocusColumnRight, ActionFocusColumnFirst,
