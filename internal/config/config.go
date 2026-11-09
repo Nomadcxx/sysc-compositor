@@ -40,17 +40,19 @@ type Config struct {
 	Binds        []Binding
 	// OverlayBinds is every bind in order, applied here or not, as the
 	// hotkey overlay lists them; HotkeyOverlay is its section.
-	OverlayBinds      []OverlayBind
-	HotkeyOverlay     HotkeyOverlay
-	RecentWindows     RecentWindows
-	Workspaces        []WorkspaceConfig
-	Outputs           []OutputConfig // in file order; FindOutput takes the first match
-	WindowRules       []WindowRule
-	LayerRules        []LayerRule
-	Animations        Animations
-	Blur              Blur
-	PreferNoCSD       bool
-	XwaylandSatellite XwaylandSatellite
+	OverlayBinds       []OverlayBind
+	HotkeyOverlay      HotkeyOverlay
+	ConfigNotification ConfigNotification
+	RecentWindows      RecentWindows
+	Workspaces         []WorkspaceConfig
+	Outputs            []OutputConfig // in file order; FindOutput takes the first match
+	WindowRules        []WindowRule
+	LayerRules         []LayerRule
+	Animations         Animations
+	Blur               Blur
+	Debug              Debug
+	PreferNoCSD        bool
+	XwaylandSatellite  XwaylandSatellite
 	// ScreenshotPath is the strftime pattern screenshots are written to; nil
 	// (`screenshot-path null`) keeps them in the clipboard only.
 	ScreenshotPath *string
@@ -89,9 +91,10 @@ type LoadResult struct {
 
 type Input struct {
 	Pointers
-	ModKey, ModKeyNested string
-	Tablet               Tablet
-	Touch                Touch
+	WorkspaceAutoBackAndForth bool
+	ModKey, ModKeyNested      string
+	Tablet                    Tablet
+	Touch                     Touch
 }
 
 // Tablet is input.tablet, Niri's niri-config/src/input.rs Tablet.
@@ -460,21 +463,32 @@ type SpringConfig struct {
 	Epsilon      float64
 }
 
+type EasingConfig struct {
+	DurationMS  uint32
+	Curve       string
+	CubicBezier [4]float64
+}
+
 type Animation struct {
-	Off         bool
-	Spring      *SpringConfig
-	Unsupported bool
+	Off          bool
+	Spring       *SpringConfig
+	Easing       *EasingConfig
+	CustomShader *string
+	Unsupported  bool
 }
 
 type Animations struct {
-	Off                    bool
-	WindowOpen             Animation
-	WindowClose            Animation
-	WindowResize           Animation
-	WindowMovement         Animation
-	OverviewOpenClose      Animation
-	WorkspaceSwitch        Animation
-	HorizontalViewMovement Animation
+	Slowdown                    *float64
+	ConfigNotificationOpenClose Animation
+	ScreenshotUIOpen            Animation
+	Off                         bool
+	WindowOpen                  Animation
+	WindowClose                 Animation
+	WindowResize                Animation
+	WindowMovement              Animation
+	OverviewOpenClose           Animation
+	WorkspaceSwitch             Animation
+	HorizontalViewMovement      Animation
 	// ExitConfirmationOpenClose drives the exit dialog's fade and zoom.
 	ExitConfirmationOpenClose Animation
 	// RecentWindowsClose fades the window switcher out.
@@ -670,6 +684,10 @@ func decode(name string, nodes []*document.Node) (*Config, error) {
 			err = c.hotkeyOverlay(n)
 		case "recent-windows":
 			err = c.recentWindows(n)
+		case "config-notification":
+			err = c.configNotification(n)
+		case "debug":
+			err = c.debug(n)
 		case "switch-events":
 			err = c.switchEvents(n)
 		case "workspace":
@@ -816,6 +834,17 @@ func (c *Config) input(n *document.Node) error {
 	for _, child := range n.Children {
 		name := nodeName(child)
 		switch name {
+		case "workspace-auto-back-and-forth":
+			if seenPointers[name] {
+				return fmt.Errorf("duplicate node `%s`", name)
+			}
+			seenPointers[name] = true
+			value, err := flagArg(child)
+			if err != nil {
+				return fmt.Errorf("%s: %w", name, err)
+			}
+			c.Input.WorkspaceAutoBackAndForth = value
+			continue
 		case "touchpad", "mouse", "trackpoint", "trackball":
 			if seenPointers[name] {
 				return fmt.Errorf("duplicate node `%s`", name)
@@ -1109,15 +1138,17 @@ func defaultAnimations() Animations {
 		return Animation{Spring: &SpringConfig{DampingRatio: 1, Stiffness: stiffness, Epsilon: epsilon}}
 	}
 	return Animations{
-		WindowOpen:                Animation{Unsupported: true}, // Niri's default is easing.
-		WindowClose:               Animation{Unsupported: true}, // Niri's default is easing.
-		WindowResize:              spring(800, 0.0001),
-		WindowMovement:            spring(800, 0.0001),
-		OverviewOpenClose:         spring(800, 0.0001),
-		WorkspaceSwitch:           spring(1000, 0.0001),
-		HorizontalViewMovement:    spring(800, 0.0001),
-		ExitConfirmationOpenClose: Animation{Spring: &SpringConfig{DampingRatio: 0.6, Stiffness: 500, Epsilon: 0.01}},
-		RecentWindowsClose:        spring(800, 0.001),
+		WindowOpen:                  Animation{Easing: &EasingConfig{DurationMS: 150, Curve: "ease-out-expo"}},
+		WindowClose:                 Animation{Easing: &EasingConfig{DurationMS: 150, Curve: "ease-out-quad"}},
+		WindowResize:                spring(800, 0.0001),
+		WindowMovement:              spring(800, 0.0001),
+		OverviewOpenClose:           spring(800, 0.0001),
+		WorkspaceSwitch:             spring(1000, 0.0001),
+		HorizontalViewMovement:      spring(800, 0.0001),
+		ExitConfirmationOpenClose:   Animation{Spring: &SpringConfig{DampingRatio: 0.6, Stiffness: 500, Epsilon: 0.01}},
+		RecentWindowsClose:          spring(800, 0.001),
+		ConfigNotificationOpenClose: Animation{Spring: &SpringConfig{DampingRatio: 0.6, Stiffness: 1000, Epsilon: 0.001}},
+		ScreenshotUIOpen:            Animation{Easing: &EasingConfig{DurationMS: 200, Curve: "ease-out-quad"}},
 	}
 }
 
@@ -1140,16 +1171,14 @@ func (c *Config) animations(n *document.Node) error {
 			if err != nil || value < 0 || value > math.MaxInt32 {
 				return fmt.Errorf("`slowdown` must be a number from 0 to %d", int64(math.MaxInt32))
 			}
-			c.addWarning("animations.slowdown")
+			c.Animations.Slowdown = &value
 		case "window-open", "window-close", "window-resize", "window-movement", "overview-open-close", "workspace-switch", "horizontal-view-movement",
-			"exit-confirmation-open-close", "recent-windows-close":
+			"exit-confirmation-open-close", "recent-windows-close", "config-notification-open-close", "screenshot-ui-open":
 			setting, err := c.parseAnimation(name, child)
 			if err != nil {
 				return fmt.Errorf("%s: %w", name, err)
 			}
 			c.setAnimation(name, setting)
-		case "config-notification-open-close", "screenshot-ui-open":
-			c.addWarning("animations." + name)
 		default:
 			return fmt.Errorf("unexpected node `%s`", name)
 		}
@@ -1187,20 +1216,33 @@ func (c *Config) parseAnimation(name string, node *document.Node) (Animation, er
 			if err != nil {
 				return Animation{}, err
 			}
-			setting.Spring = &spring
+			setting.Spring, setting.Easing = &spring, nil
 			setting.Unsupported = false
 			sawSpring = true
 		case "duration-ms", "curve":
 			if sawSpring {
 				return Animation{}, fmt.Errorf("cannot combine spring and easing settings")
 			}
-			if err := validateEasingChild(child); err != nil {
+			if setting.Easing == nil {
+				setting.Easing = &EasingConfig{DurationMS: 250, Curve: "ease-out-cubic"}
+			} else if !sawEasing {
+				copy := *setting.Easing
+				setting.Easing = &copy
+			}
+			if nodeName(child) == "duration-ms" {
+				if len(child.Properties) != 0 || len(child.Children) != 0 {
+					return Animation{}, fmt.Errorf("duration-ms takes one number")
+				}
+				value, err := intArg(child, 0, math.MaxUint32)
+				if err != nil {
+					return Animation{}, err
+				}
+				setting.Easing.DurationMS = uint32(value)
+			} else if err := parseEasingCurve(child, setting.Easing); err != nil {
 				return Animation{}, err
 			}
-			setting.Spring = nil
-			setting.Unsupported = true
-			sawEasing = true
-			c.addWarning("animations." + name + ".easing")
+			setting.Spring, setting.Unsupported, sawEasing = nil, false, true
+
 		case "custom-shader":
 			if name != "window-open" && name != "window-close" && name != "window-resize" {
 				return Animation{}, fmt.Errorf("unexpected node `custom-shader`")
@@ -1208,9 +1250,11 @@ func (c *Config) parseAnimation(name string, node *document.Node) (Animation, er
 			if len(child.Properties) != 0 || len(child.Children) != 0 {
 				return Animation{}, fmt.Errorf("`custom-shader` takes one string argument")
 			}
-			if _, err := stringArgs(child, 1, 1); err != nil {
+			values, err := stringArgs(child, 1, 1)
+			if err != nil {
 				return Animation{}, err
 			}
+			setting.CustomShader = &values[0]
 			c.addWarning("animations." + name + ".custom-shader")
 		default:
 			return Animation{}, fmt.Errorf("unexpected node `%s`", nodeName(child))
@@ -1241,6 +1285,10 @@ func defaultAnimation(name string) Animation {
 		return defaults.ExitConfirmationOpenClose
 	case "recent-windows-close":
 		return defaults.RecentWindowsClose
+	case "config-notification-open-close":
+		return defaults.ConfigNotificationOpenClose
+	case "screenshot-ui-open":
+		return defaults.ScreenshotUIOpen
 	default:
 		return defaults.HorizontalViewMovement
 	}
@@ -1266,22 +1314,41 @@ func (c *Config) setAnimation(name string, setting Animation) {
 		c.Animations.ExitConfirmationOpenClose = setting
 	case "recent-windows-close":
 		c.Animations.RecentWindowsClose = setting
+	case "config-notification-open-close":
+		c.Animations.ConfigNotificationOpenClose = setting
+	case "screenshot-ui-open":
+		c.Animations.ScreenshotUIOpen = setting
 	}
 }
 
-func validateEasingChild(node *document.Node) error {
-	if nodeName(node) == "duration-ms" {
-		if len(node.Children) != 0 || len(node.Properties) != 0 {
-			return fmt.Errorf("`duration-ms` takes one number")
+func parseEasingCurve(node *document.Node, easing *EasingConfig) error {
+	if len(node.Arguments) == 0 || len(node.Properties) != 0 || len(node.Children) != 0 {
+		return fmt.Errorf("curve takes an easing name")
+	}
+	name, ok := node.Arguments[0].Value.(string)
+	if !ok {
+		return fmt.Errorf("curve must be a string")
+	}
+	expected := 1
+	switch name {
+	case "linear", "ease-out-quad", "ease-out-cubic", "ease-out-expo":
+	case "cubic-bezier":
+		expected = 5
+	default:
+		return fmt.Errorf("unknown easing curve %q", name)
+	}
+	if len(node.Arguments) != expected {
+		return fmt.Errorf("curve %q needs %d arguments", name, expected)
+	}
+	easing.Curve = name
+	if name == "cubic-bezier" {
+		for i, arg := range node.Arguments[1:] {
+			value, ok := numericValue(arg.Value)
+			if !ok || value < math.MinInt32 || value > math.MaxInt32 || (i%2 == 0 && (value < 0 || value > 1)) {
+				return fmt.Errorf("invalid cubic-bezier curve coordinate")
+			}
+			easing.CubicBezier[i] = value
 		}
-		_, err := intArg(node, 0, math.MaxUint32)
-		return err
-	}
-	if len(node.Arguments) != 1 || len(node.Children) != 0 || len(node.Properties) != 0 {
-		return fmt.Errorf("`curve` takes one easing name")
-	}
-	if _, ok := node.Arguments[0].Value.(string); !ok {
-		return fmt.Errorf("`curve` must be a string")
 	}
 	return nil
 }
@@ -1877,6 +1944,16 @@ func (c *Config) binds(n *document.Node) error {
 					default:
 						return fmt.Errorf("bind %q action %s: unexpected property `%s`", nodeName(node), name, key)
 					}
+				}
+			}
+			if name == bind.ActionDoScreenTransition {
+				for key, property := range actionNode.Properties {
+					value, ok := property.Value.(int64)
+					if key != "delay-ms" || !ok || value < 0 || value > 65535 {
+						return fmt.Errorf("bind %q action %s: invalid delay-ms", nodeName(node), name)
+					}
+					delay := uint16(value)
+					action.DelayMS = &delay
 				}
 			}
 			if name == bind.ActionQuit {

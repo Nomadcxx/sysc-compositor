@@ -18,6 +18,9 @@ func TestParseSizeChangeReadsNiriSizes(t *testing.T) {
 		{arg: "", wantErr: true},
 		{arg: "wide", wantErr: true},
 		{arg: "50%%", wantErr: true},
+		{arg: "NaN%", wantErr: true},
+		{arg: "Inf%", wantErr: true},
+		{arg: "-Inf%", wantErr: true},
 	} {
 		got, err := ParseSizeChange(tc.arg)
 		if tc.wantErr {
@@ -215,7 +218,7 @@ func TestToggleMaximizeColumnFillsTheWidthAndRestoresIt(t *testing.T) {
 	}
 }
 
-func TestMaximizeWindowToEdgesFillsTheColumnAndHidesTheRest(t *testing.T) {
+func TestMaximizeWindowToEdgesExtractsTheWindow(t *testing.T) {
 	ws := NewWorkspace(Bounds{Width: 1200, Height: 800}, 400, 16)
 	ws.AddWindow(1)
 	ws.AddWindow(2)
@@ -233,18 +236,18 @@ func TestMaximizeWindowToEdgesFillsTheColumnAndHidesTheRest(t *testing.T) {
 	if !ok {
 		t.Fatal("Placement(1) missing")
 	}
-	if maximized.Width != 1168 {
-		t.Errorf("maximized window width = %d, want 1168", maximized.Width)
+	if maximized.Width != 1200 {
+		t.Errorf("maximized window width = %d, want 1200", maximized.Width)
 	}
-	if maximized.Height != 768 {
-		t.Errorf("maximized window height = %d, want 768", maximized.Height)
+	if maximized.Height != 800 {
+		t.Errorf("maximized window height = %d, want 800", maximized.Height)
 	}
 	hidden, ok := ws.Placement(2)
 	if !ok {
 		t.Fatal("Placement(2) missing")
 	}
-	if hidden.Visible {
-		t.Error("the window behind the maximized one is still visible")
+	if !hidden.Visible || hidden.Column == maximized.Column {
+		t.Error("maximizing a normal group did not extract its target")
 	}
 	if !maximized.Maximized || hidden.Maximized {
 		t.Errorf("Maximized = %v and %v, want only the maximized window marked", maximized.Maximized, hidden.Maximized)
@@ -403,7 +406,7 @@ func TestMaximizeColumnFillsTheWorkingWidth(t *testing.T) {
 	}
 }
 
-func TestMaximizeWindowToEdgesFillsTheColumnHeight(t *testing.T) {
+func TestMaximizeWindowToEdgesUsesTheParentArea(t *testing.T) {
 	ws := NewWorkspace(Bounds{Width: 1200, Height: 800}, 400, 16)
 	ws.AddWindow(1)
 	ws.AddWindow(2)
@@ -418,15 +421,15 @@ func TestMaximizeWindowToEdgesFillsTheColumnHeight(t *testing.T) {
 		t.Fatal("MaximizeWindowToEdges(1) = false, want true")
 	}
 	placement, _ := ws.Placement(1)
-	if placement.Height != 768 {
-		t.Errorf("maximized window height = %d, want 768", placement.Height)
+	if placement.Height != 800 {
+		t.Errorf("maximized window height = %d, want 800", placement.Height)
 	}
-	if placement.Width != 1168 {
-		t.Errorf("maximized window width = %d, want 1168", placement.Width)
+	if placement.Width != 1200 {
+		t.Errorf("maximized window width = %d, want 1200", placement.Width)
 	}
 	other, _ := ws.Placement(2)
-	if other.Y != 800 {
-		t.Errorf("window behind the maximized one = %d, want it pushed out of the working area", other.Y)
+	if other.Column == placement.Column || !other.Visible {
+		t.Errorf("normal sibling was not retained in its own visible column: %+v", other)
 	}
 }
 
@@ -531,5 +534,214 @@ func TestTabbedColumnKeepsRoomForItsTabIndicator(t *testing.T) {
 	ws.SetTabSpace(TabSpace{Size: 9, Side: TabLeft})
 	if got, _ := ws.Placement(1); got.X != plain.X {
 		t.Errorf("a normal column took tab room: %+v", got)
+	}
+}
+
+func TestWindowWidthAndCenterActionsTargetWithoutChangingFocus(t *testing.T) {
+	ws := NewWorkspace(Bounds{X: 30, Y: 40, Width: 1200, Height: 800}, 400, 16)
+	ws.AddWindow(1)
+	ws.AddWindow(2)
+	if !ws.SetWindowWidth(1, SizeChange{Fixed: 500}) {
+		t.Fatal("targeted width was ignored")
+	}
+	first, _ := ws.Placement(1)
+	second, _ := ws.Placement(2)
+	if first.Width != 500 || second.Width != 400 {
+		t.Fatalf("targeted widths = %d, %d", first.Width, second.Width)
+	}
+	if id, _ := ws.FocusedWindow(); id != 2 {
+		t.Fatalf("width focused window %d", id)
+	}
+	if ws.CenterWindow(1) {
+		t.Fatal("centering a non-active tiled column should do nothing")
+	}
+	if !ws.CenterWindow(2) {
+		t.Fatal("centering active tiled column was ignored")
+	}
+	second, _ = ws.Placement(2)
+	if second.X != 430 {
+		t.Fatalf("centered x = %d, want 430", second.X)
+	}
+	if !ws.SwitchPresetWindowWidth(1, false) {
+		t.Fatal("targeted preset was ignored")
+	}
+	first, _ = ws.Placement(1)
+	if first.Width != 576 {
+		t.Fatalf("targeted preset width = %d, want 576", first.Width)
+	}
+	if id, _ := ws.FocusedWindow(); id != 2 {
+		t.Fatalf("preset focused window %d", id)
+	}
+}
+
+func TestFloatingSizingUsesItsOwnGeometryAndPresets(t *testing.T) {
+	ws := NewWorkspace(Bounds{X: 30, Y: 40, Width: 1200, Height: 800}, 400, 16)
+	ws.AddWindow(1)
+	ws.AddWindow(2)
+	ws.SetWindowFloating(2, true, Bounds{X: 100, Y: 120, Width: 300, Height: 200})
+	if !ws.SetColumnWidth(SizeChange{Proportion: 50}) {
+		t.Fatal("floating column-width route was ignored")
+	}
+	floating, _ := ws.Placement(2)
+	if floating.Width != 600 || floating.Height != 200 || floating.X != 100 || floating.Y != 120 {
+		t.Fatalf("floating width geometry = %+v", floating)
+	}
+	if !ws.SetWindowHeight(0, SizeChange{Proportion: 50}) {
+		t.Fatal("floating height route was ignored")
+	}
+	floating, _ = ws.Placement(2)
+	if floating.Height != 400 || floating.Width != 600 {
+		t.Fatalf("floating height geometry = %+v", floating)
+	}
+	if ws.ResetWindowHeight(0) || ws.ToggleMaximizeColumn() {
+		t.Fatal("floating reset or maximize changed the tiled column")
+	}
+	if !ws.CenterColumn() {
+		t.Fatal("floating center-column route was ignored")
+	}
+	floating, _ = ws.Placement(2)
+	if floating.X != 330 || floating.Y != 240 {
+		t.Fatalf("floating center geometry = %+v", floating)
+	}
+	ws.SetPresetSizes([]PresetSize{{Fixed: true, Value: 900}, {Fixed: true, Value: 300}, {Value: 0.5}}, nil)
+	for _, width := range []int{900, 300, 600, 900} {
+		if !ws.SwitchPresetColumnWidth(false) {
+			t.Fatal("floating preset route was ignored")
+		}
+		floating, _ = ws.Placement(2)
+		if floating.Width != width {
+			t.Fatalf("floating preset width = %d, want %d", floating.Width, width)
+		}
+	}
+	ws.SetWindowSizeHints(2, 500, 700, 150, 500)
+	ws.SetWindowWidth(2, SizeChange{Fixed: 1000})
+	floating, _ = ws.Placement(2)
+	if floating.Width != 700 {
+		t.Fatalf("floating max-width = %d", floating.Width)
+	}
+	if !ws.SetWindowWidth(1, SizeChange{Fixed: 500}) {
+		t.Fatal("tiled target while floating was ignored")
+	}
+	tiled, _ := ws.Placement(1)
+	if tiled.Width != 500 {
+		t.Fatalf("targeted tiled width = %d", tiled.Width)
+	}
+	if id, _ := ws.FocusedWindow(); id != 2 {
+		t.Fatalf("targeted width changed floating focus to %d", id)
+	}
+}
+
+func TestFloatingPresetHeightAndOversizedCenter(t *testing.T) {
+	ws := NewWorkspace(Bounds{X: 30, Y: 40, Width: 1000, Height: 700}, 400, 16)
+	ws.AddWindow(1)
+	ws.SetWindowFloating(1, true, Bounds{X: 100, Y: 120, Width: 300, Height: 200})
+	ws.SetPresetSizes(nil, []PresetSize{{Fixed: true, Value: 500}, {Fixed: true, Value: 200}})
+	for _, want := range []int{500, 200, 500} {
+		ws.SwitchPresetWindowHeight(0, false)
+		got, _ := ws.Placement(1)
+		if got.Height != want {
+			t.Fatalf("floating preset height = %d, want %d", got.Height, want)
+		}
+	}
+	ws.SetWindowWidth(1, SizeChange{Fixed: 1500})
+	ws.SetWindowHeight(1, SizeChange{Fixed: 1000})
+	ws.CenterWindow(1)
+	got, _ := ws.Placement(1)
+	if got.X != 30 || got.Y != 40 || got.Width != 1500 || got.Height != 1000 {
+		t.Fatalf("oversized floating center = %+v", got)
+	}
+}
+
+func TestSetMaximizedExtractsWindowsAndRestoresFloating(t *testing.T) {
+	ws := NewWorkspace(Bounds{X: 10, Y: 20, Width: 1200, Height: 800}, 400, 16)
+	ws.AddWindow(1)
+	ws.AddWindow(2)
+	ws.FocusColumn(0)
+	ws.ConsumeWindowIntoColumn()
+	if !ws.SetMaximized(1, true) || ws.SetMaximized(1, true) {
+		t.Fatal("maximize must apply once")
+	}
+	first, _ := ws.Placement(1)
+	second, _ := ws.Placement(2)
+	if !first.Maximized || first.Column == second.Column || second.Maximized || first.Width != 1200 || first.Height != 800 || first.Y != 20 {
+		t.Fatalf("extracted maximize: first=%+v second=%+v", first, second)
+	}
+	if !ws.SetMaximized(1, false) || ws.SetMaximized(1, false) {
+		t.Fatal("unmaximize must apply once")
+	}
+	first, _ = ws.Placement(1)
+	if first.Maximized || first.Width != 400 {
+		t.Fatalf("unmaximized geometry = %+v", first)
+	}
+	ws.SetWindowFloating(2, true, Bounds{X: 100, Y: 120, Width: 300, Height: 200})
+	if !ws.SetMaximized(2, true) {
+		t.Fatal("floating maximize was ignored")
+	}
+	second, _ = ws.Placement(2)
+	if second.Floating || !second.Maximized {
+		t.Fatalf("maximized floating target = %+v", second)
+	}
+	if !ws.SetMaximized(2, false) {
+		t.Fatal("floating unmaximize was ignored")
+	}
+	second, _ = ws.Placement(2)
+	if !second.Floating || second.Maximized || second.X != 100 || second.Y != 120 || second.Width != 300 || second.Height != 200 {
+		t.Fatalf("restored floating target = %+v", second)
+	}
+}
+
+func TestSetMaximizedRetainsTabbedGroupAndIgnoresStruts(t *testing.T) {
+	ws := NewWorkspace(Bounds{X: 110, Y: 120, Width: 1000, Height: 600}, 400, 16)
+	ws.SetMaximizedBounds(Bounds{X: 10, Y: 20, Width: 1200, Height: 800})
+	ws.AddWindow(1)
+	ws.AddWindow(2)
+	ws.FocusColumn(0)
+	ws.ConsumeWindowIntoColumn()
+	ws.SetColumnDisplay(ColumnDisplayTabbed)
+	ws.SetTabSpace(TabSpace{Size: 40, Side: TabLeft})
+	if !ws.SetMaximized(1, true) {
+		t.Fatal("tabbed maximize was ignored")
+	}
+	first, _ := ws.Placement(1)
+	second, _ := ws.Placement(2)
+	if first.Column != second.Column || !first.Maximized || !second.Maximized || first.X != 10 || first.Y != 20 || first.Width != 1200 || first.Height != 800 {
+		t.Fatalf("tabbed maximize: first=%+v second=%+v", first, second)
+	}
+}
+
+func TestMaximizedGeometryTracksWorkspaceResize(t *testing.T) {
+	ws := NewWorkspace(Bounds{X: 10, Y: 20, Width: 1200, Height: 800}, 400, 16)
+	ws.AddWindow(1)
+	ws.SetMaximized(1, true)
+	ws.SetGeometry(Bounds{X: 30, Y: 40, Width: 900, Height: 600}, 400, 16)
+	p, _ := ws.Placement(1)
+	if p.X != 30 || p.Y != 40 || p.Width != 900 || p.Height != 600 {
+		t.Fatalf("resized maximized placement = %+v", p)
+	}
+}
+
+func TestMaximizeAnInactiveTilePreservesFocusAndGroup(t *testing.T) {
+	ws := NewWorkspace(Bounds{Width: 1200, Height: 800}, 400, 16)
+	ws.AddWindow(1)
+	ws.AddWindow(2)
+	ws.FocusColumn(0)
+	ws.ConsumeWindowIntoColumn()
+	ws.FocusWindow(2)
+	if !ws.SetMaximized(1, true) {
+		t.Fatal("inactive maximize was ignored")
+	}
+	if id, _ := ws.FocusedWindow(); id != 2 {
+		t.Fatalf("maximize changed focus to %d", id)
+	}
+	first, _ := ws.Placement(1)
+	second, _ := ws.Placement(2)
+	if first.Column == second.Column || second.Maximized {
+		t.Fatalf("maximize changed sibling group: %+v %+v", first, second)
+	}
+	if !ws.SetMaximized(1, false) {
+		t.Fatal("inactive unmaximize was ignored")
+	}
+	if id, _ := ws.FocusedWindow(); id != 2 {
+		t.Fatalf("unmaximize changed focus to %d", id)
 	}
 }

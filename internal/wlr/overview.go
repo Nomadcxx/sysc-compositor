@@ -169,6 +169,9 @@ type overviewProjection struct {
 	SourceFirst uintptr
 	SourceLast  uintptr
 	tree        *C.struct_wlr_scene_tree
+	// layer is the background or bottom layer surface this copy projects;
+	// nil for a window.
+	layer *layerSurface
 }
 
 type overviewSurfaceListeners struct {
@@ -311,6 +314,12 @@ func (c *Compositor) syncOverviewScene() {
 		c.overviewBackdrops = append(c.overviewBackdrops, overviewBackdrop{
 			output: name, Bounds: bounds, Color: color, node: node,
 		})
+		// Niri draws place-within-backdrop surfaces unzoomed over the backdrop.
+		for _, layer := range c.layerOrder {
+			if layer.outputName == name && layer.withinBackdrop() {
+				c.projectOverviewLayer(layer, name, 0, layout.Bounds{}, 0, 0, 1)
+			}
+		}
 	}
 
 	views := make(map[uint64]*toplevelView, len(c.views))
@@ -322,6 +331,16 @@ func (c *Compositor) syncOverviewScene() {
 	}
 	for _, current := range frames {
 		for _, workspace := range current.frame.Workspaces {
+			// Background and bottom layers move and zoom with each workspace,
+			// below its windows.
+			for _, kind := range []int{layerBackground, layerBottom} {
+				for _, layer := range c.layerOrder {
+					if layer.outputName == current.name && layer.layer == kind && !layer.withinBackdrop() {
+						c.projectOverviewLayer(layer, current.name, workspace.ID, workspace.Bounds,
+							current.frame.Output.X, current.frame.Output.Y, current.frame.Zoom)
+					}
+				}
+			}
 			for _, window := range workspace.Windows {
 				if !window.Visible {
 					continue
@@ -353,6 +372,30 @@ func (c *Compositor) syncOverviewScene() {
 			}
 		}
 	}
+}
+
+// projectOverviewLayer copies layer's mapped buffers into the overview,
+// mapping the output origin (sourceX, sourceY) to the origin of bounds.
+func (c *Compositor) projectOverviewLayer(layer *layerSurface, output string, workspace uint64,
+	bounds layout.Bounds, sourceX, sourceY int, zoom float64) {
+	if layer.tree == nil || !bool(layer.surface.surface.mapped) {
+		return
+	}
+	tree := C.wlr_scene_tree_create(c.overviewTree)
+	if tree == nil {
+		return
+	}
+	var sourceFirst, sourceLast C.uintptr_t
+	count := int(C.sysc_overview_project_buffers(tree, layer.tree, C.int(sourceX), C.int(sourceY),
+		C.int(bounds.X), C.int(bounds.Y), C.double(zoom), &sourceFirst, &sourceLast))
+	if count == 0 {
+		C.wlr_scene_node_destroy(&tree.node)
+		return
+	}
+	c.overviewProjections = append(c.overviewProjections, overviewProjection{
+		Output: output, WorkspaceID: workspace, Bounds: bounds, BufferCount: count,
+		SourceFirst: uintptr(sourceFirst), SourceLast: uintptr(sourceLast), tree: tree, layer: layer,
+	})
 }
 
 // projectViewPreview draws view's buffers under parent with its window

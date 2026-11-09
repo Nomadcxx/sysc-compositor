@@ -54,11 +54,11 @@ func TestWindowRuleOpenMaximizedToEdgesFillsTheColumn(t *testing.T) {
 			return
 		}
 		bounds := c.layoutBox()
-		if window.Tile.Height != bounds.h-2*16 {
-			t.Errorf("maximized tile height = %d, want %d", window.Tile.Height, bounds.h-2*16)
+		if window.Tile.Height != bounds.h {
+			t.Errorf("maximized tile height = %d, want %d", window.Tile.Height, bounds.h)
 		}
-		if window.Tile.Width != bounds.w-2*16 {
-			t.Errorf("maximized tile width = %d, want %d", window.Tile.Width, bounds.w-2*16)
+		if window.Tile.Width != bounds.w {
+			t.Errorf("maximized tile width = %d, want %d", window.Tile.Width, bounds.w)
 		}
 		c.Terminate()
 	}

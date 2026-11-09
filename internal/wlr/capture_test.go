@@ -345,7 +345,8 @@ func TestScreenshotUISelectsAndCapturesARegion(t *testing.T) {
 	c.SetScreenshotHandler(func(path *string) { reports <- path })
 	path := filepath.Join(dir, "region.png")
 	var want image.Rectangle
-	var scale float64
+	var physicalWant image.Rectangle
+
 	runTools(t, c, func(func(string, ...string) *exec.Cmd) {
 		var pointer *fakePointer
 		var keyboard *fakeKeyboard
@@ -370,7 +371,7 @@ func TestScreenshotUISelectsAndCapturesARegion(t *testing.T) {
 			}
 			var box image.Rectangle
 			for output, frame := range c.shotUI.frames {
-				box, scale = frame.box, frame.scale
+				box = frame.box
 				c.shotUI.output = output
 			}
 			want = image.Rect(box.Min.X+20, box.Min.Y+30, box.Min.X+120, box.Min.Y+90)
@@ -378,8 +379,11 @@ func TestScreenshotUISelectsAndCapturesARegion(t *testing.T) {
 			pointer.button(btnLeft, true)
 			pointer.moveTo(float64(want.Max.X), float64(want.Max.Y))
 			pointer.button(btnLeft, false)
-			if c.shotUI.selection != want {
-				t.Errorf("selection = %v, want the dragged %v", c.shotUI.selection, want)
+			frame := c.shotUI.frames[c.shotUI.output]
+			first, last := frame.physical(want.Min), frame.physical(want.Max)
+			physicalWant = image.Rectangle{Min: first, Max: last.Add(image.Pt(1, 1))}
+			if got := c.shotUI.selectionPixels(); got != physicalWant {
+				t.Errorf("physical selection=%v want %v", got, physicalWant)
 			}
 			keyboard.key(57, true) // KEY_SPACE
 			keyboard.key(57, false)
@@ -405,7 +409,7 @@ func TestScreenshotUISelectsAndCapturesARegion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if w, h := int(float64(want.Dx())*scale), int(float64(want.Dy())*scale); config.Width != w || config.Height != h {
+	if w, h := physicalWant.Dx(), physicalWant.Dy(); config.Width != w || config.Height != h {
 		t.Errorf("region screenshot is %dx%d, want %dx%d", config.Width, config.Height, w, h)
 	}
 }

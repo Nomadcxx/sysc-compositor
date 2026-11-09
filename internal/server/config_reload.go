@@ -32,6 +32,9 @@ func compositorOptions(cfg *config.Config, locale *config.Keyboard) wlr.Options 
 		k = keyboardWithLocale(k, *locale)
 	}
 	return wlr.Options{
+		Debug:                     cfg.Debug,
+		ConfigNotification:        cfg.ConfigNotification,
+		WorkspaceAutoBackAndForth: cfg.Input.WorkspaceAutoBackAndForth,
 		Keyboard: wlr.Keyboard{
 			Rules: k.Rules, Model: k.Model, Layout: k.Layout, Variant: k.Variant, Options: k.Options,
 			File: expandHome(k.File), RepeatDelay: k.RepeatDelay, RepeatRate: k.RepeatRate,
@@ -189,6 +192,7 @@ func (s *Server) applyConfigReload(sequence uint64, target reloadTarget, load co
 		if s.announcer != nil {
 			s.announcer.Announce(configErrorAnnouncement)
 		}
+		s.c.NotifyConfigLoadFailed(true)
 		s.state.publishConfigLoaded(s.events, true)
 		return
 	}
@@ -206,6 +210,7 @@ func (s *Server) applyConfigReload(sequence uint64, target reloadTarget, load co
 	watched := s.watchedConfigs(s.configSources)
 	s.reloadMu.Unlock()
 	s.updateConfigWatches(watched)
+	s.c.NotifyConfigLoadFailed(false)
 	s.state.publishConfigLoaded(s.events, false)
 }
 

@@ -201,7 +201,7 @@ func (c *Compositor) syncViewDecorations(view *toplevelView) {
 	if view == nil || view.toplevel == nil || view.tree == nil {
 		return
 	}
-	visible := view.mapped && view.presentationVisible && !view.fullscreen
+	visible := view.mapped && view.presentationVisible && !view.fullscreen && !c.openShaderOwnsView(view)
 	geometry := view.geometry()
 	visualWidth, visualHeight := geometry.w, geometry.h
 	if view.resizeSnapshot != nil {
@@ -313,4 +313,24 @@ func (c *Compositor) destroyViewAppearance(view *toplevelView) {
 		sceneFXNodeDestroy(view.borderNode)
 		view.borderNode = nil
 	}
+}
+
+// ToggleWindowRuleOpacity changes only the rule contribution, as Niri does.
+func (c *Compositor) ToggleWindowRuleOpacity(id *uint64) bool {
+	windowID, ok := c.windowActionID(id)
+	if !ok {
+		return false
+	}
+	for _, view := range c.views {
+		if view.mapped && view.id == windowID {
+			if view.appearance.Opacity == nil || *view.appearance.Opacity == 1 {
+				return false
+			}
+			view.ignoreRuleOpacity = !view.ignoreRuleOpacity
+			c.syncViewOpacity(view)
+			c.damageCaptureSources()
+			return true
+		}
+	}
+	return false
 }

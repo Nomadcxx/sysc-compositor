@@ -38,6 +38,7 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"image/color"
 	"image/draw"
 	"math"
 	"os"
@@ -56,17 +57,20 @@ import (
 // input. The selection is kept for the next opening, as in Niri.
 
 type screenshotUI struct {
-	tree        unsafe.Pointer
-	overlay     unsafe.Pointer // dim and border rects, rebuilt as the selection moves
-	hints       unsafe.Pointer // the help panels, kept above the overlay
-	frames      map[unsafe.Pointer]*frozenFrame
-	selection   image.Rectangle // layout coordinates
-	output      unsafe.Pointer  // the output the selection is on
-	anchor      image.Point
-	dragging    bool
-	onButton    bool // the press began on a capture button
-	showPointer bool
-	path        string
+	openProgress     float64
+	tree             unsafe.Pointer
+	overlay          unsafe.Pointer // dim and border rects, rebuilt as the selection moves
+	hints            unsafe.Pointer // the help panels, kept above the overlay
+	frames           map[unsafe.Pointer]*frozenFrame
+	selection        image.Rectangle // logical envelope in layout coordinates
+	preciseSelection shotSelection
+	preciseOutput    unsafe.Pointer
+	output           unsafe.Pointer // the output the selection is on
+	anchor           image.Point    // upright physical pixel
+	dragging         bool
+	onButton         bool // the press began on a capture button
+	showPointer      bool
+	path             string
 }
 
 // evdevButtonLeft is BTN_LEFT.
@@ -74,6 +78,7 @@ const evdevButtonLeft = 0x110
 
 type frozenFrame struct {
 	buffer    *C.struct_wlr_buffer
+	pixelSize image.Point
 	box       image.Rectangle // the output's layout box
 	scale     float64
 	transform uint32
@@ -106,7 +111,7 @@ func (c *Compositor) Screenshot(showPointer bool, path string) error {
 	if tree == nil {
 		return errors.New("wlr: creating the screenshot UI failed")
 	}
-	ui := &screenshotUI{tree: tree, frames: map[unsafe.Pointer]*frozenFrame{}, path: path, showPointer: showPointer}
+	ui := &screenshotUI{openProgress: 1, tree: tree, frames: map[unsafe.Pointer]*frozenFrame{}, path: path, showPointer: showPointer}
 	for pointer := range c.sceneOutputs {
 		if !c.outputIsEnabled(pointer) {
 			continue
@@ -122,7 +127,7 @@ func (c *Compositor) Screenshot(showPointer bool, path string) error {
 			C.wlr_buffer_unlock(buffer)
 			continue
 		}
-		ui.frames[pointer] = &frozenFrame{buffer: buffer, box: box, scale: float64((*C.struct_wlr_output)(pointer).scale), transform: transform}
+		ui.frames[pointer] = &frozenFrame{buffer: buffer, box: box, scale: float64((*C.struct_wlr_output)(pointer).scale), transform: transform, pixelSize: image.Pt(int(buffer.width), int(buffer.height))}
 	}
 	if len(ui.frames) == 0 {
 		C.sysc_shot_tree_destroy(tree)
@@ -139,8 +144,15 @@ func (c *Compositor) Screenshot(showPointer bool, path string) error {
 	c.cancelTiledWindowMove()
 	c.clearPointerGrab()
 	ui.selection, ui.output = c.initialShotSelection()
+	if saved := c.lastShotPrecise; saved != nil {
+		frame := ui.frames[ui.output]
+		if saved.logical == ui.selection && saved.frameBox == frame.box && saved.scale == frame.scale && saved.transform == frame.transform {
+			ui.setSelectionPixels(saved.pixels)
+		}
+	}
 	c.drawShotSelection()
 	c.closeSwitcher(false)
+	c.animateScreenshotOpen(ui)
 	return nil
 }
 
@@ -221,6 +233,7 @@ func (c *Compositor) syncShotHint(frame *frozenFrame) {
 	if shot.dragging {
 		opacity = ui.ScreenshotHintDragOpacity
 	}
+	opacity *= shot.openProgress
 	for i, node := range frame.hint {
 		if node == nil {
 			continue
@@ -264,19 +277,16 @@ func (c *Compositor) drawShotSelection() {
 	if ui.overlay == nil {
 		return
 	}
-	dim := [4]float32{0, 0, 0, 0.5}
-	rect := func(r image.Rectangle, color [4]float32) {
-		if r.Empty() {
-			return
+	dim := color.RGBA{A: 128}
+	sel := ui.selectionPixels()
+	for output, frame := range ui.frames {
+		b := frame.pixelBounds()
+		rect := func(r image.Rectangle, shade color.RGBA) {
+			alpha := ui.openProgress
+			shade = color.RGBA{uint8(math.Round(float64(shade.R) * alpha)), uint8(math.Round(float64(shade.G) * alpha)), uint8(math.Round(float64(shade.B) * alpha)), uint8(math.Round(float64(shade.A) * alpha))}
+			drawShotPhysicalRect(ui.overlay, frame, r, shade)
 		}
-		if node := sceneFXCreateRect(ui.overlay, r.Dx(), r.Dy(), color); node != nil {
-			sceneFXNodeSetPosition(node, r.Min.X, r.Min.Y)
-		}
-	}
-	sel := ui.selection
-	for _, frame := range ui.frames {
-		b := frame.box
-		if !sel.Overlaps(b) {
+		if output != ui.output || sel.Empty() {
 			rect(b, dim)
 			continue
 		}
@@ -285,13 +295,13 @@ func (c *Compositor) drawShotSelection() {
 		rect(image.Rect(b.Min.X, in.Max.Y, b.Max.X, b.Max.Y), dim)
 		rect(image.Rect(b.Min.X, in.Min.Y, in.Min.X, in.Max.Y), dim)
 		rect(image.Rect(in.Max.X, in.Min.Y, b.Max.X, in.Max.Y), dim)
+		white := color.RGBA{255, 255, 255, 255}
+		border := max(1, int(math.Round(2*frame.scale)))
+		rect(image.Rect(sel.Min.X-border, sel.Min.Y-border, sel.Max.X+border, sel.Min.Y), white)
+		rect(image.Rect(sel.Min.X-border, sel.Max.Y, sel.Max.X+border, sel.Max.Y+border), white)
+		rect(image.Rect(sel.Min.X-border, sel.Min.Y, sel.Min.X, sel.Max.Y), white)
+		rect(image.Rect(sel.Max.X, sel.Min.Y, sel.Max.X+border, sel.Max.Y), white)
 	}
-	white := [4]float32{1, 1, 1, 1}
-	const border = 2
-	rect(image.Rect(sel.Min.X-border, sel.Min.Y-border, sel.Max.X+border, sel.Min.Y), white)
-	rect(image.Rect(sel.Min.X-border, sel.Max.Y, sel.Max.X+border, sel.Max.Y+border), white)
-	rect(image.Rect(sel.Min.X-border, sel.Min.Y, sel.Min.X, sel.Max.Y), white)
-	rect(image.Rect(sel.Max.X, sel.Min.Y, sel.Max.X+border, sel.Max.Y), white)
 	if ui.hints != nil {
 		C.wlr_scene_node_raise_to_top(&(*C.struct_wlr_scene_tree)(ui.hints).node)
 	}
@@ -311,9 +321,16 @@ func (c *Compositor) closeScreenshotUI() {
 		return
 	}
 	c.shotUI = nil
+	c.cancelAnimation(screenshotOpenKey)
 	defer c.refreshA11y()
 	defer c.damageCaptureSources()
 	c.lastShotSelection = ui.selection
+	precise := ui.preciseSelection
+	precise.pixels = ui.selectionPixels()
+	if frame := ui.frames[ui.output]; frame != nil {
+		precise.logical, precise.frameBox, precise.scale, precise.transform = ui.selection, frame.box, frame.scale, frame.transform
+		c.lastShotPrecise = &precise
+	}
 	for _, frame := range ui.frames {
 		C.wlr_buffer_unlock(frame.buffer)
 	}
@@ -326,15 +343,8 @@ func (c *Compositor) closeScreenshotUI() {
 func (c *Compositor) confirmScreenshot(writeToDisk bool) {
 	ui := c.shotUI
 	frame := ui.frames[ui.output]
-	sel := ui.selection.Intersect(frame.box).Sub(frame.box.Min)
-	box := image.Rect(int(float64(sel.Min.X)*frame.scale), int(float64(sel.Min.Y)*frame.scale),
-		int(float64(sel.Max.X)*frame.scale), int(float64(sel.Max.Y)*frame.scale))
-	size := image.Pt(int(frame.buffer.width), int(frame.buffer.height))
-	upright := size
-	if frame.transform&1 != 0 {
-		upright.X, upright.Y = upright.Y, upright.X
-	}
-	box = box.Intersect(image.Rectangle{Max: upright})
+	box := ui.selectionPixels()
+	size := frame.pixelSize
 	if box.Empty() {
 		c.closeScreenshotUI()
 		return
@@ -402,6 +412,10 @@ func (c *Compositor) runShotBinding(binding bind.Binding) {
 			c.Quit(action.SkipConfirmation)
 		case bind.ActionPowerOffMonitors, bind.ActionPowerOnMonitors:
 			c.executeBindAction(action)
+		case bind.ActionSetWindowWidth, bind.ActionSetColumnWidth:
+			c.setShotSize(action.Size, true)
+		case bind.ActionSetWindowHeight:
+			c.setShotSize(action.Size, false)
 		case bind.ActionMoveColumnLeft, bind.ActionMoveColumnLeftOrToMonitorLeft:
 			c.moveShotSelection(-shotMoveStep, 0)
 		case bind.ActionMoveColumnRight, bind.ActionMoveColumnRightOrToMonitorRight:
@@ -435,11 +449,14 @@ func (c *Compositor) runShotBinding(binding bind.Binding) {
 // output's edges.
 func (c *Compositor) moveShotSelection(dx, dy int) {
 	ui := c.shotUI
-	box := ui.frames[ui.output].box
-	sel := ui.selection
+	frame := ui.frames[ui.output]
+	box := frame.pixelBounds()
+	sel := ui.selectionPixels()
+	dx = int(math.Round(float64(dx) * frame.scale))
+	dy = int(math.Round(float64(dy) * frame.scale))
 	dx = max(box.Min.X-sel.Min.X, min(dx, box.Max.X-sel.Max.X))
 	dy = max(box.Min.Y-sel.Min.Y, min(dy, box.Max.Y-sel.Max.Y))
-	ui.selection = sel.Add(image.Pt(dx, dy))
+	ui.setSelectionPixels(sel.Add(image.Pt(dx, dy)))
 	c.drawShotSelection()
 }
 
@@ -466,14 +483,17 @@ func (c *Compositor) moveShotSelectionToOutput(name string) {
 	if target == nil || target == ui.output {
 		return
 	}
-	from, to := ui.frames[ui.output].box, ui.frames[target].box
-	sel := ui.selection
-	w, h := min(max(sel.Dx(), 1), to.Dx()), min(max(sel.Dy(), 1), to.Dy())
-	x := int(math.Round(float64(sel.Min.X-from.Min.X) / float64(from.Dx()) * float64(to.Dx())))
-	y := int(math.Round(float64(sel.Min.Y-from.Min.Y) / float64(from.Dy()) * float64(to.Dy())))
+	fromFrame, toFrame := ui.frames[ui.output], ui.frames[target]
+	from, to := fromFrame.pixelBounds(), toFrame.pixelBounds()
+	sel := ui.selectionPixels()
+	factor := toFrame.scale / fromFrame.scale
+	w := min(max(int(math.Round(float64(sel.Dx())*factor)), 1), to.Dx())
+	h := min(max(int(math.Round(float64(sel.Dy())*factor)), 1), to.Dy())
+	x := int(math.Round(float64(sel.Min.X) / float64(from.Dx()) * float64(to.Dx())))
+	y := int(math.Round(float64(sel.Min.Y) / float64(from.Dy()) * float64(to.Dy())))
 	x, y = max(0, min(x, to.Dx()-w)), max(0, min(y, to.Dy()-h))
 	ui.output = target
-	ui.selection = image.Rect(to.Min.X+x, to.Min.Y+y, to.Min.X+x+w, to.Min.Y+y+h)
+	ui.setSelectionPixels(image.Rect(x, y, x+w, y+h))
 	c.drawShotSelection()
 }
 
@@ -515,9 +535,9 @@ func (c *Compositor) shotUIButton(button uint32, pressed bool) bool {
 			return true
 		}
 		ui.dragging = false
-		// A click with no drag selects a small square around it, as Niri.
-		if sel := ui.selection; sel.Dx() <= 1 && sel.Dy() <= 1 {
-			ui.selection = image.Rect(sel.Min.X-16, sel.Min.Y-16, sel.Min.X+16, sel.Min.Y+16).Intersect(ui.frames[ui.output].box)
+		// Niri's default click selection is 32 physical pixels.
+		if sel := ui.selectionPixels(); sel.Dx() <= 1 && sel.Dy() <= 1 {
+			ui.setSelectionPixels(image.Rect(sel.Min.X-16, sel.Min.Y-16, sel.Min.X+16, sel.Min.Y+16))
 		}
 		c.drawShotSelection()
 		for _, frame := range ui.frames {
@@ -533,8 +553,9 @@ func (c *Compositor) shotUIButton(button uint32, pressed bool) bool {
 			ui.onButton = true
 			return true
 		}
-		ui.output, ui.anchor, ui.dragging = pointer, cursor, true
-		ui.selection = image.Rectangle{Min: cursor, Max: cursor}
+		ui.output, ui.dragging = pointer, true
+		ui.anchor = frame.physicalPointer(float64(c.cursor.x), float64(c.cursor.y))
+		ui.setSelectionPixels(image.Rectangle{Min: ui.anchor, Max: ui.anchor.Add(image.Pt(1, 1))})
 		c.drawShotSelection()
 		for _, frame := range ui.frames {
 			c.syncShotHint(frame)
@@ -551,9 +572,11 @@ func (c *Compositor) shotUIMotion() bool {
 		return false
 	}
 	if ui.dragging {
-		box := ui.frames[ui.output].box
-		cursor := image.Pt(int(c.cursor.x), int(c.cursor.y))
-		ui.selection = image.Rectangle{Min: ui.anchor, Max: cursor}.Canon().Intersect(box)
+		frame := ui.frames[ui.output]
+		cursor := frame.physicalPointer(float64(c.cursor.x), float64(c.cursor.y))
+		selection := image.Rectangle{Min: ui.anchor, Max: cursor}.Canon()
+		selection.Max = selection.Max.Add(image.Pt(1, 1))
+		ui.setSelectionPixels(selection)
 		c.drawShotSelection()
 	}
 	return true

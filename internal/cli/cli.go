@@ -448,102 +448,6 @@ func onlyArgs(rest []string) error {
 	return nil
 }
 
-// parseAction follows niri's CLI shape for the actions built so far.
-func parseAction(args []string) (ipc.Action, error) {
-	if len(args) == 0 {
-		return ipc.Action{}, errors.New("an action is required")
-	}
-	afterDash := func(rest []string) ([]string, error) {
-		if len(rest) < 2 || rest[0] != "--" {
-			return nil, errors.New("the command goes after `--`")
-		}
-		return rest[1:], nil
-	}
-	switch args[0] {
-	case "quit":
-		a := ipc.Action{Name: "Quit"}
-		for _, f := range args[1:] {
-			if f != "-s" && f != "--skip-confirmation" {
-				return a, fmt.Errorf("quit: unexpected argument %q", f)
-			}
-			a.SkipConfirmation = true
-		}
-		return a, nil
-	case "spawn":
-		command, err := afterDash(args[1:])
-		return ipc.Action{Name: "Spawn", Command: command}, err
-	case "spawn-sh":
-		command, err := afterDash(args[1:])
-		if err == nil && len(command) != 1 {
-			err = errors.New("spawn-sh takes one command string")
-		}
-		if err != nil {
-			return ipc.Action{}, err
-		}
-		return ipc.Action{Name: "SpawnSh", ShellCommand: command[0]}, nil
-	case "switch-layout":
-		if len(args) == 2 {
-			switch args[1] {
-			case "next":
-				return ipc.Action{Name: "SwitchLayout", Layout: "Next"}, nil
-			case "prev":
-				return ipc.Action{Name: "SwitchLayout", Layout: "Prev"}, nil
-			default:
-				index, err := parseUint8(args[1])
-				if err == nil {
-					return ipc.Action{Name: "SwitchLayout", Layout: "Index", LayoutIndex: &index}, nil
-				}
-			}
-		}
-		return ipc.Action{}, errors.New("switch-layout expects `next`, `prev`, or a layout index")
-	case "load-config-file":
-		var path *string
-		if len(args) > 1 {
-			if args[1] != "--path" || len(args) != 3 || args[2] == "" {
-				return ipc.Action{}, errors.New("load-config-file accepts only --path PATH")
-			}
-			path = &args[2]
-		}
-		return ipc.Action{Name: "LoadConfigFile", ConfigPath: path}, nil
-	case "focus-window":
-		id, err := parseWindowID(args[1:], true)
-		return ipc.Action{Name: "FocusWindow", WindowID: id}, err
-	case "close-window":
-		id, err := parseWindowID(args[1:], false)
-		return ipc.Action{Name: "CloseWindow", WindowID: id}, err
-	case "set-dynamic-cast-window":
-		id, err := parseWindowID(args[1:], false)
-		return ipc.Action{Name: "SetDynamicCastWindow", WindowID: id}, err
-	case "set-dynamic-cast-monitor":
-		if len(args) > 2 {
-			return ipc.Action{}, errors.New("set-dynamic-cast-monitor takes at most one output")
-		}
-		var output *string
-		if len(args) == 2 {
-			output = &args[1]
-		}
-		return ipc.Action{Name: "SetDynamicCastMonitor", CastOutput: output}, nil
-	case "clear-dynamic-cast-target":
-		return ipc.Action{Name: "ClearDynamicCastTarget"}, onlyArgs(args[1:])
-	case "stop-cast":
-		if len(args) != 3 || args[1] != "--session-id" {
-			return ipc.Action{}, errors.New("stop-cast needs --session-id ID")
-		}
-		id, err := strconv.ParseUint(args[2], 10, 64)
-		if err != nil {
-			return ipc.Action{}, fmt.Errorf("invalid cast session ID %q", args[2])
-		}
-		return ipc.Action{Name: "StopCast", SessionID: id}, nil
-	case "focus-workspace":
-		if len(args) != 2 {
-			return ipc.Action{}, errors.New("focus-workspace needs an index or name")
-		}
-		reference, err := parseWorkspaceReference(args[1])
-		return ipc.Action{Name: "FocusWorkspace", Workspace: reference}, err
-	}
-	return ipc.Action{}, fmt.Errorf("action %s: %w", args[0], errNotBuilt)
-}
-
 func parseUint8(value string) (uint8, error) {
 	index, err := strconv.ParseUint(value, 10, 8)
 	if err != nil {
@@ -732,20 +636,6 @@ func parseFiniteFloat(value, field string) (float64, error) {
 		return 0, fmt.Errorf("invalid %s %q", field, value)
 	}
 	return n, nil
-}
-
-func parseWindowID(args []string, required bool) (*uint64, error) {
-	if len(args) == 0 && !required {
-		return nil, nil
-	}
-	if len(args) != 2 || args[0] != "--id" {
-		return nil, errors.New("expected --id <window-id>")
-	}
-	id, err := strconv.ParseUint(args[1], 10, 64)
-	if err != nil {
-		return nil, fmt.Errorf("invalid window ID %q", args[1])
-	}
-	return &id, nil
 }
 
 func parseWorkspaceReference(value string) (*ipc.WorkspaceReference, error) {

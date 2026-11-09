@@ -1,6 +1,7 @@
 package wlr
 
 import (
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
@@ -144,22 +145,39 @@ func TestBorderDrawsAroundTheWindowAndShrinksIt(t *testing.T) {
 			}
 		}
 		// configured compares the size sent to the client with the tile less
-		// the border on each side.
+		// the border on each side. As in Niri, a throttled size waits for the
+		// client's commit and a resize transaction for every member's, so the
+		// clients acknowledge and the size gets until the deadline to settle.
 		configured := func(stage string, border int) {
 			t.Helper()
-			onCompositor(t, c, func() {
-				for _, window := range c.model.Snapshot().Windows {
-					if window.ID != view.id {
-						continue
-					}
-					gotW, gotH := int(view.toplevel.scheduled.width), int(view.toplevel.scheduled.height)
-					wantW, wantH := window.Tile.Width-2*border, window.Tile.Height-2*border
-					if gotW != wantW || gotH != wantH {
-						t.Errorf("%s: configured %dx%d, want the %dx%d tile less %d px a side (%dx%d)",
-							stage, gotW, gotH, window.Tile.Width, window.Tile.Height, border, wantW, wantH)
-					}
+			for _, client := range clients {
+				if err := client.AcknowledgeConfigure(); err != nil {
+					t.Errorf("%s: %v", stage, err)
 				}
-			})
+			}
+			var mismatch string
+			for deadline := time.Now().Add(time.Second); ; time.Sleep(20 * time.Millisecond) {
+				mismatch = ""
+				onCompositor(t, c, func() {
+					for _, window := range c.model.Snapshot().Windows {
+						if window.ID != view.id {
+							continue
+						}
+						gotW, gotH := int(view.toplevel.scheduled.width), int(view.toplevel.scheduled.height)
+						wantW, wantH := window.Tile.Width-2*border, window.Tile.Height-2*border
+						if gotW != wantW || gotH != wantH {
+							mismatch = fmt.Sprintf("configured %dx%d, want the %dx%d tile less %d px a side (%dx%d)",
+								gotW, gotH, window.Tile.Width, window.Tile.Height, border, wantW, wantH)
+						}
+					}
+				})
+				if mismatch == "" || time.Now().After(deadline) {
+					break
+				}
+			}
+			if mismatch != "" {
+				t.Errorf("%s: %s", stage, mismatch)
+			}
 		}
 
 		assertBorder("inactive window with the rule's colour", nrgba(yellow))

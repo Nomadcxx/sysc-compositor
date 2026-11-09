@@ -546,6 +546,11 @@ func (c *Compositor) handleKeyboardKeyFrom(keyboard *C.struct_wlr_keyboard, supp
 			suppressed[keycode] = true
 			return
 		}
+		if c.pickWindow != nil && c.keysymIs(keycode, "Escape") {
+			c.finishWindowPick(0, nil)
+			suppressed[keycode] = true
+			return
+		}
 		if c.pickColor != nil && c.keysymIs(keycode, "Escape") {
 			c.finishColorPick([3]float64{}, errors.New("no color picked"))
 			suppressed[keycode] = true
@@ -760,6 +765,33 @@ func (c *Compositor) modifierActive(modifier bind.Modifier) bool {
 
 func (c *Compositor) executeBindAction(action bind.Action) {
 	if c.runSwitcherAction(action) {
+		return
+	}
+	if action.Name == bind.ActionToggleWindowRuleOpacity {
+		c.ToggleWindowRuleOpacity(nil)
+		return
+	}
+	if action.Name == bind.ActionFocusWorkspace {
+		if c.model == nil {
+			return
+		}
+		if id, ok := c.workspaceIDForBind(action.WorkspaceIndex, action.WorkspaceName); ok {
+			c.FocusWorkspaceID(id)
+		}
+		return
+	}
+	if action.Name == bind.ActionDoScreenTransition {
+		if err := c.DoScreenTransition(action.DelayMS); err != nil {
+			fmt.Fprintf(os.Stderr, "sysc-compositor: screen transition: %v\n", err)
+		}
+		return
+	}
+	if action.Name == bind.ActionSetWindowWidth {
+		c.SetWindowWidth(nil, action.Size)
+		return
+	}
+	if action.Name == bind.ActionSetColumnWidth {
+		c.SetColumnWidth(action.Size)
 		return
 	}
 	if action.Name == bind.ActionCloseWindow {
@@ -996,13 +1028,6 @@ func (c *Compositor) executeBindAction(action bind.Action) {
 		changed = c.model.MoveColumnToFirst()
 	case bind.ActionMoveColumnToLast:
 		changed = c.model.MoveColumnToLast()
-	case bind.ActionFocusWorkspace:
-		if action.WorkspaceName != "" {
-			changed = c.model.FocusWorkspaceName(action.WorkspaceName)
-		} else {
-			changed = c.model.FocusWorkspace("", action.WorkspaceIndex)
-		}
-		focus = true
 	case bind.ActionConsumeWindowIntoColumn:
 		changed = c.model.ConsumeWindowIntoColumn()
 	case bind.ActionExpelWindowFromColumn:
@@ -1037,8 +1062,12 @@ func (c *Compositor) executeBindAction(action bind.Action) {
 		changed, focus = c.model.MoveColumnToWorkspaceDown(action.Focus), action.Focus
 	case bind.ActionMoveColumnToWorkspaceUp:
 		changed, focus = c.model.MoveColumnToWorkspaceUp(action.Focus), action.Focus
-	case bind.ActionSetColumnWidth:
-		changed = c.model.SetColumnWidth(action.Size)
+	case bind.ActionCenterWindow:
+		changed = c.model.CenterWindowFor(0)
+	case bind.ActionSwitchPresetWindowWidth:
+		changed = c.model.SwitchPresetWindowWidthFor(0, false)
+	case bind.ActionSwitchPresetWindowWidthBack:
+		changed = c.model.SwitchPresetWindowWidthFor(0, true)
 	case bind.ActionSwitchPresetColumnWidth:
 		changed = c.model.SwitchPresetColumnWidth(false)
 	case bind.ActionSwitchPresetColumnWidthBack:

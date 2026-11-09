@@ -22,9 +22,7 @@ static void sysc_workspace_set_enabled(struct wlr_scene_tree *tree, bool enabled
 	wlr_scene_node_set_enabled(&tree->node, enabled);
 }
 
-static void sysc_workspace_set_size(struct wlr_xdg_toplevel *toplevel, int width, int height) {
-	wlr_xdg_toplevel_set_size(toplevel, width, height);
-}
+
 */
 import "C"
 
@@ -290,13 +288,22 @@ func (c *Compositor) workspaceIDForBind(index uint8, name string) (uint64, bool)
 	if name != "" {
 		return c.model.WorkspaceIDByName(name)
 	}
+	// Niri clamps an index past the output's last workspace to that workspace.
 	snapshot := c.model.Snapshot()
+	var last uint64
+	var lastIndex uint8
 	for _, workspace := range snapshot.Workspaces {
-		if workspace.Output == snapshot.FocusedOutput && workspace.Index == index {
+		if workspace.Output != snapshot.FocusedOutput {
+			continue
+		}
+		if workspace.Index == max(index, 1) {
 			return workspace.ID, true
 		}
+		if workspace.Index > lastIndex {
+			last, lastIndex = workspace.ID, workspace.Index
+		}
 	}
-	return 0, false
+	return last, last != 0
 }
 
 func (c *Compositor) activeWindowSnapshot() (wm.WindowSnapshot, bool) {
@@ -368,6 +375,7 @@ func (c *Compositor) applyWorkspaceModel() {
 	if c.model == nil {
 		return
 	}
+	defer c.beginResizeBatch()()
 	// A window that maps with baba-is-float starts the clock that bobs it.
 	defer c.scheduleAnimationTick()
 	for _, view := range c.views {
@@ -439,6 +447,7 @@ func (c *Compositor) applyWorkspaceModel() {
 			visible = fullscreen == view
 		}
 		view.fullscreen = window.Fullscreen
+		c.syncNativeMaximized(view, window.Tile.Maximized && !window.Fullscreen)
 		view.maximized, view.floating = window.Tile.Maximized, window.Tile.Floating
 		view.urgent = window.IsUrgent
 		view.workspaceID = window.WorkspaceID
@@ -458,7 +467,7 @@ func (c *Compositor) applyWorkspaceModel() {
 			view.presentationVisible = false
 			c.setViewSceneEnabled(view, true)
 			if targetWidth > 0 && targetHeight > 0 {
-				C.sysc_workspace_set_size(view.toplevel, C.int(targetWidth), C.int(targetHeight))
+				c.requestWindowSize(view, targetWidth, targetHeight)
 			}
 			x, y := view.layoutPosition()
 			height := c.workspaceBounds(window.Output).Height
@@ -481,7 +490,7 @@ func (c *Compositor) applyWorkspaceModel() {
 			c.setViewSceneEnabled(view, true)
 			c.animateViewPosition(view, targetX, targetY, c.animationConfig.WorkspaceSwitch, nil)
 			if targetWidth > 0 && targetHeight > 0 {
-				C.sysc_workspace_set_size(view.toplevel, C.int(targetWidth), C.int(targetHeight))
+				c.requestWindowSize(view, targetWidth, targetHeight)
 			}
 		} else {
 			view.presentationVisible = visible
@@ -492,7 +501,7 @@ func (c *Compositor) applyWorkspaceModel() {
 				c.setViewSceneEnabled(view, false)
 				c.setViewAppearanceEnabled(view, false)
 				if targetWidth > 0 && targetHeight > 0 {
-					C.sysc_workspace_set_size(view.toplevel, C.int(targetWidth), C.int(targetHeight))
+					c.requestWindowSize(view, targetWidth, targetHeight)
 				}
 				continue
 			}
@@ -520,7 +529,7 @@ func (c *Compositor) applyWorkspaceModel() {
 				}
 			}
 			if targetWidth > 0 && targetHeight > 0 {
-				C.sysc_workspace_set_size(view.toplevel, C.int(targetWidth), C.int(targetHeight))
+				c.requestWindowSize(view, targetWidth, targetHeight)
 			}
 		}
 		if visible && !view.openAnimationStarted {
@@ -532,7 +541,7 @@ func (c *Compositor) applyWorkspaceModel() {
 					c.setViewScenePosition(view, bounds.X, bounds.Y)
 				}
 				if int(view.toplevel.scheduled.width) != bounds.Width || int(view.toplevel.scheduled.height) != bounds.Height {
-					C.sysc_workspace_set_size(view.toplevel, C.int(bounds.Width), C.int(bounds.Height))
+					c.requestWindowSize(view, bounds.Width, bounds.Height)
 				}
 			}
 			continue

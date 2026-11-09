@@ -137,28 +137,39 @@ import (
 // Compositor holds the wlroots object graph for one running server. Every
 // method must be called on the thread that ran LockOSThread.
 type Compositor struct {
-	knownOutputs           map[string]config.OutputName
-	applyingOutputConfigs  bool
-	display                *C.struct_wl_display
-	backend                *C.struct_wlr_backend
-	session                *C.struct_wlr_session
-	renderer               *C.struct_wlr_renderer
-	rendererLost           *Listener
-	rendererRecoveryQueued bool
-	rendererBuffers        map[*C.struct_wlr_client_buffer]*rendererBuffer
-	rendererSurfaces       map[*C.struct_wlr_surface]*rendererSurface
-	alloc                  *C.struct_wlr_allocator
-	comp                   *C.struct_wlr_compositor
-	layout                 *C.struct_wlr_output_layout
-	scene                  *C.struct_wlr_scene
-	capture                *captureProtocol
-	pipewire               *pipeWire
-	casts                  map[uint64]*screenCast
-	castTargetWindows      map[uint64]bool // the windows a cast shows, for is-window-cast-target
-	dynamicCastID          uint64
-	captureNodes           map[*C.struct_wlr_scene_node]*captureNodeOwner
-	xdgDecorationManager   unsafe.Pointer
-	kdeDecorationManager   unsafe.Pointer
+	debugRuntime               debugRuntime
+	resizeTransaction          *resizeTransaction
+	collectingResize           int
+	screenTransitions          map[unsafe.Pointer]*screenTransition
+	screenTransitionTimer      *time.Timer
+	screenTransitionGeneration uint64
+	animationShaders           *animationShaderSet
+	debugConfig                config.Debug
+	configNotification         config.ConfigNotification
+	configNotice               configNotice
+	workspaceAutoBackAndForth  bool
+	knownOutputs               map[string]config.OutputName
+	applyingOutputConfigs      bool
+	display                    *C.struct_wl_display
+	backend                    *C.struct_wlr_backend
+	session                    *C.struct_wlr_session
+	renderer                   *C.struct_wlr_renderer
+	rendererLost               *Listener
+	rendererRecoveryQueued     bool
+	rendererBuffers            map[*C.struct_wlr_client_buffer]*rendererBuffer
+	rendererSurfaces           map[*C.struct_wlr_surface]*rendererSurface
+	alloc                      *C.struct_wlr_allocator
+	comp                       *C.struct_wlr_compositor
+	layout                     *C.struct_wlr_output_layout
+	scene                      *C.struct_wlr_scene
+	capture                    *captureProtocol
+	pipewire                   *pipeWire
+	casts                      map[uint64]*screenCast
+	castTargetWindows          map[uint64]bool // the windows a cast shows, for is-window-cast-target
+	dynamicCastID              uint64
+	captureNodes               map[*C.struct_wlr_scene_node]*captureNodeOwner
+	xdgDecorationManager       unsafe.Pointer
+	kdeDecorationManager       unsafe.Pointer
 	// toplevelDecorations maps each xdg toplevel to its xdg-decoration
 	// object, which tells whether the window is server-side decorated.
 	toplevelDecorations map[*C.struct_wlr_xdg_toplevel]*C.struct_wlr_xdg_toplevel_decoration_v1
@@ -214,10 +225,12 @@ type Compositor struct {
 	screenshotTaken         func(path *string)
 	shotUI                  *screenshotUI
 	pickColor               *colorPicker
+	pickWindow              *windowPicker
 	serviceClients          map[unsafe.Pointer]uintptr
 	hotkeyOverlay           hotkeyOverlay
 	exitDialog              exitDialog
 	lastShotSelection       image.Rectangle
+	lastShotPrecise         *shotSelection
 	animations              map[animationKey]*runningAnimation
 	animationTimer          *time.Timer
 	frameFallbackTimer      *time.Timer
@@ -398,24 +411,27 @@ type Compositor struct {
 
 // Options are the settings a compositor starts with.
 type Options struct {
-	Keyboard     Keyboard
-	ModKey       string
-	ModKeyNested string
-	Layout       *LayoutOptions
-	CursorTheme  string
-	CursorSize   int
-	Binds        []bind.Binding
-	Workspaces   []wm.WorkspaceConfig
-	WindowRules  []config.WindowRule
-	LayerRules   []config.LayerRule
-	Overview     config.Overview
-	Gestures     config.Gestures
-	Animations   config.Animations
-	Blur         config.Blur
-	Tablet       config.Tablet
-	Pointers     config.Pointers
-	Touch        config.Touch
-	PreferNoCSD  bool
+	Debug                     config.Debug
+	ConfigNotification        config.ConfigNotification
+	WorkspaceAutoBackAndForth bool
+	Keyboard                  Keyboard
+	ModKey                    string
+	ModKeyNested              string
+	Layout                    *LayoutOptions
+	CursorTheme               string
+	CursorSize                int
+	Binds                     []bind.Binding
+	Workspaces                []wm.WorkspaceConfig
+	WindowRules               []config.WindowRule
+	LayerRules                []config.LayerRule
+	Overview                  config.Overview
+	Gestures                  config.Gestures
+	Animations                config.Animations
+	Blur                      config.Blur
+	Tablet                    config.Tablet
+	Pointers                  config.Pointers
+	Touch                     config.Touch
+	PreferNoCSD               bool
 	// Outputs are the config's output sections; the first match wins.
 	Outputs []config.OutputConfig
 	// ScreenshotPath is the screenshot-path pattern, nil for clipboard only.
@@ -493,6 +509,9 @@ func NewWith(opts Options) (*Compositor, error) {
 	c.pointers = opts.Pointers
 	c.touchConfig = opts.Touch
 	c.animationConfig = opts.Animations
+	c.debugConfig = opts.Debug
+	c.configNotification = opts.ConfigNotification
+	c.workspaceAutoBackAndForth = opts.WorkspaceAutoBackAndForth
 	c.blurConfig = opts.Blur
 	c.screenshotPattern = opts.ScreenshotPath
 	c.hotkeyOverlay.open = opts.ShowHotkeyOverlayAtStartup
@@ -558,9 +577,8 @@ func NewWith(opts Options) (*Compositor, error) {
 	c.touchPoints = map[int32]*touchPoint{}
 	c.consumedPointerButtons = map[uint32]bool{}
 
-	c.backend = C.wlr_backend_autocreate(c.loop, &c.session)
-	if c.backend == nil {
-		return nil, errors.New("wlr_backend_autocreate failed")
+	if err := c.createConfiguredBackend(); err != nil {
+		return nil, err
 	}
 	var err error
 	c.modKey, err = bind.ResolveModKey(opts.ModKey, opts.ModKeyNested, c.nested())
@@ -573,7 +591,7 @@ func NewWith(opts Options) (*Compositor, error) {
 	}
 	c.configureSwitcher(*opts.RecentWindows)
 
-	c.renderer = (*C.struct_wlr_renderer)(createSceneFXRenderer(unsafe.Pointer(c.backend)))
+	c.renderer = (*C.struct_wlr_renderer)(c.createConfiguredRenderer())
 	if c.renderer == nil {
 		return nil, errors.New("fx_renderer_create failed")
 	}
@@ -585,6 +603,7 @@ func NewWith(opts Options) (*Compositor, error) {
 	if c.alloc == nil {
 		return nil, errors.New("wlr_allocator_autocreate failed")
 	}
+	c.configureAnimationShaders()
 
 	C.wlr_subcompositor_create(c.display)
 	C.wlr_data_device_manager_create(c.display)
@@ -715,6 +734,9 @@ func NewWith(opts Options) (*Compositor, error) {
 	if err := c.startPost(); err != nil {
 		return nil, err
 	}
+	if err := c.initializeDebug(); err != nil {
+		return nil, err
+	}
 	c.watchRendererLoss()
 	c.watchRendererBuffers()
 	if !bool(C.wlr_backend_start(c.backend)) {
@@ -802,6 +824,11 @@ func (c *Compositor) Reconfigure(opts Options) error {
 	c.setPointerConfig(opts.Pointers)
 	c.setTouchConfig(opts.Touch)
 	c.animationConfig = opts.Animations
+	c.configureAnimationShaders()
+	c.debugConfig = opts.Debug
+	c.applyDebugSettings()
+	c.configNotification = opts.ConfigNotification
+	c.workspaceAutoBackAndForth = opts.WorkspaceAutoBackAndForth
 	c.screenshotPattern = opts.ScreenshotPath
 	c.configureSwitcher(*opts.RecentWindows)
 	c.configureHotkeyOverlay(opts.OverlayBinds, opts.HotkeyOverlay)
@@ -814,6 +841,7 @@ func (c *Compositor) Reconfigure(opts Options) error {
 	rulesChanged := !reflect.DeepEqual(c.windowRules, opts.WindowRules)
 	c.windowRules = slices.Clone(opts.WindowRules)
 	if rulesChanged {
+		c.clearScreenTransitions()
 		// Frozen pixels may outlive the window and its original buffer.
 		c.closeScreenshotUI()
 	}
@@ -929,10 +957,16 @@ func (c *Compositor) Terminate() {
 // Destroy releases the compositor. Listeners added through AddListener are
 // removed first so no token outlives its wl_signal.
 func (c *Compositor) Destroy() {
+	c.finishResizeTransactions()
+	c.finishDebug()
+	c.clearScreenTransitions()
+	c.clearConfigNotice()
+	c.finishAnimationShaders()
 	c.stopOutputProtocolEdits()
 	c.finishRendererBuffers()
 	c.stopPipeWire()
 	c.finishColorPick([3]float64{}, ErrClosed)
+	c.finishWindowPick(0, ErrClosed)
 	c.destroyCaptureSources()
 	c.destroyCapturePrivacy()
 	c.destroyVirtualInputGuard()

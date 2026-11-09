@@ -137,6 +137,9 @@ func TestTouchDragsAScreenshotSelection(t *testing.T) {
 			screen.frame()
 			screen.up(1)
 			screen.frame()
+			// Niri's corner points are inclusive pixels: the selection ends
+			// one past the pixel the finger lifted on.
+			want.Max = want.Max.Add(image.Pt(1, 1))
 			if c.shotUI == nil || c.shotUI.selection != want {
 				t.Errorf("selection = %v, want the dragged %v", c.shotUI.selection, want)
 			}

@@ -254,6 +254,12 @@ func (w *Workspace) SetFloatingGeometry(id uint64, bounds Bounds) bool {
 	if floating.bounds == bounds {
 		return false
 	}
+	if bounds.Width != floating.bounds.Width {
+		floating.tile.presetWidth = false
+	}
+	if bounds.Height != floating.bounds.Height {
+		floating.tile.presetHeight = false
+	}
 	floating.bounds = bounds
 	floating.tile.floatingBounds = bounds
 	floating.tile.hasFloatingBounds = true
@@ -380,11 +386,14 @@ type tileState struct {
 	yOffset              int
 	floatingBounds       Bounds
 	hasFloatingBounds    bool
-	// maximized makes the window fill the height of its column.
-	maximized bool
+	// restoreToFloating records a floating window maximized into tiling.
+	restoreToFloating bool
 	// presetHeight remembers the preset window height in use.
 	presetHeight    bool
 	presetHeightIdx int
+	// presetWidth belongs to a floating window; tiled widths belong to its column.
+	presetWidth    bool
+	presetWidthIdx int
 }
 
 type columnState struct {
@@ -394,31 +403,11 @@ type columnState struct {
 	width   int
 	// fullWidth makes the column take the whole working width.
 	fullWidth bool
+	// maximized uses the parent usable area, ignoring struts and gaps.
+	maximized bool
 	// presetWidth remembers the preset column width in use.
 	presetWidth    bool
 	presetWidthIdx int
-}
-
-// hasMaximizedTile reports whether the column holds a window that is
-// maximized to the edges.
-func (c *columnState) hasMaximizedTile() bool {
-	for _, tile := range c.tiles {
-		if tile.maximized {
-			return true
-		}
-	}
-	return false
-}
-
-// hiddenByMaximizedTile reports whether a tile sits behind the window that is
-// maximized to the edges of its column.
-func (c *columnState) hiddenByMaximizedTile(tileIndex int) bool {
-	for index, tile := range c.tiles {
-		if tile.maximized {
-			return index != tileIndex
-		}
-	}
-	return false
 }
 
 type floatingState struct {
@@ -433,6 +422,7 @@ type floatingState struct {
 // windows; focus is a column and an active window within that column.
 type Workspace struct {
 	bounds              Bounds
+	maximizedBounds     Bounds
 	columnWidth         int
 	gap                 int
 	columns             []columnState
@@ -484,7 +474,7 @@ func (w *Workspace) centeringFocusedColumn() bool {
 
 // NewWorkspace creates an empty workspace with fixed column width and gap.
 func NewWorkspace(bounds Bounds, columnWidth, gap int) *Workspace {
-	w := &Workspace{focused: -1}
+	w := &Workspace{focused: -1, maximizedBounds: bounds}
 	w.SetGeometry(bounds, columnWidth, gap)
 	return w
 }
@@ -510,6 +500,7 @@ func (w *Workspace) SetGeometry(bounds Bounds, columnWidth, gap int) {
 		}
 	}
 	w.bounds = bounds
+	w.maximizedBounds = bounds
 	w.columnWidth = columnWidth
 	w.gap = gap
 	w.revealFocused()
@@ -1519,15 +1510,19 @@ func (w *Workspace) placementAt(columnIndex, tileIndex int) Placement {
 	tile := column.tiles[tileIndex]
 	placement := Placement{
 		ID: tile.id, Column: uint32(columnIndex), Tile: uint32(tileIndex),
-		Active: tileIndex == column.active,
-		Visible: (column.display != ColumnDisplayTabbed || tileIndex == column.active) &&
-			!column.hiddenByMaximizedTile(tileIndex),
-		Maximized: tile.maximized,
+		Active:    tileIndex == column.active,
+		Visible:   column.display != ColumnDisplayTabbed || tileIndex == column.active,
+		Maximized: column.maximized,
 		Display:   column.display,
 		X:         w.bounds.X + w.columnStart(columnIndex) - w.viewOffset,
 		Y:         w.tileBaseY(columnIndex, tileIndex) + tile.yOffset,
 		Width:     w.columnWidthAt(columnIndex),
 		Height:    w.windowHeightAt(columnIndex, tileIndex),
+	}
+	if column.maximized {
+		placement.Y = w.maximizedBounds.Y
+		placement.Width, placement.Height = w.maximizedBounds.Width, w.maximizedBounds.Height
+		return placement
 	}
 	// A tabbed column's tiles give up the tab indicator's room, Niri's
 	// extra_size and content_offset.
@@ -1590,6 +1585,10 @@ func (w *Workspace) revealFocused() {
 func (w *Workspace) revealFocusedFrom(previous int) {
 	if w.focused < 0 || w.focused >= len(w.columns) || w.bounds.Width == 0 {
 		w.viewOffset = 0
+		return
+	}
+	if w.columns[w.focused].maximized {
+		w.viewOffset = w.columnStart(w.focused) + w.bounds.X - w.maximizedBounds.X
 		return
 	}
 	if w.centeringFocusedColumn() ||
@@ -1657,7 +1656,10 @@ func (w *Workspace) columnStart(index int) int {
 
 func (w *Workspace) columnWidthAt(index int) int {
 	column := w.columns[index]
-	if column.fullWidth || column.hasMaximizedTile() {
+	if column.maximized {
+		return w.maximizedBounds.Width
+	}
+	if column.fullWidth {
 		// Niri keeps a gap on either side of a column that fills the working
 		// area, so the border and the shadow of the window stay visible.
 		return max(w.bounds.Width-2*w.gap, columnMinWidth(&column))
@@ -1701,9 +1703,6 @@ func (w *Workspace) defaultTileHeight(columnIndex, tileIndex int) int {
 	if column.tiles[tileIndex].height > 0 {
 		return column.tiles[tileIndex].height
 	}
-	if column.tiles[tileIndex].maximized {
-		return w.defaultWindowHeight()
-	}
 	return w.automaticTileHeight(columnIndex, tileIndex)
 }
 
@@ -1740,16 +1739,6 @@ func (w *Workspace) tileBaseY(columnIndex, tileIndex int) int {
 	column := w.columns[columnIndex]
 	if column.display == ColumnDisplayTabbed {
 		return base
-	}
-	for index, tile := range column.tiles {
-		if tile.maximized {
-			if index == tileIndex {
-				return base
-			}
-			// The other windows of a maximized column are pushed out of the
-			// working area.
-			return base + w.defaultWindowHeight() + w.gap
-		}
 	}
 	for previous := 0; previous < tileIndex; previous++ {
 		base += w.windowHeightAt(columnIndex, previous) + w.gap

@@ -267,6 +267,7 @@ func (c *Compositor) handleNewLayerSurface(data unsafe.Pointer) {
 			c.arrangeLayers(l.output)
 		}
 		c.applyLayerAppearance(l)
+		c.syncOverviewLayer(l)
 		c.updateKeyboardFocus()
 		c.notifyStateChanged()
 	})
@@ -289,6 +290,7 @@ func (c *Compositor) handleNewLayerSurface(data unsafe.Pointer) {
 			c.onDemandLayerFocus = nil
 		}
 		c.arrangeLayers(l.output)
+		c.syncOverviewLayer(l)
 		c.updateKeyboardFocus()
 		c.notifyStateChanged()
 	})
@@ -304,9 +306,20 @@ func (c *Compositor) handleNewLayerSurface(data unsafe.Pointer) {
 		if c.onDemandLayerFocus == l {
 			c.onDemandLayerFocus = nil
 		}
+		c.syncOverviewLayer(l)
 		c.updateKeyboardFocus()
 		c.notifyStateChanged()
 	})
+}
+
+// syncOverviewLayer refreshes the overview's copies of a background or
+// bottom layer surface, including copies left by a move to another layer.
+func (c *Compositor) syncOverviewLayer(l *layerSurface) {
+	projected := slices.ContainsFunc(c.overviewProjections,
+		func(projection overviewProjection) bool { return projection.layer == l })
+	if projected || l.layer == layerBackground || l.layer == layerBottom {
+		c.syncOverviewScene()
+	}
 }
 
 // resolveLayerRules matches the layer rules against the surface's namespace,
@@ -334,6 +347,13 @@ func (c *Compositor) reapplyLayerRules() {
 }
 
 func (l *layerSurface) namespace() string { return C.GoString(l.surface.namespace) }
+
+// withinBackdrop is Niri's place-within-backdrop condition: the rule holds
+// only for a background surface that ignores exclusive zones.
+func (l *layerSurface) withinBackdrop() bool {
+	return l.rules.PlaceWithinBackdrop && l.layer == layerBackground &&
+		l.surface.current.exclusive_zone < 0
+}
 
 // mappedSize is the surface's size, and whether it is mapped.
 func (l *layerSurface) mappedSize() (width, height int, mapped bool) {

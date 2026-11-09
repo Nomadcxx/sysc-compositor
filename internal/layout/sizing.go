@@ -34,7 +34,7 @@ func ParseSizeChange(arg string) (SizeChange, error) {
 	}
 	if strings.HasSuffix(text, "%") {
 		value, err := strconv.ParseFloat(strings.TrimSuffix(text, "%"), 64)
-		if err != nil {
+		if err != nil || math.IsNaN(value) || math.IsInf(value, 0) {
 			return SizeChange{}, fmt.Errorf("invalid size %q", arg)
 		}
 		return SizeChange{Proportion: value, Relative: relative}, nil
@@ -136,17 +136,51 @@ func (w *Workspace) MaximizeColumn(id uint64) bool {
 // column the whole working width, the way Niri's open-maximized-to-edges
 // does. The window id of zero means the focused window.
 func (w *Workspace) MaximizeWindowToEdges(id uint64) bool {
+	return w.SetMaximized(id, true)
+}
+
+// SetMaximizedBounds supplies the usable output area before workspace struts.
+func (w *Workspace) SetMaximizedBounds(bounds Bounds) {
+	w.maximizedBounds = bounds
+	w.revealFocused()
+}
+
+// IsMaximized reports the retained column state, including beneath fullscreen.
+func (w *Workspace) IsMaximized(id uint64) bool {
+	column, _, ok := w.windowTile(id)
+	return ok && w.columns[column].maximized
+}
+
+// SetMaximized follows Niri's idempotent set/unset policy. A normal column
+// gives the target its own column; a tabbed column maximizes as a group.
+func (w *Workspace) SetMaximized(id uint64, maximize bool) bool {
+	if id == 0 {
+		id, _ = w.FocusedWindow()
+	}
+	restoreFloating := false
+	if index := w.floatingIndexOf(id); index >= 0 {
+		if !maximize {
+			return false
+		}
+		restoreFloating = true
+		w.SetWindowFloating(id, false, Bounds{})
+	}
 	columnIndex, tileIndex, ok := w.windowTile(id)
-	if !ok {
+	if !ok || w.columns[columnIndex].maximized == maximize {
 		return false
+	}
+	if maximize && len(w.columns[columnIndex].tiles) > 1 && w.columns[columnIndex].display != ColumnDisplayTabbed {
+		w.ConsumeOrExpelWindowRight(&id)
+		columnIndex, tileIndex, _ = w.windowTile(id)
 	}
 	column := &w.columns[columnIndex]
-	tile := &column.tiles[tileIndex]
-	if tile.maximized {
-		return false
+	column.maximized = maximize
+	if maximize {
+		column.tiles[tileIndex].restoreToFloating = restoreFloating
+	} else if column.tiles[tileIndex].restoreToFloating {
+		column.tiles[tileIndex].restoreToFloating = false
+		w.SetWindowFloating(id, true, Bounds{})
 	}
-	tile.maximized = true
-	column.presetWidth = false
 	w.revealFocused()
 	return true
 }
@@ -205,24 +239,41 @@ func (w *Workspace) SetFloatingPosition(id uint64, position FloatingPosition) bo
 // SetColumnWidth sets the focused column's width, the way Niri's
 // set-column-width does.
 func (w *Workspace) SetColumnWidth(change SizeChange) bool {
-	if w.focused < 0 || w.focused >= len(w.columns) {
+	return w.SetWindowWidth(0, change)
+}
+
+// SetWindowWidth changes the target's column or its floating rectangle. Zero
+// names the focused window; targeting another window leaves focus unchanged.
+func (w *Workspace) SetWindowWidth(id uint64, change SizeChange) bool {
+	if id == 0 {
+		id, _ = w.FocusedWindow()
+	}
+	if index := w.floatingIndexOf(id); index >= 0 {
+		return w.setFloatingSize(index, change, true)
+	}
+	columnIndex, _, found := w.windowTile(id)
+	if !found {
 		return false
 	}
-	current := w.columnWidthAt(w.focused)
+	current := w.columnWidthAt(columnIndex)
+	// A fixed width names the window, so its tab strip gets extra room.
+	if change.Fixed != 0 && !change.Relative && w.columns[columnIndex].display == ColumnDisplayTabbed &&
+		(w.tabSpace.Side == TabLeft || w.tabSpace.Side == TabRight) &&
+		!(w.tabSpace.HideWhenSingle && len(w.columns[columnIndex].tiles) == 1) {
+		change.Fixed += w.tabSpace.Size
+	}
 	target, ok := w.resolveSize(change, current, w.bounds.Width)
 	if !ok {
 		return false
 	}
-	column := &w.columns[w.focused]
+	column := &w.columns[columnIndex]
 	column.width = target
 	if target == w.columnWidth {
 		column.width = 0
 	}
 	column.fullWidth = false
 	column.presetWidth = false
-	for index := range column.tiles {
-		column.tiles[index].maximized = false
-	}
+	column.maximized = false
 	w.revealFocused()
 	return true
 }
@@ -230,18 +281,31 @@ func (w *Workspace) SetColumnWidth(change SizeChange) bool {
 // SwitchPresetColumnWidth cycles the focused column through the preset
 // widths.
 func (w *Workspace) SwitchPresetColumnWidth(backwards bool) bool {
-	if w.focused < 0 || w.focused >= len(w.columns) {
+	return w.SwitchPresetWindowWidth(0, backwards)
+}
+
+// SwitchPresetWindowWidth uses the column presets for tiled and floating
+// windows. Floating percentages use the full working width without tile gaps.
+func (w *Workspace) SwitchPresetWindowWidth(id uint64, backwards bool) bool {
+	if id == 0 {
+		id, _ = w.FocusedWindow()
+	}
+	if index := w.floatingIndexOf(id); index >= 0 {
+		return w.switchFloatingPreset(index, backwards, true)
+	}
+	columnIndex, _, found := w.windowTile(id)
+	if !found {
 		return false
 	}
 	presets := w.columnPresets()
-	column := &w.columns[w.focused]
-	current := w.columnWidthAt(w.focused)
+	column := &w.columns[columnIndex]
+	current := w.columnWidthAt(columnIndex)
 	index := -1
-	if column.presetWidth && !column.fullWidth && !column.hasMaximizedTile() {
+	if column.presetWidth && !column.fullWidth && !column.maximized {
 		index = column.presetWidthIdx
 	}
 	var next int
-	if index >= 0 {
+	if index >= 0 && index < len(presets) {
 		if backwards {
 			next = (index + len(presets) - 1) % len(presets)
 		} else {
@@ -258,9 +322,7 @@ func (w *Workspace) SwitchPresetColumnWidth(backwards bool) bool {
 	if target == w.columnWidth {
 		column.width = 0
 	}
-	for index := range column.tiles {
-		column.tiles[index].maximized = false
-	}
+	column.maximized = false
 	w.revealFocused()
 	return true
 }
@@ -269,14 +331,15 @@ func (w *Workspace) SwitchPresetColumnWidth(backwards bool) bool {
 // and back again. A column with a window maximized to the edges loses that
 // instead, the way Niri treats the two as one state.
 func (w *Workspace) ToggleMaximizeColumn() bool {
+	if w.focusedFloat != 0 {
+		return false
+	}
 	if w.focused < 0 || w.focused >= len(w.columns) {
 		return false
 	}
 	column := &w.columns[w.focused]
-	if column.hasMaximizedTile() {
-		for index := range column.tiles {
-			column.tiles[index].maximized = false
-		}
+	if column.maximized {
+		column.maximized = false
 		column.fullWidth = false
 	} else {
 		column.fullWidth = !column.fullWidth
@@ -291,23 +354,15 @@ func (w *Workspace) ToggleMaximizeColumn() bool {
 // ToggleMaximizeWindowToEdges makes a window fill the working area and back
 // again. The window id of zero means the focused window.
 func (w *Workspace) ToggleMaximizeWindowToEdges(id uint64) bool {
-	columnIndex, tileIndex, ok := w.windowTile(id)
-	if !ok {
-		return false
-	}
-	column := &w.columns[columnIndex]
-	tile := &column.tiles[tileIndex]
-	tile.maximized = !tile.maximized
-	if tile.maximized {
-		column.presetWidth = false
-	}
-	w.revealFocused()
-	return true
+	return w.SetMaximized(id, !w.IsMaximized(id))
 }
 
 // CenterColumn scrolls the view so the focused column sits in the middle of
 // the working area.
 func (w *Workspace) CenterColumn() bool {
+	if w.focusedFloat != 0 {
+		return w.CenterWindow(w.focusedFloat)
+	}
 	if w.focused < 0 || w.focused >= len(w.columns) {
 		return false
 	}
@@ -320,6 +375,9 @@ func (w *Workspace) CenterColumn() bool {
 // CenterVisibleColumns scrolls the view so the columns that are fully visible
 // sit in the middle of the working area.
 func (w *Workspace) CenterVisibleColumns() bool {
+	if w.focusedFloat != 0 {
+		return false
+	}
 	if w.focused < 0 || w.focused >= len(w.columns) {
 		return false
 	}
@@ -350,11 +408,14 @@ func (w *Workspace) CenterVisibleColumns() bool {
 // ExpandColumnToAvailableWidth grows the focused column into the space the
 // other visible columns do not use.
 func (w *Workspace) ExpandColumnToAvailableWidth() bool {
+	if w.focusedFloat != 0 {
+		return false
+	}
 	if w.focused < 0 || w.focused >= len(w.columns) {
 		return false
 	}
 	column := &w.columns[w.focused]
-	if column.fullWidth || column.hasMaximizedTile() {
+	if column.fullWidth || column.maximized {
 		// A column that already fills the width has nothing to grow into.
 		return false
 	}
@@ -411,6 +472,12 @@ func (w *Workspace) ExpandColumnToAvailableWidth() bool {
 // Niri's set-window-height does. The window id of zero means the focused
 // window.
 func (w *Workspace) SetWindowHeight(id uint64, change SizeChange) bool {
+	if id == 0 {
+		id, _ = w.FocusedWindow()
+	}
+	if index := w.floatingIndexOf(id); index >= 0 {
+		return w.setFloatingSize(index, change, false)
+	}
 	columnIndex, tileIndex, ok := w.windowTile(id)
 	if !ok {
 		return false
@@ -426,7 +493,7 @@ func (w *Workspace) SetWindowHeight(id uint64, change SizeChange) bool {
 	// automatic height, so that the other windows of the column keep their
 	// own share of the space.
 	tile.height = target
-	tile.maximized = false
+	column.maximized = false
 	tile.presetHeight = false
 	return true
 }
@@ -438,9 +505,10 @@ func (w *Workspace) ResetWindowHeight(id uint64) bool {
 	if !ok {
 		return false
 	}
-	tile := &w.columns[columnIndex].tiles[tileIndex]
+	column := &w.columns[columnIndex]
+	tile := &column.tiles[tileIndex]
 	tile.height = 0
-	tile.maximized = false
+	column.maximized = false
 	tile.presetHeight = false
 	return true
 }
@@ -448,19 +516,26 @@ func (w *Workspace) ResetWindowHeight(id uint64) bool {
 // SwitchPresetWindowHeight cycles a window through the preset heights. The
 // window id of zero means the focused window.
 func (w *Workspace) SwitchPresetWindowHeight(id uint64, backwards bool) bool {
+	if id == 0 {
+		id, _ = w.FocusedWindow()
+	}
+	if index := w.floatingIndexOf(id); index >= 0 {
+		return w.switchFloatingPreset(index, backwards, false)
+	}
 	columnIndex, tileIndex, ok := w.windowTile(id)
 	if !ok {
 		return false
 	}
 	current := w.windowHeightAt(columnIndex, tileIndex)
-	tile := &w.columns[columnIndex].tiles[tileIndex]
+	column := &w.columns[columnIndex]
+	tile := &column.tiles[tileIndex]
 	presets := w.windowPresets()
 	index := -1
-	if tile.presetHeight && !tile.maximized {
+	if tile.presetHeight && !w.columns[columnIndex].maximized {
 		index = tile.presetHeightIdx
 	}
 	var next int
-	if index >= 0 {
+	if index >= 0 && index < len(presets) {
 		if backwards {
 			next = (index + len(presets) - 1) % len(presets)
 		} else {
@@ -471,14 +546,117 @@ func (w *Workspace) SwitchPresetWindowHeight(id uint64, backwards bool) bool {
 	}
 	tile.presetHeight = true
 	tile.presetHeightIdx = next
-	tile.maximized = false
+	column.maximized = false
 	target := w.presetPixels(presets[next], w.bounds.Height)
 	tile.height = target
 	return true
 }
 
+// CenterWindow centers a floating window within the working area, preferring
+// the top-left corner when it is larger. A tiled target must be in the active
+// column, as Niri can only center that column without changing focus.
+func (w *Workspace) CenterWindow(id uint64) bool {
+	if id == 0 {
+		id, _ = w.FocusedWindow()
+	}
+	if index := w.floatingIndexOf(id); index >= 0 {
+		bounds := w.floating[index].bounds
+		bounds.X = w.bounds.X + max(0, (w.bounds.Width-bounds.Width)/2)
+		bounds.Y = w.bounds.Y + max(0, (w.bounds.Height-bounds.Height)/2)
+		return w.SetFloatingGeometry(id, bounds)
+	}
+	column, _, ok := w.windowTile(id)
+	if !ok || column != w.focused {
+		return false
+	}
+	width := w.columnWidthAt(column)
+	w.viewOffset = w.columnStart(column) - (w.bounds.Width-width)/2
+	return true
+}
+
+func (w *Workspace) setFloatingSize(index int, change SizeChange, width bool) bool {
+	if math.IsNaN(change.Proportion) || math.IsInf(change.Proportion, 0) {
+		return false
+	}
+	floating := &w.floating[index]
+	current, working := floating.bounds.Height, w.bounds.Height
+	if width {
+		current, working = floating.bounds.Width, w.bounds.Width
+	}
+	target := float64(change.Fixed)
+	if change.Fixed == 0 {
+		target = float64(working) * change.Proportion / 100
+	}
+	if change.Relative {
+		target += float64(current)
+	}
+	target = math.Round(min(100000, max(1, target)))
+	bounds := floating.bounds
+	if width {
+		floating.tile.presetWidth = false
+		bounds.Width = int(target)
+	} else {
+		floating.tile.presetHeight = false
+		bounds.Height = int(target)
+	}
+	return w.SetFloatingGeometry(floating.tile.id, bounds)
+}
+
+func (w *Workspace) switchFloatingPreset(index int, backwards, width bool) bool {
+	floating := &w.floating[index]
+	presets := w.windowPresets()
+	current, working := floating.bounds.Height, w.bounds.Height
+	onPreset, previous := floating.tile.presetHeight, floating.tile.presetHeightIdx
+	if width {
+		presets = w.columnPresets()
+		current, working = floating.bounds.Width, w.bounds.Width
+		onPreset, previous = floating.tile.presetWidth, floating.tile.presetWidthIdx
+	}
+	resolved := func(preset PresetSize) float64 {
+		if preset.Fixed {
+			return preset.Value
+		}
+		return float64(working) * preset.Value
+	}
+	next := 0
+	if backwards {
+		next = len(presets) - 1
+	}
+	if onPreset && previous < len(presets) {
+		if backwards {
+			next = (previous + len(presets) - 1) % len(presets)
+		} else {
+			next = (previous + 1) % len(presets)
+		}
+	} else if backwards {
+		for i := len(presets) - 1; i >= 0; i-- {
+			if resolved(presets[i])+1 < float64(current) {
+				next = i
+				break
+			}
+		}
+	} else {
+		for i, preset := range presets {
+			if float64(current)+1 < resolved(preset) {
+				next = i
+				break
+			}
+		}
+	}
+	changed := w.setFloatingSize(index, SizeChange{Fixed: int(math.Round(resolved(presets[next])))}, width)
+	if width {
+		floating.tile.presetWidth, floating.tile.presetWidthIdx = true, next
+	} else {
+		floating.tile.presetHeight, floating.tile.presetHeightIdx = true, next
+	}
+	return changed
+}
+
 // resolveSize turns a size change into a pixel size against the working size.
 func (w *Workspace) resolveSize(change SizeChange, current, working int) (int, bool) {
+	if math.IsNaN(change.Proportion) || math.IsInf(change.Proportion, 0) {
+		return 0, false
+	}
 	if working <= 0 || working <= w.gap {
 		return 0, false
 	}
@@ -539,6 +717,9 @@ func (w *Workspace) proportionPixels(share float64, working int) int {
 
 // focusedTile returns the focused column and the focused window inside it.
 func (w *Workspace) focusedTile() (int, int, bool) {
+	if w.focusedFloat != 0 {
+		return 0, 0, false
+	}
 	if w.focused < 0 || w.focused >= len(w.columns) {
 		return 0, 0, false
 	}

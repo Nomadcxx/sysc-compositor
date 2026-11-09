@@ -40,6 +40,7 @@ type Chord struct {
 }
 
 type Action struct {
+	DelayMS        *uint16
 	Name           string
 	Args           []string
 	WorkspaceIndex uint8
@@ -86,6 +87,12 @@ type Binding struct {
 }
 
 const (
+	ActionDoScreenTransition             = "do-screen-transition"
+	ActionSetWindowWidth                 = "set-window-width"
+	ActionCenterWindow                   = "center-window"
+	ActionSwitchPresetWindowWidth        = "switch-preset-window-width"
+	ActionSwitchPresetWindowWidthBack    = "switch-preset-window-width-back"
+	ActionToggleWindowRuleOpacity        = "toggle-window-rule-opacity"
 	ActionCloseWindow                    = "close-window"
 	ActionSpawn                          = "spawn"
 	ActionSpawnSh                        = "spawn-sh"
@@ -469,7 +476,7 @@ func ParseAction(name string, args []string) (Action, bool, error) {
 		}
 		action.ColumnDisplay = args[0]
 		return action, true, nil
-	case ActionSetColumnWidth, ActionSetWindowHeight:
+	case ActionSetColumnWidth, ActionSetWindowHeight, ActionSetWindowWidth:
 		if len(args) != 1 {
 			return Action{}, true, fmt.Errorf("%s takes one size", name)
 		}
@@ -479,7 +486,7 @@ func ParseAction(name string, args []string) (Action, bool, error) {
 		}
 		action.Size = size
 		return action, true, nil
-	case ActionSwitchPresetColumnWidth, ActionSwitchPresetColumnWidthBack,
+	case ActionDoScreenTransition, ActionSwitchPresetWindowWidth, ActionSwitchPresetWindowWidthBack, ActionCenterWindow, ActionToggleWindowRuleOpacity, ActionSwitchPresetColumnWidth, ActionSwitchPresetColumnWidthBack,
 		ActionMaximizeColumn, ActionMaximizeWindowToEdges, ActionCenterColumn,
 		ActionCenterVisibleColumns, ActionExpandColumnToAvailableWidth,
 		ActionResetWindowHeight, ActionSwitchPresetWindowHeight,
@@ -514,6 +521,8 @@ func parseWorkspaceReference(action *Action, args []string) error {
 
 func IsSupportedAction(name string) bool {
 	switch name {
+	case ActionDoScreenTransition, ActionSetWindowWidth, ActionCenterWindow, ActionSwitchPresetWindowWidth, ActionSwitchPresetWindowWidthBack, ActionToggleWindowRuleOpacity:
+		return true
 	case ActionCloseWindow, ActionSpawn, ActionSpawnSh,
 		ActionFocusColumnLeft, ActionFocusColumnRight, ActionFocusColumnFirst,
 		ActionFocusColumnLast, ActionMoveColumnLeft, ActionMoveColumnRight,
