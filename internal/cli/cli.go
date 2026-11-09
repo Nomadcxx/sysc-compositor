@@ -21,6 +21,7 @@ import (
 
 	"github.com/Nomadcxx/sysc-compositor/internal/config"
 	"github.com/Nomadcxx/sysc-compositor/internal/ipc"
+	"github.com/Nomadcxx/sysc-compositor/internal/perf"
 	"github.com/Nomadcxx/sysc-compositor/internal/server"
 	"github.com/Nomadcxx/sysc-compositor/internal/session"
 )
@@ -138,6 +139,12 @@ func reportConfigGaps(name string, cfg *config.Config, w io.Writer) {
 // run starts the compositor. A config that fails to load is reported and the
 // defaults are used, as niri does.
 func run(name, configFlag string, sessionMode bool, env Env) int {
+	diagnostics, perfErr := perf.Start(env.Getenv("SYSC_BENCH_DIAGNOSTICS"))
+	if perfErr != nil {
+		fmt.Fprintf(env.Stderr, "%s: benchmark diagnostics: %v\n", name, perfErr)
+		return 1
+	}
+	defer diagnostics.Close()
 	// wlroots objects belong to the thread that created them.
 	runtime.LockOSThread()
 	path := config.Locate(configFlag, env.Getenv)

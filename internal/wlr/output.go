@@ -200,6 +200,7 @@ import (
 	"unsafe"
 
 	"github.com/Nomadcxx/sysc-compositor/internal/config"
+	"github.com/Nomadcxx/sysc-compositor/internal/perf"
 )
 
 type OutputModeSnapshot struct {
@@ -531,14 +532,32 @@ func (c *Compositor) handleNewOutput(data unsafe.Pointer) {
 		if !adopted {
 			return
 		}
+		var before C.uint32_t
+		var started time.Time
+		if perf.Enabled() {
+			before = output.commit_seq
+			started = time.Now()
+		}
 		if c.repaintOutput(data, so) {
 			c.drawn++
+		}
+		if perf.Enabled() {
+			// The repaint can succeed without committing an idle output.
+			perf.OutputFrame(output.commit_seq != before, time.Since(started))
 		}
 		c.syncOutputVRR(data)
 		c.lockFrameDone(data)
 		c.updateIdleInhibit()
 	})
 	c.keep(frame)
+	var present *Listener
+	if perf.Enabled() {
+		present = AddListener(unsafe.Pointer(&output.events.present), func(event unsafe.Pointer) {
+			e := (*C.struct_wlr_output_event_present)(event)
+			perf.OutputPresent(bool(e.presented), uint32(e.flags))
+		})
+		c.keep(present)
+	}
 
 	// A nested output is sized by the host: Niri tiles the window and the
 	// backend asks for that size. Ignoring the request leaves the output at
@@ -579,6 +598,9 @@ func (c *Compositor) handleNewOutput(data unsafe.Pointer) {
 		}
 		delete(c.actionPoweredOff, data)
 		c.drop(frame)
+		if present != nil {
+			c.drop(present)
+		}
 		c.drop(request)
 		c.drop(commit)
 		c.drop(destroy)
