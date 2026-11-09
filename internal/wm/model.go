@@ -67,6 +67,10 @@ type outputState struct {
 	// whenever the active one changes.
 	activeID          uint64
 	previousWorkspace uint64
+	// switching holds the workspaces drawn switchOffset workspaces past the
+	// active one while a switch gesture holds or settles them.
+	switching    bool
+	switchOffset float64
 }
 
 type windowState struct {
@@ -95,6 +99,7 @@ type Model struct {
 	outputs             map[string]*outputState
 	windows             map[uint64]windowState
 	overview            overviewState
+	workspaceGesture    *workspaceGesture
 	windowDrag          *WindowDrag
 	resizedWindows      map[uint64]windowSize
 	floatingWindows     map[uint64]layout.Bounds

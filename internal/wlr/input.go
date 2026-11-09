@@ -149,7 +149,6 @@ type pointerSwipeState struct {
 	selector        wm.SwipeAxisSelector
 	output          string
 	workspaceID     uint64
-	actionApplied   bool
 	scrollRemainder float64
 }
 
@@ -479,15 +478,15 @@ func (c *Compositor) handlePointerSwipeUpdate(device, data unsafe.Pointer) {
 	if c.model == nil {
 		return
 	}
+	timestamp := state.advanceGestureTime(uint32(event.time_msec))
 	if state.fingers == 4 {
-		timestamp := state.advanceGestureTime(uint32(event.time_msec))
 		if c.model.UpdateOverviewGesture(-float64(event.dy), timestamp) {
 			c.syncOverviewScene()
 		}
 		return
 	}
 	dx, dy := swipeDeltas(c.touchpadNaturalScroll(device), float64(event.dx), float64(event.dy))
-	c.workspaceSwipe(state, dx, dy)
+	c.workspaceSwipe(state, dx, dy, timestamp)
 }
 
 // aimWorkspaceSwipe points a 3-finger swipe at the output under the pointer,
@@ -502,8 +501,8 @@ func (c *Compositor) aimWorkspaceSwipe(state *pointerSwipeState) {
 
 // workspaceSwipe is the 3-finger swipe once its axis is chosen: a horizontal
 // swipe scrolls the view of the workspace it is aimed at, and a vertical one
-// switches the output's workspace once per gesture.
-func (c *Compositor) workspaceSwipe(state *pointerSwipeState, dx, dy float64) {
+// moves the output's workspaces with the fingers, as Niri's.
+func (c *Compositor) workspaceSwipe(state *pointerSwipeState, dx, dy float64, timestamp time.Duration) {
 	axis, delta, selected := state.selector.Add(dx, dy)
 	if !selected {
 		return
@@ -519,16 +518,12 @@ func (c *Compositor) workspaceSwipe(state *pointerSwipeState, dx, dy float64) {
 		}
 		return
 	}
-	if newAxis && !state.actionApplied {
-		direction := -1
-		if delta > 0 {
-			direction = 1
-		}
-		state.actionApplied = c.model.FocusWorkspaceByDelta(state.output, direction)
-		if state.actionApplied {
-			c.applyWorkspaceModel()
-			c.activateWorkspaceFocus()
-		}
+	if newAxis && !c.beginWorkspaceGesture(state.output) {
+		state.axis = wm.SwipeAxisNone
+		return
+	}
+	if state.axis == wm.SwipeAxisVertical {
+		c.updateWorkspaceGesture(delta, timestamp)
 	}
 }
 
@@ -545,6 +540,9 @@ func (c *Compositor) handlePointerSwipeEnd(device, data unsafe.Pointer) {
 		return
 	}
 	timestamp := state.advanceGestureTime(uint32(event.time_msec))
+	if state.fingers == 3 && state.axis == wm.SwipeAxisVertical {
+		c.endWorkspaceGesture(timestamp)
+	}
 	if state.fingers == 4 && c.model != nil {
 		from, to, velocity, ok := c.model.FinishOverviewGestureAnimation(timestamp)
 		if ok {
@@ -1076,7 +1074,7 @@ func (c *Compositor) handleCursorAxis(data unsafe.Pointer) {
 	horizontal := event.orientation == C.WL_POINTER_AXIS_HORIZONTAL_SCROLL
 	factor := c.pointerScrollFactor(unsafe.Pointer(event.pointer), finger)
 	delta, v120 := scaleAxis(factor, horizontal, float64(event.delta), int32(event.delta_discrete))
-	if c.overviewScrollGesture(finger, horizontal, delta) ||
+	if c.overviewScrollGesture(finger, horizontal, delta, uint32(event.time_msec)) ||
 		c.scrollBinds(event.source == C.WL_POINTER_AXIS_SOURCE_WHEEL, finger,
 			horizontal, delta, v120) {
 		return
@@ -1100,26 +1098,37 @@ func (c *Compositor) handleCursorAxis(data unsafe.Pointer) {
 // wlroots axis event carries one orientation. A zero delta is libinput's
 // scroll stop and ends the gesture; so does any scroll outside these
 // conditions, which then goes on as usual.
-func (c *Compositor) overviewScrollGesture(finger, horizontal bool, delta float64) bool {
+func (c *Compositor) overviewScrollGesture(finger, horizontal bool, delta float64, timeMsec uint32) bool {
 	if !finger || c.model == nil || !c.model.OverviewOpen() || c.activeBindModifiers() != 0 ||
 		c.pointerOnLayerSurface() {
-		c.overviewScroll = nil
+		c.endOverviewScroll(timeMsec)
 		return false
 	}
 	if delta == 0 {
-		c.overviewScroll = nil
+		c.endOverviewScroll(timeMsec)
 		return true
 	}
 	if c.overviewScroll == nil {
-		c.overviewScroll = &pointerSwipeState{}
+		c.overviewScroll = &pointerSwipeState{lastTimeMsec: timeMsec}
 		c.aimWorkspaceSwipe(c.overviewScroll)
 	}
+	timestamp := c.overviewScroll.advanceGestureTime(timeMsec)
 	if horizontal {
-		c.workspaceSwipe(c.overviewScroll, delta, 0)
+		c.workspaceSwipe(c.overviewScroll, delta, 0, timestamp)
 	} else {
-		c.workspaceSwipe(c.overviewScroll, 0, delta)
+		c.workspaceSwipe(c.overviewScroll, 0, delta, timestamp)
 	}
 	return true
+}
+
+// endOverviewScroll ends the overview's scroll gesture; a vertical one
+// settles its workspace switch.
+func (c *Compositor) endOverviewScroll(timeMsec uint32) {
+	state := c.overviewScroll
+	c.overviewScroll = nil
+	if state != nil && state.axis == wm.SwipeAxisVertical {
+		c.endWorkspaceGesture(state.advanceGestureTime(timeMsec))
+	}
 }
 
 func (c *Compositor) handleCursorFrame(unsafe.Pointer) {

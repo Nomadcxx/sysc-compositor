@@ -528,8 +528,9 @@ func TestPointerGesturesAndHotCornerDriveOverviewOnCompositorThread(t *testing.T
 		if got := windowPlacementX(c.model.Snapshot().Windows, 1); got == beforeX {
 			t.Error("three-finger horizontal swipe did not scroll the active workspace")
 		}
+		// Past half of Niri's 300 px a workspace, so the release switches.
 		pointer.swipeBegin(3)
-		pointer.swipeUpdate(3, 0, 16)
+		pointer.swipeUpdate(3, 0, 200)
 		pointer.swipeEnd(false)
 		activeChanged := false
 		for _, workspace := range c.model.Snapshot().Workspaces {
@@ -1031,9 +1032,9 @@ func TestOverviewWheelSwitchesWorkspaceUnderPointer(t *testing.T) {
 
 // TestOverviewTouchpadScrollSwipes: in the overview Niri makes a plain
 // touchpad or continuous scroll a swipe. A horizontal one moves the hovered
-// row's view; a vertical one switches the workspace, in sysc once per gesture,
-// until libinput's scroll stop. With a modifier held it is no gesture, and no
-// scroll reaches a window.
+// row's view; a vertical one moves the workspaces with the fingers and, at
+// libinput's scroll stop, switches to the workspace its momentum reaches.
+// With a modifier held it is no gesture, and no scroll reaches a window.
 func TestOverviewTouchpadScrollSwipes(t *testing.T) {
 	pointerBindHarness(t, "binds {}\n", func(c *Compositor, client *testclient.ToplevelClient,
 		pointer *fakePointer, keyboard *fakeKeyboard, _ *toplevelView) {
@@ -1094,28 +1095,30 @@ func TestOverviewTouchpadScrollSwipes(t *testing.T) {
 
 			pointer.fingerScrollAt(1100, false, 10)
 			pointer.fingerScrollAt(1110, false, 10)
+			if offset, ok := c.model.WorkspaceRenderOffset(output); !ok || offset <= 0 || focusedWorkspaceID(c) != first {
+				t.Errorf("a vertical touchpad scroll: offset %v (%v), switched %v; want the rows following, unswitched",
+					offset, ok, focusedWorkspaceID(c) != first)
+			}
+			// Most of a workspace, held still before the scroll stop: no
+			// momentum, so the switch is to the nearest workspace.
+			pointer.fingerScrollAt(1120, false, 200)
+			pointer.fingerScrollAt(2000, false, 0)
 			second := focusedWorkspaceID(c)
 			if second == first {
-				t.Error("a vertical touchpad scroll down did not switch the workspace")
+				t.Error("a vertical touchpad scroll did not switch the workspace at the scroll stop")
 			}
-			pointer.fingerScrollAt(1120, false, 10)
-			pointer.fingerScrollAt(1130, false, 10)
-			if focusedWorkspaceID(c) != second {
-				t.Error("one vertical touchpad gesture switched the workspace twice")
-			}
-			pointer.fingerScrollAt(1140, false, 0)
-			pointer.continuousScrollAt(1200, 10)
-			pointer.continuousScrollAt(1210, 10)
+			pointer.continuousScrollAt(2100, 10)
+			pointer.continuousScrollAt(2110, 200)
+			pointer.continuousScrollAt(3000, 0)
 			third := focusedWorkspaceID(c)
 			if third == second {
 				t.Error("a continuous scroll after the scroll stop did not switch the workspace again")
 			}
-			pointer.continuousScrollAt(1220, 0)
 
 			keyboard.key(keyLeftShift, true)
-			pointer.fingerScrollAt(1300, false, -10)
-			pointer.fingerScrollAt(1310, false, -10)
-			pointer.fingerScrollAt(1320, false, 0)
+			pointer.fingerScrollAt(3100, false, -10)
+			pointer.fingerScrollAt(3110, false, -10)
+			pointer.fingerScrollAt(3120, false, 0)
 			keyboard.key(keyLeftShift, false)
 			if focusedWorkspaceID(c) != third {
 				t.Error("a touchpad scroll with Shift held ran the overview gesture")

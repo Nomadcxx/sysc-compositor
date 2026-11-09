@@ -395,7 +395,9 @@ func (c *Compositor) applyWorkspaceModel() {
 			continue
 		}
 		current := activeWorkspace{id: workspace.ID, index: int(workspace.Index)}
-		if previous, ok := c.activeWorkspaces[workspace.Output]; ok && previous.id != current.id {
+		// A gesture's switch is drawn by presentWorkspaceSwitch instead.
+		_, gesture := c.model.WorkspaceRenderOffset(workspace.Output)
+		if previous, ok := c.activeWorkspaces[workspace.Output]; ok && previous.id != current.id && !gesture {
 			direction := 1
 			if current.index < previous.index {
 				direction = -1
@@ -558,6 +560,7 @@ func (c *Compositor) applyWorkspaceModel() {
 			c.syncViewDecorations(view)
 		}
 	}
+	c.presentWorkspaceSwitch()
 	c.syncTabIndicators()
 	c.syncBackgroundColors()
 	c.syncRuleBackgroundEffects()
