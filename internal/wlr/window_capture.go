@@ -381,6 +381,7 @@ func (c *Compositor) syncCaptureSources() {
 // ponytail: output changes send full damage to every output source; add per-output
 // regions if capture profiling requires it. Window sources wake only for their own tree.
 func (c *Compositor) damageCaptureSources(views ...*toplevelView) {
+	c.debugContentChanged()
 	if c.capture == nil {
 		return
 	}

@@ -364,7 +364,7 @@ type touchUIFinger struct {
 // overlay layer surface, which takes the finger itself. The exit dialog
 // closes on any press, a finger's too.
 func (c *Compositor) touchDrivesUI(lx, ly float64) bool {
-	if c.pickColor != nil {
+	if c.pickColor != nil || c.pickWindow != nil {
 		return false
 	}
 	return c.shotUI != nil || c.switcher.isOpen() || c.exitDialog.open ||
@@ -374,7 +374,7 @@ func (c *Compositor) touchDrivesUI(lx, ly float64) bool {
 // touchReachesOverviewLayer reports whether a finger in the overview, with
 // no other modal UI up, lands on a top or overlay layer surface.
 func (c *Compositor) touchReachesOverviewLayer(lx, ly float64) bool {
-	return c.pickColor == nil && c.shotUI == nil && !c.switcher.isOpen() && !c.exitDialog.open &&
+	return c.pickColor == nil && c.pickWindow == nil && c.shotUI == nil && !c.switcher.isOpen() && !c.exitDialog.open &&
 		c.overviewShown() && c.upperLayerAt(lx, ly)
 }
 

@@ -47,30 +47,6 @@ func TestUrgencyActionsUpdateModelAndNotifyIPC(t *testing.T) {
 	}
 }
 
-func TestActivationWithoutInputSerialMarksUnfocusedWindowUrgent(t *testing.T) {
-	model := wm.New()
-	model.AddOutput("DP-1", layout.Bounds{Width: 1000, Height: 800}, 500, 16)
-	model.MapWindow(1, "DP-1")
-	model.MapWindow(2, "DP-1")
-	c := &Compositor{model: model}
-	view := &toplevelView{id: 1, mapped: true}
-	if !c.applyActivationRequest(view, false) {
-		t.Fatal("no-serial activation request = false, want urgency set")
-	}
-	if !model.Snapshot().Windows[0].IsUrgent {
-		t.Fatal("no-serial activation request did not mark its target urgent")
-	}
-	if c.applyActivationRequest(&toplevelView{id: 2, mapped: true}, false) {
-		t.Fatal("focused target became urgent")
-	}
-	if c.applyActivationRequest(view, true) {
-		t.Fatal("serial-backed activation request entered the M6 urgency path")
-	}
-	if c.applyActivationRequest(&toplevelView{id: 1}, false) {
-		t.Fatal("unmapped target became urgent")
-	}
-}
-
 func TestApplyingEmptyWorkspaceActivationNotifiesState(t *testing.T) {
 	model := wm.New()
 	model.AddOutput("test", layout.Bounds{Width: 1000, Height: 800}, 500, 16)

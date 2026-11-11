@@ -76,7 +76,7 @@ func (c *Compositor) recoverRenderer() error {
 	if c.renderer == nil {
 		return ErrClosed
 	}
-	renderer := (*C.struct_wlr_renderer)(createSceneFXRenderer(unsafe.Pointer(c.backend)))
+	renderer := (*C.struct_wlr_renderer)(c.createConfiguredRenderer())
 	if renderer == nil {
 		return fmt.Errorf("recreating renderer failed")
 	}
@@ -107,9 +107,11 @@ func (c *Compositor) recoverRenderer() error {
 			C.wlr_buffer_unlock(source)
 		}
 	}()
+	c.finishAnimationShaders()
 	oldRenderer, oldAllocator := c.renderer, c.alloc
 	c.drop(c.rendererLost)
 	c.renderer, c.alloc = renderer, allocator
+	c.configureAnimationShaders()
 	C.wlr_compositor_set_renderer(c.comp, renderer)
 	var failed string
 	for pointer := range c.backendOutputs {

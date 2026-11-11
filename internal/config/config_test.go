@@ -112,13 +112,13 @@ func TestParseReportsUnappliedBindActions(t *testing.T) {
 	cfg, err := Parse("bindings.kdl", []byte(`
 binds {
     Mod+Q { close-window; spawn "kitty"; }
-    Mod+W { toggle-debug-tint; }
+    Mod+W { an-action-sysc-does-not-apply; }
 }
 `))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(cfg.UnappliedActions, []string{"toggle-debug-tint"}) {
+	if !reflect.DeepEqual(cfg.UnappliedActions, []string{"an-action-sysc-does-not-apply"}) {
 		t.Fatalf("unapplied actions = %q, want unique action names in source order", cfg.UnappliedActions)
 	}
 	if len(cfg.Binds) != 1 || len(cfg.Binds[0].Actions) != 2 {
@@ -999,7 +999,7 @@ func TestPreferNoCSDAcceptsExplicitFalse(t *testing.T) {
 	}
 }
 
-func TestM8AnimationOffAndUnsupportedSettings(t *testing.T) {
+func TestM8AnimationOffAndEasingSettings(t *testing.T) {
 	// Niri rejects a repeated `animations` within one file, so the later
 	// block that turns animations back on comes from an include.
 	dir := t.TempDir()
@@ -1030,12 +1030,12 @@ include "animations.kdl"
 	if cfg.Animations.Off || !cfg.Animations.WindowOpen.Off {
 		t.Errorf("global/per-kind animation off = %v/%v", cfg.Animations.Off, cfg.Animations.WindowOpen.Off)
 	}
-	if cfg.Animations.WindowClose.Spring != nil || !cfg.Animations.WindowClose.Unsupported {
-		t.Errorf("unsupported easing was applied: %+v", cfg.Animations.WindowClose)
+	if cfg.Animations.WindowClose.Spring != nil || cfg.Animations.WindowClose.Easing == nil || cfg.Animations.WindowClose.Unsupported || cfg.Animations.Slowdown == nil || *cfg.Animations.Slowdown != 2 {
+		t.Errorf("easing or slowdown not applied: %+v", cfg.Animations)
 	}
-	for _, warning := range []string{"animations.slowdown", "animations.window-close.easing"} {
-		if !slices.Contains(cfg.Warnings, warning) {
-			t.Errorf("warnings %v do not contain %q", cfg.Warnings, warning)
+	for _, warning := range cfg.Warnings {
+		if strings.HasPrefix(warning, "animations.") {
+			t.Errorf("applied animation warns: %s", warning)
 		}
 	}
 }

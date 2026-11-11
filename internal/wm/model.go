@@ -67,6 +67,10 @@ type outputState struct {
 	// whenever the active one changes.
 	activeID          uint64
 	previousWorkspace uint64
+	// switching holds the workspaces drawn switchOffset workspaces past the
+	// active one while a switch gesture holds or settles them.
+	switching    bool
+	switchOffset float64
 }
 
 type windowState struct {
@@ -95,6 +99,7 @@ type Model struct {
 	outputs             map[string]*outputState
 	windows             map[uint64]windowState
 	overview            overviewState
+	workspaceGesture    *workspaceGesture
 	windowDrag          *WindowDrag
 	resizedWindows      map[uint64]windowSize
 	floatingWindows     map[uint64]layout.Bounds
@@ -343,6 +348,7 @@ func (m *Model) applyWorkspaceLayout(out *outputState, workspace *workspaceState
 	workspace.outputLayout = out.layout
 	width, gap := m.workspaceGeometry(out, workspace)
 	workspace.strip.SetGeometry(m.workspaceBounds(out, workspace), width, gap)
+	workspace.strip.SetMaximizedBounds(out.bounds)
 	widths, heights := m.presetSizes(workspace)
 	workspace.strip.SetPresetSizes(widths, heights)
 	workspace.strip.SetDefaultColumnDisplay(m.columnDisplay(workspace))
@@ -910,6 +916,48 @@ func (m *Model) MoveFloatingWindow(id uint64, x, y layout.PositionChange) bool {
 	return false
 }
 
+// IsMaximized reports the retained layout state independently of fullscreen.
+func (m *Model) IsMaximized(id uint64) bool {
+	if id == 0 {
+		id, _ = m.ActiveWindow()
+	}
+	state, ok := m.windows[id]
+	if !ok {
+		return false
+	}
+	workspace := m.workspaceByID(state.workspaceID)
+	return workspace != nil && workspace.strip.IsMaximized(id)
+}
+
+// SetMaximized applies the client request without changing window focus.
+func (m *Model) SetMaximized(id uint64, maximize bool) bool {
+	if id == 0 {
+		id, _ = m.ActiveWindow()
+	}
+	changed := m.windowStripAction(id, func(strip *layout.Workspace, target uint64) bool {
+		return strip.SetMaximized(target, maximize)
+	})
+	if changed {
+		if maximize {
+			delete(m.floatingWindows, id)
+		} else if m.fullscreen[id] {
+			// Unmaximize changes the underlying sizing mode. Keep a restored
+			// floating window tiled until fullscreen itself ends.
+			out, _, workspace := m.workspaceLocation(m.windows[id].workspaceID)
+			if placement, exists := workspace.strip.Placement(id); exists && placement.Floating {
+				bounds := layout.Bounds{X: placement.X, Y: placement.Y, Width: placement.Width, Height: placement.Height}
+				m.fullscreenFloat[id] = fullscreenRestore{bounds: bounds, area: out.bounds}
+				workspace.strip.SetWindowFloating(id, false, layout.Bounds{})
+				delete(m.floatingWindows, id)
+				m.reconcile(out)
+			}
+		} else {
+			m.restoreFloatingAfterFullscreen(id)
+		}
+	}
+	return changed
+}
+
 // SetFullscreen records a mapped client's requested fullscreen state without
 // replacing its saved workspace placement.
 func (m *Model) SetFullscreen(id uint64, fullscreen bool) bool {
@@ -957,6 +1005,9 @@ func (m *Model) SetFullscreen(id uint64, fullscreen bool) bool {
 }
 
 func (m *Model) restoreFloatingAfterFullscreen(id uint64) {
+	if m.fullscreen[id] || m.IsMaximized(id) {
+		return
+	}
 	restore, ok := m.fullscreenFloat[id]
 	if !ok {
 		return
@@ -1759,9 +1810,7 @@ func (m *Model) ToggleMaximizeColumn() bool {
 }
 
 func (m *Model) ToggleMaximizeWindowToEdges() bool {
-	return m.activeStripAction(func(workspace *layout.Workspace) bool {
-		return workspace.ToggleMaximizeWindowToEdges(0)
-	})
+	return m.SetMaximized(0, !m.IsMaximized(0))
 }
 
 func (m *Model) CenterColumn() bool {
@@ -1794,6 +1843,26 @@ func (m *Model) SwitchPresetWindowHeight(backwards bool) bool {
 	})
 }
 
+// SetWindowWidthFor changes one window's width without changing focus.
+// The window id of zero means the focused window.
+func (m *Model) SetWindowWidthFor(id uint64, change layout.SizeChange) bool {
+	return m.windowStripAction(id, func(workspace *layout.Workspace, windowID uint64) bool {
+		return workspace.SetWindowWidth(windowID, change)
+	})
+}
+
+// SwitchPresetWindowWidthFor cycles the target's width presets.
+func (m *Model) SwitchPresetWindowWidthFor(id uint64, backwards bool) bool {
+	return m.windowStripAction(id, func(workspace *layout.Workspace, windowID uint64) bool {
+		return workspace.SwitchPresetWindowWidth(windowID, backwards)
+	})
+}
+
+// CenterWindowFor centers the target in its workspace without changing focus.
+func (m *Model) CenterWindowFor(id uint64) bool {
+	return m.windowStripAction(id, (*layout.Workspace).CenterWindow)
+}
+
 // SetWindowHeightFor sets the height of a window, wherever it sits. The
 // window id of zero means the focused window.
 func (m *Model) SetWindowHeightFor(id uint64, change layout.SizeChange) bool {
@@ -1821,9 +1890,7 @@ func (m *Model) SwitchPresetWindowHeightFor(id uint64, backwards bool) bool {
 // ToggleMaximizeWindowToEdgesFor maximizes a window to the edges of its
 // column. The window id of zero means the focused window.
 func (m *Model) ToggleMaximizeWindowToEdgesFor(id uint64) bool {
-	return m.windowStripAction(id, func(workspace *layout.Workspace, windowID uint64) bool {
-		return workspace.ToggleMaximizeWindowToEdges(windowID)
-	})
+	return m.SetMaximized(id, !m.IsMaximized(id))
 }
 
 // MaximizeColumnFor makes the column that holds a window take the whole
@@ -1837,9 +1904,7 @@ func (m *Model) MaximizeColumnFor(id uint64) bool {
 // MaximizeWindowToEdgesFor maximizes a window to the edges of the working
 // area, the way Niri's open-maximized-to-edges does.
 func (m *Model) MaximizeWindowToEdgesFor(id uint64) bool {
-	return m.windowStripAction(id, func(workspace *layout.Workspace, windowID uint64) bool {
-		return workspace.MaximizeWindowToEdges(windowID)
-	})
+	return m.SetMaximized(id, true)
 }
 
 // SetColumnDisplayFor sets the display mode of the column that holds a
@@ -1866,8 +1931,10 @@ func (m *Model) windowStripAction(id uint64, action func(*layout.Workspace, uint
 		if out == nil || len(out.workspaces) == 0 {
 			return false
 		}
-		changed := action(out.workspaces[out.active].strip, 0)
+		strip := out.workspaces[out.active].strip
+		changed := action(strip, 0)
 		if changed {
+			m.rememberFloatingGeometry(strip, 0)
 			m.clearFocusedUrgency()
 		}
 		return changed
@@ -1886,6 +1953,7 @@ func (m *Model) windowStripAction(id uint64, action func(*layout.Workspace, uint
 		}
 		changed := action(workspace.strip, id)
 		if changed {
+			m.rememberFloatingGeometry(workspace.strip, id)
 			m.clearFocusedUrgency()
 		}
 		return changed
@@ -1893,13 +1961,26 @@ func (m *Model) windowStripAction(id uint64, action func(*layout.Workspace, uint
 	return false
 }
 
+// The saved rectangle follows action-based resizes and centering, so toggling
+// floating or entering fullscreen cannot restore an older rectangle.
+func (m *Model) rememberFloatingGeometry(strip *layout.Workspace, id uint64) {
+	if id == 0 {
+		id, _ = strip.FocusedWindow()
+	}
+	if placement, exists := strip.Placement(id); exists && placement.Floating {
+		m.floatingWindows[id] = layout.Bounds{X: placement.X, Y: placement.Y, Width: placement.Width, Height: placement.Height}
+	}
+}
+
 func (m *Model) activeStripAction(action func(*layout.Workspace) bool) bool {
 	out := m.outputs[m.focusedOutput]
 	if out == nil || len(out.workspaces) == 0 {
 		return false
 	}
-	changed := action(out.workspaces[out.active].strip)
+	strip := out.workspaces[out.active].strip
+	changed := action(strip)
 	if changed {
+		m.rememberFloatingGeometry(strip, 0)
 		m.clearFocusedUrgency()
 	}
 	return changed

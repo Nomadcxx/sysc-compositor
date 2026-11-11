@@ -509,6 +509,9 @@ func clampModeSize(v C.int32_t) uint16 {
 // handleNewOutput brings up an output the backend just announced and gives it a
 // scene output so clients paint into the nested session rather than nowhere.
 func (c *Compositor) handleNewOutput(data unsafe.Pointer) {
+	if !c.admitDebugOutput(data) {
+		return
+	}
 	output := (*C.struct_wlr_output)(data)
 	if !bool(C.sysc_output_init_render(output, c.alloc, c.renderer)) {
 		return
@@ -528,7 +531,7 @@ func (c *Compositor) handleNewOutput(data unsafe.Pointer) {
 		if !adopted {
 			return
 		}
-		if C.sysc_repaint_scene_output(so) {
+		if c.repaintOutput(data, so) {
 			c.drawn++
 		}
 		c.syncOutputVRR(data)
@@ -611,6 +614,7 @@ func (c *Compositor) adoptOutput(pointer unsafe.Pointer) {
 
 // outputGeometryChanged lets what lives on an output follow a new box.
 func (c *Compositor) outputGeometryChanged(pointer unsafe.Pointer) {
+	c.screenTransitionGeometryChanged(pointer)
 	if c.shotUI != nil {
 		if frame := c.shotUI.frames[pointer]; frame != nil {
 			output := (*C.struct_wlr_output)(pointer)
@@ -620,6 +624,7 @@ func (c *Compositor) outputGeometryChanged(pointer unsafe.Pointer) {
 		}
 	}
 	c.arrangeLayers(pointer)
+	c.configNoticeGeometryChanged()
 	c.arrangeLockOutput(pointer)
 	c.syncHotkeyOverlay()
 	c.refreshState()
@@ -629,6 +634,7 @@ func (c *Compositor) outputGeometryChanged(pointer unsafe.Pointer) {
 // retireOutput forgets an output's scene output and what lives on it, as an
 // unplug does. The caller destroys or releases the scene output.
 func (c *Compositor) retireOutput(pointer unsafe.Pointer) {
+	c.finishScreenTransition(pointer)
 	if c.shotUI != nil && c.shotUI.frames[pointer] != nil {
 		c.closeScreenshotUI()
 	}

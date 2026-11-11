@@ -55,6 +55,7 @@ type switcher struct {
 	syncing, dirty bool
 	// moves is the previews drawn away from their place as they slide back.
 	moves map[uint64]*switcherMove
+	opens map[uint64]*float64
 	alpha float64
 	tree  *C.struct_wlr_scene_tree
 	hits  []switcherHit
@@ -443,6 +444,10 @@ func (c *Compositor) dropSwitcher() {
 	for id := range s.moves {
 		c.cancelAnimation(switcherMoveKey(id))
 	}
+	for id := range s.opens {
+		c.cancelAnimation(animationKey{owner: id, property: "switcher-open"})
+	}
+	s.opens = nil
 	if s.tree != nil {
 		C.wlr_scene_node_destroy(&s.tree.node)
 		s.tree = nil
@@ -691,8 +696,12 @@ func (c *Compositor) syncSwitcher() {
 				radii[i] = radius * zoom
 			}
 			sceneFXClipTree(unsafe.Pointer(preview), rect{x, y, int(math.Round(r.W)), int(math.Round(r.H))}, sceneFXRadii(radii))
-			if s.alpha < 1 {
-				sceneFXScaleTreeOpacity(unsafe.Pointer(preview), s.alpha)
+			alpha := s.alpha
+			if opening := s.opens[v.id]; opening != nil {
+				alpha *= clampOpacity(*opening)
+			}
+			if alpha < 1 {
+				sceneFXScaleTreeOpacity(unsafe.Pointer(preview), alpha)
 			}
 			if s.previews == nil {
 				s.previews = make(map[uint64]unsafe.Pointer)
@@ -821,6 +830,24 @@ func (c *Compositor) relistSwitcher(change func() bool) {
 	was := listedSet(s.mru)
 	if !change() {
 		return
+	}
+	for _, window := range s.mru.Listed() {
+		if was[window.ID] {
+			continue
+		}
+		if s.opens == nil {
+			s.opens = map[uint64]*float64{}
+		}
+		progress := new(float64)
+		id := window.ID
+		s.opens[id] = progress
+		key := animationKey{owner: id, property: "switcher-open"}
+		c.cancelAnimation(key)
+		c.animateValue(key, c.animationConfig.WindowOpen, 0, 1, 0, func(value float64) { *progress = clampOpacity(value); c.markSwitcherDirty() }, func() {
+			if s.opens[id] == progress {
+				delete(s.opens, id)
+			}
+		})
 	}
 	current, ok := s.mru.Current()
 	strip, shown := c.switcherStrip()

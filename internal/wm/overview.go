@@ -340,8 +340,9 @@ func (m *Model) OverviewFrame(output string, zoom float64) (OverviewFrame, bool)
 	frame := OverviewFrame{Output: outputBounds, Zoom: zoom, Workspaces: make([]OverviewWorkspace, 0, len(out.workspaces))}
 	for index, workspace := range out.workspaces {
 		bounds := layout.Bounds{
-			X:     workspaceX,
-			Y:     activeY + (index-out.active)*(workspaceHeight+gap),
+			X: workspaceX,
+			Y: activeY + int(math.Round((float64(index-out.active)-out.switchOffset)*
+				float64(workspaceHeight+gap))),
 			Width: workspaceWidth, Height: workspaceHeight,
 		}
 		projected := OverviewWorkspace{ID: workspace.id, Active: index == out.active, Bounds: bounds}

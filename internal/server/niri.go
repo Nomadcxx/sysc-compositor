@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -43,6 +44,12 @@ func Version() string {
 // niriHandler answers the niri-ipc requests M2 builds; every other request
 // and action decodes and replies that it is not built yet.
 type niriHandler struct {
+	// conn is the client's connection; a picker watches it for the client
+	// going away while it waits.
+	conn             *net.UnixConn
+	pickWindow       func(context.Context) (*ipc.Window, error)
+	pickColor        func(context.Context) ([3]float64, error)
+	screenTransition func(*uint16) error
 	// quit runs Niri's Quit after the reply is written: the exit dialog
 	// asks first unless skipConfirmation is set.
 	quit            func(skipConfirmation bool)
@@ -319,6 +326,30 @@ func toNiriLayer(layer wlr.LayerSnapshot) ipc.LayerSurface {
 
 func (h niriHandler) handle(r ipc.Request) (ipc.Reply, func()) {
 	switch r.Name {
+	case "PickWindow", "PickColor":
+		ctx := context.Background()
+		if h.conn != nil {
+			var cancel context.CancelFunc
+			ctx, cancel = unixConnectionContext(h.conn)
+			defer cancel()
+		}
+		if r.Name == "PickWindow" && h.pickWindow != nil {
+			window, err := h.pickWindow(ctx)
+			if err != nil {
+				return ipc.Reply{Err: err.Error()}, nil
+			}
+			return ipc.Reply{Ok: ipc.SuccessValue("PickedWindow", window)}, nil
+		}
+		if r.Name == "PickColor" && h.pickColor != nil {
+			rgb, err := h.pickColor(ctx)
+			if err != nil {
+				return ipc.Reply{Err: err.Error()}, nil
+			}
+			return ipc.Reply{Ok: ipc.SuccessValue("PickedColor", struct {
+				RGB [3]float64 `json:"rgb"`
+			}{rgb})}, nil
+		}
+		return ipc.Unimplemented(r.Name), nil
 	case "Output":
 		if r.Output == nil || h.configureOutput == nil {
 			return ipc.Unimplemented("Output"), nil
@@ -394,6 +425,14 @@ func (h niriHandler) handle(r ipc.Request) (ipc.Reply, func()) {
 func (h niriHandler) action(a ipc.Action) (ipc.Reply, func()) {
 	var err error
 	switch a.Name {
+	case "DoScreenTransition":
+		if h.screenTransition == nil {
+			return ipc.Unimplemented(a.Name), nil
+		}
+		if err := h.screenTransition(a.DelayMS); err != nil {
+			return ipc.Reply{Err: err.Error()}, nil
+		}
+		return ipc.Reply{Ok: ipc.Handled}, nil
 	case "LoadConfigFile":
 		if a.ConfigPath != nil {
 			if err := validateConfigPath(*a.ConfigPath); err != nil {
@@ -430,7 +469,7 @@ func (h niriHandler) action(a ipc.Action) (ipc.Reply, func()) {
 		"MoveWindowToWorkspaceDown", "MoveWindowToWorkspaceUp", "MoveColumnToWorkspaceDown", "MoveColumnToWorkspaceUp",
 		"ToggleWindowUrgent", "SetWindowUrgent", "UnsetWindowUrgent":
 		return h.windowAction(a, 0)
-	case "CenterColumn", "CenterVisibleColumns", "ExpandColumnToAvailableWidth", "MaximizeColumn",
+	case "CenterWindow", "SetWindowWidth", "SwitchPresetWindowWidth", "SwitchPresetWindowWidthBack", "ToggleWindowRuleOpacity", "CenterColumn", "CenterVisibleColumns", "ExpandColumnToAvailableWidth", "MaximizeColumn",
 		"SwitchPresetColumnWidth", "SwitchPresetColumnWidthBack", "SetColumnWidth",
 		"MaximizeWindowToEdges", "ResetWindowHeight", "SwitchPresetWindowHeight", "SwitchPresetWindowHeightBack",
 		"SetWindowHeight":
@@ -556,5 +595,6 @@ func asciiEqualFold(a, b string) bool {
 }
 
 func (h niriHandler) serve(c *net.UnixConn) {
+	h.conn = c
 	ipc.ServeConnWithStream(c, h.handle, h.stream)
 }

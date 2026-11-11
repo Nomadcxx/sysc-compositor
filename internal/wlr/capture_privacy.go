@@ -53,6 +53,7 @@ import (
 type captureIdentity struct {
 	appID, title string
 	blocked      bool
+	blockedCast  bool
 }
 
 type captureNodeOwner struct {
@@ -128,6 +129,11 @@ func (c *Compositor) syncCapturePrivacy() {
 		identity := owner.identity
 		blocked := config.ResolveWindowRules(c.windowRules, identity.appID, identity.title,
 			config.UnmappedWindowState(c.atStartup)).BlocksCapture(config.CaptureScreen)
+		blockedCast := config.ResolveWindowRules(c.windowRules, identity.appID, identity.title, config.UnmappedWindowState(c.atStartup)).BlocksCapture(config.CaptureCast)
+		if (blocked && !identity.blocked) || (blockedCast && !identity.blockedCast) {
+			c.clearScreenTransitions()
+		}
+		identity.blockedCast = blockedCast
 		if blocked && !identity.blocked {
 			c.closeScreenshotUI()
 		}
@@ -157,6 +163,7 @@ func (c *Compositor) beginCapturePrivacy(target config.CaptureTarget) (func(), e
 		return func() {}, nil
 	}
 	c.syncCapturePrivacy()
+	restoreTransition := c.selectScreenTransitionTarget(target)
 	// ponytail: frozen screenshot UI is capture-transparent for casts. Render
 	// the filtered live scene below instead of keeping a second full snapshot.
 	var shotTree unsafe.Pointer
@@ -172,20 +179,30 @@ func (c *Compositor) beginCapturePrivacy(target config.CaptureTarget) (func(), e
 			blocked[node] = true
 		}
 	}
-	// A layer rule's block-out-from masks the layer surface's buffers too.
+	// A layer rule's block-out-from masks the layer surface's buffers too,
+	// including its overview copies.
+	blockLayerTree := func(tree *C.struct_wlr_scene_tree) {
+		walkCaptureScene(&tree.node, func(node *C.struct_wlr_scene_node) {
+			if node._type == C.WLR_SCENE_NODE_BUFFER {
+				blocked[node] = true
+			}
+		})
+	}
 	for _, layer := range c.layerOrder {
 		if layer.tree != nil && layer.rules.BlocksCapture(target) {
-			walkCaptureScene(&layer.tree.node, func(node *C.struct_wlr_scene_node) {
-				if node._type == C.WLR_SCENE_NODE_BUFFER {
-					blocked[node] = true
-				}
-			})
+			blockLayerTree(layer.tree)
+		}
+	}
+	for _, projection := range c.overviewProjections {
+		if projection.layer != nil && projection.layer.rules.BlocksCapture(target) {
+			blockLayerTree(projection.tree)
 		}
 	}
 	var masks []captureMask
 	var blurMasks []captureBlurMask
 	var blurs []*C.struct_wlr_scene_optimized_blur
 	restore := func() {
+		restoreTransition()
 		for _, mask := range masks {
 			C.wlr_scene_node_destroy(mask.rect)
 			C.wlr_scene_node_set_enabled(mask.node, C.bool(mask.enabled))

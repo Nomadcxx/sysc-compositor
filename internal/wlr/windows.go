@@ -294,8 +294,11 @@ func (c *Compositor) opensFocused(view *toplevelView) bool {
 	if view == nil {
 		return true
 	}
-	if focused := view.appearance.OpenFocused; focused != nil && !*focused {
-		return false
+	if focused := view.appearance.OpenFocused; focused != nil {
+		return *focused
+	}
+	if c.debugConfig.StrictNewWindowFocusPolicy {
+		return c.debugActivationFocusOnMap(view)
 	}
 	return true
 }
@@ -434,7 +437,7 @@ func (c *Compositor) CloseWindow(id *uint64) bool {
 
 func (c *Compositor) captureCloseSnapshot(view *toplevelView) {
 	if view == nil || !view.presentationVisible || view.closeSnapshot != nil || c.animationConfig.Off ||
-		c.animationConfig.WindowClose.Off || c.animationConfig.WindowClose.Spring == nil {
+		c.animationConfig.WindowClose.Off || (c.animationConfig.WindowClose.Spring == nil && c.animationConfig.WindowClose.Easing == nil) {
 		return
 	}
 	c.rememberCaptureNodes(view)
@@ -461,7 +464,7 @@ func (c *Compositor) captureCloseSnapshot(view *toplevelView) {
 
 // FocusWorkspaceID focuses an IPC workspace by its stable model ID.
 func (c *Compositor) FocusWorkspaceID(id uint64) bool {
-	if c.model == nil || !c.model.FocusWorkspaceID(id) {
+	if c.model == nil || !focusExplicitWorkspace(c.model, id, c.workspaceAutoBackAndForth) {
 		return false
 	}
 	c.applyWorkspaceModel()
@@ -576,9 +579,11 @@ func (c *Compositor) SetColumnDisplay(display layout.ColumnDisplay) bool {
 }
 
 func (c *Compositor) FocusWorkspaceName(name string) bool {
-	return c.applyWorkspaceFocusAction(func(model *wm.Model) bool {
-		return model.FocusWorkspaceName(name)
-	})
+	if c.model == nil {
+		return false
+	}
+	id, ok := c.model.WorkspaceIDByName(name)
+	return ok && c.FocusWorkspaceID(id)
 }
 
 func (c *Compositor) SetWorkspaceName(id uint64, name string) bool {

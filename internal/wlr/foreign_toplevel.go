@@ -144,6 +144,8 @@ func (c *Compositor) syncForeignToplevels() {
 		C.wlr_foreign_toplevel_handle_v1_set_activated(f.native, C.bool(c.keyboardFocusedView() == view))
 		fullscreen := view.fullscreen || (c.model != nil && c.model.IsWindowedFullscreen(view.id))
 		C.wlr_foreign_toplevel_handle_v1_set_fullscreen(f.native, C.bool(fullscreen))
+		maximized := c.model != nil && c.model.IsMaximized(view.id) && !fullscreen
+		C.wlr_foreign_toplevel_handle_v1_set_maximized(f.native, C.bool(maximized))
 		var output *C.struct_wlr_output
 		name := view.outputName
 		if name == "" {
@@ -188,8 +190,13 @@ func (c *Compositor) watchForeignRequests(f *foreignToplevel) {
 		}
 		c.SetFullscreen(f.view.id, bool(event.fullscreen))
 	})
-	// Niri ignores minimize and rectangle requests. ponytail: maximize waits
-	// for M15's column sizing policy; keep this protocol's parity row partial.
+	add(unsafe.Pointer(&f.native.events.request_maximize), func(data unsafe.Pointer) {
+		if allowed() {
+			event := (*C.struct_wlr_foreign_toplevel_handle_v1_maximized_event)(data)
+			c.SetMaximized(f.view.id, bool(event.maximized))
+		}
+	})
+	// Niri ignores minimize and rectangle requests.
 }
 
 func (c *Compositor) closeForeignToplevel(view *toplevelView) {

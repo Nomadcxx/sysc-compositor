@@ -86,13 +86,17 @@ static const struct wl_interface sysc_idle_xdg_surface_interface = {
 static const struct wl_message sysc_idle_xdg_toplevel_requests[] = {
 	{"destroy", "", NULL}, {"set_parent", "?o", NULL},
 	{"set_title", "s", NULL}, {"set_app_id", "s", NULL},
+	{"show_window_menu", "ouii", NULL}, {"move", "ou", NULL}, {"resize", "ouu", NULL},
+	{"set_max_size", "ii", NULL}, {"set_min_size", "ii", NULL},
+	{"set_maximized", "", NULL}, {"unset_maximized", "", NULL},
+	{"set_fullscreen", "?o", NULL}, {"unset_fullscreen", "", NULL}, {"set_minimized", "", NULL},
 };
 static const struct wl_message sysc_idle_xdg_toplevel_events[] = {
 	{"configure", "iia", NULL},
 	{"close", "", NULL},
 };
 static const struct wl_interface sysc_idle_xdg_toplevel_interface = {
-	"xdg_toplevel", 1, 4, sysc_idle_xdg_toplevel_requests, 2, sysc_idle_xdg_toplevel_events,
+	"xdg_toplevel", 1, 14, sysc_idle_xdg_toplevel_requests, 2, sysc_idle_xdg_toplevel_events,
 };
 static const struct wl_message sysc_idle_notifier_requests[] = {
 	{"destroy", "", NULL},
@@ -464,7 +468,10 @@ struct sysc_idle_client {
 	struct wl_surface *surface;
 	struct wl_proxy *xdg_surface, *toplevel, *notification, *inhibitor;
 	struct wl_buffer *buffer;
-	uint32_t configure_serial;
+	uint32_t configure_serial, acked_serial;
+	unsigned int configure_count;
+	int configured_width, configured_height;
+	bool configured_maximized;
 	bool configured;
 	int events[SYSC_IDLE_EVENTS];
 	int head, tail;
@@ -548,6 +555,7 @@ static const struct { void (*ping)(void *, struct wl_proxy *, uint32_t); }
 
 static void sysc_idle_surface_configure(void *data, struct wl_proxy *proxy, uint32_t serial) {
 	struct sysc_idle_client *c = data;
+	c->configure_count++;
 	c->configure_serial = serial;
 	c->configured = true;
 }
@@ -556,6 +564,16 @@ static const struct { void (*configure)(void *, struct wl_proxy *, uint32_t); }
 
 static void sysc_idle_toplevel_configure(void *data, struct wl_proxy *proxy,
 		int32_t width, int32_t height, struct wl_array *states) {
+	struct sysc_idle_client *c = data;
+	c->configured_width = width;
+	c->configured_height = height;
+	c->configured_maximized = false;
+	uint32_t *state;
+	wl_array_for_each(state, states) {
+		if (*state == 1) { // xdg_toplevel.state.maximized
+			c->configured_maximized = true;
+		}
+	}
 }
 static void sysc_idle_toplevel_close(void *data, struct wl_proxy *proxy) {
 	((struct sysc_idle_client *)data)->close_requested = true;
@@ -847,6 +865,7 @@ static int sysc_idle_client_start(const char *display_name, uint32_t timeout_ms,
 		return 8;
 	}
 	wl_proxy_marshal_flags(c->xdg_surface, 4, NULL, 1, 0, c->configure_serial);
+	c->acked_serial = c->configure_serial;
 	wl_surface_attach(c->surface, c->buffer, 0, 0);
 	wl_surface_damage(c->surface, 0, 0, 200, 150);
 	wl_surface_commit(c->surface);
@@ -1135,6 +1154,30 @@ static int sysc_client_unlock_pointer(struct sysc_idle_client *c) {
 		c->locked_pointer = NULL;
 	}
 	return wl_display_roundtrip(c->display) < 0 ? 1 : 0;
+}
+
+static int sysc_client_ack_configure(struct sysc_idle_client *c) {
+	if (wl_display_roundtrip(c->display) < 0) {
+		return -1;
+	}
+	if (c->configure_serial != c->acked_serial) {
+		wl_proxy_marshal_flags(c->xdg_surface, 4, NULL, 1, 0, c->configure_serial);
+		c->acked_serial = c->configure_serial;
+		wl_surface_commit(c->surface);
+	}
+	return wl_display_roundtrip(c->display) < 0 ? -1 : 0;
+}
+static int sysc_client_set_maximized(struct sysc_idle_client *c, bool maximized) {
+	wl_proxy_marshal_flags(c->toplevel, maximized ? 9 : 10, NULL, 1, 0);
+	if (wl_display_roundtrip(c->display) < 0 || wl_display_roundtrip(c->display) < 0) {
+		return -1;
+	}
+	if (c->configure_serial != c->acked_serial) {
+		wl_proxy_marshal_flags(c->xdg_surface, 4, NULL, 1, 0, c->configure_serial);
+		c->acked_serial = c->configure_serial;
+		wl_surface_commit(c->surface);
+	}
+	return wl_display_roundtrip(c->display) < 0 ? -1 : 0;
 }
 
 static int sysc_client_set_identity(struct sysc_idle_client *c, const char *title, const char *app_id) {
@@ -1485,6 +1528,19 @@ func (c *ToplevelClient) Paint(color uint32, width, height int) error {
 		return fmt.Errorf("paint failed: %s", c.failure())
 	}
 	return nil
+}
+
+// SetMaximized sends the native xdg request and acknowledges its configure.
+func (c *ToplevelClient) SetMaximized(maximized bool) error {
+	if C.sysc_client_set_maximized(c.state, C.bool(maximized)) != 0 {
+		return fmt.Errorf("xdg maximize request failed: %s", c.failure())
+	}
+	return nil
+}
+
+// ConfiguredState is the most recent native toplevel configure.
+func (c *ToplevelClient) ConfiguredState() (width, height int, maximized bool) {
+	return int(c.state.configured_width), int(c.state.configured_height), bool(c.state.configured_maximized)
 }
 
 func (c *ToplevelClient) SetIdentity(title, appID string) error {
@@ -1905,3 +1961,12 @@ func (c *ToplevelClient) Close() {
 		c.state = nil
 	}
 }
+
+// AcknowledgeConfigure commits the last received configuration without repainting.
+func (c *ToplevelClient) AcknowledgeConfigure() error {
+	if C.sysc_client_ack_configure(c.state) < 0 {
+		return fmt.Errorf("acknowledging configure: %s", c.failure())
+	}
+	return nil
+}
+func (c *ToplevelClient) ConfigureCount() int { return int(c.state.configure_count) }

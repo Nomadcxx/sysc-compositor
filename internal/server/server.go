@@ -76,6 +76,9 @@ func New(load config.LoadResult, path config.Path, configLoadFailed bool) (*Serv
 		stopping: make(chan struct{}),
 	}
 	c.SetStateChanged(s.refreshNiriState)
+	if configLoadFailed {
+		c.NotifyConfigLoadFailed(true)
+	}
 	if err := s.startControl(); err != nil {
 		// The compositor still serves clients without the control socket;
 		// injected input is simply unavailable.
@@ -252,6 +255,11 @@ func (s *Server) Run() error {
 	}
 	if s.niri != nil {
 		h := niriHandler{
+			screenTransition: func(delay *uint16) error {
+				return (controlSeat{c: s.c, stopping: s.stopping}).call(func() error { return s.c.DoScreenTransition(delay) })
+			},
+			pickWindow: s.ipcPickWindow,
+			pickColor:  s.ipcPickColor,
 			configureOutput: func(request ipc.OutputRequest) (string, error) {
 				var result string
 				err := (controlSeat{c: s.c, stopping: s.stopping}).call(func() error {
@@ -379,6 +387,18 @@ func (s *Server) Run() error {
 						s.c.ConsumeOrExpelWindowRight(action.WindowID)
 					case "ToggleColumnTabbedDisplay":
 						s.c.ToggleColumnTabbedDisplay()
+					case "CenterWindow":
+						s.c.CenterWindow(action.WindowID)
+					case "SetWindowWidth":
+						if action.Size != nil {
+							s.c.SetWindowWidth(action.WindowID, layoutSizeChange(*action.Size))
+						}
+					case "SwitchPresetWindowWidth":
+						s.c.SwitchPresetWindowWidth(action.WindowID, false)
+					case "SwitchPresetWindowWidthBack":
+						s.c.SwitchPresetWindowWidth(action.WindowID, true)
+					case "ToggleWindowRuleOpacity":
+						s.c.ToggleWindowRuleOpacity(action.WindowID)
 					case "CenterColumn":
 						s.c.CenterColumn()
 					case "CenterVisibleColumns":

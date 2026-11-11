@@ -412,15 +412,7 @@ func (c *Compositor) handleActivationRequest(data unsafe.Pointer) {
 	if event.token == nil || event.surface == nil {
 		return
 	}
-	view := c.viewForSurface(event.surface)
-	c.applyActivationRequest(view, event.token.seat != nil)
-}
-
-func (c *Compositor) applyActivationRequest(view *toplevelView, hasSerial bool) bool {
-	if c.model == nil || view == nil || !view.mapped || hasSerial {
-		return false
-	}
-	return c.SetWindowUrgent(view.id, true)
+	c.applyDebugActivation(event.token, event.surface)
 }
 
 // fullscreenState is a view's acknowledged fullscreen state and window
@@ -498,4 +490,34 @@ func (c *Compositor) layoutBox() rect {
 	var b C.struct_wlr_box
 	C.sysc_layout_box(c.layout, &b)
 	return rect{int(b.x), int(b.y), int(b.width), int(b.height)}
+}
+
+// syncNativeMaximized publishes the layout's sizing mode. Fullscreen suppresses
+// the advertised maximized bit while the layout retains its restore state.
+func (c *Compositor) syncNativeMaximized(view *toplevelView, maximized bool) {
+	if bool(view.toplevel.scheduled.maximized) != maximized {
+		C.wlr_xdg_toplevel_set_maximized(view.toplevel, C.bool(maximized))
+	}
+}
+
+func (c *Compositor) applyMaximizeRequest(view *toplevelView) {
+	if c.sessionLocked {
+		return
+	}
+	if view.mapped {
+		c.SetMaximized(view.id, bool(view.toplevel.requested.maximized))
+		c.syncNativeMaximized(view, c.model != nil && c.model.IsMaximized(view.id) && !view.fullscreen)
+		return
+	}
+	maximized := bool(view.toplevel.requested.maximized)
+	if rule := view.appearance.OpenMaximizedToEdges; rule != nil {
+		maximized = *rule
+	}
+	c.syncNativeMaximized(view, maximized && !bool(view.toplevel.requested.fullscreen))
+	if maximized {
+		if output := c.defaultOutput(); output != nil {
+			bounds := c.workspaceBounds(C.GoString(output.name))
+			C.wlr_xdg_toplevel_set_size(view.toplevel, C.int(bounds.Width), C.int(bounds.Height))
+		}
+	}
 }

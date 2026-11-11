@@ -25,9 +25,11 @@ func (c *Compositor) PickColor(done func([3]float64, error)) (func(), error) {
 	if done == nil {
 		return nil, errors.New("wlr: a color pick needs a result handler")
 	}
-	if c.sessionLocked || c.allOutputsOff() || c.pickColor != nil || c.shotUI != nil {
+	if c.sessionLocked || c.allOutputsOff() || c.shotUI != nil {
 		return nil, errors.New("wlr: color picker unavailable")
 	}
+	c.finishWindowPick(0, nil)
+	c.finishColorPick([3]float64{}, errors.New("no color picked"))
 	c.endTouchPoints(nowMsec())
 	pick := &colorPicker{done: done}
 	c.pickColor = pick

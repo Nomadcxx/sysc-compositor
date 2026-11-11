@@ -17,16 +17,56 @@ type animationKey struct {
 }
 
 type runningAnimation struct {
-	spring  animation.Spring
-	target  float64
-	started time.Time
-	set     func(float64)
-	done    func()
+	spring   animation.Spring
+	easing   *animation.Easing
+	slowdown float64
+	target   float64
+	started  time.Time
+	set      func(float64)
+	done     func()
 }
 
 type activeWorkspace struct {
 	id    uint64
 	index int
+}
+
+func (c *Compositor) animationSlowdown() float64 {
+	if c.animationConfig.Slowdown == nil {
+		return 1
+	}
+	return math.Max(.001, *c.animationConfig.Slowdown)
+}
+
+func (a *runningAnimation) rate() float64 {
+	if a.slowdown <= 0 {
+		return 1
+	}
+	return a.slowdown
+}
+
+func (a *runningAnimation) duration() time.Duration {
+	duration := a.spring.Duration()
+	if a.easing != nil {
+		duration = a.easing.Duration()
+	}
+	return time.Duration(math.Min(float64(math.MaxInt64), float64(duration)*a.rate()))
+}
+
+func (a *runningAnimation) valueAt(elapsed time.Duration) float64 {
+	elapsed = time.Duration(float64(elapsed) / a.rate())
+	if a.easing != nil {
+		return a.easing.ValueAt(elapsed)
+	}
+	return a.spring.ValueAt(elapsed)
+}
+
+func (a *runningAnimation) velocityAt(elapsed time.Duration) float64 {
+	elapsed = time.Duration(float64(elapsed) / a.rate())
+	if a.easing != nil {
+		return a.easing.VelocityAt(elapsed) / a.rate()
+	}
+	return a.spring.VelocityAt(elapsed) / a.rate()
 }
 
 func (c *Compositor) scheduleAnimationTick() {
@@ -45,15 +85,15 @@ func (c *Compositor) tickAnimations(now time.Time) {
 			continue
 		}
 		elapsed := now.Sub(current.started)
-		if elapsed >= current.spring.Duration() {
+		if elapsed >= current.duration() {
 			delete(c.animations, key)
-			current.set(current.spring.ValueAt(elapsed))
+			current.set(current.valueAt(elapsed))
 			if current.done != nil {
 				current.done()
 			}
 			continue
 		}
-		current.set(current.spring.ValueAt(elapsed))
+		current.set(current.valueAt(elapsed))
 	}
 	c.syncBobbing(now)
 	if c.switcher.dirty {
@@ -73,7 +113,7 @@ func (c *Compositor) animationValue(key animationKey, fallback float64, now time
 		return fallback, 0, false
 	}
 	elapsed := max(time.Duration(0), now.Sub(current.started))
-	return current.spring.ValueAt(elapsed), current.spring.VelocityAt(elapsed), true
+	return current.valueAt(elapsed), current.velocityAt(elapsed), true
 }
 
 func (c *Compositor) hasAnimation(key animationKey) bool {
@@ -82,6 +122,7 @@ func (c *Compositor) hasAnimation(key animationKey) bool {
 
 func (c *Compositor) cancelAnimation(key animationKey) {
 	delete(c.animations, key)
+	c.finishAnimationShaderEffect(key)
 }
 
 // offsetAnimation moves a running animation's ends by delta, as Niri's
@@ -89,6 +130,10 @@ func (c *Compositor) cancelAnimation(key animationKey) {
 func (c *Compositor) offsetAnimation(key animationKey, delta float64) {
 	if current := c.animations[key]; current != nil {
 		current.spring = current.spring.Offset(delta)
+		if current.easing != nil {
+			offset := current.easing.Offset(delta)
+			current.easing = &offset
+		}
 		current.target += delta
 	}
 }
@@ -100,6 +145,7 @@ func (c *Compositor) cancelViewAnimations(view *toplevelView) {
 	for key := range c.animations {
 		if key.owner == view.id {
 			delete(c.animations, key)
+			c.finishAnimationShaderEffect(key)
 		}
 	}
 }
@@ -117,20 +163,28 @@ func (c *Compositor) animateValue(key animationKey, kind config.Animation,
 			return
 		}
 		elapsed := max(time.Duration(0), now.Sub(current.started))
-		from = current.spring.ValueAt(elapsed)
-		velocity = current.spring.VelocityAt(elapsed)
+		from = current.valueAt(elapsed)
+		velocity = current.velocityAt(elapsed)
 		delete(c.animations, key)
 	}
-	if c.animationConfig.Off || kind.Off || kind.Spring == nil {
+	if c.animationConfig.Off || kind.Off || (kind.Spring == nil && kind.Easing == nil) {
 		set(to)
 		if done != nil {
 			done()
 		}
 		return
 	}
-	spring, err := animation.NewSpring(from, to, velocity,
-		kind.Spring.DampingRatio, float64(kind.Spring.Stiffness), kind.Spring.Epsilon)
-	if err != nil || spring.Duration() == 0 {
+	current := &runningAnimation{target: to, started: now, set: set, done: done, slowdown: c.animationSlowdown()}
+	var err error
+	if kind.Easing != nil {
+		e := kind.Easing
+		easing, failure := animation.NewEasing(from, to, time.Duration(e.DurationMS)*time.Millisecond, e.Curve, e.CubicBezier)
+		current.easing, err = &easing, failure
+	} else {
+		spring := kind.Spring
+		current.spring, err = animation.NewSpring(from, to, velocity*current.slowdown, spring.DampingRatio, float64(spring.Stiffness), spring.Epsilon)
+	}
+	if err != nil || current.duration() == 0 {
 		set(to)
 		if done != nil {
 			done()
@@ -138,7 +192,7 @@ func (c *Compositor) animateValue(key animationKey, kind config.Animation,
 		return
 	}
 	set(from)
-	c.animations[key] = &runningAnimation{spring: spring, target: to, started: now, set: set, done: done}
+	c.animations[key] = current
 	c.scheduleAnimationTick()
 }
 
@@ -157,7 +211,7 @@ func (c *Compositor) animateViewPosition(view *toplevelView, x, y int, kind conf
 	currentX, currentY := view.layoutPosition()
 	xKey := animationKey{owner: view.id, property: "x"}
 	yKey := animationKey{owner: view.id, property: "y"}
-	if kind.Off || kind.Spring == nil || c.animationConfig.Off {
+	if kind.Off || (kind.Spring == nil && kind.Easing == nil) || c.animationConfig.Off {
 		c.setViewScenePosition(view, x, y)
 		if done != nil {
 			done()
@@ -204,6 +258,7 @@ func (c *Compositor) setViewScenePosition(view *toplevelView, x, y int) {
 		sceneFXTreeSetPosition(view.resizeSnapshot, x, y)
 	}
 	c.syncViewDecorations(view)
+	c.syncAnimationShaderPosition(view)
 }
 
 func (c *Compositor) setViewSceneEnabled(view *toplevelView, enabled bool) {
@@ -214,6 +269,13 @@ func (c *Compositor) setViewSceneEnabled(view *toplevelView, enabled bool) {
 		sceneFXSetNodeEnabled(view.resizeSnapshot, enabled)
 	}
 	sceneFXSetNodeEnabled(view.sceneNode(), enabled)
+	if c.animationShaders != nil {
+		for _, property := range []string{"open-opacity", "resize-shader"} {
+			if effect := c.animationShaders.effects[animationKey{owner: view.id, property: property}]; effect != nil {
+				sceneFXSetNodeEnabled(unsafe.Pointer(&effect.node.node), enabled)
+			}
+		}
+	}
 }
 
 // syncViewOpacity draws the live window at its presentation opacity, or hides
@@ -222,11 +284,11 @@ func (c *Compositor) setViewSceneEnabled(view *toplevelView, enabled bool) {
 // frame callbacks during the resize spring.
 func (c *Compositor) syncViewOpacity(view *toplevelView) {
 	ruleOpacity := 1.0
-	if !view.fullscreen && view.appearance.Opacity != nil {
+	if !view.fullscreen && !view.ignoreRuleOpacity && view.appearance.Opacity != nil {
 		ruleOpacity = clampOpacity(*view.appearance.Opacity)
 	}
 	opacity := clampOpacity(view.presentationOpacity) * ruleOpacity
-	if view.resizeSnapshot != nil {
+	if view.resizeSnapshot != nil || c.animationShaderOwnsView(view) {
 		opacity = 0
 	}
 	sceneFXSetTreeOpacity(view.sceneNode(), opacity)
@@ -240,7 +302,7 @@ func (c *Compositor) startWindowOpen(view *toplevelView) {
 		return
 	}
 	view.openAnimationStarted = true
-	if c.animationConfig.Off || c.animationConfig.WindowOpen.Off || c.animationConfig.WindowOpen.Spring == nil {
+	if c.animationConfig.Off || c.animationConfig.WindowOpen.Off || (c.animationConfig.WindowOpen.Spring == nil && c.animationConfig.WindowOpen.Easing == nil) {
 		view.presentationOpacity = 1
 		view.openAnimationFinished = true
 		return
@@ -248,11 +310,15 @@ func (c *Compositor) startWindowOpen(view *toplevelView) {
 	view.openAnimationFinished = false
 	view.presentationOpacity = 0
 	key := animationKey{owner: view.id, property: "open-opacity"}
+	c.beginWindowOpenShader(view, key)
 	c.animateValue(key, c.animationConfig.WindowOpen, 0, 1, 0, func(value float64) {
+		progress := value
 		value = clampOpacity(value)
 		view.presentationOpacity = value
+		c.updateWindowOpenShader(view, key, progress)
 		c.syncViewOpacity(view)
 	}, func() {
+		c.finishAnimationShaderEffect(key)
 		view.openAnimationFinished = true
 		if view.mapped && view.presentationVisible {
 			c.applyWorkspaceModel()
@@ -272,20 +338,27 @@ func (c *Compositor) startCloseSnapshot(id uint64, node unsafe.Pointer) {
 	if node == nil {
 		return
 	}
-	if c.animationConfig.Off || c.animationConfig.WindowClose.Off || c.animationConfig.WindowClose.Spring == nil {
+	if c.animationConfig.Off || c.animationConfig.WindowClose.Off || (c.animationConfig.WindowClose.Spring == nil && c.animationConfig.WindowClose.Easing == nil) {
 		sceneFXNodeDestroy(node)
 		delete(c.closingNodes, id)
 		return
 	}
 	sceneFXSetNodeEnabled(node, true)
+	key := closeSnapshotKey(id)
+	c.beginCloseShader(key, node)
 	opacity := 1.0
-	c.animateValue(closeSnapshotKey(id), c.animationConfig.WindowClose, 1, 0, 0, func(value float64) {
+	c.animateValue(key, c.animationConfig.WindowClose, 1, 0, 0, func(value float64) {
+		progress := 1 - value
 		value = clampOpacity(value)
-		if opacity > 0 {
-			sceneFXScaleTreeOpacity(node, value/opacity)
+		if !c.updateCloseShader(key, progress) {
+			sceneFXSetNodeEnabled(node, true)
+			if opacity > 0 {
+				sceneFXScaleTreeOpacity(node, value/opacity)
+			}
 		}
 		opacity = value
 	}, func() {
+		c.finishAnimationShaderEffect(key)
 		sceneFXNodeDestroy(node)
 		delete(c.closingNodes, id)
 	})
@@ -306,6 +379,7 @@ func (c *Compositor) cancelResizeAnimation(view *toplevelView) {
 		return
 	}
 	w, h := c.resizeKeys(view)
+	c.cancelAnimation(animationKey{owner: view.id, property: "resize-shader"})
 	c.cancelAnimation(w)
 	c.cancelAnimation(h)
 	if view.resizeSnapshot != nil {
@@ -328,7 +402,7 @@ func (c *Compositor) animateViewSize(view *toplevelView, width, height int, kind
 		if float64(width) == float64(geometry.w) && float64(height) == float64(geometry.h) {
 			return
 		}
-		if c.animationConfig.Off || kind.Off || kind.Spring == nil {
+		if c.animationConfig.Off || kind.Off || (kind.Spring == nil && kind.Easing == nil) {
 			return
 		}
 		var count int
@@ -346,7 +420,13 @@ func (c *Compositor) animateViewSize(view *toplevelView, width, height int, kind
 		view.resizeScaleX, view.resizeScaleY = 1, 1
 		c.syncViewOpacity(view)
 	}
+	if view.resizeTargetWidth == width && view.resizeTargetHeight == height && c.hasAnimation(animationKey{owner: view.id, property: "resize-shader"}) {
+		return
+	}
 	view.resizeTargetWidth, view.resizeTargetHeight = width, height
+	if c.beginResizeShader(view, kind) {
+		return
+	}
 	wKey, hKey := c.resizeKeys(view)
 	if view.resizeWidth != float64(width) || c.hasAnimation(wKey) {
 		c.animateValue(wKey, kind, view.resizeWidth, float64(width), 0, func(value float64) {
@@ -381,7 +461,7 @@ func (c *Compositor) finishResizeIfSettled(view *toplevelView) {
 		return
 	}
 	wKey, hKey := c.resizeKeys(view)
-	if c.hasAnimation(wKey) || c.hasAnimation(hKey) {
+	if c.hasAnimation(wKey) || c.hasAnimation(hKey) || c.hasAnimation(animationKey{owner: view.id, property: "resize-shader"}) {
 		return
 	}
 	sceneFXNodeDestroy(view.resizeSnapshot)

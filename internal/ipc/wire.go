@@ -268,11 +268,11 @@ type SizeChange struct {
 	Value float64
 }
 
-// Action is a decoded action. Only the fields of the actions built so far
-// are kept; every other action is known by Name alone.
+// Action holds the fields of the pinned Niri action variants.
 type Action struct {
 	Name             string
 	SkipConfirmation bool     // Quit
+	DelayMS          *uint16  // DoScreenTransition
 	Command          []string // Spawn
 	ShellCommand     string   // SpawnSh
 	Layout           string   // SwitchLayout: Next, Prev, or Index
@@ -287,7 +287,7 @@ type Action struct {
 	Output           string
 	Focus            *bool
 	X, Y             PositionChange
-	Size             *SizeChange // SetColumnWidth, SetWindowHeight
+	Size             *SizeChange // SetColumnWidth, SetWindowWidth, SetWindowHeight
 	WriteToDisk      bool        // ScreenshotScreen, ScreenshotWindow
 	ShowPointer      bool        // Screenshot, ScreenshotScreen, ScreenshotWindow
 	Path             *string     // ScreenshotScreen, ScreenshotWindow
@@ -508,6 +508,14 @@ func decodeAction(raw json.RawMessage) (Action, error) {
 			return Action{}, ErrParse
 		}
 		a.WindowID, a.WriteToDisk, a.ShowPointer, a.Path = f.ID, *f.WriteToDisk, *f.ShowPointer, f.Path
+	case "DoScreenTransition":
+		var f struct {
+			DelayMS *uint16 `json:"delay_ms"`
+		}
+		if err := strict(body, &f); err != nil {
+			return Action{}, ErrParse
+		}
+		a.DelayMS = f.DelayMS
 	case "Quit":
 		var f struct {
 			SkipConfirmation *bool `json:"skip_confirmation"`
@@ -788,7 +796,7 @@ func decodeAction(raw json.RawMessage) (Action, error) {
 			return Action{}, ErrParse
 		}
 		a.Size = &change
-	case "SetWindowHeight":
+	case "SetWindowWidth", "SetWindowHeight":
 		var f struct {
 			ID     *uint64          `json:"id"`
 			Change *json.RawMessage `json:"change"`
@@ -801,7 +809,8 @@ func decodeAction(raw json.RawMessage) (Action, error) {
 			return Action{}, ErrParse
 		}
 		a.WindowID, a.Size = f.ID, &change
-	case "ResetWindowHeight", "MaximizeWindowToEdges", "SwitchPresetWindowHeight", "SwitchPresetWindowHeightBack":
+	case "ResetWindowHeight", "MaximizeWindowToEdges", "SwitchPresetWindowHeight", "SwitchPresetWindowHeightBack",
+		"CenterWindow", "SwitchPresetWindowWidth", "SwitchPresetWindowWidthBack", "ToggleWindowRuleOpacity":
 		var f struct {
 			ID *uint64 `json:"id"`
 		}
@@ -830,6 +839,10 @@ func decodeAction(raw json.RawMessage) (Action, error) {
 		}
 		a.Y, err = decodePositionChange(*f.Y)
 		if err != nil {
+			return Action{}, ErrParse
+		}
+	default:
+		if err := strict(body, &struct{}{}); err != nil {
 			return Action{}, ErrParse
 		}
 	}
@@ -882,7 +895,11 @@ func decodeSizeChange(raw json.RawMessage) (SizeChange, error) {
 		return SizeChange{}, ErrParse
 	}
 	if change.Kind == SizeSetFixed || change.Kind == SizeAdjustFixed {
-		change.Value = math.Round(change.Value)
+		var fixed int32
+		if json.Unmarshal(value, &fixed) != nil {
+			return SizeChange{}, ErrParse
+		}
+		change.Value = float64(fixed)
 	}
 	return change, nil
 }
@@ -937,7 +954,7 @@ func variant(raw []byte) (string, json.RawMessage, error) {
 }
 
 func strict(body json.RawMessage, v any) error {
-	if body == nil {
+	if trimmed := bytes.TrimSpace(body); len(trimmed) == 0 || trimmed[0] != '{' {
 		return ErrParse
 	}
 	d := json.NewDecoder(bytes.NewReader(body))
@@ -976,6 +993,10 @@ func EncodeRequest(r Request) []byte {
 			ShowPointer bool    `json:"show_pointer"`
 			Path        *string `json:"path"`
 		}{a.WindowID, a.WriteToDisk, a.ShowPointer, a.Path}
+	case "DoScreenTransition":
+		body = struct {
+			DelayMS *uint16 `json:"delay_ms"`
+		}{a.DelayMS}
 	case "Quit":
 		body = struct {
 			SkipConfirmation bool `json:"skip_confirmation"`
@@ -1130,12 +1151,13 @@ func EncodeRequest(r Request) []byte {
 		body = struct {
 			Change any `json:"change"`
 		}{sizeChangeValue(a.Size)}
-	case "SetWindowHeight":
+	case "SetWindowWidth", "SetWindowHeight":
 		body = struct {
 			ID     *uint64 `json:"id"`
 			Change any     `json:"change"`
 		}{a.WindowID, sizeChangeValue(a.Size)}
-	case "ResetWindowHeight", "MaximizeWindowToEdges", "SwitchPresetWindowHeight", "SwitchPresetWindowHeightBack":
+	case "ResetWindowHeight", "MaximizeWindowToEdges", "SwitchPresetWindowHeight", "SwitchPresetWindowHeightBack",
+		"CenterWindow", "SwitchPresetWindowWidth", "SwitchPresetWindowWidthBack", "ToggleWindowRuleOpacity":
 		body = struct {
 			ID *uint64 `json:"id"`
 		}{a.WindowID}

@@ -468,10 +468,9 @@ func TestValidateParsesConfigWithoutRunningStartup(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.kdl")
 	marker := filepath.Join(dir, "startup-ran")
-	// toggle-debug-tint is a niri action sysc does not apply yet (M15).
-	// close-window and screenshot, which this used, are applied since M4 and
-	// M11.
-	source := fmt.Sprintf("spawn-sh-at-startup %q\nbinds {\n    Mod+Q { close-window; }\n    Mod+T { toggle-debug-tint; }\n}\n", "touch "+marker)
+	// Every Niri bind action applies since M15, so an unknown name stands in
+	// for an unapplied one.
+	source := fmt.Sprintf("spawn-sh-at-startup %q\nbinds {\n    Mod+Q { close-window; }\n    Mod+T { an-action-sysc-does-not-apply; }\n}\n", "touch "+marker)
 	if err := os.WriteFile(configPath, []byte(source), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -491,7 +490,7 @@ func TestValidateParsesConfigWithoutRunningStartup(t *testing.T) {
 	if strings.Contains(stderr.String(), "section `binds`") {
 		t.Errorf("validate warnings %q call the applied binds section unapplied", stderr.String())
 	}
-	if !strings.Contains(stderr.String(), "bind actions are accepted but not applied yet: toggle-debug-tint\n") {
+	if !strings.Contains(stderr.String(), "bind actions are accepted but not applied yet: an-action-sysc-does-not-apply\n") {
 		t.Errorf("validate warnings %q do not identify the unapplied bind action", stderr.String())
 	}
 }

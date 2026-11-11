@@ -149,7 +149,6 @@ type pointerSwipeState struct {
 	selector        wm.SwipeAxisSelector
 	output          string
 	workspaceID     uint64
-	actionApplied   bool
 	scrollRemainder float64
 }
 
@@ -187,6 +186,7 @@ func (g pointerGrab) resizeOptions() layout.ResizeOptions {
 }
 
 type toplevelView struct {
+	sizeRequest     resizeRequest
 	captureIdentity *captureIdentity
 	foreign         *foreignToplevel
 	toplevel        *C.struct_wlr_xdg_toplevel
@@ -204,6 +204,7 @@ type toplevelView struct {
 	cornerRadii             config.CornerRadius
 	clipToGeometry          bool
 	presentationOpacity     float64
+	ignoreRuleOpacity       bool
 	bobY                    int // the baba-is-float offset below the view's place
 	openAnimationStarted    bool
 	openAnimationFinished   bool
@@ -477,15 +478,15 @@ func (c *Compositor) handlePointerSwipeUpdate(device, data unsafe.Pointer) {
 	if c.model == nil {
 		return
 	}
+	timestamp := state.advanceGestureTime(uint32(event.time_msec))
 	if state.fingers == 4 {
-		timestamp := state.advanceGestureTime(uint32(event.time_msec))
 		if c.model.UpdateOverviewGesture(-float64(event.dy), timestamp) {
 			c.syncOverviewScene()
 		}
 		return
 	}
 	dx, dy := swipeDeltas(c.touchpadNaturalScroll(device), float64(event.dx), float64(event.dy))
-	c.workspaceSwipe(state, dx, dy)
+	c.workspaceSwipe(state, dx, dy, timestamp)
 }
 
 // aimWorkspaceSwipe points a 3-finger swipe at the output under the pointer,
@@ -500,8 +501,8 @@ func (c *Compositor) aimWorkspaceSwipe(state *pointerSwipeState) {
 
 // workspaceSwipe is the 3-finger swipe once its axis is chosen: a horizontal
 // swipe scrolls the view of the workspace it is aimed at, and a vertical one
-// switches the output's workspace once per gesture.
-func (c *Compositor) workspaceSwipe(state *pointerSwipeState, dx, dy float64) {
+// moves the output's workspaces with the fingers, as Niri's.
+func (c *Compositor) workspaceSwipe(state *pointerSwipeState, dx, dy float64, timestamp time.Duration) {
 	axis, delta, selected := state.selector.Add(dx, dy)
 	if !selected {
 		return
@@ -517,16 +518,12 @@ func (c *Compositor) workspaceSwipe(state *pointerSwipeState, dx, dy float64) {
 		}
 		return
 	}
-	if newAxis && !state.actionApplied {
-		direction := -1
-		if delta > 0 {
-			direction = 1
-		}
-		state.actionApplied = c.model.FocusWorkspaceByDelta(state.output, direction)
-		if state.actionApplied {
-			c.applyWorkspaceModel()
-			c.activateWorkspaceFocus()
-		}
+	if newAxis && !c.beginWorkspaceGesture(state.output) {
+		state.axis = wm.SwipeAxisNone
+		return
+	}
+	if state.axis == wm.SwipeAxisVertical {
+		c.updateWorkspaceGesture(delta, timestamp)
 	}
 }
 
@@ -543,6 +540,9 @@ func (c *Compositor) handlePointerSwipeEnd(device, data unsafe.Pointer) {
 		return
 	}
 	timestamp := state.advanceGestureTime(uint32(event.time_msec))
+	if state.fingers == 3 && state.axis == wm.SwipeAxisVertical {
+		c.endWorkspaceGesture(timestamp)
+	}
 	if state.fingers == 4 && c.model != nil {
 		from, to, velocity, ok := c.model.FinishOverviewGestureAnimation(timestamp)
 		if ok {
@@ -749,7 +749,7 @@ func (c *Compositor) handleCursorMotionAbsolute(data unsafe.Pointer) {
 }
 
 func (c *Compositor) processCursorMotion(time C.uint32_t) {
-	if c.pickColor != nil {
+	if c.pickColor != nil || c.pickWindow != nil {
 		C.wlr_seat_pointer_notify_clear_focus(c.seat)
 		c.showCursorImage("crosshair")
 		return
@@ -973,6 +973,9 @@ func (c *Compositor) deliverPointerButton(source unsafe.Pointer, timeMsec C.uint
 		C.wlr_seat_pointer_notify_frame(c.seat)
 		return
 	}
+	if c.pickWindowButton(button, pressed) {
+		return
+	}
 	if c.pickColorButton(button, pressed) {
 		return
 	}
@@ -1071,7 +1074,7 @@ func (c *Compositor) handleCursorAxis(data unsafe.Pointer) {
 	horizontal := event.orientation == C.WL_POINTER_AXIS_HORIZONTAL_SCROLL
 	factor := c.pointerScrollFactor(unsafe.Pointer(event.pointer), finger)
 	delta, v120 := scaleAxis(factor, horizontal, float64(event.delta), int32(event.delta_discrete))
-	if c.overviewScrollGesture(finger, horizontal, delta) ||
+	if c.overviewScrollGesture(finger, horizontal, delta, uint32(event.time_msec)) ||
 		c.scrollBinds(event.source == C.WL_POINTER_AXIS_SOURCE_WHEEL, finger,
 			horizontal, delta, v120) {
 		return
@@ -1095,26 +1098,37 @@ func (c *Compositor) handleCursorAxis(data unsafe.Pointer) {
 // wlroots axis event carries one orientation. A zero delta is libinput's
 // scroll stop and ends the gesture; so does any scroll outside these
 // conditions, which then goes on as usual.
-func (c *Compositor) overviewScrollGesture(finger, horizontal bool, delta float64) bool {
+func (c *Compositor) overviewScrollGesture(finger, horizontal bool, delta float64, timeMsec uint32) bool {
 	if !finger || c.model == nil || !c.model.OverviewOpen() || c.activeBindModifiers() != 0 ||
 		c.pointerOnLayerSurface() {
-		c.overviewScroll = nil
+		c.endOverviewScroll(timeMsec)
 		return false
 	}
 	if delta == 0 {
-		c.overviewScroll = nil
+		c.endOverviewScroll(timeMsec)
 		return true
 	}
 	if c.overviewScroll == nil {
-		c.overviewScroll = &pointerSwipeState{}
+		c.overviewScroll = &pointerSwipeState{lastTimeMsec: timeMsec}
 		c.aimWorkspaceSwipe(c.overviewScroll)
 	}
+	timestamp := c.overviewScroll.advanceGestureTime(timeMsec)
 	if horizontal {
-		c.workspaceSwipe(c.overviewScroll, delta, 0)
+		c.workspaceSwipe(c.overviewScroll, delta, 0, timestamp)
 	} else {
-		c.workspaceSwipe(c.overviewScroll, 0, delta)
+		c.workspaceSwipe(c.overviewScroll, 0, delta, timestamp)
 	}
 	return true
+}
+
+// endOverviewScroll ends the overview's scroll gesture; a vertical one
+// settles its workspace switch.
+func (c *Compositor) endOverviewScroll(timeMsec uint32) {
+	state := c.overviewScroll
+	c.overviewScroll = nil
+	if state != nil && state.axis == wm.SwipeAxisVertical {
+		c.endWorkspaceGesture(state.advanceGestureTime(timeMsec))
+	}
 }
 
 func (c *Compositor) handleCursorFrame(unsafe.Pointer) {
@@ -1131,7 +1145,7 @@ func (c *Compositor) overviewShown() bool {
 // A finger drives the last four through the pointer (touchDrivesUI); the
 // colour picker takes none, as Niri's does not.
 func (c *Compositor) modalUIOpen() bool {
-	return c.pickColor != nil || c.shotUI != nil || c.switcher.isOpen() || c.exitDialog.open ||
+	return c.pickColor != nil || c.pickWindow != nil || c.shotUI != nil || c.switcher.isOpen() || c.exitDialog.open ||
 		(c.model != nil && (c.model.OverviewProgress() > 0 || c.model.OverviewOpen()))
 }
 
@@ -1212,7 +1226,7 @@ func (c *Compositor) focusView(view *toplevelView) {
 	changed := c.focusedView != view
 	if changed {
 		if previous := c.focusedView; previous != nil && previous.toplevel != nil {
-			C.wlr_xdg_toplevel_set_activated(previous.toplevel, false)
+			C.wlr_xdg_toplevel_set_activated(previous.toplevel, C.bool(c.debugViewActivated(previous, false)))
 		}
 		c.focusedView = view
 		c.touch(view)
@@ -1311,9 +1325,7 @@ func (c *Compositor) updateKeyboardFocus() {
 	} else if focusedView != nil {
 		surface = focusedView.toplevel.base.surface
 	}
-	if c.focusedView != nil && c.focusedView.toplevel != nil {
-		C.wlr_xdg_toplevel_set_activated(c.focusedView.toplevel, focusedView == c.focusedView && focusedLayer == nil)
-	}
+	c.syncDebugActivations(focusedView, focusedLayer != nil)
 	if surface == nil {
 		C.wlr_seat_keyboard_notify_clear_focus(c.seat)
 		c.keyboardFocusChanged(previousFocusedView)
@@ -1464,6 +1476,7 @@ func (c *Compositor) handleNewToplevel(data unsafe.Pointer) {
 	c.nextViewID++
 	view := &toplevelView{toplevel: toplevel, tree: tree, id: c.nextViewID, presentationOpacity: 1}
 	c.views[unsafe.Pointer(toplevel)] = view
+	c.watchResizeRequests(view)
 	add := func(signal Signal, fn func(unsafe.Pointer)) {
 		listener := AddListener(signal, fn)
 		view.listeners = append(view.listeners, listener)
@@ -1488,6 +1501,7 @@ func (c *Compositor) handleNewToplevel(data unsafe.Pointer) {
 			return
 		}
 		C.wlr_xdg_toplevel_set_size(toplevel, 0, 0)
+		c.applyMaximizeRequest(view)
 	})
 	view.listeners = append(view.listeners, initialCommit)
 	c.keep(initialCommit)
@@ -1496,6 +1510,11 @@ func (c *Compositor) handleNewToplevel(data unsafe.Pointer) {
 	})
 	add(unsafe.Pointer(&toplevel.events.request_resize), func(data unsafe.Pointer) {
 		c.handleToplevelResize(view, data)
+	})
+	add(unsafe.Pointer(&toplevel.events.request_maximize), func(unsafe.Pointer) {
+		if bool(toplevel.base.initialized) {
+			c.applyMaximizeRequest(view)
+		}
 	})
 	// A request before the initial commit is answered by that commit's
 	// configure; one sent before then is a protocol error.
@@ -1517,6 +1536,7 @@ func (c *Compositor) handleNewToplevel(data unsafe.Pointer) {
 	// wlroots clears a seat's pointer focus when the surface is destroyed,
 	// never on unmap, and a destroyed toplevel unmaps first.
 	add(unsafe.Pointer(&toplevel.base.surface.events.unmap), func(unsafe.Pointer) {
+		c.forgetResizeRequest(view)
 		c.rememberCaptureNodes(view)
 		c.closeWindowCaptureSources(view)
 		if c.tiledMove != nil && c.tiledMove.view == view {
@@ -1602,6 +1622,15 @@ func (c *Compositor) handleNewToplevel(data unsafe.Pointer) {
 					c.mapWindowAfterUnmap(view, output, clientFullscreen)
 				}
 			}
+			if c.model != nil && !c.sessionLocked {
+				maximized := bool(toplevel.requested.maximized)
+				if rule := view.appearance.OpenMaximizedToEdges; rule != nil {
+					maximized = *rule
+				}
+				if maximized {
+					c.model.SetMaximized(view.id, true)
+				}
+			}
 			// Niri activates newly mapped windows (ActivateWindow::Smart); its
 			// dialog and activation-token heuristics come with M5. A rule with
 			// open-focused false keeps the focus where it is.
@@ -1624,6 +1653,9 @@ func (c *Compositor) handleNewToplevel(data unsafe.Pointer) {
 		c.notifyWindowStateChanged()
 		c.syncOverviewScene()
 		c.syncSwitcher()
+		if newlyMapped {
+			c.debugWindowMapped(view)
+		}
 		if newlyMapped && c.viewMapped != nil {
 			c.viewMapped(view)
 		}
@@ -1793,6 +1825,7 @@ func (c *Compositor) handleToplevelDestroy(view *toplevelView) {
 	if view == nil {
 		return
 	}
+	c.forgetResizeRequest(view)
 	c.closeWindowCaptureSources(view)
 	c.closeForeignToplevel(view)
 	c.cancelViewAnimations(view)
