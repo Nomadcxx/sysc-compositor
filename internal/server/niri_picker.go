@@ -8,8 +8,10 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// Observe peer shutdown without consuming bytes owned by the IPC scanner.
-// The duplicate keeps poll from observing a reused descriptor after Close.
+// Observe peer shutdown without consuming bytes owned by the IPC scanner,
+// for as long as one request waits. The duplicate keeps poll from observing a
+// reused descriptor after Close; it holds the socket open, so the watch must
+// end, within one poll, once the request does.
 func unixConnectionContext(connection *net.UnixConn) (context.Context, context.CancelFunc) {
 	ctx, cancel := context.WithCancel(context.Background())
 	file, err := connection.File()

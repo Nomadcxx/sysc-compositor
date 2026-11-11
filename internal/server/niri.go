@@ -44,7 +44,9 @@ func Version() string {
 // niriHandler answers the niri-ipc requests M2 builds; every other request
 // and action decodes and replies that it is not built yet.
 type niriHandler struct {
-	ctx              context.Context
+	// conn is the client's connection; a picker watches it for the client
+	// going away while it waits.
+	conn             *net.UnixConn
 	pickWindow       func(context.Context) (*ipc.Window, error)
 	pickColor        func(context.Context) ([3]float64, error)
 	screenTransition func(*uint16) error
@@ -325,9 +327,11 @@ func toNiriLayer(layer wlr.LayerSnapshot) ipc.LayerSurface {
 func (h niriHandler) handle(r ipc.Request) (ipc.Reply, func()) {
 	switch r.Name {
 	case "PickWindow", "PickColor":
-		ctx := h.ctx
-		if ctx == nil {
-			ctx = context.Background()
+		ctx := context.Background()
+		if h.conn != nil {
+			var cancel context.CancelFunc
+			ctx, cancel = unixConnectionContext(h.conn)
+			defer cancel()
 		}
 		if r.Name == "PickWindow" && h.pickWindow != nil {
 			window, err := h.pickWindow(ctx)
@@ -591,8 +595,6 @@ func asciiEqualFold(a, b string) bool {
 }
 
 func (h niriHandler) serve(c *net.UnixConn) {
-	ctx, cancel := unixConnectionContext(c)
-	defer cancel()
-	h.ctx = ctx
+	h.conn = c
 	ipc.ServeConnWithStream(c, h.handle, h.stream)
 }
