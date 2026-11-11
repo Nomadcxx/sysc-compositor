@@ -11,22 +11,42 @@ package wlr
 #include <wlr/types/wlr_xdg_shell.h>
 extern void sysc_listener_fire(uintptr_t token, void *data);
 struct sysc_debug_activation_request {
- struct wlr_xdg_activation_token_v1 *token;
- struct wl_client *client;
+	struct wlr_xdg_activation_token_v1 *token;
+	struct wl_client *client;
 };
-static void sysc_debug_activation_log(void *data, enum wl_protocol_logger_type direction,const struct wl_protocol_logger_message *message){
- if(direction!=WL_PROTOCOL_LOGGER_REQUEST || strcmp(wl_resource_get_class(message->resource),"xdg_activation_token_v1") || strcmp(message->message->name,"commit"))return;
- struct wlr_xdg_activation_token_v1 *token=wl_resource_get_user_data(message->resource);
- if(token==NULL)return;
- struct sysc_debug_activation_request request={token,wl_resource_get_client(message->resource)};
- sysc_listener_fire((uintptr_t)data,&request);
+static void sysc_debug_activation_log(void *data, enum wl_protocol_logger_type direction,
+		const struct wl_protocol_logger_message *message) {
+	if (direction != WL_PROTOCOL_LOGGER_REQUEST ||
+			strcmp(wl_resource_get_class(message->resource),
+					"xdg_activation_token_v1") ||
+			strcmp(message->message->name, "commit")) {
+		return;
+	}
+	struct wlr_xdg_activation_token_v1 *token = wl_resource_get_user_data(message->resource);
+	if (token == NULL) {
+		return;
+	}
+	struct sysc_debug_activation_request request = {
+			token, wl_resource_get_client(message->resource)};
+	sysc_listener_fire((uintptr_t)data, &request);
 }
-static struct wl_protocol_logger *sysc_debug_activation_logger(struct wl_display *display,uintptr_t token){return wl_display_add_protocol_logger(display,sysc_debug_activation_log,(void*)token);}
-static bool sysc_debug_activation_valid_serial(struct wlr_xdg_activation_token_v1 *token,struct wl_client *client){
- if(token->seat==NULL)return false;
- struct wlr_seat_client *seat=wlr_seat_client_for_wl_client(token->seat,client);
- return seat!=NULL && wlr_seat_client_validate_event_serial(seat,token->serial) &&
-  (token->surface==NULL || token->surface==token->seat->keyboard_state.focused_surface || token->surface==token->seat->pointer_state.focused_surface);
+static struct wl_protocol_logger *sysc_debug_activation_logger(
+		struct wl_display *display, uintptr_t token) {
+	return wl_display_add_protocol_logger(display, sysc_debug_activation_log, (void *)token);
+}
+static bool sysc_debug_activation_valid_serial(
+		struct wlr_xdg_activation_token_v1 *token, struct wl_client *client) {
+	if (token->seat == NULL) {
+		return false;
+	}
+	struct wlr_seat_client *seat = wlr_seat_client_for_wl_client(token->seat, client);
+	return seat != NULL && wlr_seat_client_validate_event_serial(seat, token->serial) &&
+			(token->surface == NULL ||
+					token->surface ==
+							token->seat->keyboard_state
+									.focused_surface ||
+					token->surface ==
+							token->seat->pointer_state.focused_surface);
 }
 */
 import "C"

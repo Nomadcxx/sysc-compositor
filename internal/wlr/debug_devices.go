@@ -10,17 +10,30 @@ package wlr
 #include <wlr/backend/session.h>
 #include <scenefx/render/fx_renderer/fx_renderer.h>
 
-struct sysc_debug_backend_list { struct wlr_backend **items; size_t count; };
+struct sysc_debug_backend_list {
+	struct wlr_backend **items;
+	size_t count;
+};
 static void sysc_debug_backend_collect(struct wlr_backend *backend, void *data) {
- struct sysc_debug_backend_list *list=data;
- if(wlr_backend_is_multi(backend)) {wlr_multi_for_each_backend(backend,sysc_debug_backend_collect,data);return;}
- if(!wlr_backend_is_drm(backend)) return;
- struct wlr_backend **items=realloc(list->items,(list->count+1)*sizeof(*items));
- if(items==NULL) return;
- list->items=items;list->items[list->count++]=backend;
+	struct sysc_debug_backend_list *list = data;
+	if (wlr_backend_is_multi(backend)) {
+		wlr_multi_for_each_backend(backend, sysc_debug_backend_collect, data);
+		return;
+	}
+	if (!wlr_backend_is_drm(backend)) {
+		return;
+	}
+	struct wlr_backend **items = realloc(list->items, (list->count + 1) * sizeof(*items));
+	if (items == NULL) {
+		return;
+	}
+	list->items = items;
+	list->items[list->count++] = backend;
 }
 static struct sysc_debug_backend_list sysc_debug_backend_list(struct wlr_backend *backend) {
- struct sysc_debug_backend_list list={0};sysc_debug_backend_collect(backend,&list);return list;
+	struct sysc_debug_backend_list list = {0};
+	sysc_debug_backend_collect(backend, &list);
+	return list;
 }
 */
 import "C"

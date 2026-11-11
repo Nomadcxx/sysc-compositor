@@ -6,13 +6,16 @@ package wlr
 #include <wlr/types/wlr_compositor.h>
 #include <wlr/types/wlr_xdg_shell.h>
 static uint32_t sysc_resize_state(struct wlr_xdg_toplevel *toplevel) {
- struct wlr_xdg_toplevel_configure *s=&toplevel->scheduled;
- return s->tiled | s->constrained<<4 | s->maximized<<8 | s->fullscreen<<9 |
-  s->resizing<<10 | s->activated<<11 | s->suspended<<12;
+	struct wlr_xdg_toplevel_configure *s = &toplevel->scheduled;
+	return s->tiled | s->constrained << 4 | s->maximized << 8 | s->fullscreen << 9 |
+			s->resizing << 10 | s->activated << 11 | s->suspended << 12;
 }
-static bool sysc_resize_serial_reached(uint32_t current,uint32_t target){return (int32_t)(current-target)>=0;}
-static bool sysc_resize_unmapping(struct wlr_surface *surface){
- return (surface->pending.committed&WLR_SURFACE_STATE_BUFFER)&&surface->pending.buffer==NULL;
+static bool sysc_resize_serial_reached(uint32_t current, uint32_t target) {
+	return (int32_t)(current - target) >= 0;
+}
+static bool sysc_resize_unmapping(struct wlr_surface *surface) {
+	return (surface->pending.committed & WLR_SURFACE_STATE_BUFFER) &&
+			surface->pending.buffer == NULL;
 }
 */
 import "C"

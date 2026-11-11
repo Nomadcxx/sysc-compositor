@@ -4,10 +4,11 @@ package wlr
 #cgo pkg-config: wlroots-0.20 wayland-server scenefx-0.5
 #cgo CFLAGS: -DWLR_USE_UNSTABLE
 #include <scenefx/types/wlr_scene.h>
-static void sysc_shot_mask_source(struct wlr_scene_buffer *node, double x, double y, double width, double height) {
- struct wlr_fbox box={.x=x,.y=y,.width=width,.height=height};
- wlr_scene_buffer_set_source_box(node,&box);
- wlr_scene_buffer_set_filter_mode(node,WLR_SCALE_FILTER_NEAREST);
+static void sysc_shot_mask_source(
+		struct wlr_scene_buffer *node, double x, double y, double width, double height) {
+	struct wlr_fbox box = {.x = x, .y = y, .width = width, .height = height};
+	wlr_scene_buffer_set_source_box(node, &box);
+	wlr_scene_buffer_set_filter_mode(node, WLR_SCALE_FILTER_NEAREST);
 }
 */
 import "C"

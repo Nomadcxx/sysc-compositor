@@ -415,13 +415,6 @@ func (c *Compositor) handleActivationRequest(data unsafe.Pointer) {
 	c.applyDebugActivation(event.token, event.surface)
 }
 
-func (c *Compositor) applyActivationRequest(view *toplevelView, hasSerial bool) bool {
-	if c.model == nil || view == nil || !view.mapped || hasSerial {
-		return false
-	}
-	return c.SetWindowUrgent(view.id, true)
-}
-
 // fullscreenState is a view's acknowledged fullscreen state and window
 // geometry in layout coordinates, for tests.
 func (c *Compositor) fullscreenState(view *toplevelView) (bool, rect) {

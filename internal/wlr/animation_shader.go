@@ -20,281 +20,453 @@ package wlr
 #include <wlr/types/wlr_compositor.h>
 #include <wlr/util/transform.h>
 
-
 // SceneFX 0.5's installed render/pass.h references uninstalled private headers.
 // These declarations are its public add-texture/rect/shadow ABI; no private
 // render-pass fields are accessed.
 struct fx_gles_render_pass;
-struct sysc_float_radii { float top_left, top_right, bottom_right, bottom_left; };
-struct sysc_float_clip { struct wlr_fbox area; struct sysc_float_radii corners; };
+struct sysc_float_radii {
+	float top_left, top_right, bottom_right, bottom_left;
+};
+struct sysc_float_clip {
+	struct wlr_fbox area;
+	struct sysc_float_radii corners;
+};
 struct sysc_fx_texture_options {
- struct wlr_render_texture_options base;
- const struct wlr_box *clip_box;
- struct sysc_float_radii corners;
- bool discard_transparent;
- struct sysc_float_clip clipped_region;
+	struct wlr_render_texture_options base;
+	const struct wlr_box *clip_box;
+	struct sysc_float_radii corners;
+	bool discard_transparent;
+	struct sysc_float_clip clipped_region;
 };
 struct sysc_fx_rect_options {
- struct wlr_render_rect_options base;
- struct sysc_float_radii corners;
- struct sysc_float_clip clipped_region;
+	struct wlr_render_rect_options base;
+	struct sysc_float_radii corners;
+	struct sysc_float_clip clipped_region;
 };
 struct sysc_fx_shadow_options {
- struct wlr_box box;
- struct sysc_float_clip clipped_region;
- const pixman_region32_t *clip;
- float blur_sigma;
- int corner_radius;
- struct wlr_render_color color;
+	struct wlr_box box;
+	struct sysc_float_clip clipped_region;
+	const pixman_region32_t *clip;
+	float blur_sigma;
+	int corner_radius;
+	struct wlr_render_color color;
 };
 struct fx_gles_render_pass *fx_get_render_pass(struct wlr_render_pass *);
-void fx_render_pass_add_texture(struct fx_gles_render_pass *, const struct sysc_fx_texture_options *);
-void fx_render_pass_add_rounded_rect(struct fx_gles_render_pass *, const struct sysc_fx_rect_options *);
-void fx_render_pass_add_box_shadow(struct fx_gles_render_pass *, const struct sysc_fx_shadow_options *);
-static struct sysc_float_radii sysc_animation_radii(struct fx_corner_radii radii,double scale) {
- return (struct sysc_float_radii){radii.top_left*scale,radii.top_right*scale,radii.bottom_right*scale,radii.bottom_left*scale};
+void fx_render_pass_add_texture(
+		struct fx_gles_render_pass *, const struct sysc_fx_texture_options *);
+void fx_render_pass_add_rounded_rect(
+		struct fx_gles_render_pass *, const struct sysc_fx_rect_options *);
+void fx_render_pass_add_box_shadow(
+		struct fx_gles_render_pass *, const struct sysc_fx_shadow_options *);
+static struct sysc_float_radii sysc_animation_radii(struct fx_corner_radii radii, double scale) {
+	return (struct sysc_float_radii){radii.top_left * scale, radii.top_right * scale,
+			radii.bottom_right * scale, radii.bottom_left * scale};
 }
-static struct sysc_float_clip sysc_animation_clip(struct clipped_region clip,int x,int y,double scale) {
- return (struct sysc_float_clip){
-  .area={.x=(x+clip.area.x)*scale,.y=(y+clip.area.y)*scale,.width=clip.area.width*scale,.height=clip.area.height*scale},
-  .corners=sysc_animation_radii(clip.corners,scale),
- };
+static struct sysc_float_clip sysc_animation_clip(
+		struct clipped_region clip, int x, int y, double scale) {
+	return (struct sysc_float_clip){
+			.area = {.x = (x + clip.area.x) * scale,
+					.y = (y + clip.area.y) * scale,
+					.width = clip.area.width * scale,
+					.height = clip.area.height * scale},
+			.corners = sysc_animation_radii(clip.corners, scale),
+	};
 }
-static void sysc_animation_flatten_node(struct wlr_scene_node *node,struct wlr_render_pass *pass,
- struct wlr_renderer *renderer,int x,int y,double scale,bool root) {
- if(!root && !node->enabled)return;
- x+=node->x;y+=node->y;
- struct fx_gles_render_pass *fx=fx_get_render_pass(pass);
- switch(node->type) {
- case WLR_SCENE_NODE_TREE: {
-  struct wlr_scene_tree *tree=wlr_scene_tree_from_node(node);
-  struct wlr_scene_node *child;
-  wl_list_for_each(child,&tree->children,link)sysc_animation_flatten_node(child,pass,renderer,x,y,scale,false);
-  break;
- }
- case WLR_SCENE_NODE_BUFFER: {
-  struct wlr_scene_buffer *scene=wlr_scene_buffer_from_node(node);
-  struct wlr_texture *texture=NULL;
-  bool imported=false;
-  if(scene->buffer!=NULL) {
-   struct wlr_client_buffer *client=wlr_client_buffer_get(scene->buffer);
-   texture=client ? client->texture:wlr_texture_from_buffer(renderer,scene->buffer);
-   imported=client==NULL;
-  }
-  if(texture==NULL)texture=scene->WLR_PRIVATE.texture;
-  if(texture==NULL)break;
-  int w=scene->dst_width,h=scene->dst_height;
-  if(w==0||h==0) {w=texture->width;h=texture->height;if(scene->transform&1){int swap=w;w=h;h=swap;}}
-  struct wlr_box dst={.x=lround(x*scale),.y=lround(y*scale),.width=lround(w*scale),.height=lround(h*scale)};
-  struct fx_corner_radii radii=scene->corners;
-  enum wl_output_transform transform=wlr_output_transform_invert(scene->transform);
-  fx_corner_radii_transform(transform,&radii);
-  struct sysc_fx_texture_options options={
-   .base={.texture=texture,.src_box=scene->src_box,.dst_box=dst,.transform=transform,
-    .alpha=&scene->opacity,.filter_mode=scene->filter_mode,.blend_mode=WLR_RENDER_BLEND_MODE_PREMULTIPLIED,
-    .wait_timeline=scene->WLR_PRIVATE.wait_timeline,.wait_point=scene->WLR_PRIVATE.wait_point},
-   .clip_box=&dst,.corners=sysc_animation_radii(radii,scale),
-  };
-  fx_render_pass_add_texture(fx,&options);
-  if(imported)wlr_texture_destroy(texture);
-  break;
- }
- case WLR_SCENE_NODE_RECT: {
-  struct wlr_scene_rect *rect=wlr_scene_rect_from_node(node);
-  struct sysc_fx_rect_options options={
-   .base={.box={lround(x*scale),lround(y*scale),lround(rect->width*scale),lround(rect->height*scale)},
-    .color={rect->color[0],rect->color[1],rect->color[2],rect->color[3]},.blend_mode=WLR_RENDER_BLEND_MODE_PREMULTIPLIED},
-   .corners=sysc_animation_radii(rect->corners,scale),.clipped_region=sysc_animation_clip(rect->clipped_region,x,y,scale),
-  };
-  fx_render_pass_add_rounded_rect(fx,&options);
-  break;
- }
- case WLR_SCENE_NODE_SHADOW: {
-  struct wlr_scene_shadow *shadow=wlr_scene_shadow_from_node(node);
-  struct sysc_fx_shadow_options options={
-   .box={lround(x*scale),lround(y*scale),lround(shadow->width*scale),lround(shadow->height*scale)},
-   .clipped_region=sysc_animation_clip(shadow->clipped_region,x,y,scale),
-   .blur_sigma=shadow->blur_sigma*scale,.corner_radius=lround(shadow->corner_radius*scale),
-   .color={shadow->color[0],shadow->color[1],shadow->color[2],shadow->color[3]},
-  };
-  fx_render_pass_add_box_shadow(fx,&options);
-  break;
- }
- default:break;
- }
+static void sysc_animation_flatten_node(struct wlr_scene_node *node, struct wlr_render_pass *pass,
+		struct wlr_renderer *renderer, int x, int y, double scale, bool root) {
+	if (!root && !node->enabled) {
+		return;
+	}
+	x += node->x;
+	y += node->y;
+	struct fx_gles_render_pass *fx = fx_get_render_pass(pass);
+	switch (node->type) {
+	case WLR_SCENE_NODE_TREE: {
+		struct wlr_scene_tree *tree = wlr_scene_tree_from_node(node);
+		struct wlr_scene_node *child;
+		wl_list_for_each(child, &tree->children, link) sysc_animation_flatten_node(
+				child, pass, renderer, x, y, scale, false);
+		break;
+	}
+	case WLR_SCENE_NODE_BUFFER: {
+		struct wlr_scene_buffer *scene = wlr_scene_buffer_from_node(node);
+		struct wlr_texture *texture = NULL;
+		bool imported = false;
+		if (scene->buffer != NULL) {
+			struct wlr_client_buffer *client = wlr_client_buffer_get(scene->buffer);
+			texture = client ? client->texture
+					 : wlr_texture_from_buffer(renderer, scene->buffer);
+			imported = client == NULL;
+		}
+		if (texture == NULL) {
+			texture = scene->WLR_PRIVATE.texture;
+		}
+		if (texture == NULL) {
+			break;
+		}
+		int w = scene->dst_width, h = scene->dst_height;
+		if (w == 0 || h == 0) {
+			w = texture->width;
+			h = texture->height;
+			if (scene->transform & 1) {
+				int swap = w;
+				w = h;
+				h = swap;
+			}
+		}
+		struct wlr_box dst = {.x = lround(x * scale),
+				.y = lround(y * scale),
+				.width = lround(w * scale),
+				.height = lround(h * scale)};
+		struct fx_corner_radii radii = scene->corners;
+		enum wl_output_transform transform = wlr_output_transform_invert(scene->transform);
+		fx_corner_radii_transform(transform, &radii);
+		struct sysc_fx_texture_options options = {
+				.base = {.texture = texture,
+						.src_box = scene->src_box,
+						.dst_box = dst,
+						.transform = transform,
+						.alpha = &scene->opacity,
+						.filter_mode = scene->filter_mode,
+						.blend_mode = WLR_RENDER_BLEND_MODE_PREMULTIPLIED,
+						.wait_timeline = scene->WLR_PRIVATE.wait_timeline,
+						.wait_point = scene->WLR_PRIVATE.wait_point},
+				.clip_box = &dst,
+				.corners = sysc_animation_radii(radii, scale),
+		};
+		fx_render_pass_add_texture(fx, &options);
+		if (imported) {
+			wlr_texture_destroy(texture);
+		}
+		break;
+	}
+	case WLR_SCENE_NODE_RECT: {
+		struct wlr_scene_rect *rect = wlr_scene_rect_from_node(node);
+		struct sysc_fx_rect_options options = {
+				.base = {.box = {lround(x * scale), lround(y * scale),
+							 lround(rect->width * scale),
+							 lround(rect->height * scale)},
+						.color = {rect->color[0], rect->color[1],
+								rect->color[2], rect->color[3]},
+						.blend_mode = WLR_RENDER_BLEND_MODE_PREMULTIPLIED},
+				.corners = sysc_animation_radii(rect->corners, scale),
+				.clipped_region = sysc_animation_clip(
+						rect->clipped_region, x, y, scale),
+		};
+		fx_render_pass_add_rounded_rect(fx, &options);
+		break;
+	}
+	case WLR_SCENE_NODE_SHADOW: {
+		struct wlr_scene_shadow *shadow = wlr_scene_shadow_from_node(node);
+		struct sysc_fx_shadow_options options = {
+				.box = {lround(x * scale), lround(y * scale),
+						lround(shadow->width * scale),
+						lround(shadow->height * scale)},
+				.clipped_region = sysc_animation_clip(
+						shadow->clipped_region, x, y, scale),
+				.blur_sigma = shadow->blur_sigma * scale,
+				.corner_radius = lround(shadow->corner_radius * scale),
+				.color = {shadow->color[0], shadow->color[1], shadow->color[2],
+						shadow->color[3]},
+		};
+		fx_render_pass_add_box_shadow(fx, &options);
+		break;
+	}
+	default:
+		break;
+	}
 }
-static bool sysc_animation_flatten(struct wlr_renderer *renderer,struct wlr_buffer *dst,
- struct wlr_scene_node *node,int x,int y,double scale,bool local) {
- struct wlr_render_pass *pass=wlr_renderer_begin_buffer_pass(renderer,dst,NULL);
- if(pass==NULL)return false;
- wlr_render_pass_add_rect(pass,&(struct wlr_render_rect_options){.box={0,0,dst->width,dst->height},.blend_mode=WLR_RENDER_BLEND_MODE_NONE});
- if(local){x-=node->x;y-=node->y;}
- sysc_animation_flatten_node(node,pass,renderer,x,y,scale,true);
- return wlr_render_pass_submit(pass);
+static bool sysc_animation_flatten(struct wlr_renderer *renderer, struct wlr_buffer *dst,
+		struct wlr_scene_node *node, int x, int y, double scale, bool local) {
+	struct wlr_render_pass *pass = wlr_renderer_begin_buffer_pass(renderer, dst, NULL);
+	if (pass == NULL) {
+		return false;
+	}
+	wlr_render_pass_add_rect(pass,
+			&(struct wlr_render_rect_options){.box = {0, 0, dst->width, dst->height},
+					.blend_mode = WLR_RENDER_BLEND_MODE_NONE});
+	if (local) {
+		x -= node->x;
+		y -= node->y;
+	}
+	sysc_animation_flatten_node(node, pass, renderer, x, y, scale, true);
+	return wlr_render_pass_submit(pass);
 }
 
-static void sysc_animation_bounds(struct wlr_scene_node *node,int x,int y,struct wlr_box *box,bool *found,bool root) {
- if(!root&&!node->enabled)return;
- x+=node->x;y+=node->y;
- if(node->type==WLR_SCENE_NODE_TREE) {
-  struct wlr_scene_tree *tree=wlr_scene_tree_from_node(node);struct wlr_scene_node *child;
-  wl_list_for_each(child,&tree->children,link)sysc_animation_bounds(child,x,y,box,found,false);
-  return;
- }
- int w=0,h=0;
- if(node->type==WLR_SCENE_NODE_BUFFER) {
-  struct wlr_scene_buffer *buffer=wlr_scene_buffer_from_node(node);w=buffer->dst_width;h=buffer->dst_height;
-  if(w==0||h==0) {w=buffer->WLR_PRIVATE.buffer_width;h=buffer->WLR_PRIVATE.buffer_height;if(buffer->transform&1){int swap=w;w=h;h=swap;}}
- } else if(node->type==WLR_SCENE_NODE_RECT) {struct wlr_scene_rect *rect=wlr_scene_rect_from_node(node);w=rect->width;h=rect->height;}
- else if(node->type==WLR_SCENE_NODE_SHADOW) {struct wlr_scene_shadow *shadow=wlr_scene_shadow_from_node(node);w=shadow->width;h=shadow->height;}
- if(w<=0||h<=0)return;
- if(!*found) {*box=(struct wlr_box){x,y,w,h};*found=true;return;}
- int x1=box->x+box->width,y1=box->y+box->height;
- box->x=box->x<x?box->x:x;box->y=box->y<y?box->y:y;
- box->width=(x1>x+w?x1:x+w)-box->x;box->height=(y1>y+h?y1:y+h)-box->y;
+static void sysc_animation_bounds(struct wlr_scene_node *node, int x, int y, struct wlr_box *box,
+		bool *found, bool root) {
+	if (!root && !node->enabled) {
+		return;
+	}
+	x += node->x;
+	y += node->y;
+	if (node->type == WLR_SCENE_NODE_TREE) {
+		struct wlr_scene_tree *tree = wlr_scene_tree_from_node(node);
+		struct wlr_scene_node *child;
+		wl_list_for_each(child, &tree->children, link)
+				sysc_animation_bounds(child, x, y, box, found, false);
+		return;
+	}
+	int w = 0, h = 0;
+	if (node->type == WLR_SCENE_NODE_BUFFER) {
+		struct wlr_scene_buffer *buffer = wlr_scene_buffer_from_node(node);
+		w = buffer->dst_width;
+		h = buffer->dst_height;
+		if (w == 0 || h == 0) {
+			w = buffer->WLR_PRIVATE.buffer_width;
+			h = buffer->WLR_PRIVATE.buffer_height;
+			if (buffer->transform & 1) {
+				int swap = w;
+				w = h;
+				h = swap;
+			}
+		}
+	} else if (node->type == WLR_SCENE_NODE_RECT) {
+		struct wlr_scene_rect *rect = wlr_scene_rect_from_node(node);
+		w = rect->width;
+		h = rect->height;
+	} else if (node->type == WLR_SCENE_NODE_SHADOW) {
+		struct wlr_scene_shadow *shadow = wlr_scene_shadow_from_node(node);
+		w = shadow->width;
+		h = shadow->height;
+	}
+	if (w <= 0 || h <= 0) {
+		return;
+	}
+	if (!*found) {
+		*box = (struct wlr_box){x, y, w, h};
+		*found = true;
+		return;
+	}
+	int x1 = box->x + box->width, y1 = box->y + box->height;
+	box->x = box->x < x ? box->x : x;
+	box->y = box->y < y ? box->y : y;
+	box->width = (x1 > x + w ? x1 : x + w) - box->x;
+	box->height = (y1 > y + h ? y1 : y + h) - box->y;
 }
-static struct wlr_box sysc_animation_roots_bounds(struct wlr_scene_node **nodes,size_t count) {
- struct wlr_box box={0};bool found=false;
- for(size_t i=0;i<count;i++) {
-  int x=0,y=0;
-  for(struct wlr_scene_node *parent=(struct wlr_scene_node *)nodes[i]->parent;parent!=NULL;parent=(struct wlr_scene_node *)parent->parent){x+=parent->x;y+=parent->y;}
-  sysc_animation_bounds(nodes[i],x,y,&box,&found,true);
- }
- return box;
+static struct wlr_box sysc_animation_roots_bounds(struct wlr_scene_node **nodes, size_t count) {
+	struct wlr_box box = {0};
+	bool found = false;
+	for (size_t i = 0; i < count; i++) {
+		int x = 0, y = 0;
+		for (struct wlr_scene_node *parent = (struct wlr_scene_node *)nodes[i]->parent;
+				parent != NULL; parent = (struct wlr_scene_node *)parent->parent) {
+			x += parent->x;
+			y += parent->y;
+		}
+		sysc_animation_bounds(nodes[i], x, y, &box, &found, true);
+	}
+	return box;
 }
-static bool sysc_animation_flatten_roots(struct wlr_renderer *renderer,struct wlr_buffer *dst,
- struct wlr_scene_node **nodes,size_t count,int ox,int oy,double scale) {
- struct wlr_render_pass *pass=wlr_renderer_begin_buffer_pass(renderer,dst,NULL);
- if(pass==NULL)return false;
- wlr_render_pass_add_rect(pass,&(struct wlr_render_rect_options){.box={0,0,dst->width,dst->height},.blend_mode=WLR_RENDER_BLEND_MODE_NONE});
- for(size_t i=0;i<count;i++) {
-  int x=-ox,y=-oy;
-  for(struct wlr_scene_node *parent=(struct wlr_scene_node *)nodes[i]->parent;parent!=NULL;parent=(struct wlr_scene_node *)parent->parent){x+=parent->x;y+=parent->y;}
-  sysc_animation_flatten_node(nodes[i],pass,renderer,x,y,scale,true);
- }
- return wlr_render_pass_submit(pass);
+static bool sysc_animation_flatten_roots(struct wlr_renderer *renderer, struct wlr_buffer *dst,
+		struct wlr_scene_node **nodes, size_t count, int ox, int oy, double scale) {
+	struct wlr_render_pass *pass = wlr_renderer_begin_buffer_pass(renderer, dst, NULL);
+	if (pass == NULL) {
+		return false;
+	}
+	wlr_render_pass_add_rect(pass,
+			&(struct wlr_render_rect_options){.box = {0, 0, dst->width, dst->height},
+					.blend_mode = WLR_RENDER_BLEND_MODE_NONE});
+	for (size_t i = 0; i < count; i++) {
+		int x = -ox, y = -oy;
+		for (struct wlr_scene_node *parent = (struct wlr_scene_node *)nodes[i]->parent;
+				parent != NULL; parent = (struct wlr_scene_node *)parent->parent) {
+			x += parent->x;
+			y += parent->y;
+		}
+		sysc_animation_flatten_node(nodes[i], pass, renderer, x, y, scale, true);
+	}
+	return wlr_render_pass_submit(pass);
 }
 
-static void sysc_animation_set_buffer(struct wlr_scene_buffer *node,struct wlr_buffer *buffer,int x,int y,int width,int height) {
- wlr_scene_buffer_set_buffer(node,buffer);
- wlr_scene_buffer_set_dest_size(node,width,height);
- wlr_scene_node_set_position(&node->node,x,y);
+static void sysc_animation_set_buffer(struct wlr_scene_buffer *node, struct wlr_buffer *buffer,
+		int x, int y, int width, int height) {
+	wlr_scene_buffer_set_buffer(node, buffer);
+	wlr_scene_buffer_set_dest_size(node, width, height);
+	wlr_scene_node_set_position(&node->node, x, y);
 }
 
 static struct wlr_buffer *sysc_animation_buffer(struct wlr_renderer *renderer,
-        struct wlr_allocator *allocator, int width, int height) {
- const struct wlr_drm_format_set *formats = renderer->WLR_PRIVATE.impl->get_render_formats(renderer);
- const struct wlr_drm_format *format = wlr_drm_format_set_get(formats,DRM_FORMAT_ARGB8888);
- if (format == NULL) return NULL;
- return wlr_allocator_create_buffer(allocator,width,height,format);
+		struct wlr_allocator *allocator, int width, int height) {
+	const struct wlr_drm_format_set *formats =
+			renderer->WLR_PRIVATE.impl->get_render_formats(renderer);
+	const struct wlr_drm_format *format = wlr_drm_format_set_get(formats, DRM_FORMAT_ARGB8888);
+	if (format == NULL) {
+		return NULL;
+	}
+	return wlr_allocator_create_buffer(allocator, width, height, format);
 }
 
-static GLuint sysc_animation_compile_stage(GLenum type, const char *source, char *error, size_t error_size) {
- GLuint shader=glCreateShader(type);
- glShaderSource(shader,1,&source,NULL);glCompileShader(shader);
- GLint ok=0;glGetShaderiv(shader,GL_COMPILE_STATUS,&ok);
- if (!ok) { glGetShaderInfoLog(shader,error_size,NULL,error);glDeleteShader(shader);return 0; }
- return shader;
+static GLuint sysc_animation_compile_stage(
+		GLenum type, const char *source, char *error, size_t error_size) {
+	GLuint shader = glCreateShader(type);
+	glShaderSource(shader, 1, &source, NULL);
+	glCompileShader(shader);
+	GLint ok = 0;
+	glGetShaderiv(shader, GL_COMPILE_STATUS, &ok);
+	if (!ok) {
+		glGetShaderInfoLog(shader, error_size, NULL, error);
+		glDeleteShader(shader);
+		return 0;
+	}
+	return shader;
 }
 
 // A SceneFX pass owns the EGL context until submit. All GL calls stay inside
 // that scope, including compilation/deletion outside a physical output frame.
-static GLuint sysc_animation_compile(struct wlr_renderer *renderer,
-        struct wlr_buffer *scratch, const char *vertex, const char *fragment, char *error, size_t error_size) {
- struct wlr_render_pass *pass=wlr_renderer_begin_buffer_pass(renderer,scratch,NULL);
- if (pass==NULL) { snprintf(error,error_size,"could not begin compiler render pass");return 0; }
- GLuint vs=sysc_animation_compile_stage(GL_VERTEX_SHADER,vertex,error,error_size);
- GLuint fs=vs ? sysc_animation_compile_stage(GL_FRAGMENT_SHADER,fragment,error,error_size) : 0;
- GLuint program=0;
- if (vs && fs) {
-  program=glCreateProgram();glAttachShader(program,vs);glAttachShader(program,fs);glLinkProgram(program);
-  GLint ok=0;glGetProgramiv(program,GL_LINK_STATUS,&ok);
-  if (!ok) { glGetProgramInfoLog(program,error_size,NULL,error);glDeleteProgram(program);program=0; }
- }
- if (vs) glDeleteShader(vs);
- if (fs) glDeleteShader(fs);
- wlr_render_pass_submit(pass);
- return program;
+static GLuint sysc_animation_compile(struct wlr_renderer *renderer, struct wlr_buffer *scratch,
+		const char *vertex, const char *fragment, char *error, size_t error_size) {
+	struct wlr_render_pass *pass = wlr_renderer_begin_buffer_pass(renderer, scratch, NULL);
+	if (pass == NULL) {
+		snprintf(error, error_size, "could not begin compiler render pass");
+		return 0;
+	}
+	GLuint vs = sysc_animation_compile_stage(GL_VERTEX_SHADER, vertex, error, error_size);
+	GLuint fs = vs ? sysc_animation_compile_stage(
+					 GL_FRAGMENT_SHADER, fragment, error, error_size)
+		       : 0;
+	GLuint program = 0;
+	if (vs && fs) {
+		program = glCreateProgram();
+		glAttachShader(program, vs);
+		glAttachShader(program, fs);
+		glLinkProgram(program);
+		GLint ok = 0;
+		glGetProgramiv(program, GL_LINK_STATUS, &ok);
+		if (!ok) {
+			glGetProgramInfoLog(program, error_size, NULL, error);
+			glDeleteProgram(program);
+			program = 0;
+		}
+	}
+	if (vs) {
+		glDeleteShader(vs);
+	}
+	if (fs) {
+		glDeleteShader(fs);
+	}
+	wlr_render_pass_submit(pass);
+	return program;
 }
 
-static void sysc_animation_delete_program(struct wlr_renderer *renderer, struct wlr_buffer *scratch, GLuint program) {
- struct wlr_render_pass *pass=wlr_renderer_begin_buffer_pass(renderer,scratch,NULL);
- if (pass==NULL) return;
- glDeleteProgram(program);
- wlr_render_pass_submit(pass);
+static void sysc_animation_delete_program(
+		struct wlr_renderer *renderer, struct wlr_buffer *scratch, GLuint program) {
+	struct wlr_render_pass *pass = wlr_renderer_begin_buffer_pass(renderer, scratch, NULL);
+	if (pass == NULL) {
+		return;
+	}
+	glDeleteProgram(program);
+	wlr_render_pass_submit(pass);
 }
 
 struct sysc_animation_uniforms {
- float size[2], geo_size[2], progress, clamped_progress, random_seed, alpha, scale;
- float input_to_geo[9], geo_to_tex[9];
- float curr_to_prev[9],curr_to_next[9],geo_to_prev[9],geo_to_next[9];
- float corner_radius[4], clip_to_geometry;
+	float size[2], geo_size[2], progress, clamped_progress, random_seed, alpha, scale;
+	float input_to_geo[9], geo_to_tex[9];
+	float curr_to_prev[9], curr_to_next[9], geo_to_prev[9], geo_to_next[9];
+	float corner_radius[4], clip_to_geometry;
 };
-static void sysc_animation_mat(GLuint program,const char *name,const float *matrix) {
- glUniformMatrix3fv(glGetUniformLocation(program,name),1,GL_FALSE,matrix);
+static void sysc_animation_mat(GLuint program, const char *name, const float *matrix) {
+	glUniformMatrix3fv(glGetUniformLocation(program, name), 1, GL_FALSE, matrix);
 }
-static void sysc_animation_float(GLuint program,const char *name,float value) {
- glUniform1f(glGetUniformLocation(program,name),value);
+static void sysc_animation_float(GLuint program, const char *name, float value) {
+	glUniform1f(glGetUniformLocation(program, name), value);
 }
-static void sysc_animation_vec2(GLuint program,const char *name,const float *value) {
- glUniform2fv(glGetUniformLocation(program,name),1,value);
+static void sysc_animation_vec2(GLuint program, const char *name, const float *value) {
+	glUniform2fv(glGetUniformLocation(program, name), 1, value);
 }
 // A texture GL has never filtered keeps the mipmapped default minification
 // filter and is incomplete without mipmaps, so every sample reads black.
 static void sysc_animation_sampling(void) {
- glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR);
- glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR);
- glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);
- glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 }
 static bool sysc_animation_render(struct wlr_renderer *renderer, GLuint program,
-        struct wlr_buffer *dst,struct wlr_buffer *previous,struct wlr_buffer *next,
-        const struct sysc_animation_uniforms *u) {
- struct wlr_texture *prev=wlr_texture_from_buffer(renderer,previous);
- struct wlr_texture *after=next ? wlr_texture_from_buffer(renderer,next) : NULL;
- if (prev==NULL || (next && after==NULL)) { if(prev)wlr_texture_destroy(prev);if(after)wlr_texture_destroy(after);return false; }
- struct fx_texture_attribs prev_attrs,next_attrs;
- fx_texture_get_attribs(prev,&prev_attrs);
- if(after)fx_texture_get_attribs(after,&next_attrs);
- // Flattening below produces ordinary 2D textures even for external client imports.
- if(prev_attrs.target!=GL_TEXTURE_2D || (after && next_attrs.target!=GL_TEXTURE_2D)) { wlr_texture_destroy(prev);if(after)wlr_texture_destroy(after);return false; }
- struct wlr_render_pass *pass=wlr_renderer_begin_buffer_pass(renderer,dst,NULL);
- if(pass==NULL) { wlr_texture_destroy(prev);if(after)wlr_texture_destroy(after);return false; }
- glDisable(GL_BLEND);glDisable(GL_SCISSOR_TEST);glClearColor(0,0,0,0);glClear(GL_COLOR_BUFFER_BIT);
- glUseProgram(program);
- glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,prev_attrs.tex);sysc_animation_sampling();
- glUniform1i(glGetUniformLocation(program,"niri_tex"),0);
- glUniform1i(glGetUniformLocation(program,"niri_tex_prev"),0);
- glActiveTexture(GL_TEXTURE1);glBindTexture(GL_TEXTURE_2D,after ? next_attrs.tex : prev_attrs.tex);sysc_animation_sampling();
- glUniform1i(glGetUniformLocation(program,"niri_tex_next"),1);
- sysc_animation_vec2(program,"niri_size",u->size);
- sysc_animation_vec2(program,"niri_geo_size",u->geo_size);
- sysc_animation_vec2(program,"niri_curr_geo_size",u->geo_size);
- sysc_animation_mat(program,"niri_input_to_geo",u->input_to_geo);
- sysc_animation_mat(program,"niri_input_to_curr_geo",u->input_to_geo);
- sysc_animation_mat(program,"niri_geo_to_tex",u->geo_to_tex);
- sysc_animation_mat(program,"niri_curr_geo_to_prev_geo",u->curr_to_prev);
- sysc_animation_mat(program,"niri_curr_geo_to_next_geo",u->curr_to_next);
- sysc_animation_mat(program,"niri_geo_to_tex_prev",u->geo_to_prev);
- sysc_animation_mat(program,"niri_geo_to_tex_next",u->geo_to_next);
- sysc_animation_float(program,"niri_progress",u->progress);
- sysc_animation_float(program,"niri_clamped_progress",u->clamped_progress);
- sysc_animation_float(program,"niri_random_seed",u->random_seed);
- sysc_animation_float(program,"niri_alpha",u->alpha);
- sysc_animation_float(program,"niri_scale",u->scale);
- sysc_animation_float(program,"niri_clip_to_geometry",u->clip_to_geometry);
- glUniform4fv(glGetUniformLocation(program,"niri_corner_radius"),1,u->corner_radius);
- const GLfloat positions[]={-1,-1,1,-1,-1,1,1,1};
- GLint attr=glGetAttribLocation(program,"position");
- glBindBuffer(GL_ARRAY_BUFFER,0);glEnableVertexAttribArray(attr);
- glVertexAttribPointer(attr,2,GL_FLOAT,GL_FALSE,0,positions);glDrawArrays(GL_TRIANGLE_STRIP,0,4);
- glDisableVertexAttribArray(attr);glUseProgram(0);
- glActiveTexture(GL_TEXTURE1);glBindTexture(GL_TEXTURE_2D,0);
- glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,0);
- bool ok=glGetError()==GL_NO_ERROR;
- bool submitted=wlr_render_pass_submit(pass);
- wlr_texture_destroy(prev);if(after)wlr_texture_destroy(after);
- return ok && submitted;
+		struct wlr_buffer *dst, struct wlr_buffer *previous, struct wlr_buffer *next,
+		const struct sysc_animation_uniforms *u) {
+	struct wlr_texture *prev = wlr_texture_from_buffer(renderer, previous);
+	struct wlr_texture *after = next ? wlr_texture_from_buffer(renderer, next) : NULL;
+	if (prev == NULL || (next && after == NULL)) {
+		if (prev) {
+			wlr_texture_destroy(prev);
+		}
+		if (after) {
+			wlr_texture_destroy(after);
+		}
+		return false;
+	}
+	struct fx_texture_attribs prev_attrs, next_attrs;
+	fx_texture_get_attribs(prev, &prev_attrs);
+	if (after) {
+		fx_texture_get_attribs(after, &next_attrs);
+	}
+	// Flattening below produces ordinary 2D textures even for external client imports.
+	if (prev_attrs.target != GL_TEXTURE_2D || (after && next_attrs.target != GL_TEXTURE_2D)) {
+		wlr_texture_destroy(prev);
+		if (after) {
+			wlr_texture_destroy(after);
+		}
+		return false;
+	}
+	struct wlr_render_pass *pass = wlr_renderer_begin_buffer_pass(renderer, dst, NULL);
+	if (pass == NULL) {
+		wlr_texture_destroy(prev);
+		if (after) {
+			wlr_texture_destroy(after);
+		}
+		return false;
+	}
+	glDisable(GL_BLEND);
+	glDisable(GL_SCISSOR_TEST);
+	glClearColor(0, 0, 0, 0);
+	glClear(GL_COLOR_BUFFER_BIT);
+	glUseProgram(program);
+	glActiveTexture(GL_TEXTURE0);
+	glBindTexture(GL_TEXTURE_2D, prev_attrs.tex);
+	sysc_animation_sampling();
+	glUniform1i(glGetUniformLocation(program, "niri_tex"), 0);
+	glUniform1i(glGetUniformLocation(program, "niri_tex_prev"), 0);
+	glActiveTexture(GL_TEXTURE1);
+	glBindTexture(GL_TEXTURE_2D, after ? next_attrs.tex : prev_attrs.tex);
+	sysc_animation_sampling();
+	glUniform1i(glGetUniformLocation(program, "niri_tex_next"), 1);
+	sysc_animation_vec2(program, "niri_size", u->size);
+	sysc_animation_vec2(program, "niri_geo_size", u->geo_size);
+	sysc_animation_vec2(program, "niri_curr_geo_size", u->geo_size);
+	sysc_animation_mat(program, "niri_input_to_geo", u->input_to_geo);
+	sysc_animation_mat(program, "niri_input_to_curr_geo", u->input_to_geo);
+	sysc_animation_mat(program, "niri_geo_to_tex", u->geo_to_tex);
+	sysc_animation_mat(program, "niri_curr_geo_to_prev_geo", u->curr_to_prev);
+	sysc_animation_mat(program, "niri_curr_geo_to_next_geo", u->curr_to_next);
+	sysc_animation_mat(program, "niri_geo_to_tex_prev", u->geo_to_prev);
+	sysc_animation_mat(program, "niri_geo_to_tex_next", u->geo_to_next);
+	sysc_animation_float(program, "niri_progress", u->progress);
+	sysc_animation_float(program, "niri_clamped_progress", u->clamped_progress);
+	sysc_animation_float(program, "niri_random_seed", u->random_seed);
+	sysc_animation_float(program, "niri_alpha", u->alpha);
+	sysc_animation_float(program, "niri_scale", u->scale);
+	sysc_animation_float(program, "niri_clip_to_geometry", u->clip_to_geometry);
+	glUniform4fv(glGetUniformLocation(program, "niri_corner_radius"), 1, u->corner_radius);
+	const GLfloat positions[] = {-1, -1, 1, -1, -1, 1, 1, 1};
+	GLint attr = glGetAttribLocation(program, "position");
+	glBindBuffer(GL_ARRAY_BUFFER, 0);
+	glEnableVertexAttribArray(attr);
+	glVertexAttribPointer(attr, 2, GL_FLOAT, GL_FALSE, 0, positions);
+	glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+	glDisableVertexAttribArray(attr);
+	glUseProgram(0);
+	glActiveTexture(GL_TEXTURE1);
+	glBindTexture(GL_TEXTURE_2D, 0);
+	glActiveTexture(GL_TEXTURE0);
+	glBindTexture(GL_TEXTURE_2D, 0);
+	bool ok = glGetError() == GL_NO_ERROR;
+	bool submitted = wlr_render_pass_submit(pass);
+	wlr_texture_destroy(prev);
+	if (after) {
+		wlr_texture_destroy(after);
+	}
+	return ok && submitted;
 }
 */
 import "C"

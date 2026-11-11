@@ -469,7 +469,7 @@ struct sysc_idle_client {
 	struct wl_proxy *xdg_surface, *toplevel, *notification, *inhibitor;
 	struct wl_buffer *buffer;
 	uint32_t configure_serial, acked_serial;
- unsigned int configure_count;
+	unsigned int configure_count;
 	int configured_width, configured_height;
 	bool configured_maximized;
 	bool configured;
@@ -556,7 +556,7 @@ static const struct { void (*ping)(void *, struct wl_proxy *, uint32_t); }
 static void sysc_idle_surface_configure(void *data, struct wl_proxy *proxy, uint32_t serial) {
 	struct sysc_idle_client *c = data;
 	c->configure_count++;
- c->configure_serial = serial;
+	c->configure_serial = serial;
 	c->configured = true;
 }
 static const struct { void (*configure)(void *, struct wl_proxy *, uint32_t); }
@@ -565,10 +565,15 @@ static const struct { void (*configure)(void *, struct wl_proxy *, uint32_t); }
 static void sysc_idle_toplevel_configure(void *data, struct wl_proxy *proxy,
 		int32_t width, int32_t height, struct wl_array *states) {
 	struct sysc_idle_client *c = data;
-	c->configured_width = width; c->configured_height = height;
+	c->configured_width = width;
+	c->configured_height = height;
 	c->configured_maximized = false;
 	uint32_t *state;
-	wl_array_for_each(state, states) if (*state == 1) c->configured_maximized = true;
+	wl_array_for_each(state, states) {
+		if (*state == 1) { // xdg_toplevel.state.maximized
+			c->configured_maximized = true;
+		}
+	}
 }
 static void sysc_idle_toplevel_close(void *data, struct wl_proxy *proxy) {
 	((struct sysc_idle_client *)data)->close_requested = true;
@@ -1152,17 +1157,21 @@ static int sysc_client_unlock_pointer(struct sysc_idle_client *c) {
 }
 
 static int sysc_client_ack_configure(struct sysc_idle_client *c) {
- if (wl_display_roundtrip(c->display)<0) return -1;
- if(c->configure_serial!=c->acked_serial){
- wl_proxy_marshal_flags(c->xdg_surface,4,NULL,1,0,c->configure_serial);
- c->acked_serial=c->configure_serial;
- wl_surface_commit(c->surface);
- }
- return wl_display_roundtrip(c->display)<0 ? -1:0;
+	if (wl_display_roundtrip(c->display) < 0) {
+		return -1;
+	}
+	if (c->configure_serial != c->acked_serial) {
+		wl_proxy_marshal_flags(c->xdg_surface, 4, NULL, 1, 0, c->configure_serial);
+		c->acked_serial = c->configure_serial;
+		wl_surface_commit(c->surface);
+	}
+	return wl_display_roundtrip(c->display) < 0 ? -1 : 0;
 }
 static int sysc_client_set_maximized(struct sysc_idle_client *c, bool maximized) {
 	wl_proxy_marshal_flags(c->toplevel, maximized ? 9 : 10, NULL, 1, 0);
-	if (wl_display_roundtrip(c->display) < 0 || wl_display_roundtrip(c->display) < 0) return -1;
+	if (wl_display_roundtrip(c->display) < 0 || wl_display_roundtrip(c->display) < 0) {
+		return -1;
+	}
 	if (c->configure_serial != c->acked_serial) {
 		wl_proxy_marshal_flags(c->xdg_surface, 4, NULL, 1, 0, c->configure_serial);
 		c->acked_serial = c->configure_serial;
