@@ -6,7 +6,7 @@ A document that is not in this map is one the project will lose.
 Product contract: `plans/2026-10-02-sysc-compositor-design.md`. Workstreams and order:
 `plans/2026-10-02-orchestration.md`.
 
-Current continuation: [2026-11-11 handover](plans/2026-11-11-handover.md), with the
+Current continuation: [2026-11-12 handover](plans/2026-11-12-handover.md), with the
 [2026-11-05 implementation plan](plans/2026-11-05-handover.md) for the order and the rules.
 Owner order: finish compositor development and acceptance before resuming benchmarking.
 
@@ -29,7 +29,8 @@ executed until the owner schedules the milestone they belong to.
 | [plans/2026-10-02-m0-nested-tinywl.md](plans/2026-10-02-m0-nested-tinywl.md) | plan | M0, the first code in this repository: nested tinywl, one seat plus cursor. |
 | [plans/2026-10-02-sysc-launch.md](plans/2026-10-02-sysc-launch.md) | plan | Sibling workstream L0, executed in `/home/nomadx/sysc-launch`, not here. |
 | [plans/niri-parity-matrix.md](plans/niri-parity-matrix.md) | checklist | Remaining niri IPC and config parity. Fill this rather than expanding the design. |
-| [plans/2026-11-11-handover.md](plans/2026-11-11-handover.md) | handover | **Current state.** M15 development complete: outputs (#102) and the action and UI close-out (#103) merged; CI green on the merge; next the archThink deploy and owner gate, M15 hardware acceptance, the remaining parity gaps, then acceptance gates and packaging; the VM recipe changes and test notes. |
+| [plans/2026-11-12-handover.md](plans/2026-11-12-handover.md) | handover | **Current state.** archThink running `86aac7c` with a rollback and Lock restored (`sysc-2261`); `sysc-2265` closed; parity gaps filed as `sysc-2280`–`sysc-2286`; Niri v26.04 reference restored; next the owner gate, M15 hardware acceptance, the gaps, acceptance gates and packaging. |
+| [plans/2026-11-11-handover.md](plans/2026-11-11-handover.md) | handover | Superseded by the 2026-11-12 handover. Was: M15 development complete: outputs (#102) and the action and UI close-out (#103) merged; CI green on the merge; next the archThink deploy and owner gate, M15 hardware acceptance, the remaining parity gaps, then acceptance gates and packaging; the VM recipe changes and test notes. |
 | [plans/2026-11-08-handover.md](plans/2026-11-08-handover.md) | handover | Superseded by the 2026-11-11 handover. Was: config slice 6 done and `sysc-2231` closed; #98 merged; the tranche integrated with main by cherry-pick in #99; next the laptop check, `background-color` (`sysc-2266`), M15, acceptance and packaging. |
 | [plans/2026-11-09-m15-closeout.md](plans/2026-11-09-m15-closeout.md) | plan | M15 Part 4: remaining action and CLI routes, sizing/picker fixes, animation and custom shader equivalents, debug/notification and UI policy, then parity reconciliation and acceptance. Merged as #103 (`1eac2c2`); the execution record holds the review and what remains. |
 | [plans/2026-11-08-m15-outputs.md](plans/2026-11-08-m15-outputs.md) | plan | M15 Part 3, outputs: six slices implemented with a shared apply path for config, IPC, output-management and DisplayConfig; VM regression evidence, workspace restoration and SceneFX + llvmpipe recovery. Physical acceptance limits recorded. |
