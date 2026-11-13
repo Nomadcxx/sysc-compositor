@@ -202,6 +202,14 @@ func run(name, configFlag string, sessionMode bool, env Env) int {
 		<-ch
 		s.Terminate()
 	}()
+	// Diagnostic: SIGUSR1 writes the scene graph to stderr (the journal).
+	dump := make(chan os.Signal, 1)
+	signal.Notify(dump, syscall.SIGUSR1)
+	go func() {
+		for range dump {
+			s.DumpScene()
+		}
+	}()
 	if err := s.Run(); err != nil {
 		fmt.Fprintf(env.Stderr, "%s: %v\n", name, err)
 		return 1

@@ -616,3 +616,8 @@ func (s *Server) Destroy() {
 		s.c = nil
 	}
 }
+
+// DumpScene writes the compositor's scene graph to stderr, for diagnosis.
+func (s *Server) DumpScene() {
+	_ = s.c.Post(func() { s.c.DumpScene(os.Stderr) })
+}
