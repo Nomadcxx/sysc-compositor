@@ -14,6 +14,7 @@ package wlr
 
 #include <wlr/types/wlr_output.h>
 #include <wlr/backend/drm.h>
+#include <wlr/backend/session.h>
 #include <wlr/backend.h>
 #include <wlr/util/transform.h>
 #include <wlr/types/wlr_output_layout.h>
@@ -181,13 +182,36 @@ func (c *Compositor) outputDecorations(name string) config.Decorations {
 
 // applyOutputConfigs is Niri's reload_output_config: it brings every output
 // to its section's state, then places them all. Every path that changes the
-// output config calls it.
+// output config calls it. An inactive session cannot commit, so, as Niri's
+// on_output_config_changed, it waits for watchSessionResume instead.
 func (c *Compositor) applyOutputConfigs() error {
+	if c.session != nil && !bool(c.session.active) {
+		c.outputConfigOnResume = true
+		return nil
+	}
+	c.outputConfigOnResume = false
 	err := c.applyOutputConfigsMode(nil)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "sysc-compositor: output config: %v\n", err)
 	}
 	return err
+}
+
+// watchSessionResume applies output config that changed while the session
+// was inactive, after the backend has restored its own state on resume.
+func (c *Compositor) watchSessionResume() {
+	if c.session == nil {
+		return
+	}
+	c.keep(AddListener(unsafe.Pointer(&c.session.events.active), func(unsafe.Pointer) {
+		if bool(c.session.active) && c.outputConfigOnResume {
+			_ = c.Post(func() {
+				if c.outputConfigOnResume {
+					c.applyOutputConfigs()
+				}
+			})
+		}
+	}))
 }
 
 func (c *Compositor) applyOutputConfigsMode(changed map[unsafe.Pointer]bool) error {

@@ -127,3 +127,46 @@ func TestLidPolicyTurnsLaptopPanelOffOnlyWhileExternalOutputExists(t *testing.T)
 		t.Fatal("losing the external output did not restore the sole panel")
 	}
 }
+
+// TestOutputConfigWaitsForTheSessionToResume: Niri's
+// update_output_config_on_resume. An inactive session cannot commit, so a lid
+// change or reload made from another VT is applied when the session returns.
+func TestOutputConfigWaitsForTheSessionToResume(t *testing.T) {
+	session := newTestSession()
+	t.Cleanup(session.free) // after Destroy has removed its listeners
+	c := newNested(t)
+	useTestSession(t, c, session)
+	headless, err := addNamedHeadlessTestOutput(c, 800, 600, "eDP-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(headless.destroy)
+	laid := func() bool {
+		output, ok := outputSnapshotNamed(c, "eDP-1")
+		return ok && output.Logical != nil
+	}
+
+	session.setActive(false)
+	c.SetLidClosed(true)
+	if !laid() {
+		t.Fatal("a lid change from another VT committed while the session was inactive")
+	}
+	session.setActive(true)
+	c.drainPosted()
+	if laid() {
+		t.Fatal("resuming the session did not apply the deferred lid change")
+	}
+
+	session.setActive(false)
+	if err := c.Reconfigure(Options{Debug: config.Debug{KeepLaptopPanelOnWhenLidIsClosed: true}}); err != nil {
+		t.Fatal(err)
+	}
+	if laid() {
+		t.Fatal("a reload from another VT committed while the session was inactive")
+	}
+	session.setActive(true)
+	c.drainPosted()
+	if !laid() {
+		t.Fatal("resuming the session did not apply the deferred reload")
+	}
+}
