@@ -141,3 +141,58 @@ func TestWorkspaceGestureInTheOverviewIsUnclamped(t *testing.T) {
 		t.Fatalf("overview swipe settled on %d, want 2", activeIndex(t, m, "DP-1"))
 	}
 }
+
+func TestDndWorkspaceGestureClampsAndUses1500Pixels(t *testing.T) {
+	m := New()
+	m.AddOutput("DP-1", layout.Bounds{Width: 1000, Height: 800}, 500, 16)
+	threeWorkspaces(t, m, "DP-1")
+	m.FocusWorkspace("", 1)
+	last := float64(len(m.Snapshot().Workspaces) - 1)
+	m.OpenOverview()
+	if !m.BeginWorkspaceDND("DP-1") {
+		t.Fatal("could not begin DND")
+	}
+	m.UpdateWorkspaceGesture(750, time.Millisecond, .5)
+	if got := gestureOffset(t, m); math.Abs(got-.5) > 1e-9 {
+		t.Fatalf("750 DND pixels = %v workspaces, want 0.5", got)
+	}
+	m.UpdateWorkspaceGesture(100000, 2*time.Millisecond, .5)
+	if got := gestureOffset(t, m); got != last {
+		t.Fatalf("DND overscrolled the end: %v", got)
+	}
+	m.UpdateWorkspaceGesture(-150, 3*time.Millisecond, .5)
+	if got := gestureOffset(t, m); math.Abs(got-(last-.1)) > 1e-9 {
+		t.Fatalf("DND built up overscroll instead of reversing: %v", got)
+	}
+	_, _, velocity, ok := m.EndWorkspaceGesture(4*time.Millisecond, .5)
+	if !ok || velocity != 0 || activeIndex(t, m, "DP-1") != int(last) {
+		t.Fatalf("DND release: ok=%v velocity=%v active=%v", ok, velocity, activeIndex(t, m, "DP-1"))
+	}
+}
+
+func TestDndWorkspaceEdgeUsesStripAndWorkingArea(t *testing.T) {
+	bounds := layout.Bounds{X: 250, Y: 40, Width: 500, Height: 600}
+	for _, tc := range []struct {
+		x, y      float64
+		direction int
+		speed     float64
+	}{
+		{249, 0, 0, 0}, {750, 640, 0, 0}, {500, 0, -1, 1500}, {500, 40, -1, 1500}, {500, 65, -1, 750}, {500, 340, 0, 0}, {500, 640, 1, 1500},
+	} {
+		direction, speed := DNDEdgeWorkspaceSwitchAt(bounds, tc.x, tc.y, 50, 1500)
+		if direction != tc.direction || speed != tc.speed {
+			t.Errorf("at %v,%v got %v/%v want %v/%v", tc.x, tc.y, direction, speed, tc.direction, tc.speed)
+		}
+	}
+	var tracker DNDEdgeScrollTracker
+	start := time.Unix(0, 0)
+	if got := tracker.UpdateWorkspace(start, bounds, 500, 640, 50, 20*time.Millisecond, 1500); got != 0 {
+		t.Fatal(got)
+	}
+	if got := tracker.UpdateWorkspace(start.Add(20*time.Millisecond), bounds, 500, 640, 50, 20*time.Millisecond, 1500); got != 0 {
+		t.Fatal(got)
+	}
+	if got := tracker.UpdateWorkspace(start.Add(40*time.Millisecond), bounds, 500, 640, 50, 20*time.Millisecond, 1500); got != 30 {
+		t.Fatalf("post-dwell distance = %v want30", got)
+	}
+}

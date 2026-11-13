@@ -153,6 +153,15 @@ static void sysc_fake_pointer_swipe_end(struct wlr_pointer *pointer, uint32_t ti
 	wl_signal_emit_mutable(&pointer->events.swipe_end, &event);
 }
 
+static bool sysc_test_request_drag(struct wlr_seat *seat, struct wlr_surface *origin, uint32_t serial) {
+ struct wlr_seat_client *client = wlr_seat_client_for_wl_client(seat, wl_resource_get_client(origin->resource));
+ if (client == NULL) return false;
+ struct wlr_drag *drag = wlr_drag_create(client, NULL, NULL);
+ if (drag == NULL) return false;
+ wlr_seat_request_start_drag(seat, drag, origin, serial);
+ return seat->drag == drag;
+}
+
 static struct wlr_drag *sysc_fake_drag_create(void) {
 	struct wlr_drag *drag = calloc(1, sizeof(*drag));
 	if (drag == NULL) {
@@ -427,6 +436,11 @@ func (f *fakePointer) swipeUpdateAt(timeMsec, fingers uint32, dx, dy float64) {
 
 func (f *fakePointer) swipeEndAt(timeMsec uint32, cancelled bool) {
 	C.sysc_fake_pointer_swipe_end(f.pointer, C.uint32_t(timeMsec), C.bool(cancelled))
+}
+
+// requestTestDrag enters the same wlroots request path as wl_data_device.start_drag.
+func (c *Compositor) requestTestDrag(view *toplevelView, serial uint32) bool {
+	return bool(C.sysc_test_request_drag(c.seat, view.toplevel.base.surface, C.uint32_t(serial)))
 }
 
 type fakeDrag struct {

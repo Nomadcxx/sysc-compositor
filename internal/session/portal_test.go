@@ -19,6 +19,7 @@ import (
 func testPortal(t *testing.T, hooks PortalHooks) (*Portal, *dbus.Conn) {
 	t.Helper()
 	address := startPrivateBus(t)
+	hooks.Session = true
 	p, err := connectPortal(address, hooks)
 	if err != nil {
 		t.Fatal(err)
@@ -232,7 +233,7 @@ func TestPortalConcurrentRepliesStayWithTheirRequests(t *testing.T) {
 func TestServiceChannelSupportsOmittedInterfaceAndIndependentSenders(t *testing.T) {
 	accepted := make(chan int, 2)
 	address := startPrivateBus(t)
-	p, err := connectPortal(address, PortalHooks{OpenWayland: func(_ context.Context, fd int) error {
+	p, err := connectPortal(address, PortalHooks{Session: true, OpenWayland: func(_ context.Context, fd int) error {
 		copy, err := syscall.Dup(fd)
 		if err == nil {
 			accepted <- copy
@@ -398,6 +399,29 @@ func TestPortalRejectsAndClosesIncomingDescriptors(t *testing.T) {
 		syscall.Close(pair[1])
 		if n != 0 || err != nil {
 			t.Errorf("%s: received SCM_RIGHTS endpoint leaked: read=%d, %v", tc.name, n, err)
+		}
+	}
+}
+
+func TestDebugPortalDoesNotExposeServiceChannel(t *testing.T) {
+	address := startPrivateBus(t)
+	portal, err := connectPortal(address, PortalHooks{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer portal.Close()
+	conn, err := dbus.Connect(address)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	for _, name := range []string{displayConfigName, introspectName, screenshotName, serviceChannelName} {
+		var owned bool
+		if err := conn.BusObject().Call("org.freedesktop.DBus.NameHasOwner", 0, name).Store(&owned); err != nil {
+			t.Fatal(err)
+		}
+		if want := name != serviceChannelName; owned != want {
+			t.Errorf("debug portal name %s owned=%v want%v", name, owned, want)
 		}
 	}
 }

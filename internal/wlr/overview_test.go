@@ -37,18 +37,32 @@ func TestOverviewCompositorActionsNotifyStateChanges(t *testing.T) {
 	}
 }
 
+// TestOverviewTreeStacksAboveWindowsAndBelowTopLayers: the open overview sits
+// between windows and the top layers. Closed, the same tree is the workspace
+// switch backdrop beneath windows and their shadows.
 func TestOverviewTreeStacksAboveWindowsAndBelowTopLayers(t *testing.T) {
 	c := newNested(t)
 	if err := c.Post(func() {
+		belowTop := func(state string) {
+			if !sceneNodeBefore(&c.overviewTree.node, &c.layerTrees[layerTop].node) {
+				t.Errorf("%s: top layer tree is not above overview", state)
+			}
+			if !sceneNodeBefore(&c.overviewTree.node, &c.layerTrees[layerOverlay].node) {
+				t.Errorf("%s: overlay layer tree is not above overview", state)
+			}
+		}
+		if !sceneNodeBefore(&c.overviewTree.node, &c.windowShadowTree.node) ||
+			!sceneNodeBefore(&c.overviewTree.node, &c.layerTrees[layerWindows].node) {
+			t.Error("closed overview tree is not beneath windows and their shadows")
+		}
+		belowTop("closed")
+		if !c.OpenOverview() {
+			t.Error("overview did not open")
+		}
 		if !sceneNodeBefore(&c.layerTrees[layerWindows].node, &c.overviewTree.node) {
-			t.Error("overview tree is not above normal window content")
+			t.Error("open overview tree is not above normal window content")
 		}
-		if !sceneNodeBefore(&c.overviewTree.node, &c.layerTrees[layerTop].node) {
-			t.Error("top layer tree is not above overview")
-		}
-		if !sceneNodeBefore(&c.overviewTree.node, &c.layerTrees[layerOverlay].node) {
-			t.Error("overlay layer tree is not above overview")
-		}
+		belowTop("open")
 		if !sceneNodeBefore(&c.insertHintTree.node, &c.layerTrees[layerTop].node) {
 			t.Error("top layer tree is not above insert hints")
 		}

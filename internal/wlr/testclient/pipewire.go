@@ -82,6 +82,7 @@ static void sysc_pw_receiver_format(void *data, uint32_t id, const struct spa_po
  if (id != SPA_PARAM_Format || param == NULL) return;
  struct spa_video_info_raw info = {0};
  if (spa_format_video_raw_parse(param,&info) < 0 || info.format != SPA_VIDEO_FORMAT_RGBA ||
+  (info.flags & SPA_VIDEO_FLAG_MODIFIER) != 0 ||
   info.size.width == 0 || info.size.height == 0 ||
   (uint64_t)info.size.width * info.size.height * 4 > UINT64_C(64)*1024*1024) {
   sysc_pw_receiver_fail(r,"invalid negotiated video format"); return;
@@ -107,6 +108,7 @@ static void sysc_pw_receiver_process(void *data) {
  struct spa_buffer *buffer=pwbuffer->buffer;
  if(buffer->n_datas==1 && r->width>0 && r->height>0) {
   struct spa_data *plane=&buffer->datas[0];
+  if (plane->type != SPA_DATA_MemFd) { sysc_pw_receiver_fail(r,"expected a MemFd cast buffer"); goto queued; }
   struct spa_chunk *chunk=plane->chunk;
   size_t row=(size_t)r->width*4, size=row*r->height;
   if(plane->data!=NULL && chunk!=NULL && !(chunk->flags & SPA_CHUNK_FLAG_CORRUPTED) &&

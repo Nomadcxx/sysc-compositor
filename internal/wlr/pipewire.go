@@ -106,6 +106,9 @@ failed:
  return NULL;
 }
 
+// Casts use MemFd exclusively: no DRM modifier is advertised. Niri's
+// force-pipewire-invalid-modifier only filters DMA-BUF formats, so it has
+// no additional effect on this transport.
 // A variable frame rate up to the output's refresh, as Niri offers
 // (pw_utils.rs make_video_params). A fixed refresh rate leaves no
 // intersection with consumers such as libwebrtc that cap the rate below it.

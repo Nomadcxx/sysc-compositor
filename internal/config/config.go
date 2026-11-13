@@ -514,13 +514,15 @@ type OverlayBind struct {
 }
 
 type Overview struct {
-	Zoom          float64
-	BackdropColor Color
+	Zoom            float64
+	BackdropColor   Color
+	WorkspaceShadow Shadow
 }
 
 type Gestures struct {
-	HotCorners        HotCorners
-	DNDEdgeViewScroll DNDEdgeViewScroll
+	HotCorners             HotCorners
+	DNDEdgeViewScroll      DNDEdgeViewScroll
+	DNDEdgeWorkspaceSwitch *DNDEdgeWorkspaceSwitch
 }
 
 type HotCorners struct {
@@ -534,9 +536,16 @@ type DNDEdgeViewScroll struct {
 	MaxSpeed     float64
 }
 
+type DNDEdgeWorkspaceSwitch struct {
+	TriggerHeight float64
+	DelayMS       int
+	MaxSpeed      float64
+}
+
 type InsertHint struct {
-	Off   bool
-	Color Color
+	Off      bool
+	Color    Color
+	Gradient *Gradient
 }
 
 type Cursor struct {
@@ -571,8 +580,10 @@ func Default() *Config {
 			Shadow:          Shadow{Softness: 30, Spread: 5, OffsetY: 5, Color: Color{0, 0, 0, 119.0 / 255}},
 			TabIndicator:    TabIndicator{Gap: 5, Width: 4, Length: 0.5, Position: TabIndicatorLeft},
 			BackgroundColor: Color{0, 0, 0, 1}},
-		Overview:          Overview{Zoom: 0.5, BackdropColor: Color{0.15, 0.15, 0.15, 1}},
-		Gestures:          Gestures{DNDEdgeViewScroll: DNDEdgeViewScroll{TriggerWidth: 30, DelayMS: 100, MaxSpeed: 1500}},
+		Overview: Overview{Zoom: 0.5, BackdropColor: Color{0.15, 0.15, 0.15, 1},
+			WorkspaceShadow: Shadow{On: true, Softness: 40, Spread: 10, OffsetY: 10, Color: Color{0, 0, 0, 80.0 / 255}}},
+		Gestures: Gestures{DNDEdgeViewScroll: DNDEdgeViewScroll{TriggerWidth: 30, DelayMS: 100, MaxSpeed: 1500},
+			DNDEdgeWorkspaceSwitch: &DNDEdgeWorkspaceSwitch{TriggerHeight: 50, DelayMS: 100, MaxSpeed: 1500}},
 		Cursor:            Cursor{Theme: "default", Size: 24},
 		Animations:        defaultAnimations(),
 		Blur:              defaultBlur(),
@@ -1548,7 +1559,16 @@ func (c *Config) overview(n *document.Node) error {
 			}
 			c.Overview.BackdropColor = value
 		case "workspace-shadow":
-			c.addWarning("overview.workspace-shadow")
+			for _, field := range child.Children {
+				if name := nodeName(field); name == "inactive-color" || name == "draw-behind-window" {
+					return fmt.Errorf("unexpected workspace-shadow field `%s`", name)
+				}
+			}
+			rule, err := c.shadowRule(child)
+			if err != nil {
+				return fmt.Errorf("workspace-shadow: %w", err)
+			}
+			c.Overview.WorkspaceShadow = c.Overview.WorkspaceShadow.Merged(rule)
 		default:
 			return fmt.Errorf("unexpected node `%s`", nodeName(child))
 		}
@@ -1570,7 +1590,10 @@ func (c *Config) gestures(n *document.Node) error {
 				return fmt.Errorf("dnd-edge-view-scroll: %w", err)
 			}
 		case "dnd-edge-workspace-switch":
-			c.addWarning("gestures.dnd-edge-workspace-switch")
+			settings := c.Gestures.DNDEdgeWorkspaceSwitch
+			if err := parseDNDEdgeScroll(child, "trigger-height", &settings.TriggerHeight, &settings.DelayMS, &settings.MaxSpeed); err != nil {
+				return fmt.Errorf("dnd-edge-workspace-switch: %w", err)
+			}
 		default:
 			return fmt.Errorf("unexpected node `%s`", nodeName(child))
 		}
@@ -1579,28 +1602,28 @@ func (c *Config) gestures(n *document.Node) error {
 }
 
 func (c *Config) dndEdgeViewScroll(n *document.Node) error {
+	settings := &c.Gestures.DNDEdgeViewScroll
+	return parseDNDEdgeScroll(n, "trigger-width", &settings.TriggerWidth, &settings.DelayMS, &settings.MaxSpeed)
+}
+
+func parseDNDEdgeScroll(n *document.Node, triggerName string, trigger *float64, delay *int, speed *float64) error {
+	if len(n.Arguments) != 0 || len(n.Properties) != 0 {
+		return fmt.Errorf("takes child nodes only")
+	}
 	for _, child := range n.Children {
+		var err error
 		switch nodeName(child) {
-		case "trigger-width":
-			value, err := numberArg(child)
-			if err != nil || value < 0 || value > 65535 {
-				return fmt.Errorf("`trigger-width` must be a number from 0 to 65535")
-			}
-			c.Gestures.DNDEdgeViewScroll.TriggerWidth = value
+		case triggerName:
+			*trigger, err = boundedNumber(child, 0, 65535)
 		case "delay-ms":
-			value, err := intArg(child, 0, 1<<16-1)
-			if err != nil {
-				return err
-			}
-			c.Gestures.DNDEdgeViewScroll.DelayMS = value
+			*delay, err = intArg(child, 0, 65535)
 		case "max-speed":
-			value, err := numberArg(child)
-			if err != nil || value < 0 || value > 1_000_000 {
-				return fmt.Errorf("`max-speed` must be a number from 0 to 1000000")
-			}
-			c.Gestures.DNDEdgeViewScroll.MaxSpeed = value
+			*speed, err = boundedNumber(child, 0, 1_000_000)
 		default:
-			return fmt.Errorf("unexpected node `%s`", nodeName(child))
+			return fmt.Errorf("unexpected node %q", nodeName(child))
+		}
+		if err != nil {
+			return err
 		}
 	}
 	return nil
@@ -1650,7 +1673,11 @@ func (c *Config) insertHint(n *document.Node) error {
 			}
 			c.Layout.InsertHint.Color = value
 		case "gradient":
-			c.addWarning("layout.insert-hint.gradient")
+			gradient, err := parseGradient(child)
+			if err != nil {
+				return fmt.Errorf("insert-hint gradient: %w", err)
+			}
+			c.Layout.InsertHint.Gradient = gradient
 		default:
 			return fmt.Errorf("unexpected node `%s`", nodeName(child))
 		}

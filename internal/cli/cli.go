@@ -184,8 +184,8 @@ func run(name, configFlag string, sessionMode bool, env Env) int {
 			return 1
 		}
 		defer lifecycle.Close()
-		s.StartSessionDBus()
 	}
+	s.StartDBus(sessionMode)
 	// sysc-compositor.service is Type=notify: graphical-session.target, and the
 	// shell with it, waits for this.
 	if err := session.NotifyReady(); err != nil {

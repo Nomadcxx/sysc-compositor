@@ -243,6 +243,7 @@ func (c *Compositor) renderOutputForTarget(pointer unsafe.Pointer, target config
 	if !ok {
 		return nil, errors.New("wlr: no such output")
 	}
+	defer c.workspaceOutput(outputName(pointer))()
 	output := (*C.struct_wlr_output)(pointer)
 	if _, err := captureAllocation(int(output.width), int(output.height), int(output.width)*4); err != nil {
 		return nil, err

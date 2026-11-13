@@ -6,7 +6,7 @@ A document that is not in this map is one the project will lose.
 Product contract: `plans/2026-10-02-sysc-compositor-design.md`. Workstreams and order:
 `plans/2026-10-02-orchestration.md`.
 
-Current continuation: [2026-11-12 handover](plans/2026-11-12-handover.md), with the
+Current continuation: [2026-11-13 handover](plans/2026-11-13-handover.md), with the
 [2026-11-05 implementation plan](plans/2026-11-05-handover.md) for the order and the rules.
 Owner order: finish compositor development and acceptance before resuming benchmarking.
 
@@ -24,6 +24,8 @@ executed until the owner schedules the milestone they belong to.
 
 | Document | Kind | What it is |
 |---|---|---|
+| [plans/2026-11-13-handover.md](plans/2026-11-13-handover.md) | handover | Current continuation: recovered persistent parity worktree, slices 2280–2286 and their proof, final regression and review, VM SSH recovery, next integration and the owner gates. |
+| [plans/2026-11-12-parity-gaps.md](plans/2026-11-12-parity-gaps.md) | plan | Remaining parity gaps `sysc-2280`–`sysc-2286`, in the owner's approved order; reuse the existing rendering, input and session paths. |
 | [plans/2026-10-02-sysc-compositor-design.md](plans/2026-10-02-sysc-compositor-design.md) | design | Product contract. Package map, globals, niri parity surface, milestones M0–M15. |
 | [plans/2026-10-02-orchestration.md](plans/2026-10-02-orchestration.md) | plan | Workstreams L0, M0–M15, S0 and their order. The map for execution. |
 | [plans/2026-10-02-m0-nested-tinywl.md](plans/2026-10-02-m0-nested-tinywl.md) | plan | M0, the first code in this repository: nested tinywl, one seat plus cursor. |

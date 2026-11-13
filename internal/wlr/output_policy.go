@@ -4,6 +4,7 @@ import (
 	"image"
 	"math"
 	"slices"
+	"strings"
 
 	"github.com/Nomadcxx/sysc-compositor/internal/config"
 )
@@ -151,4 +152,20 @@ func placeOutputs(outputs []outputPlacement) []image.Point {
 		placed = append(placed, image.Rectangle{Min: position, Max: position.Add(output.size)})
 	}
 	return positions
+}
+
+// isLaptopPanel is Niri's is_laptop_panel (src/utils/mod.rs).
+func isLaptopPanel(connector string) bool {
+	return strings.HasPrefix(connector, "eDP-") || strings.HasPrefix(connector, "LVDS") ||
+		strings.HasPrefix(connector, "DSI-")
+}
+
+// shouldDisableLaptopPanels is Niri's should_disable_laptop_panels
+// (src/backend/tty.rs): a closed lid turns the laptop panels off only while
+// another connector is connected, unless the debug flag keeps them on. A sole
+// panel stays on.
+func shouldDisableLaptopPanels(lidClosed, keepOn bool, connectors []string) bool {
+	return lidClosed && !keepOn && slices.ContainsFunc(connectors, func(connector string) bool {
+		return !isLaptopPanel(connector)
+	})
 }

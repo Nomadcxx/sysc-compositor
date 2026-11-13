@@ -44,6 +44,7 @@ type workspaceGesture struct {
 	centerID uint64
 	start    float64
 	clamped  bool
+	dnd      bool
 	tracker  overviewGestureTracker
 }
 
@@ -95,6 +96,15 @@ func (m *Model) BeginWorkspaceGesture(output string) bool {
 	return true
 }
 
+// BeginWorkspaceDND starts a clamped, momentum-free overview strip drag.
+func (m *Model) BeginWorkspaceDND(output string) bool {
+	if !m.overview.open || !m.BeginWorkspaceGesture(output) {
+		return false
+	}
+	m.workspaceGesture.dnd = true
+	return true
+}
+
 // UpdateWorkspaceGesture moves the gesture by deltaY logical pixels, positive
 // towards later workspaces. zoom is the overview zoom, 1 when it is closed.
 func (m *Model) UpdateWorkspaceGesture(deltaY float64, timestamp time.Duration, zoom float64) bool {
@@ -106,6 +116,18 @@ func (m *Model) UpdateWorkspaceGesture(deltaY float64, timestamp time.Duration, 
 	if out == nil {
 		m.workspaceGesture = nil
 		return false
+	}
+	if g.dnd {
+		g.tracker.push(deltaY, timestamp)
+		center := g.center(out)
+		lo, hi := g.bounds(out, center)
+		position := g.start + g.tracker.position/1500
+		clamped := min(max(position, lo), hi)
+		g.start += clamped - position
+		offset := clamped + float64(center-out.active)
+		changed := offset != out.switchOffset
+		out.switchOffset = offset
+		return changed
 	}
 	// Niri reduces the effect of the overview zoom on the touchpad somewhat.
 	zoom = gestureZoom(zoom)
@@ -142,6 +164,10 @@ func (m *Model) EndWorkspaceGesture(timestamp time.Duration, zoom float64) (outp
 	target := center + int(math.Round(min(max(projected, lo), hi)))
 	velocity = g.tracker.velocity() / workspaceGesturePixels *
 		band.clampDerivative(lo, hi, g.start+g.tracker.position/workspaceGesturePixels)
+	if g.dnd {
+		target = center + int(math.Round(min(max(g.start+g.tracker.position/1500, lo), hi)))
+		velocity = 0
+	}
 	drawn := float64(out.active) + out.switchOffset
 	if target != out.active {
 		out.active = target
@@ -170,8 +196,8 @@ func (m *Model) WorkspaceRenderOffset(output string) (float64, bool) {
 
 // SetWorkspaceRenderOffset is the settling spring's presentation value.
 func (m *Model) SetWorkspaceRenderOffset(output string, offset float64) {
-	if out := m.outputs[output]; out != nil && out.switching {
-		out.switchOffset = offset
+	if out := m.outputs[output]; out != nil {
+		out.switching, out.switchOffset = true, offset
 	}
 }
 

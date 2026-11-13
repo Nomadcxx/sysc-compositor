@@ -225,7 +225,7 @@ func (c *Compositor) applyOutputConfigsMode(changed map[unsafe.Pointer]bool) err
 			return errors.Join(err, c.applyOutputStates(saved, false))
 		}
 		for _, pointer := range outputs {
-			if section := c.outputConfig(pointer); section != nil && section.Off {
+			if c.outputOff(pointer) {
 				if err = c.turnOutputOff(pointer); err != nil {
 					return err
 				}
@@ -285,7 +285,7 @@ func (c *Compositor) applyOutputStates(states map[unsafe.Pointer]*C.struct_wlr_o
 func (c *Compositor) applyOutputConfig(pointer unsafe.Pointer, testOnly, strict bool, prepared *C.struct_wlr_output_state) error {
 	output := (*C.struct_wlr_output)(pointer)
 	section := c.outputConfig(pointer)
-	if section != nil && section.Off {
+	if c.outputOff(pointer) {
 		if testOnly || strict {
 			if !bool(C.sysc_output_disable(output, C.bool(testOnly), prepared)) {
 				return fmt.Errorf("output %s refused off", outputName(pointer))
@@ -414,6 +414,37 @@ func (c *Compositor) applyOutputConfig(pointer unsafe.Pointer, testOnly, strict 
 		c.adoptOutput(pointer)
 	}
 	return nil
+}
+
+// outputOff reports whether an output belongs off: its section says so, or
+// the lid policy disables it. The policy is derived on every apply and never
+// written into the config, so reload and requests keep the user's sections.
+func (c *Compositor) outputOff(pointer unsafe.Pointer) bool {
+	if section := c.outputConfig(pointer); section != nil && section.Off {
+		return true
+	}
+	return isLaptopPanel(outputName(pointer)) && c.laptopPanelsDisabled()
+}
+
+// laptopPanelsDisabled applies Niri's lid policy to the connected outputs,
+// including those the config turned off, as Niri counts every connector.
+func (c *Compositor) laptopPanelsDisabled() bool {
+	connectors := make([]string, 0, len(c.backendOutputs))
+	for pointer := range c.backendOutputs {
+		connectors = append(connectors, outputName(pointer))
+	}
+	return shouldDisableLaptopPanels(c.lidClosed, c.debugConfig.KeepLaptopPanelOnWhenLidIsClosed, connectors)
+}
+
+// SetLidClosed records the lid from either source, the input switch or
+// login1, and reapplies the output config when it changes, as Niri's
+// set_lid_closed does. It runs on the compositor thread.
+func (c *Compositor) SetLidClosed(closed bool) {
+	if c.lidClosed == closed {
+		return
+	}
+	c.lidClosed = closed
+	c.applyOutputConfigs()
 }
 
 // turnOutputOff disables an output and takes it out of the layout, as an

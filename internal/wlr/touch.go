@@ -10,6 +10,7 @@ package wlr
 #include <wayland-server-core.h>
 #include <wayland-util.h>
 #include <wlr/types/wlr_cursor.h>
+#include <wlr/types/wlr_data_device.h>
 #include <wlr/types/wlr_input_device.h>
 #include <wlr/types/wlr_output.h>
 #include <wlr/types/wlr_output_layout.h>
@@ -65,11 +66,12 @@ type touchDevice struct {
 // surface it went down on, so the stroke stays with it (the implicit grab)
 // wherever it moves.
 type touchPoint struct {
-	id      int32
-	surface *C.struct_wlr_surface
-	xOffset C.double
-	yOffset C.double
-	gone    *Listener
+	layoutX, layoutY float64
+	id               int32
+	surface          *C.struct_wlr_surface
+	xOffset          C.double
+	yOffset          C.double
+	gone             *Listener
 }
 
 // addTouch puts a touch screen on the user seat.
@@ -226,6 +228,7 @@ func (c *Compositor) handleTouchDown(data unsafe.Pointer) {
 		return
 	}
 	point := &touchPoint{
+		layoutX: lx, layoutY: ly,
 		id:      int32(event.touch_id),
 		surface: surface,
 		xOffset: C.double(lx) - sx,
@@ -257,7 +260,16 @@ func (c *Compositor) handleTouchMotion(data unsafe.Pointer) {
 		return
 	}
 	point := c.touchPoints[int32(event.touch_id)]
-	if point == nil || point.surface == nil {
+	if point == nil {
+		return
+	}
+	point.layoutX, point.layoutY = lx, ly
+	if c.isNativeDragFinger(point.id) {
+		c.updateNativeDragFocus(event.time_msec)
+		c.updateDndEdgeScroll(c.dndScroll)
+		return
+	}
+	if point.surface == nil {
 		return
 	}
 	C.wlr_seat_touch_notify_motion(c.seat, event.time_msec, event.touch_id,
@@ -277,6 +289,12 @@ func (c *Compositor) handleTouchUp(data unsafe.Pointer) {
 	point := c.touchPoints[int32(event.touch_id)]
 	if point == nil {
 		return
+	}
+	// wlroots 0.20.2 dereferences the source on every touch drop. A NULL
+	// source is valid for an intra-client drag, and its pointer path ends
+	// such a drag without a drop; end the touch grab the same way before up.
+	if c.isNativeDragFinger(point.id) && c.seat.drag.source == nil {
+		c.cancelNativeDrag()
 	}
 	C.wlr_seat_touch_notify_up(c.seat, event.time_msec, event.touch_id)
 	fmt.Fprintf(os.Stderr, "sysc-compositor: touch up id=%d\n", int32(event.touch_id))
@@ -303,7 +321,8 @@ func (c *Compositor) touchSurfaceGone(point *touchPoint) {
 		return
 	}
 	point.surface = nil
-	if current, ok := c.touchPoints[point.id]; ok && current == point {
+	// The drag finger outlives its surface: its motion and up drive the drag.
+	if current, ok := c.touchPoints[point.id]; ok && current == point && !c.isNativeDragFinger(point.id) {
 		delete(c.touchPoints, point.id)
 	}
 	if point.gone != nil {
@@ -337,10 +356,31 @@ func (c *Compositor) releaseTouchPoints() {
 // and it leaves the points in place anyway, so each finger is ended on its
 // own.
 func (c *Compositor) endTouchPoints(timeMsec C.uint32_t) {
+	if drag := c.seat.drag; drag != nil && drag.grab_type == C.WLR_DRAG_GRAB_KEYBOARD_TOUCH {
+		c.cancelNativeDrag()
+	}
 	for id := range c.touchPoints {
 		C.wlr_seat_touch_notify_up(c.seat, timeMsec, C.int32_t(id))
 	}
 	c.releaseTouchPoints()
+}
+
+// isNativeDragFinger reports whether a client's native drag follows this finger.
+func (c *Compositor) isNativeDragFinger(id int32) bool {
+	drag := c.seat.drag
+	return drag != nil && drag.grab_type == C.WLR_DRAG_GRAB_KEYBOARD_TOUCH && int32(drag.grab_touch_id) == id
+}
+
+// Overview entry releases ordinary contacts, preserving the native drag finger.
+// Locking and device removal still use endTouchPoints and end every contact.
+func (c *Compositor) endTouchesForOverview() {
+	for id := range c.touchPoints {
+		if c.isNativeDragFinger(id) {
+			continue
+		}
+		C.wlr_seat_touch_notify_up(c.seat, nowMsec(), C.int32_t(id))
+		c.dropTouchPoint(id)
+	}
 }
 
 // setTouchConfig applies input.touch. Turning touch off ends every finger.

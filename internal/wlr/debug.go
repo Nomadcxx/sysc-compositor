@@ -421,6 +421,7 @@ func (c *Compositor) applyDebugSettings() {
 }
 func (c *Compositor) repaintOutput(pointer unsafe.Pointer, scene *C.struct_wlr_scene_output) bool {
 	defer C.sysc_debug_frame_done(scene)
+	defer c.workspaceOutput(outputName(pointer))()
 	state := c.debugRuntime.outputs[pointer]
 	if state == nil {
 		return bool(C.wlr_scene_output_commit(scene, nil))

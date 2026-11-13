@@ -28,41 +28,56 @@ func TestLocaleKeyboardFillsOnlyUnsetXKBSettings(t *testing.T) {
 }
 
 func TestNestedServerDoesNotAcquirePortalNames(t *testing.T) {
-	command := exec.Command("dbus-daemon", "--session", "--nofork", "--print-address=1")
-	stdout, err := command.StdoutPipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := command.Start(); err != nil {
-		t.Skipf("dbus-daemon unavailable: %v", err)
-	}
-	defer func() { command.Process.Kill(); command.Wait() }()
-	scanner := bufio.NewScanner(stdout)
-	if !scanner.Scan() {
-		t.Fatal("private bus did not print its address")
-	}
-	address := scanner.Text()
-	t.Setenv("DBUS_SESSION_BUS_ADDRESS", address)
-	runtime.LockOSThread()
-	defer runtime.UnlockOSThread()
-	server, err := New(config.LoadResult{}, config.Path{}, false)
-	if err != nil {
-		t.Skipf("nested compositor unavailable: %v", err)
-	}
-	defer server.Destroy()
-	conn, err := dbus.Connect(address)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Close()
-	for _, name := range []string{"org.gnome.Mutter.DisplayConfig", "org.gnome.Mutter.ServiceChannel", "org.gnome.Shell.Introspect", "org.gnome.Shell.Screenshot", "org.gnome.Mutter.ScreenCast", "org.freedesktop.ScreenSaver", "org.freedesktop.a11y.Manager"} {
-		var owned bool
-		if err := conn.BusObject().Call("org.freedesktop.DBus.NameHasOwner", 0, name).Store(&owned); err != nil {
-			t.Fatal(err)
+	for _, enabled := range []bool{false, true} {
+		name := "default"
+		if enabled {
+			name = "debug"
 		}
-		if owned {
-			t.Errorf("nested startup acquired session name %s", name)
-		}
+		t.Run(name, func(t *testing.T) {
+			command := exec.Command("dbus-daemon", "--session", "--nofork", "--print-address=1")
+			stdout, err := command.StdoutPipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := command.Start(); err != nil {
+				t.Skipf("dbus-daemon unavailable: %v", err)
+			}
+			defer func() { command.Process.Kill(); command.Wait() }()
+			scanner := bufio.NewScanner(stdout)
+			if !scanner.Scan() {
+				t.Fatal("private bus did not print its address")
+			}
+			address := scanner.Text()
+			t.Setenv("DBUS_SESSION_BUS_ADDRESS", address)
+			runtime.LockOSThread()
+			defer runtime.UnlockOSThread()
+			cfg := config.Default()
+			cfg.Debug.DBusInterfacesInNonSessionInstances = enabled
+			server, err := New(config.LoadResult{Config: cfg}, config.Path{}, false)
+			if err != nil {
+				t.Skipf("nested compositor unavailable: %v", err)
+			}
+			defer server.Destroy()
+			server.StartDBus(false)
+			conn, err := dbus.Connect(address)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer conn.Close()
+			for _, name := range []string{"org.gnome.Mutter.DisplayConfig", "org.gnome.Mutter.ServiceChannel", "org.gnome.Shell.Introspect", "org.gnome.Shell.Screenshot", "org.gnome.Mutter.ScreenCast", "org.freedesktop.ScreenSaver", "org.freedesktop.a11y.Manager"} {
+				var owned bool
+				if err := conn.BusObject().Call("org.freedesktop.DBus.NameHasOwner", 0, name).Store(&owned); err != nil {
+					t.Fatal(err)
+				}
+				if enabled && name == "org.gnome.Mutter.ScreenCast" {
+					continue
+				} // PipeWire availability is tested separately.
+				want := enabled && name != "org.gnome.Mutter.ServiceChannel"
+				if owned != want {
+					t.Errorf("debug=%v name %s owned=%v want=%v", enabled, name, owned, want)
+				}
+			}
+		})
 	}
 }
 
@@ -96,7 +111,7 @@ func TestSessionServesKeyboardMonitor(t *testing.T) {
 			server.Destroy()
 		}
 	}()
-	server.StartSessionDBus()
+	server.StartDBus(true)
 	conn, err := dbus.Connect(address)
 	if err != nil {
 		t.Fatal(err)

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	cfg "github.com/Nomadcxx/sysc-compositor/internal/config"
 	"github.com/Nomadcxx/sysc-compositor/internal/wlr/testclient"
 )
 
@@ -71,8 +72,19 @@ func startPrivatePipeWire(t *testing.T, c *Compositor, tool func(string, ...stri
 }
 
 func TestPipeWireProducesFramesAndSurvivesDaemonLoss(t *testing.T) {
+	for _, force := range []bool{false, true} {
+		name := "default"
+		if force {
+			name = "force-invalid-modifier"
+		}
+		t.Run(name, func(t *testing.T) { testPipeWireFramesAndDaemonLoss(t, force) })
+	}
+}
+
+func testPipeWireFramesAndDaemonLoss(t *testing.T, force bool) {
+	t.Helper()
 	dir, config := privatePipeWireDir(t)
-	c := newNested(t)
+	c := newNestedWith(t, Options{Debug: cfg.Debug{ForcePipeWireInvalidModifier: force}})
 	runTools(t, c, func(tool func(string, ...string) *exec.Cmd) {
 		daemon, lost, before, ok := startPrivatePipeWire(t, c, tool, dir, config)
 		if daemon != nil {

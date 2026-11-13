@@ -144,12 +144,15 @@ static void sysc_overview_surface_list_destroy(struct sysc_overview_surface_list
 import "C"
 
 import (
+	"image"
+	"math"
 	"slices"
 	"time"
 	"unsafe"
 
 	"github.com/Nomadcxx/sysc-compositor/internal/config"
 	"github.com/Nomadcxx/sysc-compositor/internal/layout"
+	"github.com/Nomadcxx/sysc-compositor/internal/ui"
 	"github.com/Nomadcxx/sysc-compositor/internal/wm"
 )
 
@@ -204,7 +207,7 @@ func (c *Compositor) ToggleOverview() bool {
 		return false
 	}
 	if c.model.OverviewOpen() {
-		c.endTouchPoints(nowMsec())
+		c.endTouchesForOverview()
 	}
 	to := c.model.OverviewProgress()
 	c.model.SetOverviewAnimationProgress(from)
@@ -223,7 +226,7 @@ func (c *Compositor) OpenOverview() bool {
 	if !c.model.OpenOverview() {
 		return false
 	}
-	c.endTouchPoints(nowMsec())
+	c.endTouchesForOverview()
 	to := c.model.OverviewProgress()
 	c.model.SetOverviewAnimationProgress(from)
 	c.animateOverviewProgress(from, to, velocity)
@@ -256,6 +259,10 @@ func (c *Compositor) clearOverviewScene() {
 	for _, backdrop := range c.overviewBackdrops {
 		C.wlr_scene_node_destroy(&backdrop.node.node)
 	}
+	for node := range c.overviewWorkspaceNodes {
+		sceneFXNodeDestroy(node)
+	}
+	c.overviewWorkspaceNodes = nil
 	c.overviewProjections = nil
 	c.overviewBackdrops = nil
 }
@@ -269,11 +276,13 @@ func (c *Compositor) syncOverviewScene() {
 	}
 	c.clearOverviewScene()
 	progress := c.model.OverviewProgress()
-	if progress <= 0 {
-		C.wlr_scene_node_set_enabled(&c.overviewTree.node, false)
-		return
+	if progress > 0 {
+		C.wlr_scene_node_place_below(&c.overviewTree.node, &c.layerTrees[layerTop].node)
+	} else {
+		// The same layer copies form the switch backdrop beneath real windows
+		// and their decorations. The overview also projects the windows.
+		C.wlr_scene_node_place_below(&c.overviewTree.node, &c.windowShadowTree.node)
 	}
-	C.wlr_scene_node_set_enabled(&c.overviewTree.node, true)
 
 	type outputFrame struct {
 		name  string
@@ -288,6 +297,16 @@ func (c *Compositor) syncOverviewScene() {
 	zoom := c.model.OverviewZoom(c.overviewConfig.Zoom)
 	for _, name := range names {
 		frame, ok := c.model.OverviewFrame(name, zoom)
+		if progress <= 0 {
+			if _, switching := c.model.WorkspaceRenderOffset(name); !switching {
+				continue
+			}
+			bounds, exists := c.outputLayoutBounds(name)
+			if !exists {
+				continue
+			}
+			frame, ok = c.model.WorkspaceFrame(name, bounds, 1)
+		}
 		if !ok {
 			continue
 		}
@@ -300,11 +319,18 @@ func (c *Compositor) syncOverviewScene() {
 		if section := c.outputConfigByName(name); section != nil && section.BackdropColor != nil {
 			color = *section.BackdropColor
 		}
+		opacity := progress
+		if progress <= 0 {
+			// Cover the stationary originals, including a transparent backdrop's
+			// black output clear colour, before drawing the moving copies.
+			opacity = 1
+			color.R, color.G, color.B, color.A = color.R*color.A, color.G*color.A, color.B*color.A, 1
+		}
 		var rgba [4]C.float
-		rgba[0] = C.float(color.R * color.A * progress)
-		rgba[1] = C.float(color.G * color.A * progress)
-		rgba[2] = C.float(color.B * color.A * progress)
-		rgba[3] = C.float(color.A * progress)
+		rgba[0] = C.float(color.R * color.A * opacity)
+		rgba[1] = C.float(color.G * color.A * opacity)
+		rgba[2] = C.float(color.B * color.A * opacity)
+		rgba[3] = C.float(color.A * opacity)
 		node := C.wlr_scene_rect_create(c.overviewTree,
 			C.int(bounds.Width), C.int(bounds.Height), &rgba[0])
 		if node == nil {
@@ -321,6 +347,42 @@ func (c *Compositor) syncOverviewScene() {
 			}
 		}
 	}
+	C.wlr_scene_node_set_enabled(&c.overviewTree.node, C.bool(len(frames) > 0))
+	if len(frames) > 0 {
+		c.overviewWorkspaceNodes = make(map[unsafe.Pointer]string)
+	}
+	// Normalize shadow dimensions to a 1080-pixel output before zooming.
+	if progress > 0 && c.overviewConfig.WorkspaceShadow.On {
+		for _, current := range frames {
+			output, ok := c.outputLayoutBounds(current.name)
+			if !ok {
+				continue
+			}
+			shadow := c.overviewConfig.WorkspaceShadow
+			factor := float64(output.Height) / 1080 * current.frame.Zoom
+			shadow.Softness *= factor
+			shadow.Spread *= factor
+			shadow.OffsetX *= factor
+			shadow.OffsetY *= factor
+			shadow.Color.A *= progress
+			style := makeShadowRenderStyle(shadow, config.CornerRadius{}, true)
+			inset := style.inset
+			x, y := int(math.Round(shadow.OffsetX)), int(math.Round(shadow.OffsetY))
+			for _, workspace := range current.frame.Workspaces {
+				bounds := workspace.Bounds
+				width, height := bounds.Width+2*inset, bounds.Height+2*inset
+				if width <= 0 || height <= 0 {
+					continue
+				}
+				node := sceneFXCreateShadow(unsafe.Pointer(c.overviewTree), width, height, style.radius, style.blurSigma, style.color)
+				if node != nil {
+					sceneFXNodeSetPosition(node, bounds.X-inset+x, bounds.Y-inset+y)
+					sceneFXShadowClip(node, inset-x, inset-y, bounds.Width, bounds.Height, [4]uint16{})
+					c.overviewWorkspaceNodes[node] = current.name
+				}
+			}
+		}
+	}
 
 	views := make(map[uint64]*toplevelView, len(c.views))
 	for _, view := range c.views {
@@ -329,8 +391,25 @@ func (c *Compositor) syncOverviewScene() {
 			views[view.id] = view
 		}
 	}
+	workspaceNames := workspaceNamesByID(c.model.Snapshot().Workspaces)
 	for _, current := range frames {
 		for _, workspace := range current.frame.Workspaces {
+			bounds := workspace.Bounds
+			left, top := max(bounds.X, current.frame.Output.X), max(bounds.Y, current.frame.Output.Y)
+			right := min(bounds.X+bounds.Width, current.frame.Output.X+current.frame.Output.Width)
+			bottom := min(bounds.Y+bounds.Height, current.frame.Output.Y+current.frame.Output.Height)
+			if right <= left || bottom <= top {
+				continue
+			}
+			color := c.workspaceBackgroundColor(current.name, workspaceNames[workspace.ID])
+			if color.A > 0 {
+				node := sceneFXCreateRect(unsafe.Pointer(c.overviewTree), right-left, bottom-top, premultipliedColor(color))
+				if node != nil {
+					sceneFXRectIgnoreInput(node)
+					sceneFXNodeSetPosition(node, left, top)
+					c.overviewWorkspaceNodes[node] = current.name
+				}
+			}
 			// Background and bottom layers move and zoom with each workspace,
 			// below its windows.
 			for _, kind := range []int{layerBackground, layerBottom} {
@@ -340,6 +419,9 @@ func (c *Compositor) syncOverviewScene() {
 							current.frame.Output.X, current.frame.Output.Y, current.frame.Zoom)
 					}
 				}
+			}
+			if progress <= 0 {
+				continue
 			}
 			for _, window := range workspace.Windows {
 				if !window.Visible {
@@ -392,6 +474,18 @@ func (c *Compositor) projectOverviewLayer(layer *layerSurface, output string, wo
 		C.wlr_scene_node_destroy(&tree.node)
 		return
 	}
+	if workspace != 0 {
+		if outputBounds, ok := c.outputLayoutBounds(output); ok {
+			left, top := max(bounds.X, outputBounds.X), max(bounds.Y, outputBounds.Y)
+			right := min(bounds.X+bounds.Width, outputBounds.X+outputBounds.Width)
+			bottom := min(bounds.Y+bounds.Height, outputBounds.Y+outputBounds.Height)
+			if right <= left || bottom <= top {
+				C.wlr_scene_node_destroy(&tree.node)
+				return
+			}
+			sceneFXClipTree(unsafe.Pointer(tree), rect{left, top, right - left, bottom - top}, [4]uint16{})
+		}
+	}
 	c.overviewProjections = append(c.overviewProjections, overviewProjection{
 		Output: output, WorkspaceID: workspace, Bounds: bounds, BufferCount: count,
 		SourceFirst: uintptr(sourceFirst), SourceLast: uintptr(sourceLast), tree: tree, layer: layer,
@@ -435,6 +529,10 @@ func (c *Compositor) syncInsertHint() {
 		C.wlr_scene_node_destroy(&c.insertHintNode.node)
 		c.insertHintNode = nil
 	}
+	if c.insertHintImage != nil {
+		sceneFXNodeDestroy(c.insertHintImage)
+		c.insertHintImage = nil
+	}
 	if c.model == nil || c.layoutOptions.InsertHint.Off {
 		C.wlr_scene_node_set_enabled(&c.insertHintTree.node, false)
 		return
@@ -447,6 +545,34 @@ func (c *Compositor) syncInsertHint() {
 	bounds := drag.Target.Hint
 	if bounds.Width <= 0 || bounds.Height <= 0 {
 		C.wlr_scene_node_set_enabled(&c.insertHintTree.node, false)
+		return
+	}
+	if gradient := c.layoutOptions.InsertHint.Gradient; gradient != nil {
+		box := image.Rect(bounds.X, bounds.Y, bounds.X+bounds.Width, bounds.Y+bounds.Height)
+		area := box
+		for _, workspace := range c.model.Snapshot().Workspaces {
+			if workspace.ID != drag.Target.WorkspaceID {
+				continue
+			}
+			if output, ok := c.outputLayoutBounds(workspace.Output); ok {
+				view := image.Rect(output.X, output.Y, output.X+output.Width, output.Y+output.Height)
+				box = box.Intersect(view)
+				if gradient.RelativeTo == "workspace-view" {
+					area = view
+				}
+			}
+		}
+		if _, err := captureAllocation(box.Dx(), box.Dy(), box.Dx()*4); err == nil {
+			// ponytail: O(visible hint pixels) per layout update; cache by gradient
+			// and bounds if drag profiling shows this rasterization is hot.
+			node := sceneImage(c.insertHintTree, ui.GradientImage(box, area, *gradient))
+			c.insertHintImage = unsafe.Pointer(node)
+			if node != nil {
+				sceneImagePlace(node, box, 1)
+				sceneImageIgnoreInput(node)
+			}
+		}
+		C.wlr_scene_node_set_enabled(&c.insertHintTree.node, C.bool(c.insertHintImage != nil))
 		return
 	}
 	color := c.layoutOptions.InsertHint.Color

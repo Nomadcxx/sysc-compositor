@@ -3,11 +3,55 @@ package wlr
 import (
 	"math"
 	"time"
+	"unsafe"
 )
 
 // workspaceSwitchKey animates one output's settling workspace switch.
 func workspaceSwitchKey(output string) animationKey {
 	return animationKey{property: "workspace-switch:" + output}
+}
+
+// workspaceOutput keeps workspace projections and sliding windows on their
+// own output, including decorations and shader nodes. Synchronous rendering runs between
+// hiding these nodes and restoring them on the compositor thread.
+func (c *Compositor) workspaceOutput(output string) func() {
+	var hidden []unsafe.Pointer
+	hide := func(node unsafe.Pointer) {
+		if node != nil && sceneFXNodeEnabled(node) {
+			hidden = append(hidden, node)
+			sceneFXSetNodeEnabled(node, false)
+		}
+	}
+	for node, owner := range c.overviewWorkspaceNodes {
+		if owner != output {
+			hide(node)
+		}
+	}
+	if c.model != nil {
+		for _, view := range c.views {
+			if view == nil || view.tree == nil || view.outputName == output {
+				continue
+			}
+			if _, switching := c.model.WorkspaceRenderOffset(view.outputName); !switching {
+				continue
+			}
+			for _, node := range []unsafe.Pointer{view.sceneNode(), view.resizeSnapshot, view.shadowNode, view.borderNode, view.focusRingNode} {
+				hide(node)
+			}
+			if c.animationShaders != nil {
+				for _, property := range []string{"open-opacity", "resize-shader"} {
+					if effect := c.animationShaders.effects[animationKey{owner: view.id, property: property}]; effect != nil {
+						hide(unsafe.Pointer(effect.node))
+					}
+				}
+			}
+		}
+	}
+	return func() {
+		for _, node := range hidden {
+			sceneFXSetNodeEnabled(node, true)
+		}
+	}
 }
 
 // beginWorkspaceGesture starts Niri's touchpad workspace switch on output,
@@ -39,6 +83,10 @@ func (c *Compositor) endWorkspaceGesture(timestamp time.Duration) {
 	}
 	c.applyWorkspaceModel()
 	c.activateWorkspaceFocus()
+	c.animateWorkspaceSwitch(output, from, velocity)
+}
+
+func (c *Compositor) animateWorkspaceSwitch(output string, from, velocity float64) {
 	c.animateValue(workspaceSwitchKey(output), c.animationConfig.WorkspaceSwitch, from, 0, velocity,
 		func(offset float64) {
 			c.model.SetWorkspaceRenderOffset(output, offset)
@@ -87,7 +135,7 @@ func (c *Compositor) presentWorkspaceSwitch() {
 			continue
 		}
 		steps := float64(position[window.WorkspaceID]-active[window.Output]) - offset
-		shown := math.Abs(steps) < 1 && (window.Tile.Visible || window.Fullscreen)
+		shown := math.Abs(steps) <= 1 && (window.Tile.Visible || window.Fullscreen)
 		if id := fullscreen[window.WorkspaceID]; id != 0 {
 			shown = shown && id == window.ID
 		}
@@ -100,7 +148,8 @@ func (c *Compositor) presentWorkspaceSwitch() {
 			continue
 		}
 		x, y, _, _ := c.windowSceneTarget(view, window)
-		height := c.workspaceBounds(window.Output).Height
+		bounds, _ := c.outputLayoutBounds(window.Output)
+		height := bounds.Height + int(math.Round(float64(bounds.Height)*0.1))
 		c.cancelAnimation(animationKey{owner: view.id, property: "x"})
 		c.cancelAnimation(animationKey{owner: view.id, property: "y"})
 		c.setViewScenePosition(view, x, y+int(math.Round(steps*float64(height))))

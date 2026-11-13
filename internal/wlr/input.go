@@ -7,6 +7,7 @@ package wlr
 #include <stdlib.h>
 #include <wlr/backend.h>
 #include <wlr/types/wlr_cursor.h>
+#include <wlr/types/wlr_data_device.h>
 #include <wlr/types/wlr_input_device.h>
 #include <wlr/types/wlr_keyboard.h>
 #include <wlr/types/wlr_pointer.h>
@@ -47,14 +48,33 @@ static void sysc_restore_client_image(struct wlr_cursor *cursor,
 }
 
 static struct wlr_surface *sysc_scene_surface_at(struct wlr_scene *scene,
-		double x, double y, double *sx, double *sy) {
+		double x, double y, double *sx, double *sy, struct wlr_scene_node **hit) {
 	struct wlr_scene_node *node = wlr_scene_node_at(&scene->tree.node, x, y, sx, sy);
+	*hit = node;
 	if (node == NULL || node->type != WLR_SCENE_NODE_BUFFER) {
 		return NULL;
 	}
 	struct wlr_scene_surface *scene_surface =
 		wlr_scene_surface_try_from_buffer(wlr_scene_buffer_from_node(node));
 	return scene_surface == NULL ? NULL : scene_surface->surface;
+}
+
+static struct wlr_surface *sysc_projected_layer_surface_at(struct wlr_scene_tree *tree,
+		double x, double y, double *sx, double *sy) {
+	int px = 0, py = 0;
+	if (tree->node.parent != NULL) {
+		wlr_scene_node_coords(&tree->node.parent->node, &px, &py);
+	}
+	// Query an inactive workspace's source without changing scene damage.
+	bool enabled = tree->node.enabled;
+	tree->node.enabled = true;
+	struct wlr_scene_node *node = wlr_scene_node_at(&tree->node, x - px, y - py, sx, sy);
+	tree->node.enabled = enabled;
+	if (node == NULL || node->type != WLR_SCENE_NODE_BUFFER) {
+		return NULL;
+	}
+	struct wlr_scene_surface *surface = wlr_scene_surface_try_from_buffer(wlr_scene_buffer_from_node(node));
+	return surface == NULL ? NULL : surface->surface;
 }
 
 static void sysc_scene_tree_position(struct wlr_scene_tree *tree, int *x, int *y) {
@@ -159,15 +179,21 @@ func (s *pointerSwipeState) advanceGestureTime(timeMsec uint32) time.Duration {
 }
 
 type dndEdgeScrollState struct {
-	drag        unsafe.Pointer
-	listeners   []*Listener
-	timer       *time.Timer
-	tracker     wm.DNDEdgeScrollTracker
-	output      string
-	workspaceID uint64
-	direction   int
-	remainder   float64
-	generation  uint64
+	updating           bool
+	icon               *C.struct_wlr_scene_tree
+	workspaceTracker   wm.DNDEdgeScrollTracker
+	workspaceDirection int
+	workspaceSwitch    bool
+	started            time.Time
+	drag               unsafe.Pointer
+	listeners          []*Listener
+	timer              *time.Timer
+	tracker            wm.DNDEdgeScrollTracker
+	output             string
+	workspaceID        uint64
+	direction          int
+	remainder          float64
+	generation         uint64
 }
 
 type tiledWindowMoveState struct {
@@ -389,8 +415,12 @@ func (c *Compositor) handleSwitchToggle(data unsafe.Pointer) {
 	default:
 		return
 	}
+	on := event.switch_state == C.WLR_SWITCH_STATE_ON
+	if switchType == SwitchLid {
+		c.SetLidClosed(on)
+	}
 	if c.switchToggle != nil {
-		c.switchToggle(SwitchToggle{Type: switchType, On: event.switch_state == C.WLR_SWITCH_STATE_ON})
+		c.switchToggle(SwitchToggle{Type: switchType, On: on})
 	}
 }
 
@@ -628,9 +658,18 @@ func (c *Compositor) handleStartDrag(data unsafe.Pointer) {
 	if c.dndScroll != nil {
 		c.destroyDndScrollState(c.dndScroll)
 	}
-	state := &dndEdgeScrollState{drag: unsafe.Pointer(drag)}
+	state := &dndEdgeScrollState{drag: unsafe.Pointer(drag), started: time.Now()}
 	c.dndScroll = state
-	state.listeners = []*Listener{
+	if drag.icon != nil {
+		state.icon = C.wlr_scene_drag_icon_create(c.layerTrees[layerOverlay], drag.icon)
+		var destroyed *Listener
+		destroyed = AddListener(unsafe.Pointer(&drag.icon.events.destroy), func(unsafe.Pointer) {
+			state.icon = nil
+			c.drop(destroyed)
+		})
+		state.listeners = append(state.listeners, destroyed)
+	}
+	state.listeners = append(state.listeners,
 		AddListener(unsafe.Pointer(&drag.events.motion), func(unsafe.Pointer) {
 			c.updateDndEdgeScroll(state)
 		}),
@@ -640,65 +679,116 @@ func (c *Compositor) handleStartDrag(data unsafe.Pointer) {
 		AddListener(unsafe.Pointer(&drag.events.destroy), func(unsafe.Pointer) {
 			c.destroyDndScrollState(state)
 		}),
-	}
+	)
 	c.keep(state.listeners...)
 	c.updateDndEdgeScroll(state)
 }
 
+func (c *Compositor) dndPoint(state *dndEdgeScrollState) (x, y float64, ok bool) {
+	if state.drag != nil {
+		drag := (*C.struct_wlr_drag)(state.drag)
+		if drag.grab_type == C.WLR_DRAG_GRAB_KEYBOARD_TOUCH {
+			point := c.touchPoints[int32(drag.grab_touch_id)]
+			if point == nil {
+				return 0, 0, false
+			}
+			return point.layoutX, point.layoutY, true
+		}
+	}
+	return float64(c.cursor.x), float64(c.cursor.y), true
+}
+
 func (c *Compositor) updateDndEdgeScroll(state *dndEdgeScrollState) {
-	if state == nil || c.dndScroll != state {
+	c.advanceDndEdgeScroll(state, time.Now())
+}
+
+func (c *Compositor) advanceDndEdgeScroll(state *dndEdgeScrollState, now time.Time) {
+	if state == nil || c.dndScroll != state || state.updating {
 		return
 	}
-	x, y := float64(c.cursor.x), float64(c.cursor.y)
-	output := c.outputNameAt(x, y)
-	workspaceID, bounds, ok := c.dndEdgeScrollTarget(output, x, y)
-	direction, _ := wm.DNDEdgeScrollAt(bounds, x, y,
-		c.dndEdgeConfig.TriggerWidth, c.dndEdgeConfig.MaxSpeed)
-	if !ok || direction == 0 || workspaceID == 0 {
+	state.updating = true
+	defer func() { state.updating = false }()
+	x, y, ok := c.dndPoint(state)
+	if !ok {
 		c.stopDndEdgeScroll(state)
 		return
 	}
-	if state.output == output && state.workspaceID == workspaceID && state.direction == direction {
+	if state.icon != nil {
+		C.wlr_scene_node_set_position(&state.icon.node, C.int(math.Round(x)), C.int(math.Round(y)))
+	}
+	output := c.outputNameAt(x, y)
+	if state.output != "" && state.output != output {
+		c.stopDndEdgeScroll(state)
+	}
+	state.output = output
+	workspaceID, bounds, valid := c.dndEdgeScrollTarget(output, x, y)
+	direction, _ := wm.DNDEdgeScrollAt(bounds, x, y, c.dndEdgeConfig.TriggerWidth, c.dndEdgeConfig.MaxSpeed)
+	if !valid {
+		direction = 0
+	}
+	if direction != state.direction || workspaceID != state.workspaceID {
+		state.tracker.Reset()
+		state.remainder = 0
+	}
+	state.direction, state.workspaceID = direction, workspaceID
+	delta := state.tracker.Update(now, bounds, x, y, c.dndEdgeConfig.TriggerWidth, time.Duration(c.dndEdgeConfig.DelayMS)*time.Millisecond, c.dndEdgeConfig.MaxSpeed)
+	state.remainder += delta
+	pixels := int(math.Trunc(state.remainder))
+	state.remainder -= float64(pixels)
+	if pixels != 0 && c.model.ScrollWorkspaceView(workspaceID, pixels) {
+		c.applyWorkspaceModel()
+	}
+
+	verticalBounds := layout.Bounds{}
+	if c.model != nil && c.model.OverviewOpen() {
+		if full, exists := c.outputLayoutBounds(output); exists {
+			working := c.workspaceBounds(output)
+			width := int(math.Round(float64(full.Width) * c.model.OverviewZoom(c.overviewConfig.Zoom)))
+			verticalBounds = layout.Bounds{X: full.X + (full.Width-width)/2, Y: working.Y, Width: width, Height: working.Height}
+		}
+	} else if state.workspaceSwitch {
+		state.workspaceSwitch = false
+		c.endWorkspaceGesture(now.Sub(state.started))
+	}
+	settings := c.dndWorkspaceConfig
+	state.workspaceDirection, _ = wm.DNDEdgeWorkspaceSwitchAt(verticalBounds, x, y, settings.TriggerHeight, settings.MaxSpeed)
+	if state.workspaceDirection != 0 && !state.workspaceSwitch {
+		c.cancelAnimation(workspaceSwitchKey(output))
+		state.workspaceSwitch = c.model.BeginWorkspaceDND(output)
+	}
+	delta = state.workspaceTracker.UpdateWorkspace(now, verticalBounds, x, y, settings.TriggerHeight, time.Duration(settings.DelayMS)*time.Millisecond, settings.MaxSpeed)
+	if state.workspaceSwitch && delta != 0 {
+		c.updateWorkspaceGesture(delta, now.Sub(state.started))
+		c.updateNativeDragFocus(nowMsec())
+		if c.dndScroll != state {
+			return
+		}
+	}
+	if direction == 0 && state.workspaceDirection == 0 {
+		if state.timer != nil {
+			state.timer.Stop()
+			state.timer = nil
+		}
+		state.generation++
 		return
 	}
-	c.stopDndEdgeScroll(state)
-	state.output, state.workspaceID, state.direction = output, workspaceID, direction
-	state.tracker.Update(time.Now(), bounds, x, y, c.dndEdgeConfig.TriggerWidth,
-		time.Duration(c.dndEdgeConfig.DelayMS)*time.Millisecond, c.dndEdgeConfig.MaxSpeed)
-	c.scheduleDndEdgeTick(state, time.Duration(c.dndEdgeConfig.DelayMS)*time.Millisecond)
+	if state.timer == nil {
+		c.scheduleDndEdgeTick(state, 20*time.Millisecond)
+	}
 }
 
 func (c *Compositor) scheduleDndEdgeTick(state *dndEdgeScrollState, delay time.Duration) {
 	state.generation++
 	generation := state.generation
-	state.timer = time.AfterFunc(delay, func() {
-		_ = c.Post(func() { c.dndEdgeScrollTick(state, generation) })
-	})
+	state.timer = time.AfterFunc(delay, func() { _ = c.Post(func() { c.dndEdgeScrollTick(state, generation) }) })
 }
 
 func (c *Compositor) dndEdgeScrollTick(state *dndEdgeScrollState, generation uint64) {
-	if state == nil || c.dndScroll != state || state.generation != generation || state.direction == 0 {
+	if state == nil || c.dndScroll != state || state.generation != generation {
 		return
 	}
 	state.timer = nil
-	x, y := float64(c.cursor.x), float64(c.cursor.y)
-	output := c.outputNameAt(x, y)
-	workspaceID, bounds, ok := c.dndEdgeScrollTarget(output, x, y)
-	direction, _ := wm.DNDEdgeScrollAt(bounds, x, y,
-		c.dndEdgeConfig.TriggerWidth, c.dndEdgeConfig.MaxSpeed)
-	if !ok || direction != state.direction || output != state.output || workspaceID != state.workspaceID {
-		c.updateDndEdgeScroll(state)
-		return
-	}
-	delta := state.tracker.Update(time.Now(), bounds, x, y, c.dndEdgeConfig.TriggerWidth,
-		time.Duration(c.dndEdgeConfig.DelayMS)*time.Millisecond, c.dndEdgeConfig.MaxSpeed)
-	state.remainder += delta
-	pixels := int(math.Trunc(state.remainder))
-	state.remainder -= float64(pixels)
-	if pixels != 0 && c.model.ScrollWorkspaceView(state.workspaceID, pixels) {
-		c.applyWorkspaceModel()
-	}
-	c.scheduleDndEdgeTick(state, 20*time.Millisecond)
+	c.advanceDndEdgeScroll(state, time.Now())
 }
 
 func (c *Compositor) stopDndEdgeScroll(state *dndEdgeScrollState) {
@@ -710,6 +800,12 @@ func (c *Compositor) stopDndEdgeScroll(state *dndEdgeScrollState) {
 		state.timer = nil
 	}
 	state.generation++
+	state.workspaceTracker.Reset()
+	state.workspaceDirection = 0
+	if state.workspaceSwitch {
+		state.workspaceSwitch = false
+		c.endWorkspaceGesture(time.Since(state.started))
+	}
 	state.tracker.Reset()
 	state.output, state.workspaceID, state.direction, state.remainder = "", 0, 0, 0
 }
@@ -760,6 +856,12 @@ func (c *Compositor) processCursorMotion(time C.uint32_t) {
 		return
 	}
 	c.updateHotCorner()
+	if drag := c.seat.drag; drag != nil && drag.grab_type == C.WLR_DRAG_GRAB_KEYBOARD_POINTER {
+		c.updateNativeDragFocus(time)
+		c.updateDndEdgeScroll(c.dndScroll)
+		return
+	}
+
 	// In the overview the windows are the overview's, but top and overlay
 	// layer surfaces still take the pointer (Niri's contents_under). A held
 	// button keeps the pointer only on the layer surface it was pressed on.
@@ -815,8 +917,7 @@ func (c *Compositor) processCursorMotion(time C.uint32_t) {
 		}
 		return
 	}
-	var sx, sy C.double
-	surface := C.sysc_scene_surface_at(c.scene, c.cursor.x, c.cursor.y, &sx, &sy)
+	surface, sx, sy := c.surfaceAt(float64(c.cursor.x), float64(c.cursor.y))
 	if surface == nil {
 		C.wlr_seat_pointer_notify_clear_focus(c.seat)
 		c.showDefaultImage()
@@ -1167,8 +1268,109 @@ func (c *Compositor) pointerOnLayerSurface() bool {
 // surface-local position, or nil over empty space.
 func (c *Compositor) surfaceAt(x, y float64) (*C.struct_wlr_surface, C.double, C.double) {
 	var sx, sy C.double
-	surface := C.sysc_scene_surface_at(c.scene, C.double(x), C.double(y), &sx, &sy)
+	var hit *C.struct_wlr_scene_node
+	surface := C.sysc_scene_surface_at(c.scene, C.double(x), C.double(y), &sx, &sy, &hit)
+	if c.model == nil || c.model.OverviewProgress() > 0 || hit == nil {
+		return surface, sx, sy
+	}
+	if view := c.viewForSurface(surface); view != nil {
+		if _, switching := c.model.WorkspaceRenderOffset(view.outputName); switching && c.outputNameAt(x, y) != view.outputName {
+			return nil, 0, 0
+		}
+	}
+	if surface == nil {
+		for parent := hit.parent; parent != nil; parent = parent.node.parent {
+			if parent != c.overviewTree {
+				continue
+			}
+			// Walk the projected layers from front to back: their source input
+			// regions can let this point through to another layer below.
+			for i := len(c.overviewProjections) - 1; i >= 0; i-- {
+				projection := c.overviewProjections[i]
+				if projection.layer == nil || C.wlr_scene_node_at(&projection.tree.node, C.double(x), C.double(y), &sx, &sy) == nil {
+					continue
+				}
+				sourceX, sourceY := x, y
+				if projection.WorkspaceID != 0 {
+					bounds, ok := c.outputLayoutBounds(projection.Output)
+					if !ok {
+						continue
+					}
+					sourceX += float64(bounds.X - projection.Bounds.X)
+					sourceY += float64(bounds.Y - projection.Bounds.Y)
+				}
+				if surface = C.sysc_projected_layer_surface_at(projection.layer.tree, C.double(sourceX), C.double(sourceY), &sx, &sy); surface != nil {
+					return surface, sx, sy
+				}
+			}
+			return nil, 0, 0
+		}
+	}
 	return surface, sx, sy
+}
+
+// updateNativeDragFocus retargets pointer and touch drags, including when the
+// workspace strip moves under a stationary contact.
+func (c *Compositor) updateNativeDragFocus(timestamp C.uint32_t) {
+	drag := c.seat.drag
+	if drag == nil {
+		return
+	}
+	switch drag.grab_type {
+	case C.WLR_DRAG_GRAB_KEYBOARD_POINTER:
+		surface, sx, sy := c.dragSurfaceAt(float64(c.cursor.x), float64(c.cursor.y))
+		if surface == nil {
+			C.wlr_seat_pointer_notify_clear_focus(c.seat)
+		} else {
+			C.wlr_seat_pointer_notify_enter(c.seat, surface, sx, sy)
+			C.wlr_seat_pointer_notify_motion(c.seat, timestamp, sx, sy)
+		}
+	case C.WLR_DRAG_GRAB_KEYBOARD_TOUCH:
+		point := c.touchPoints[int32(drag.grab_touch_id)]
+		if point == nil {
+			return
+		}
+		surface, sx, sy := c.dragSurfaceAt(point.layoutX, point.layoutY)
+		if surface == nil {
+			C.wlr_seat_touch_notify_clear_focus(c.seat, timestamp, C.int32_t(point.id))
+			C.wlr_seat_touch_point_clear_focus(c.seat, timestamp, C.int32_t(point.id))
+		} else {
+			C.wlr_seat_touch_point_focus(c.seat, surface, timestamp, C.int32_t(point.id), sx, sy)
+		}
+		C.wlr_seat_touch_notify_motion(c.seat, timestamp, C.int32_t(point.id), sx, sy)
+	}
+}
+
+// A client drag targets projected windows without selecting or closing overview.
+func (c *Compositor) dragSurfaceAt(x, y float64) (*C.struct_wlr_surface, C.double, C.double) {
+	surface, sx, sy := c.surfaceAt(x, y)
+	if !c.overviewShown() {
+		return surface, sx, sy
+	}
+	if layer := c.layerSurfaceForSurface(surface); layer != nil && layer.layer >= layerTop {
+		return surface, sx, sy
+	}
+	output := c.outputNameAt(x, y)
+	zoom := c.model.OverviewZoom(c.overviewConfig.Zoom)
+	hit, ok := c.model.OverviewHitTest(output, x, y, zoom)
+	if !ok || hit.WindowID == 0 {
+		return nil, 0, 0
+	}
+	frame, _ := c.model.OverviewFrame(output, zoom)
+	for _, workspace := range frame.Workspaces {
+		if workspace.ID != hit.WorkspaceID {
+			continue
+		}
+		for _, view := range c.views {
+			if view.id == hit.WindowID && view.tree != nil {
+				x = float64(frame.Output.X) + (x-float64(workspace.Bounds.X))/frame.Zoom
+				y = float64(frame.Output.Y) + (y-float64(workspace.Bounds.Y))/frame.Zoom
+				surface = C.sysc_projected_layer_surface_at(view.tree, C.double(x), C.double(y), &sx, &sy)
+				return surface, sx, sy
+			}
+		}
+	}
+	return nil, 0, 0
 }
 
 func (c *Compositor) viewAtCursor() *toplevelView {

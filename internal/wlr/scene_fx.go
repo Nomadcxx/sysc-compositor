@@ -9,6 +9,7 @@ package wlr
 #include <time.h>
 #include <wlr/types/wlr_compositor.h>
 #include <wlr/types/wlr_xdg_shell.h>
+#include <wlr/util/transform.h>
 
 struct sysc_corner_data {
 	struct wlr_surface *root;
@@ -284,15 +285,19 @@ struct sysc_scene_clip {
 };
 
 // sysc_clip_scene_buffer crops a buffer to the clip box, hiding it when it
-// lies outside, and rounds the box's corners it reaches. Transformed
-// buffers keep their extent.
+// lies outside, and rounds the box's corners it reaches.
 static void sysc_clip_scene_buffer(struct wlr_scene_buffer *buffer, int x, int y, void *data) {
 	struct sysc_scene_clip *clip = data;
-	if (buffer->buffer == NULL || buffer->transform != WL_OUTPUT_TRANSFORM_NORMAL) {
+	int raw_width = buffer->WLR_PRIVATE.buffer_width;
+	int raw_height = buffer->WLR_PRIVATE.buffer_height;
+	if (raw_width <= 0 || raw_height <= 0) {
 		return;
 	}
-	int width = buffer->dst_width > 0 ? buffer->dst_width : buffer->buffer->width;
-	int height = buffer->dst_height > 0 ? buffer->dst_height : buffer->buffer->height;
+	int width = buffer->dst_width, height = buffer->dst_height;
+	if (width <= 0 || height <= 0) {
+		width = (buffer->transform & 1) ? raw_height : raw_width;
+		height = (buffer->transform & 1) ? raw_width : raw_height;
+	}
 	int left = x > clip->x ? x : clip->x;
 	int top = y > clip->y ? y : clip->y;
 	int right = x + width < clip->x + clip->width ? x + width : clip->x + clip->width;
@@ -304,12 +309,16 @@ static void sysc_clip_scene_buffer(struct wlr_scene_buffer *buffer, int x, int y
 	if (left != x || top != y || right != x + width || bottom != y + height) {
 		struct wlr_fbox src = buffer->src_box;
 		if (src.width <= 0 || src.height <= 0) {
-			src = (struct wlr_fbox){ .width = buffer->buffer->width, .height = buffer->buffer->height };
+			src = (struct wlr_fbox){ .width = raw_width, .height = raw_height };
 		}
-		double sx = src.width / width, sy = src.height / height;
+		struct wlr_fbox uv = {
+			.x = (double)(left - x) / width, .y = (double)(top - y) / height,
+			.width = (double)(right - left) / width, .height = (double)(bottom - top) / height,
+		};
+		wlr_fbox_transform(&uv, &uv, wlr_output_transform_invert(buffer->transform), 1, 1);
 		struct wlr_fbox crop = {
-			.x = src.x + (left - x) * sx, .y = src.y + (top - y) * sy,
-			.width = (right - left) * sx, .height = (bottom - top) * sy,
+			.x = src.x + uv.x * src.width, .y = src.y + uv.y * src.height,
+			.width = uv.width * src.width, .height = uv.height * src.height,
 		};
 		wlr_scene_buffer_set_source_box(buffer, &crop);
 		wlr_scene_buffer_set_dest_size(buffer, right - left, bottom - top);

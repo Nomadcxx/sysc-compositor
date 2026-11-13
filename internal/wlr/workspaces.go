@@ -27,6 +27,7 @@ static void sysc_workspace_set_enabled(struct wlr_scene_tree *tree, bool enabled
 import "C"
 
 import (
+	"time"
 	"unsafe"
 
 	"github.com/Nomadcxx/sysc-compositor/internal/layout"
@@ -389,20 +390,20 @@ func (c *Compositor) applyWorkspaceModel() {
 	activeWindowIDs := activeWindowIDsForWorkspaces(snapshot.Workspaces)
 	workspaceNames := workspaceNamesByID(snapshot.Workspaces)
 	nextActive := make(map[string]activeWorkspace)
-	switched := make(map[string]int)
+	switched := make(map[string]float64)
 	for _, workspace := range snapshot.Workspaces {
 		if !workspace.IsActive {
 			continue
 		}
 		current := activeWorkspace{id: workspace.ID, index: int(workspace.Index)}
-		// A gesture's switch is drawn by presentWorkspaceSwitch instead.
-		_, gesture := c.model.WorkspaceRenderOffset(workspace.Output)
-		if previous, ok := c.activeWorkspaces[workspace.Output]; ok && previous.id != current.id && !gesture {
-			direction := 1
-			if current.index < previous.index {
-				direction = -1
+		offset, switching := c.model.WorkspaceRenderOffset(workspace.Output)
+		if previous, ok := c.activeWorkspaces[workspace.Output]; ok && previous.id != current.id &&
+			!c.model.WorkspaceGestureActive() && (!switching || c.animations[workspaceSwitchKey(workspace.Output)] != nil) {
+			if switching {
+				offset, _, _ = c.animationValue(workspaceSwitchKey(workspace.Output), offset, time.Now())
 			}
-			switched[workspace.Output] = direction
+			c.cancelAnimation(workspaceSwitchKey(workspace.Output))
+			switched[workspace.Output] = offset + float64(previous.index-current.index)
 		}
 		nextActive[workspace.Output] = current
 	}
@@ -442,8 +443,8 @@ func (c *Compositor) applyWorkspaceModel() {
 			continue
 		}
 		oldVisible := view.presentationVisible
-		oldWorkspaceID, oldOutput := view.workspaceID, view.outputName
-		newlyTracked := oldWorkspaceID == 0
+		oldOutput := view.outputName
+		newlyTracked := view.workspaceID == 0
 		visible := activeWorkspaceByID[window.WorkspaceID] && window.Tile.Visible
 		if fullscreen := fullscreenByOutput[window.Output]; fullscreen != nil {
 			visible = fullscreen == view
@@ -464,36 +465,7 @@ func (c *Compositor) applyWorkspaceModel() {
 			view.presentationVisible = visible
 			c.setViewSceneEnabled(view, visible)
 			c.setViewAppearanceEnabled(view, visible)
-		} else if direction, changed := switched[window.Output]; changed && oldOutput == window.Output && oldVisible && !visible && oldWorkspaceID == window.WorkspaceID {
-			c.cancelResizeAnimation(view)
-			view.presentationVisible = false
-			c.setViewSceneEnabled(view, true)
-			if targetWidth > 0 && targetHeight > 0 {
-				c.requestWindowSize(view, targetWidth, targetHeight)
-			}
-			x, y := view.layoutPosition()
-			height := c.workspaceBounds(window.Output).Height
-			if height <= 0 {
-				height = 1
-			}
-			c.animateViewPosition(view, x, y-direction*height, c.animationConfig.WorkspaceSwitch, func() {
-				if !view.presentationVisible {
-					c.setViewSceneEnabled(view, false)
-				}
-			})
-		} else if direction, changed := switched[window.Output]; changed && oldOutput == window.Output && !oldVisible && visible && !newlyTracked {
-			c.cancelResizeAnimation(view)
-			view.presentationVisible = true
-			height := c.workspaceBounds(window.Output).Height
-			if height <= 0 {
-				height = 1
-			}
-			c.setViewScenePosition(view, targetX, targetY+direction*height)
-			c.setViewSceneEnabled(view, true)
-			c.animateViewPosition(view, targetX, targetY, c.animationConfig.WorkspaceSwitch, nil)
-			if targetWidth > 0 && targetHeight > 0 {
-				c.requestWindowSize(view, targetWidth, targetHeight)
-			}
+
 		} else {
 			view.presentationVisible = visible
 			if !visible {
@@ -550,6 +522,10 @@ func (c *Compositor) applyWorkspaceModel() {
 		}
 	}
 	c.activeWorkspaces = nextActive
+	for output, from := range switched {
+		c.model.SetWorkspaceRenderOffset(output, from)
+		c.animateWorkspaceSwitch(output, from, 0)
+	}
 	for _, view := range c.views {
 		if view == nil || view.tree == nil {
 			continue

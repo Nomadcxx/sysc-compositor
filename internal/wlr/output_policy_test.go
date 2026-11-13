@@ -120,3 +120,33 @@ func TestPlaceOutputsMatchesNiri(t *testing.T) {
 		}
 	}
 }
+
+// TestLaptopPanelPolicyMatchesNiri: Niri's is_laptop_panel and
+// should_disable_laptop_panels (src/utils/mod.rs, src/backend/tty.rs). Pure Go.
+func TestLaptopPanelPolicyMatchesNiri(t *testing.T) {
+	for connector, want := range map[string]bool{
+		"eDP-1": true, "LVDS-1": true, "LVDS1": true, "DSI-1": true,
+		"eDP": false, "DP-1": false, "HDMI-A-1": false, "WL-1": false, "edp-1": false,
+	} {
+		if got := isLaptopPanel(connector); got != want {
+			t.Errorf("isLaptopPanel(%q) = %t, want %t", connector, got, want)
+		}
+	}
+	for _, tc := range []struct {
+		name            string
+		lidClosed, keep bool
+		connectors      []string
+		want            bool
+	}{
+		{"open lid", false, false, []string{"eDP-1", "DP-1"}, false},
+		{"closed with external", true, false, []string{"eDP-1", "DP-1"}, true},
+		{"sole panel stays on", true, false, []string{"eDP-1"}, false},
+		{"panels only", true, false, []string{"eDP-1", "DSI-1"}, false},
+		{"debug keeps panel on", true, true, []string{"eDP-1", "DP-1"}, false},
+		{"no outputs", true, false, nil, false},
+	} {
+		if got := shouldDisableLaptopPanels(tc.lidClosed, tc.keep, tc.connectors); got != tc.want {
+			t.Errorf("%s: shouldDisableLaptopPanels = %t, want %t", tc.name, got, tc.want)
+		}
+	}
+}

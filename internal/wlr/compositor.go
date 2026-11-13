@@ -185,6 +185,7 @@ type Compositor struct {
 	overviewTree        *C.struct_wlr_scene_tree
 	insertHintTree      *C.struct_wlr_scene_tree
 	insertHintNode      *C.struct_wlr_scene_rect
+	insertHintImage     unsafe.Pointer
 	seat                *C.struct_wlr_seat
 	pointerGestures     *C.struct_wlr_pointer_gestures_v1
 	xdgShell            *C.struct_wlr_xdg_shell
@@ -242,9 +243,11 @@ type Compositor struct {
 	preferNoCSD             bool
 	overviewBackdrops       []overviewBackdrop
 	overviewProjections     []overviewProjection
+	overviewWorkspaceNodes  map[unsafe.Pointer]string
 	hotCorners              config.HotCorners
 	hotCornerTracker        wm.HotCornerTracker
 	dndEdgeConfig           config.DNDEdgeViewScroll
+	dndWorkspaceConfig      config.DNDEdgeWorkspaceSwitch
 	dndScroll               *dndEdgeScrollState
 	tiledMove               *tiledWindowMoveState
 	layerSurfaces           map[unsafe.Pointer]*layerSurface // by wlr_surface
@@ -264,6 +267,7 @@ type Compositor struct {
 	overviewScroll          *pointerSwipeState // the overview's touchpad scroll gesture, while it runs
 	switchToggleListeners   map[unsafe.Pointer]*Listener
 	switchToggle            func(SwitchToggle)
+	lidClosed               bool // from the lid switch or login1; see SetLidClosed
 	keyboardDevices         map[unsafe.Pointer]bool
 	suppressedKeys          map[uint32]bool
 	keyboardGroup           *C.struct_wlr_keyboard_group
@@ -519,6 +523,7 @@ func NewWith(opts Options) (*Compositor, error) {
 	c.preferNoCSD = opts.PreferNoCSD
 	c.hotCorners = opts.Gestures.HotCorners
 	c.dndEdgeConfig = opts.Gestures.DNDEdgeViewScroll
+	c.dndWorkspaceConfig = *opts.Gestures.DNDEdgeWorkspaceSwitch
 	c.model = wm.New(opts.Workspaces...)
 	c.windowRules = slices.Clone(opts.WindowRules)
 	c.layerRules = slices.Clone(opts.LayerRules)
@@ -762,6 +767,9 @@ func normalizeOptions(opts Options) Options {
 	if opts.Gestures.DNDEdgeViewScroll == (config.DNDEdgeViewScroll{}) {
 		opts.Gestures.DNDEdgeViewScroll = defaults.Gestures.DNDEdgeViewScroll
 	}
+	if opts.Gestures.DNDEdgeWorkspaceSwitch == nil {
+		opts.Gestures.DNDEdgeWorkspaceSwitch = defaults.Gestures.DNDEdgeWorkspaceSwitch
+	}
 	if opts.RecentWindows == nil {
 		opts.RecentWindows = &defaults.RecentWindows
 	}
@@ -838,6 +846,7 @@ func (c *Compositor) Reconfigure(opts Options) error {
 	}
 	c.hotCorners = opts.Gestures.HotCorners
 	c.dndEdgeConfig = opts.Gestures.DNDEdgeViewScroll
+	c.dndWorkspaceConfig = *opts.Gestures.DNDEdgeWorkspaceSwitch
 	rulesChanged := !reflect.DeepEqual(c.windowRules, opts.WindowRules)
 	c.windowRules = slices.Clone(opts.WindowRules)
 	if rulesChanged {

@@ -48,7 +48,6 @@ type Server struct {
 	reloadSeq     uint64
 	retryRoot     string
 	destroying    bool
-	lidClosed     bool
 	ctl           *control.Server
 	ctlPath       string
 	niri          *unixsock.Listener

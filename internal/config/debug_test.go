@@ -4,7 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"slices"
 	"strings"
 	"testing"
 )
@@ -104,18 +103,12 @@ input { workspace-auto-back-and-forth false; }
 	if cfg.ConfigNotification.DisableFailed || cfg.Input.WorkspaceAutoBackAndForth {
 		t.Fatalf("explicit false did not override flags: %+v %+v", cfg.ConfigNotification, cfg.Input)
 	}
-	// Only the settings sysc does not act on yet warn; Niri documents
-	// keep-max-bpc-unchanged as a no-op since 25.11.
-	var warned []string
+	// Every debug setting is applied; Niri documents keep-max-bpc-unchanged
+	// as a no-op since 25.11, so it does not warn either.
 	for _, warning := range cfg.Warnings {
 		if strings.HasPrefix(warning, "debug") {
-			warned = append(warned, warning)
+			t.Errorf("unexpected debug warning %q", warning)
 		}
-	}
-	slices.Sort(warned)
-	if want := []string{"debug.dbus-interfaces-in-non-session-instances", "debug.force-pipewire-invalid-modifier",
-		"debug.keep-laptop-panel-on-when-lid-is-closed"}; !slices.Equal(warned, want) {
-		t.Fatalf("debug warnings = %v, want %v", warned, want)
 	}
 }
 

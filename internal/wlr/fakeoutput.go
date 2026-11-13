@@ -4,6 +4,7 @@ package wlr
 #cgo pkg-config: wlroots-0.20 scenefx-0.5 wayland-server
 #cgo CFLAGS: -DWLR_USE_UNSTABLE
 
+#include <stdlib.h>
 #include <wlr/backend/headless.h>
 #include <wlr/render/wlr_renderer.h>
 
@@ -76,6 +77,7 @@ type headlessTestBackend struct {
 	c         *Compositor
 	backend   *C.struct_wlr_backend
 	newOutput *Listener
+	rename    *Listener
 }
 
 func gammaSizeForTest(output unsafe.Pointer) int {
@@ -130,13 +132,30 @@ func observeGammaRequestsForTest(c *Compositor, notify func()) *Listener {
 }
 
 func addHeadlessTestOutput(c *Compositor, width, height uint32) (*headlessTestBackend, error) {
+	return addNamedHeadlessTestOutput(c, width, height, "")
+}
+
+// addNamedHeadlessTestOutput gives the output a connector name, such as a
+// laptop panel's, before the compositor hears of it: wlroots forbids renaming
+// an output already advertised to clients. An empty name keeps HEADLESS-n.
+func addNamedHeadlessTestOutput(c *Compositor, width, height uint32, name string) (*headlessTestBackend, error) {
 	backend := C.wlr_headless_backend_create(c.loop)
 	if backend == nil {
 		return nil, errors.New("wlr_headless_backend_create failed")
 	}
+	var rename *Listener
+	if name != "" {
+		rename = AddListener(unsafe.Pointer(&backend.events.new_output), func(data unsafe.Pointer) {
+			connector := C.CString(name)
+			C.wlr_output_set_name((*C.struct_wlr_output)(data), connector)
+			C.free(unsafe.Pointer(connector))
+		})
+		c.keep(rename)
+	}
 	listener := AddListener(unsafe.Pointer(&backend.events.new_output), c.handleNewOutput)
 	c.keep(listener)
 	destroy := func() {
+		c.drop(rename)
 		c.drop(listener)
 		C.wlr_backend_destroy(backend)
 	}
@@ -148,7 +167,7 @@ func addHeadlessTestOutput(c *Compositor, width, height uint32) (*headlessTestBa
 		destroy()
 		return nil, errors.New("wlr_backend_start failed")
 	}
-	return &headlessTestBackend{c: c, backend: backend, newOutput: listener}, nil
+	return &headlessTestBackend{c: c, backend: backend, newOutput: listener, rename: rename}, nil
 }
 
 func requestFullscreenOnOutputForTest(c *Compositor, view *toplevelView, name string) bool {
@@ -182,6 +201,7 @@ func (b *headlessTestBackend) destroy() {
 	if b == nil || b.backend == nil {
 		return
 	}
+	b.c.drop(b.rename)
 	b.c.drop(b.newOutput)
 	C.wlr_backend_destroy(b.backend)
 	b.backend = nil

@@ -26,14 +26,4 @@ func TestSwitchEventCommandSelection(t *testing.T) {
 			t.Errorf("switchEventCommand(%+v) = %q, want %q", tc.event, got, tc.want)
 		}
 	}
-
-	s := &Server{cfg: config.Default()}
-	s.handleSwitchToggle(wlr.SwitchToggle{Type: wlr.SwitchLid, On: true})
-	if !s.lidClosed {
-		t.Fatal("hardware lid event did not update lid state")
-	}
-	s.setLidClosed(false)
-	if s.lidClosed {
-		t.Fatal("login1 lid update did not replace the current lid state")
-	}
 }

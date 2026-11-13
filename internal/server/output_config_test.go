@@ -52,7 +52,7 @@ func TestDisplayConfigAndIPCShareTheOutputEngine(t *testing.T) {
 			return
 		}
 		defer s.Destroy()
-		s.StartSessionDBus()
+		s.StartDBus(true)
 		ready <- started{server: s}
 		if err = s.Run(); err != nil {
 			t.Error(err)

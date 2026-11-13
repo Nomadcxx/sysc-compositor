@@ -565,6 +565,7 @@ func (c *Compositor) handleNewOutput(data unsafe.Pointer) {
 
 	var destroy *Listener
 	destroy = AddListener(unsafe.Pointer(&output.events.destroy), func(unsafe.Pointer) {
+		panelsDisabled := c.laptopPanelsDisabled()
 		if _, adopted := c.sceneOutputs[data]; adopted {
 			c.retireOutput(data)
 		}
@@ -572,6 +573,10 @@ func (c *Compositor) handleNewOutput(data unsafe.Pointer) {
 		delete(c.vrrRequested, data)
 		c.placeOutputs()
 		c.publishOutputConfiguration()
+		// Losing the last external output brings the laptop panel back.
+		if c.laptopPanelsDisabled() != panelsDisabled {
+			c.applyOutputConfigs()
+		}
 		delete(c.actionPoweredOff, data)
 		c.drop(frame)
 		c.drop(request)
@@ -585,16 +590,6 @@ func (c *Compositor) handleNewOutput(data unsafe.Pointer) {
 	})
 	c.keep(destroy)
 	c.applyOutputConfigs()
-	if _, adopted := c.sceneOutputs[data]; adopted && c.powerOffActive {
-		if err := c.setOutputPower(data, false); err != nil {
-			fmt.Fprintf(os.Stderr, "sysc-compositor: power off new output: %v\n", err)
-		} else {
-			if c.actionPoweredOff == nil {
-				c.actionPoweredOff = make(map[unsafe.Pointer]struct{})
-			}
-			c.actionPoweredOff[data] = struct{}{}
-		}
-	}
 	c.updateInjectedInputGate()
 	c.refreshState()
 }
@@ -610,6 +605,18 @@ func (c *Compositor) adoptOutput(pointer unsafe.Pointer) {
 	}
 	c.sceneOutputs[pointer] = so
 	c.outputGeometryChanged(pointer)
+	// An output that connects or comes back on while PowerOffMonitors holds
+	// stays dark, as Niri keeps one, and PowerOnMonitors restores it.
+	if c.powerOffActive {
+		if err := c.setOutputPower(pointer, false); err != nil {
+			fmt.Fprintf(os.Stderr, "sysc-compositor: power off output %s: %v\n", outputName(pointer), err)
+			return
+		}
+		if c.actionPoweredOff == nil {
+			c.actionPoweredOff = make(map[unsafe.Pointer]struct{})
+		}
+		c.actionPoweredOff[pointer] = struct{}{}
+	}
 }
 
 // outputGeometryChanged lets what lives on an output follow a new box.

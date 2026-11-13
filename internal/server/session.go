@@ -13,15 +13,14 @@ import (
 	"github.com/Nomadcxx/sysc-compositor/internal/wlr"
 )
 
-// StartSessionDBus starts locale1/login1 clients, ScreenSaver inhibition,
-// GNOME portal services, the a11y KeyboardMonitor and the AT-SPI announcer
-// for --session only. Failures leave the session running.
-func (s *Server) StartSessionDBus() {
-	if s.c == nil {
+// StartDBus starts the session services for a real session or an explicit
+// debug instance. ServiceChannel and session activation remain session-only.
+func (s *Server) StartDBus(sessionMode bool) {
+	if s.c == nil || !sessionMode && !s.cfg.Debug.DBusInterfacesInNonSessionInstances {
 		return
 	}
 	if s.portal == nil {
-		portal, err := session.StartPortal(session.PortalHooks{Screenshot: s.portalScreenshot, PickColor: s.portalPickColor, OpenWayland: s.portalOpenWayland, ConfigureOutputs: s.portalConfigureOutputs})
+		portal, err := session.StartPortal(session.PortalHooks{Session: sessionMode, Screenshot: s.portalScreenshot, PickColor: s.portalPickColor, OpenWayland: s.portalOpenWayland, ConfigureOutputs: s.portalConfigureOutputs})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "sysc-compositor: portal services: %v\n", err)
 		} else {
@@ -67,7 +66,8 @@ func (s *Server) StartSessionDBus() {
 	watcher, err := session.StartDBus(func(keyboard config.Keyboard) {
 		s.postSessionUpdate(func() { s.applyLocaleXKB(keyboard) })
 	}, func(closed bool) {
-		s.postSessionUpdate(func() { s.setLidClosed(closed) })
+		// The switch is the other source: either can miss a transition.
+		s.postSessionUpdate(func() { s.c.SetLidClosed(closed) })
 	})
 	if err != nil {
 		os.Stderr.WriteString("sysc-compositor: session D-Bus: " + err.Error() + "\n")

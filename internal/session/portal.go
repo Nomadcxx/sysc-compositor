@@ -29,6 +29,8 @@ const (
 // result and must return when ctx is cancelled. OpenWayland borrows fd for the
 // duration of its call; the compositor duplicates it before native ownership.
 type PortalHooks struct {
+	// ServiceChannel is privileged and remains exclusive to a real session.
+	Session          bool
 	ConfigureOutputs func(ctx context.Context, serial uint32, changes []config.OutputConfig, verify bool) error
 	Screenshot       func(ctx context.Context, includePointer bool) (string, error)
 	PickColor        func(ctx context.Context) ([3]float64, error)
@@ -50,8 +52,8 @@ type portalRequest struct {
 	cancel context.CancelFunc
 }
 
-// Portal owns the session-only discovery and screenshot interfaces. Construction
-// is explicit: nested servers never call StartPortal and never acquire names.
+// Portal owns discovery and screenshot interfaces. Debug instances may expose
+// these interfaces, while ServiceChannel remains session-only.
 type Portal struct {
 	conn          *dbus.Conn
 	hooks         PortalHooks
@@ -95,7 +97,7 @@ func connectPortal(address string, hooks PortalHooks) (*Portal, error) {
 			}
 			return
 		}
-		if message.Type != dbus.TypeMethodCall || message.Flags&dbus.FlagNoReplyExpected != 0 ||
+		if !hooks.Session || message.Type != dbus.TypeMethodCall || message.Flags&dbus.FlagNoReplyExpected != 0 ||
 			message.Headers[dbus.FieldPath].Value() != serviceChannelPath ||
 			(message.Headers[dbus.FieldInterface].Value() != nil && message.Headers[dbus.FieldInterface].Value() != serviceChannelName) ||
 			message.Headers[dbus.FieldMember].Value() != "OpenWaylandServiceConnection" || len(message.Body) != 1 {
@@ -136,6 +138,9 @@ func connectPortal(address string, hooks PortalHooks) (*Portal, error) {
 		{introspectName, introspectPath, portalIntrospect{p}, true, []introspect.Signal{{Name: "WindowsChanged"}}},
 		{screenshotName, screenshotPath, portalScreenshot{p}, true, nil},
 	} {
+		if item.name == serviceChannelName && !hooks.Session {
+			continue
+		}
 		if err := conn.Export(item.object, item.path, item.name); err != nil {
 			return fail(err)
 		}

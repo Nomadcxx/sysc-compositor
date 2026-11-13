@@ -2064,3 +2064,70 @@ layer-rule {
 		}
 	}
 }
+
+func TestOverviewWorkspaceShadowParsesWithoutWarnings(t *testing.T) {
+	cfg, err := Parse("overview.kdl", []byte(`overview { workspace-shadow { softness 10; spread 30; offset x=40 y=0; color "#ff0000"; }; }`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Warnings) != 0 {
+		t.Fatalf("workspace shadow warns: %v", cfg.Warnings)
+	}
+	shadow := cfg.Overview.WorkspaceShadow
+	if !shadow.On || shadow.Softness != 10 || shadow.Spread != 30 || shadow.OffsetX != 40 || shadow.OffsetY != 0 || shadow.Color != (Color{1, 0, 0, 1}) {
+		t.Fatalf("workspace shadow = %+v", shadow)
+	}
+	defaults := Default().Overview.WorkspaceShadow
+	if !defaults.On || defaults.Softness != 40 || defaults.Spread != 10 || defaults.OffsetY != 10 || defaults.Color.A != 80.0/255 {
+		t.Fatalf("default workspace shadow = %+v", defaults)
+	}
+	off, err := Parse("off.kdl", []byte(`overview { workspace-shadow { off; }; }`))
+	if err != nil || off.Overview.WorkspaceShadow.On {
+		t.Fatalf("off shadow = %+v, %v", off, err)
+	}
+	for _, src := range []string{
+		`overview { workspace-shadow { softness -1; }; }`,
+		`overview { workspace-shadow { offset z=1; }; }`,
+		`overview { workspace-shadow { color "invalid"; }; }`,
+		`overview { workspace-shadow { draw-behind-window true; }; }`,
+	} {
+		if _, err := Parse("bad.kdl", []byte(src)); err == nil {
+			t.Errorf("accepted invalid shadow: %s", src)
+		}
+	}
+}
+
+func TestInsertHintGradientParsesWithoutWarnings(t *testing.T) {
+	cfg, err := Parse("gradient.kdl", []byte(`layout { insert-hint { gradient from="#ff000080" to="#0000ff" angle=90 relative-to="workspace-view" in="oklch longer hue"; }; }`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Warnings) != 0 {
+		t.Fatalf("gradient warns: %v", cfg.Warnings)
+	}
+	for _, source := range []string{
+		`layout { insert-hint { gradient from="#f00"; }; }`,
+		`layout { insert-hint { gradient from="#f00" to="#00f" angle=0.5; }; }`,
+		`layout { insert-hint { gradient from="#f00" to="#00f" relative-to="output"; }; }`,
+		`layout { insert-hint { gradient from="#f00" to="#00f" in="oklch sideways hue"; }; }`,
+	} {
+		if _, err := Parse("bad.kdl", []byte(source)); err == nil {
+			t.Errorf("accepted invalid gradient: %s", source)
+		}
+	}
+}
+
+func TestDndEdgeWorkspaceSwitchConfig(t *testing.T) {
+	cfg, err := Parse("dnd.kdl", []byte(`gestures { dnd-edge-workspace-switch { trigger-height 40; delay-ms 20; max-speed 150000; }; }`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Warnings) != 0 {
+		t.Fatalf("DND workspace switch warns: %v", cfg.Warnings)
+	}
+	for _, source := range []string{`gestures { dnd-edge-workspace-switch { trigger-height -1; }; }`, `gestures { dnd-edge-workspace-switch { delay-ms 0.1; }; }`, `gestures { dnd-edge-workspace-switch { trigger-width 10; }; }`} {
+		if _, err := Parse("bad.kdl", []byte(source)); err == nil {
+			t.Errorf("invalid DND config accepted: %s", source)
+		}
+	}
+}

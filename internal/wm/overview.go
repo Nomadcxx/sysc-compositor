@@ -327,8 +327,17 @@ func (m *Model) OverviewFrame(output string, zoom float64) (OverviewFrame, bool)
 	if out == nil {
 		return OverviewFrame{}, false
 	}
-	zoom = validOverviewZoom(zoom)
-	outputBounds := out.bounds
+	return m.WorkspaceFrame(output, out.bounds, validOverviewZoom(zoom))
+}
+
+// WorkspaceFrame projects the workspace strip within the output's full bounds.
+// OverviewFrame retains its working-area projection for existing callers.
+func (m *Model) WorkspaceFrame(output string, outputBounds layout.Bounds, zoom float64) (OverviewFrame, bool) {
+	out := m.outputs[output]
+	if out == nil {
+		return OverviewFrame{}, false
+	}
+	zoom = min(max(zoom, overviewZoomMin), 1)
 	outputBounds.Width = max(0, outputBounds.Width)
 	outputBounds.Height = max(0, outputBounds.Height)
 	workspaceWidth := max(0, int(math.Round(float64(outputBounds.Width)*zoom)))
@@ -494,6 +503,15 @@ type DNDEdgeScrollTracker struct {
 // Update reports the scroll distance since its previous call after edge dwell.
 func (t *DNDEdgeScrollTracker) Update(now time.Time, bounds layout.Bounds, x, y, width float64, delay time.Duration, maxSpeed float64) float64 {
 	direction, speed := DNDEdgeScrollAt(bounds, x, y, width, maxSpeed)
+	return t.update(now, direction, speed, delay)
+}
+
+func (t *DNDEdgeScrollTracker) UpdateWorkspace(now time.Time, bounds layout.Bounds, x, y, height float64, delay time.Duration, maxSpeed float64) float64 {
+	direction, speed := DNDEdgeWorkspaceSwitchAt(bounds, x, y, height, maxSpeed)
+	return t.update(now, direction, speed, delay)
+}
+
+func (t *DNDEdgeScrollTracker) update(now time.Time, direction int, speed float64, delay time.Duration) float64 {
 	if direction == 0 || speed <= 0 {
 		t.Reset()
 		return 0
@@ -589,6 +607,23 @@ func DNDEdgeScrollAt(bounds layout.Bounds, x, y, width, maxSpeed float64) (int, 
 	}
 	if right <= width {
 		return 1, maxSpeed * clampOverviewProgress((width-right)/width)
+	}
+	return 0, 0
+}
+
+// DNDEdgeWorkspaceSwitchAt uses the overview strip's horizontal bounds and
+// clamps vertical coordinates to the working area, so docks do not block DND.
+func DNDEdgeWorkspaceSwitchAt(bounds layout.Bounds, x, y, height, maxSpeed float64) (int, float64) {
+	height = min(max(height, 0), float64(bounds.Height)/2)
+	if bounds.Width <= 0 || bounds.Height <= 0 || height < .01 || maxSpeed <= 0 || x < float64(bounds.X) || x >= float64(bounds.X+bounds.Width) {
+		return 0, 0
+	}
+	y = min(max(y-float64(bounds.Y), 0), float64(bounds.Height))
+	if y < height {
+		return -1, maxSpeed * (height - y) / height
+	}
+	if float64(bounds.Height)-y < height {
+		return 1, maxSpeed * (height - float64(bounds.Height) + y) / height
 	}
 	return 0, 0
 }

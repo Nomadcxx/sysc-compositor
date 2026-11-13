@@ -19,28 +19,20 @@ type Debug struct {
 	ForceDisableConnectorsOnResume         bool
 	RenderDRMDevice                        *string
 	IgnoredDRMDevices                      []string
-	ForcePipeWireInvalidModifier           bool
-	EmulateZeroPresentationTime            bool
-	DisableResizeThrottling                bool
-	DisableTransactions                    bool
-	KeepLaptopPanelOnWhenLidIsClosed       bool
-	DisableMonitorNames                    bool
-	StrictNewWindowFocusPolicy             bool
-	HonorXDGActivationWithInvalidSerial    bool
-	DeactivateUnfocusedWindows             bool
-	SkipCursorOnlyUpdatesDuringVRR         bool
+	// MemFd casts have no DRM modifiers, so this DMA-BUF tuning flag is a no-op.
+	ForcePipeWireInvalidModifier        bool
+	EmulateZeroPresentationTime         bool
+	DisableResizeThrottling             bool
+	DisableTransactions                 bool
+	KeepLaptopPanelOnWhenLidIsClosed    bool
+	DisableMonitorNames                 bool
+	StrictNewWindowFocusPolicy          bool
+	HonorXDGActivationWithInvalidSerial bool
+	DeactivateUnfocusedWindows          bool
+	SkipCursorOnlyUpdatesDuringVRR      bool
 }
 
 type ConfigNotification struct{ DisableFailed bool }
-
-// debugUnapplied are the debug settings sysc parses but does not act on yet.
-// keep-max-bpc-unchanged is not one: Niri's Configuration: Debug Options
-// documents it as a deprecated no-op since 25.11.
-var debugUnapplied = map[string]bool{
-	"dbus-interfaces-in-non-session-instances": true,
-	"force-pipewire-invalid-modifier":          true,
-	"keep-laptop-panel-on-when-lid-is-closed":  true,
-}
 
 // debug merges fields across includes; only ignore-drm-device repeats inside
 // one block, and its paths append rather than replacing earlier paths.
@@ -112,9 +104,6 @@ func (c *Config) debug(node *document.Node) error {
 				return fmt.Errorf("%s: %w", name, err)
 			}
 			*field = value
-		}
-		if debugUnapplied[name] {
-			c.addWarning("debug." + name)
 		}
 	}
 	return nil

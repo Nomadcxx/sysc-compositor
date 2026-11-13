@@ -332,6 +332,9 @@ func (c *Compositor) allOutputsOff() bool {
 // setSessionLocked seals or unseals the session for injected input.
 func (c *Compositor) setSessionLocked(locked bool) {
 	c.sessionLocked = locked
+	if locked {
+		c.cancelNativeDrag()
+	}
 	c.updateInjectedInputGate()
 }
 
