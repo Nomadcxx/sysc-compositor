@@ -6,6 +6,24 @@ package wlr
 
 #include <stdlib.h>
 #include <wlr/backend/headless.h>
+#include <wlr/backend/session.h>
+
+// A session the test switches between VTs; wlroots never opens it.
+static struct wlr_session *sysc_test_session_create(void) {
+	struct wlr_session *session = calloc(1, sizeof(*session));
+	if (session == NULL) return NULL;
+	session->active = true;
+	wl_list_init(&session->devices);
+	wl_signal_init(&session->events.active);
+	wl_signal_init(&session->events.add_drm_card);
+	wl_signal_init(&session->events.destroy);
+	return session;
+}
+
+static void sysc_test_session_set_active(struct wlr_session *session, bool active) {
+	session->active = active;
+	wl_signal_emit_mutable(&session->events.active, NULL);
+}
 #include <wlr/render/wlr_renderer.h>
 
 static void sysc_test_renderer_lost(struct wlr_renderer *renderer) {
@@ -70,6 +88,25 @@ import (
 )
 
 func forceRendererLossForTest(c *Compositor) { C.sysc_test_renderer_lost(c.renderer) }
+
+// testSession stands in for the libseat session of a direct-hardware run.
+type testSession struct{ session *C.struct_wlr_session }
+
+func newTestSession() *testSession { return &testSession{C.sysc_test_session_create()} }
+
+func (s *testSession) setActive(active bool) {
+	C.sysc_test_session_set_active(s.session, C.bool(active))
+}
+
+func (s *testSession) free() { C.free(unsafe.Pointer(s.session)) }
+
+// useTestSession makes c treat s as its session. The session is detached
+// before Destroy, which would otherwise close it as a real one.
+func useTestSession(t interface{ Cleanup(func()) }, c *Compositor, s *testSession) {
+	c.session = s.session
+	c.watchSessionResume()
+	t.Cleanup(func() { c.session = nil })
+}
 
 // headlessTestBackend adds deterministic outputs to compositor tests that
 // need more than the nested Wayland backend's single output.

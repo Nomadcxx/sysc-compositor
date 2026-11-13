@@ -158,6 +158,9 @@ is closed as not a bug.
 - Start the VM with `~/vm/sysc-session/run.sh [lane2]` and stop it with `./vssh sudo systemctl poweroff`.
   Switching modes moves PCI addresses, so the disk is pinned with `bootindex=0`; without that the
   firmware tries network boot first.
+- SSH is up about 14 s after boot. If it is slow again, check `systemd-analyze critical-chain`:
+  on 2026-11-13 an enabled `systemd-time-wait-sync` held every service, sshd included, for about
+  80 s of IPv6 NTP timeouts; it is now disabled in the guest.
 - Over SSH, don't wait for QEMU with `pgrep -f` on a pattern that appears in the remote command; use
   `qemu.pid`.
 - In auto mode, a detached run inside the VM (`systemd-run --user`) was refused. Lane 2 runs in the
