@@ -5,29 +5,44 @@ Branch `fix/sysc-2294-ghosting-20261114`, from `main` at `05f17da`.
 
 ## Summary
 
+- **Root cause of the window ghost, proven on archThink: `sysc-2295`.** On
+  2026-11-14 the owner killed a kitty and its contents stayed on screen, plain
+  through the kitty that took its place. A scene dump of the running `3d86b14`
+  session at that moment showed a stranded close fade:
+
+  ```
+  scene dump: views=3 closingNodes=1 animations=0
+    tree <windowAnimationTree>
+      tree at=5,42 <closing snapshot owner=4 animating=false>
+        buffer at=5,42 size=953x1033 opacity=1.000
+    tree <layer:windows>
+      view 7 kitty (opacity 0.900), view 8 kitty (0.900), view 9 kitty (1.000)
+  ```
+
+  The killed window's close fade (owner 4) was cancelled the moment it began,
+  by the teardown of window 4, so its copy stayed at full opacity in the
+  animation tree, which sits under the windows. kitty draws its background at
+  0.75 and inactive windows at 0.9, so the copy shows through the windows
+  above it. It is a scene node, not a stale pixel: it never fades, sits in
+  output space across workspaces, and goes away only on restart.
 - **`sysc-2295` is fixed.** A window's teardown cancelled any close fade whose
-  owner id equalled the window's id, which stranded the fading copy in
-  `windowAnimationTree`: output space, at the opacity it had reached, never
-  destroyed. Close-fade owners now come from the window id counter, so they
-  never equal a live window's id. Regression `TestCloseFadeSurvivesWindowTeardown`
-  failed before the fix (`tearing down window 1 cancelled close fade 1`, and
-  the copy outlived its fade) and passes after it.
+  owner id equalled the window's id. Close-fade owners now come from the
+  window id counter, so they never equal a live window's id. Regression
+  `TestCloseFadeSurvivesWindowTeardown` failed before the fix (`tearing down
+  window 1 cancelled close fade 1`, and the copy outlived its fade) and passes
+  after it.
 - **The compositor's committed buffers hold no stale pixels in archThink's
   arrangement.** A new test hook keeps each output's last committed buffer;
   `TestCommittedFramesMatchTheScene` compares it with a fresh render after
   each step of the owner's report, on archThink's drawing settings. No step
-  leaves a stale pixel. That rules out leads 2–4 (missing damage, opaque
-  culling, blur compensation) for the scripted sequences on vkms.
+  leaves a stale pixel, which rules out leads 2–4 for the scripted sequences on
+  vkms.
 - **SceneFX 0.5 does leave stale blur pixels when a frosted surface lies
-  under an opaque node** (`sysc-2303`, see below). archThink's only blur is the
-  bar's, with nothing opaque above it, so this is probably not the owner's
-  ghost.
-- **The owner's ghost is not yet proven.** A stranded close fade
-  (`sysc-2295`) fits the persistent window ghost: output space, fixed across
-  workspaces, faint because kitty draws at `background_opacity 0.75`, intense
-  when copies stack. It does not explain the bar ghost in the overview. Lead 5
-  (i915 PSR2 selective update) is the next candidate; the evidence must come
-  from archThink.
+  under an opaque node** (`sysc-2303`, see below). archThink's only blur is
+  the bar's, with nothing opaque above it, so this is not the owner's ghost.
+- **Still open:** the bar ghost in the overview is not explained by a
+  stranded window copy. The fixed build runs on archThink from 2026-11-14 for
+  the owner's long-session check.
 
 ## Method
 
@@ -101,7 +116,9 @@ skips are the usual environment ones.
 
 ## Next
 
-1. Owner: merge, then arm the fixed build on archThink for a long session.
+1. Owner: the fixed build (`def9068`: main, PR #107, the scene dump and this
+   PR) is armed on archThink in `~/.cache/sysc-compositor-gate-20261114`
+   (`rollback.sh` returns to `3d86b14`); a long session, then merge.
 2. If a ghost appears: the commission's capture protocol, plus the scene dump
    (any `closing snapshot … animating=false` line would mean a cancel path the
    fix missed). A diagnostic build can arm `committedBuffers` and dump
