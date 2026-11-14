@@ -1,0 +1,77 @@
+name: Release
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  # Offline builds (Fedora, openSUSE, Gentoo, Void) take Go modules from this.
+  vendor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: vendor tarball
+        run: |
+          ver=${GITHUB_REF_NAME#v}
+          go mod vendor
+          tar -cJf "sysc-compositor-$ver-vendor.tar.xz" vendor
+          sha256sum "sysc-compositor-$ver-vendor.tar.xz" >"sysc-compositor-$ver-vendor.tar.xz.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vendor
+          path: sysc-compositor-*-vendor.tar.xz*
+
+  deb:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: build the package in debian:forky
+        run: >-
+          docker run --rm -v "$PWD:/src" -w /src debian:forky
+          packaging/deb/build.sh "${GITHUB_REF_NAME#v}" dist
+      # SceneFX needs a DRM device and the runner has none: vkms gives a KMS
+      # device, as CI's compositor lane uses.
+      - name: software DRM device
+        run: |
+          kernel=$(uname -r)
+          if ! modinfo vkms >/dev/null 2>&1; then
+            sudo apt-get update -q
+            sudo apt-get install -y -q --no-install-recommends "linux-modules-extra-$kernel" ||
+              { echo "::error::no vkms module for runner kernel $kernel"; exit 1; }
+          fi
+          sudo modprobe vkms
+      - name: install in a fresh debian:forky and smoke-check
+        run: >-
+          docker run --rm --device /dev/dri -v "$PWD:/src:ro" -w /src
+          -e WLR_BACKENDS=drm -e LIBSEAT_BACKEND=noop
+          debian:forky sh -c 'apt-get update -q &&
+          apt-get install -y -q ./dist/sysc-compositor_*.deb &&
+          packaging/smoke.sh "$0"' "${GITHUB_REF_NAME#v}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deb
+          path: dist/*.deb
+
+  release:
+    needs: [vendor, deb]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - name: checksums
+        run: sha256sum sysc-compositor-*-vendor.tar.xz *.deb >SHA256SUMS
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            sysc-compositor-*-vendor.tar.xz
+            sysc-compositor-*-vendor.tar.xz.sha256
+            *.deb
+            SHA256SUMS

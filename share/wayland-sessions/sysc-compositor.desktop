@@ -1,6 +1,6 @@
 [Desktop Entry]
 Name=sysc-compositor
-Comment=A Wayland compositor written in Go
+Comment=A scrollable-tiling Wayland compositor built in Go
 DesktopNames=sysc
-Exec=/usr/local/bin/sysc-compositor-session
+Exec=@BINDIR@/sysc-compositor-session
 Type=Application

@@ -245,3 +245,43 @@ OBS, xbps-src, Gentoo `go-module` eclass, Nix `buildGo126Module`.
   the release has the vendor tarball, the .deb and SHA256SUMS.
 - [ ] **Step 3: Update the AUR checksums** from the tag tarball. Then the owner gates: AUR push,
   COPR, OBS and GURU. Record each one's result in this plan's execution record.
+
+---
+
+## Execution record
+
+### 2026-11-14: Tasks 1–3 (`feat/packaging-20261114`)
+
+- **Task 1** (`sysc-2201`): `internal/server.version`, set by `-ldflags`; `TestVersionPrefersLinkerVersion` passes.
+- **Task 2** (`sysc-2202`): `make install PREFIX=/usr` and the default `/usr/local` both pass
+  `packaging/check-install.sh`. A `git archive` tree built with `VERSION=0.1.0` prints
+  `sysc-compositor 0.1.0 (niri-ipc 26.4.0)`. `make build` passes `-buildvcs=false`: a tarball
+  unpacked under another repository (an AUR clone, or a stray `.git` above it) otherwise fails VCS
+  stamping or takes the wrong tree's revision, and `VERSION` replaces the stamp. A plain
+  `make install` now puts the session entry and unit under `PREFIX` too, where it used to put them
+  in `/usr` whatever the prefix.
+- **Task 3** (`sysc-2203`), Step 1, recorded 2026-11-14. Every target's Go is at or above
+  `go.mod`'s `1.26.4`, so the `go` line stays.
+
+  | Target | Go | wlroots 0.20 | SceneFX 0.5 | PipeWire | libinput |
+  |---|---|---|---|---|---|
+  | Debian forky | `golang-go` 1.27, `golang-1.26-go` 1.26.11 | `libwlroots-0.20-dev` 0.20.2 | `libscenefx-0.5-dev` 0.5 | `libpipewire-0.3-dev` 1.6.9 | `libinput-dev` 1.31.3 |
+  | Fedora 44 | `golang` 1.26.10 | `wlroots-devel` 0.20.2 | `scenefx-devel` 0.5 | `pipewire-devel` 1.6.11 | `libinput-devel` 1.31.3 |
+  | Tumbleweed | `go1.27` 1.27.3, `go1.26` 1.26.11 | `wlroots-devel` 0.20.2 | **none** (Task 6 builds it) | `pipewire-devel` 1.6.11 | `libinput-devel` 1.32 |
+  | Void | `go` 1.27.3 | `wlroots0.20-devel` 0.20.2 | `scenefx-devel` 0.5 | `pipewire-devel` 1.6.10 | `libinput-devel` 1.31.3 |
+
+  Debian runtime names: `libwlroots-0.20`, `libscenefx-0.5`, `libpipewire-0.3-0t64`,
+  `libxkbcommon0`, `libwayland-server0`, `libpixman-1-0`, `libdrm2`, `libinput10`, `xkb-data`.
+  Forky has no `xwayland-satellite`; it stays a Suggests.
+
+  **Smoke deviation.** SceneFX is the only renderer and needs a DRM device, so Step 2's
+  `headless` + `pixman` run fails (`Cannot create GLES2 renderer: no DRM FD available`).
+  `smoke.sh` keeps the headless default for a container given a render node; the release job, on
+  a runner with none, loads vkms and runs it with `WLR_BACKENDS=drm LIBSEAT_BACKEND=noop`, as
+  CI's compositor lane does. The Debian build steps live in `packaging/deb/build.sh`, which the
+  workflow and a local `podman run` both call.
+
+  Step 5 proof (local podman, desktop render node): the .deb built from a `git archive` tree
+  installs in a fresh `debian:forky` and `smoke.sh 0.1.0` passes. The binary's libraries all
+  resolve through the declared depends. `go mod vendor` gives a 12 MB tree that builds with
+  `GOFLAGS=-mod=vendor GOPROXY=off GOTOOLCHAIN=local`. The vkms path runs first on a real tag.
