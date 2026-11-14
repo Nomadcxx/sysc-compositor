@@ -240,7 +240,6 @@ type Compositor struct {
 	activeWorkspaces        map[string]activeWorkspace
 	closingNodes            map[uint64]unsafe.Pointer
 	committedBuffers        map[unsafe.Pointer]unsafe.Pointer
-	nextAnimationID         uint64
 	preferNoCSD             bool
 	overviewBackdrops       []overviewBackdrop
 	overviewProjections     []overviewProjection

@@ -24,6 +24,7 @@ executed until the owner schedules the milestone they belong to.
 
 | Document | Kind | What it is |
 |---|---|---|
+| [plans/2026-11-14-ghosting-findings.md](plans/2026-11-14-ghosting-findings.md) | record | Ghosting work: `sysc-2295` fixed (close fades stranded by window teardown); committed-buffer readback finds no stale pixels in archThink's arrangement; SceneFX blur defect `sysc-2303`; next evidence from archThink. |
 | [plans/2026-11-13-handover.md](plans/2026-11-13-handover.md) | handover | Current continuation: recovered persistent parity worktree, slices 2280–2286 and their proof, final regression and review, VM SSH recovery, next integration and the owner gates. |
 | [plans/2026-11-12-parity-gaps.md](plans/2026-11-12-parity-gaps.md) | plan | Remaining parity gaps `sysc-2280`–`sysc-2286`, in the owner's approved order; reuse the existing rendering, input and session paths. |
 | [plans/2026-10-02-sysc-compositor-design.md](plans/2026-10-02-sysc-compositor-design.md) | design | Product contract. Package map, globals, niri parity surface, milestones M0–M15. |
