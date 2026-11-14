@@ -1,0 +1,36 @@
+# The Debian 14 (forky) package, from the `make install PREFIX=/usr` tree at
+# ./root. packaging/deb/build.sh builds it.
+name: sysc-compositor
+arch: amd64
+platform: linux
+version: ${VERSION}
+version_schema: none
+section: x11
+priority: optional
+maintainer: Nomadcxx <noovie@gmail.com>
+description: A scrollable-tiling Wayland compositor built in Go
+vendor: Nomadcxx
+homepage: https://github.com/Nomadcxx/sysc-compositor
+license: GPL-3.0-or-later
+
+depends:
+  - libwlroots-0.20
+  - libscenefx-0.5
+  - libpipewire-0.3-0t64 (>= 1.4.8)
+  - libxkbcommon0
+  - libwayland-server0
+  - libpixman-1-0
+  - libdrm2
+  - libinput10
+  - dbus
+  - xkb-data
+recommends:
+  - xdg-desktop-portal-gnome
+  - xdg-desktop-portal-gtk
+suggests:
+  - xwayland-satellite
+
+contents:
+  - src: ./root/
+    dst: /
+    type: tree
