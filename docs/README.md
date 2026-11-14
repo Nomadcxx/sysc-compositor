@@ -6,8 +6,9 @@ A document that is not in this map is one the project will lose.
 Product contract: `plans/2026-10-02-sysc-compositor-design.md`. Workstreams and order:
 `plans/2026-10-02-orchestration.md`.
 
-Current continuation: [2026-11-13 handover](plans/2026-11-13-handover.md), with the
-[2026-11-05 implementation plan](plans/2026-11-05-handover.md) for the order and the rules.
+Current continuation: [2026-11-14 handover](plans/2026-11-14-handover.md); the ghosting bug has its own
+[commission](plans/2026-11-14-ghosting-commission.md). The working rules are in the
+[2026-11-05 implementation plan](plans/2026-11-05-handover.md).
 Owner order: finish compositor development and acceptance before resuming benchmarking.
 
 ## Standing rule: plans are written when a milestone starts
@@ -24,7 +25,9 @@ executed until the owner schedules the milestone they belong to.
 
 | Document | Kind | What it is |
 |---|---|---|
-| [plans/2026-11-13-handover.md](plans/2026-11-13-handover.md) | handover | Current continuation: recovered persistent parity worktree, slices 2280–2286 and their proof, final regression and review, VM SSH recovery, next integration and the owner gates. |
+| [plans/2026-11-14-handover.md](plans/2026-11-14-handover.md) | handover | Current continuation: state after parity and PR #107, what remains for a beta (blockers, desktop two-monitor bring-up, packaging, benchmarking, suite integration) and the recommended order. |
+| [plans/2026-11-14-ghosting-commission.md](plans/2026-11-14-ghosting-commission.md) | commission | `sysc-2294`: the owner's stale-ghost report, configuration, what was ruled out, ranked leads, diagnostic tools and the deliverable. |
+| [plans/2026-11-13-handover.md](plans/2026-11-13-handover.md) | handover | Superseded continuation: recovered persistent parity worktree, slices 2280–2286 and their proof, final regression and review, VM SSH recovery. |
 | [plans/2026-11-12-parity-gaps.md](plans/2026-11-12-parity-gaps.md) | plan | Remaining parity gaps `sysc-2280`–`sysc-2286`, in the owner's approved order; reuse the existing rendering, input and session paths. |
 | [plans/2026-10-02-sysc-compositor-design.md](plans/2026-10-02-sysc-compositor-design.md) | design | Product contract. Package map, globals, niri parity surface, milestones M0–M15. |
 | [plans/2026-10-02-orchestration.md](plans/2026-10-02-orchestration.md) | plan | Workstreams L0, M0–M15, S0 and their order. The map for execution. |
