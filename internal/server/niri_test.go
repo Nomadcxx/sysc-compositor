@@ -675,3 +675,15 @@ func TestNavigationActionsAreHandled(t *testing.T) {
 		t.Errorf("posted %d actions, want 30: %v", len(posted), posted)
 	}
 }
+
+func TestVersionPrefersLinkerVersion(t *testing.T) {
+	defer func(old string) { version = old }(version)
+	version = "0.1.0"
+	if got, want := Version(), "sysc-compositor 0.1.0 (niri-ipc 26.4.0)"; got != want {
+		t.Errorf("Version() = %q, want %q", got, want)
+	}
+	version = ""
+	if got := Version(); !strings.HasPrefix(got, "sysc-compositor (devel)") || !strings.HasSuffix(got, " (niri-ipc 26.4.0)") {
+		t.Errorf("without a linker version, Version() = %q, want the build-info form", got)
+	}
+}
