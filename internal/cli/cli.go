@@ -589,7 +589,7 @@ func parseOutputAction(name string, args []string) (json.RawMessage, error) {
 			}
 			onDemand = true
 		}
-		return object(map[string]any{"vrr": enabled, "on_demand": onDemand})
+		return object(map[string]any{"vrr": map[string]bool{"vrr": enabled, "on_demand": onDemand}})
 	default:
 		return nil, fmt.Errorf("unknown output action %q", name)
 	}

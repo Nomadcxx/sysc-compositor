@@ -334,11 +334,11 @@ func TestParseOutputMatchesNiriWire(t *testing.T) {
 		{[]string{"output", "DP-1", "transform", "flipped-90"}, `{"Transform":{"transform":"Flipped90"}}`},
 		{[]string{"output", "DP-1", "position", "auto"}, `{"Position":{"position":"Automatic"}}`},
 		{[]string{"output", "DP-1", "position", "set", "10", "-20"}, `{"Position":{"position":{"Specific":{"x":10,"y":-20}}}}`},
-		{[]string{"output", "DP-1", "vrr", "on", "--on-demand"}, `{"Vrr":{"vrr":true,"on_demand":true}}`},
-		{[]string{"output", "DP-1", "vrr", "y"}, `{"Vrr":{"vrr":true,"on_demand":false}}`},
-		{[]string{"output", "DP-1", "vrr", "N"}, `{"Vrr":{"vrr":false,"on_demand":false}}`},
-		{[]string{"output", "DP-1", "vrr", "T"}, `{"Vrr":{"vrr":true,"on_demand":false}}`},
-		{[]string{"output", "DP-1", "vrr", "f"}, `{"Vrr":{"vrr":false,"on_demand":false}}`},
+		{[]string{"output", "DP-1", "vrr", "on", "--on-demand"}, `{"Vrr":{"vrr":{"vrr":true,"on_demand":true}}}`},
+		{[]string{"output", "DP-1", "vrr", "y"}, `{"Vrr":{"vrr":{"vrr":true,"on_demand":false}}}`},
+		{[]string{"output", "DP-1", "vrr", "N"}, `{"Vrr":{"vrr":{"vrr":false,"on_demand":false}}}`},
+		{[]string{"output", "DP-1", "vrr", "T"}, `{"Vrr":{"vrr":{"vrr":true,"on_demand":false}}}`},
+		{[]string{"output", "DP-1", "vrr", "f"}, `{"Vrr":{"vrr":{"vrr":false,"on_demand":false}}}`},
 	}
 	for _, test := range tests {
 		t.Run(strings.Join(test.args[2:], "_"), func(t *testing.T) {
