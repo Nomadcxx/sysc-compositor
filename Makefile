@@ -21,7 +21,10 @@ build:
 # Text files under share/ name the binaries as @BINDIR@.
 SUBST = sed 's|@BINDIR@|$(BINDIR)|g'
 
-install: build
+# install takes what build made: run `make build` first. Rebuilding here would
+# drop the flags and vendor mode a package recipe gave build, and would build
+# as root under `sudo make install`.
+install:
 	install -D -m 0755 bin/sysc-compositor "$(DESTDIR)$(BINDIR)/sysc-compositor"
 	install -d "$(DESTDIR)$(DATADIR)/wayland-sessions" "$(DESTDIR)$(LIBDIR)/systemd/user"
 	$(SUBST) share/bin/sysc-compositor-session >"$(DESTDIR)$(BINDIR)/sysc-compositor-session"
