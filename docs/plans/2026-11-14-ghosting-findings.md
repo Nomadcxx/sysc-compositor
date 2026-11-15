@@ -19,6 +19,11 @@ Branch `fix/sysc-2294-ghosting-20261114`, from `main` at `05f17da`.
       view 7 kitty (opacity 0.900), view 8 kitty (0.900), view 9 kitty (1.000)
   ```
 
+  The owner's region screenshot from the same session (`screenshot_2026-11-14_11-39-56.png`
+  on archThink) shows it too: the killed kitty's `cp -rv` output, faint, behind
+  the live kitty's text. A screenshot renders the scene afresh, so the ghost was
+  in the scene, not in stale buffer or panel pixels.
+
   The killed window's close fade (owner 4) was cancelled the moment it began,
   by the teardown of window 4, so its copy stayed at full opacity in the
   animation tree, which sits under the windows. kitty draws its background at
@@ -107,6 +112,18 @@ should trip #210, matched the scene on 0.5, so it is not in the suite.
   95%), and kitty requests no blur, so nothing opaque sits above any blur node.
 - The i915 PSR parameters are root-only; the kernel command line does not set
   them.
+- The fixed build (`43b0593`) came up clean on 2026-11-15: two dumps 12 and 16
+  minutes in showed `closingNodes=0` and an empty `windowAnimationTree`, with
+  window ids 2, 7 and 8 live, so several close fades had already run to the end.
+- eDP-1 logs `Atomic commit failed: Device or resource busy` every few minutes
+  to hours, under every build, and the kernel logs i915 `Atomic update failure
+  on pipe A` (vblank evasion) under Niri and sysc alike. A failed frame is not
+  retried: SceneFX has already moved its damage into the ring, and sysc asks for
+  no frame after a commit (`output.go`, sysc-1469). The panel keeps the frame
+  before it until the next damage or cursor move schedules a frame
+  (`types/output/cursor.c`), and that commit is complete, since the ring and
+  `pending_commit_damage` still cover the lost frame. So it can leave a ghost
+  for a few seconds, never one that lasts to a restart.
 
 ## Regression
 
@@ -116,9 +133,12 @@ skips are the usual environment ones.
 
 ## Next
 
-1. Owner: the fixed build (`def9068`: main, PR #107, the scene dump and this
-   PR) is armed on archThink in `~/.cache/sysc-compositor-gate-20261114`
-   (`rollback.sh` returns to `3d86b14`); a long session, then merge.
+1. Owner: the fixed build (`43b0593`: main at `cc77dcd`, PR #107, the scene
+   dump and this PR) is armed on archThink in
+   `~/.cache/sysc-compositor-gate-20261114` (`rollback.sh` returns to
+   `3d86b14`); a long session, then merge. Screenshots in that session need the
+   shell's `org.sysc.screenshot` plugin, which the shell installed on
+   2026-11-15 does not have; a phone photo serves.
 2. If a ghost appears: the commission's capture protocol, plus the scene dump
    (any `closing snapshot … animating=false` line would mean a cancel path the
    fix missed). A diagnostic build can arm `committedBuffers` and dump
