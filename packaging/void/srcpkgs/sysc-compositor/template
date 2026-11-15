@@ -1,0 +1,31 @@
+# Template file for 'sysc-compositor'
+pkgname=sysc-compositor
+version=0.1.0
+revision=1
+hostmakedepends="go pkg-config wayland-devel wayland-protocols"
+makedepends="wlroots0.20-devel scenefx-devel pipewire-devel libxkbcommon-devel
+ wayland-devel pixman-devel libdrm-devel libinput-devel libglvnd-devel"
+depends="dbus xkeyboard-config"
+short_desc="Scrollable-tiling Wayland compositor built in Go"
+maintainer="Nomadcxx <noovie@gmail.com>"
+license="GPL-3.0-or-later"
+homepage="https://github.com/Nomadcxx/sysc-compositor"
+distfiles="https://github.com/Nomadcxx/sysc-compositor/archive/refs/tags/v${version}.tar.gz
+ https://github.com/Nomadcxx/sysc-compositor/releases/download/v${version}/sysc-compositor-${version}-vendor.tar.xz"
+checksum="@SOURCE_SHA256@
+ @VENDOR_SHA256@"
+skip_extraction="sysc-compositor-${version}-vendor.tar.xz"
+
+post_extract() {
+	vsrcextract -C vendor "sysc-compositor-${version}-vendor.tar.xz"
+}
+
+do_build() {
+	export GOTOOLCHAIN=local GOFLAGS="-mod=vendor -buildmode=pie -trimpath"
+	export CGO_CFLAGS="$CFLAGS" CGO_LDFLAGS="$LDFLAGS"
+	make build VERSION="${version}"
+}
+
+do_install() {
+	make install PREFIX=/usr DESTDIR="${DESTDIR}"
+}
