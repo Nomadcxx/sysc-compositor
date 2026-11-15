@@ -18,7 +18,7 @@ case $got in
 	;;
 esac
 # The default config sits beside the binary's prefix: /usr, or a Nix store path.
-bin=$(command -v sysc-compositor)
+bin=$(readlink -f "$(command -v sysc-compositor)")
 sysc-compositor validate -c "${bin%/bin/*}/share/sysc-compositor/default-config.kdl"
 
 XDG_RUNTIME_DIR=$(mktemp -d)

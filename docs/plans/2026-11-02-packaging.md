@@ -285,3 +285,58 @@ OBS, xbps-src, Gentoo `go-module` eclass, Nix `buildGo126Module`.
   installs in a fresh `debian:forky` and `smoke.sh 0.1.0` passes. The binary's libraries all
   resolve through the declared depends. `go mod vendor` gives a 12 MB tree that builds with
   `GOFLAGS=-mod=vendor GOPROXY=off GOTOOLCHAIN=local`. The vkms path runs first on a real tag.
+
+### 2026-11-16: Tasks 4–7 (`feat/packaging-recipes-20261116`, on top of `feat/packaging-20261114`)
+
+Every recipe's description is "A scrollable-tiling Wayland compositor built in Go" (the owner's
+wording; never pitched as a Niri clone), and every recipe carries libinput (`sysc-2209`). None can
+carry the release checksums before `v0.1.0` exists: each proof used a `git archive` tarball of this
+branch and a vendor tarball made by `go mod vendor`, and at tag time the AUR `sha256sums`, the
+Void `checksum` placeholders and the Gentoo `Manifest` are filled from the release files.
+
+`make install` no longer depends on `build` (on `feat/packaging-20261114`): RPM's `%install` runs
+in a fresh shell, so the rebuild it triggered dropped the vendor mode and flags `%build` set.
+
+- **Task 4, AUR** (`sysc-2204`): `sysc-compositor` and `sysc-compositor-git` in
+  `/home/nomadx/sysc/aur/`. That directory is still untracked (`sysc-1705`), so the recipes sit
+  beside their siblings uncommitted. Both build. `check.py` now expects 11 recipes (it said 8
+  while 9 existed), takes a `-git` package's binary without the suffix, and accepts the session
+  unit's `BindsTo=graphical-session.target` in place of `WantedBy=`. Both new recipes pass it.
+  `check.py` then stops on `sysc-terminal`, which predates this work: it has a stale 0.1.0
+  archive and no `.install` hook. In `archlinux:latest` with `niri` 26.04 installed, `pacman -U`
+  reports no conflicts, `pacman -Qkk` is clean apart from the image's `NoExtract` docs, both
+  sessions are listed, and `-git` against the stable package gets pacman's conflict prompt.
+  **Held:** sysc-shell's PKGBUILD keeps `depends=('niri')`. Its running-apps launcher still runs
+  `niri msg action spawn` (`sysc-2311`, under `sysc-1283`).
+- **Task 5, Fedora 44** (`sysc-2205`): `packaging/rpm/sysc-compositor.spec`. It uses
+  `pkgconfig()` BuildRequires, so the only `%if` blocks are Go's package name and the D-Bus
+  requirement (`dbus` on Fedora, `dbus-service` on Tumbleweed). It builds offline (`GOPROXY=off`)
+  in `fedora:44` with debuginfo. Installed in a fresh `fedora:44`, the smoke check passes.
+- **Task 6, Tumbleweed** (`sysc-2206`): `packaging/obs/scenefx/scenefx.spec`, SceneFX 0.5
+  (sha256 `0fa8ecca…a86c6`), split `libscenefx-0_5` + `scenefx-devel` as Tumbleweed splits
+  wlroots. In `opensuse/tumbleweed`, SceneFX builds first and the compositor builds against it.
+  Tumbleweed lacks `%build_ldflags`, so the spec uses `%{?build_ldflags}`. In a fresh Tumbleweed
+  the binary links `/lib64/libscenefx-0.5.so` from `libscenefx-0_5`, and the smoke check passes.
+- **Task 7, Void** (`sysc-2207`): `packaging/void/srcpkgs/sysc-compositor/template`. Built with
+  `xbps-src` in `void-buildroot-glibc` the way void-packages' CI does: `masterdir` linked to `/`,
+  `XBPS_CHROOT_CMD=ethereal`. Installed from a local repository in a fresh Void, the run
+  dependencies resolve from sonames. The smoke check passes once the bare container has `mesa-dri`.
+- **Task 7, Nix**: `flake.nix`, `flake.lock` (nixpkgs `d5cc683`). It uses `buildGo126Module`
+  through the Makefile, and needs `wayland-protocols` because wlroots' headers include its enum
+  headers. In `nixos/nix`: `nix build` and `nix flake check` pass. A NixOS system with
+  `programs.sysc-compositor.enable` evaluates to a toplevel and lists the session package. The
+  smoke check passes with Mesa from nixpkgs (there is no `/run/opengl-driver` outside NixOS).
+  `smoke.sh` finds the default config beside the binary's prefix.
+- **Task 7, Gentoo**: `packaging/gentoo/gui-wm/sysc-compositor/` (ebuild, `metadata.xml`). It
+  uses `go-module`, the vendor tarball moved into `${S}`, and the licences of the compositor and
+  the vendored modules. In `gentoo/stage3` (desktop profile, the official binhost, GURU for SceneFX
+  0.5): 159 binary packages including wlroots 0.20.2, with Go 1.27.4, SceneFX and the compositor
+  built from source. No QA notices; the smoke check passes. The binhost's glib ships without
+  `glib-mkenums`, which `xdg-desktop-portal` needs to build, so the proof installs
+  `dev-util/glib-utils` first. That is a Gentoo-side gap, not the ebuild's. `smoke.sh` resolves
+  the binary's symlinks, because merged-usr Gentoo finds it first as `/usr/sbin/sysc-compositor`.
+  The `Manifest` is generated at tag time.
+
+**Left for Task 8 and the owner:** tag `v0.1.0` and fill the checksums listed above. Then push
+the AUR recipes once `sysc-1705` tracks `aur/`, and set up COPR (`nomadcxx/sysc`), OBS
+(`home:nomadcxx:sysc`, SceneFX first) and the GURU submission.
