@@ -62,7 +62,9 @@ static bool sysc_output_try_config(struct wlr_output *output,
 	}
 	wlr_output_state_set_scale(&state, config->scale);
 	wlr_output_state_set_transform(&state, config->transform);
-	if (config->adaptive_sync >= 0) {
+	// Only an output that lists VRR support can change it: a Wayland backend
+	// output reports VRR on and refuses the whole state that turns it off.
+	if (config->adaptive_sync >= 0 && output->adaptive_sync_supported) {
 		wlr_output_state_set_adaptive_sync_enabled(&state, config->adaptive_sync);
 	}
 	bool ok = wlr_output_test_state(output, &state);

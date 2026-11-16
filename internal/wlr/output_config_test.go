@@ -213,6 +213,27 @@ func TestOutputConfigAppliesEachOutputsSection(t *testing.T) {
 	}
 }
 
+// TestOutputConfigLeavesFixedVRRAlone: an output that cannot change VRR keeps
+// it while the rest of its section applies. A Wayland backend output reports
+// VRR on and refuses to turn it off, so a nested compositor whose config asked
+// for VRR off refused its whole state and mapped no window (sysc-2296).
+func TestOutputConfigLeavesFixedVRRAlone(t *testing.T) {
+	c := newNested(t)
+	name := addConfigurableTestOutput(t, c)
+	pinTestOutputVRR(c.outputByName(name))
+	// VRR off (no setting), then on: each new scale must apply.
+	for i, vrr := range []*config.VRR{nil, {}} {
+		scale := float64(2 + i)
+		if err := c.Reconfigure(Options{Outputs: []config.OutputConfig{{Name: name, Scale: &scale, VRR: vrr}}}); err != nil {
+			t.Fatalf("VRR %+v: %v", vrr, err)
+		}
+		output, _ := outputSnapshotNamed(c, name)
+		if output.Logical == nil || output.Logical.Scale != scale {
+			t.Errorf("VRR %+v: %s logical = %+v, want scale %g applied", vrr, name, output.Logical, scale)
+		}
+	}
+}
+
 func outputModeChoicesOf(output OutputSnapshot) []outputModeChoice {
 	modes := make([]outputModeChoice, len(output.Modes))
 	for i, mode := range output.Modes {

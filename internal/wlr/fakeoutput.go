@@ -131,6 +131,12 @@ func observeGammaRequestsForTest(c *Compositor, notify func()) *Listener {
 	return AddListener(unsafe.Pointer(signal), func(unsafe.Pointer) { notify() })
 }
 
+// pinTestOutputVRR makes the output report VRR on that it cannot change, as a
+// Wayland backend output does; headless then refuses any VRR change.
+func pinTestOutputVRR(pointer unsafe.Pointer) {
+	(*C.struct_wlr_output)(pointer).adaptive_sync_status = C.WLR_OUTPUT_ADAPTIVE_SYNC_ENABLED
+}
+
 func addHeadlessTestOutput(c *Compositor, width, height uint32) (*headlessTestBackend, error) {
 	return addNamedHeadlessTestOutput(c, width, height, "")
 }
