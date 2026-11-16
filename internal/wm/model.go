@@ -5,8 +5,10 @@ import (
 	"github.com/Nomadcxx/sysc-compositor/internal/config"
 	"reflect"
 	"slices"
+	"time"
 
 	"github.com/Nomadcxx/sysc-compositor/internal/layout"
+	"github.com/Nomadcxx/sysc-compositor/internal/perf"
 )
 
 type workspaceState struct {
@@ -2087,6 +2089,9 @@ func (m *Model) ActiveWindow() (uint64, bool) {
 
 // Snapshot returns workspaces and windows in stable output/workspace order.
 func (m *Model) Snapshot() Snapshot {
+	if perf.Enabled() {
+		defer perf.RecordSnapshot(time.Now())
+	}
 	names := m.outputNames()
 	if m.detached != nil {
 		names = append(names, "")
