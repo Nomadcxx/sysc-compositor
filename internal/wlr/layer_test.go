@@ -1,13 +1,16 @@
 package wlr
 
 import (
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/Nomadcxx/sysc-compositor/internal/config"
+	"github.com/Nomadcxx/sysc-compositor/internal/wlr/testclient"
 )
 
 func TestLayerSnapshotWireMappings(t *testing.T) {
@@ -50,8 +53,31 @@ func TestLayerKeyboardFocusPriority(t *testing.T) {
 		name       string
 		candidates []layerFocusCandidate
 		hasWindow  bool
-		want       int
+		// aboveTop: the output shows a fullscreen window over its Top layer.
+		aboveTop bool
+		want     int
 	}{
+		{
+			name: "fullscreen window precedes top exclusive",
+			candidates: []layerFocusCandidate{
+				{index: 0, layer: layerTop, output: "DP-1", keyboard: LayerKeyboardExclusiveMode, mapped: true},
+			},
+			hasWindow: true, aboveTop: true, want: -1,
+		},
+		{
+			name: "overlay exclusive precedes fullscreen window",
+			candidates: []layerFocusCandidate{
+				{index: 0, layer: layerOverlay, output: "DP-1", keyboard: LayerKeyboardExclusiveMode, mapped: true},
+			},
+			hasWindow: true, aboveTop: true, want: 0,
+		},
+		{
+			name: "fullscreen window precedes bottom on-demand",
+			candidates: []layerFocusCandidate{
+				{index: 0, layer: layerBottom, output: "DP-1", keyboard: LayerKeyboardOnDemandMode, mapped: true, onDemandFocused: true},
+			},
+			hasWindow: true, aboveTop: true, want: -1,
+		},
 		{
 			name: "overlay on-demand focus precedes top exclusive",
 			candidates: []layerFocusCandidate{
@@ -123,11 +149,117 @@ func TestLayerKeyboardFocusPriority(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := chooseLayerKeyboardFocus(tc.candidates, "DP-1", tc.hasWindow); got != tc.want {
+			if got := chooseLayerKeyboardFocus(tc.candidates, "DP-1", tc.hasWindow, tc.aboveTop); got != tc.want {
 				t.Errorf("chooseLayerKeyboardFocus() = %d, want %d", got, tc.want)
 			}
 		})
 	}
+}
+
+// TestFullscreenWindowCoversTheTopLayer: as Niri's render_above_top_layer, a
+// fullscreen window draws over its output's Top bar and the bar's popup, and
+// takes the pointer there. Leaving fullscreen or opening the overview brings
+// the bar back on top (sysc-compositor#115).
+func TestFullscreenWindowCoversTheTopLayer(t *testing.T) {
+	c := newNestedWith(t, Options{Animations: config.Animations{Off: true}})
+	runTools(t, c, func(func(string, ...string) *exec.Cmd) {
+		window, err := testclient.StartToplevelClient(c.SocketName(), time.Hour)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer window.Close()
+		if err := window.SetIdentity("fullscreen-target", "fullscreen-target"); err != nil {
+			t.Error(err)
+			return
+		}
+		if err := window.Paint(0xff3498db, 200, 150); err != nil {
+			t.Error(err)
+			return
+		}
+		var pointer *fakePointer
+		// The pointer exists before the bar starts, so the bar binds a wl_pointer.
+		onCompositor(t, c, func() { pointer = c.addFakePointer() })
+		defer onCompositor(t, c, func() { pointer.remove() })
+		bar, err := testclient.StartLayerPopupClient(c.SocketName())
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer bar.Close()
+
+		var view *toplevelView
+		var layer *layerSurface
+		onCompositor(t, c, func() {
+			for _, candidate := range c.views {
+				if cString(candidate.toplevel.app_id) == "fullscreen-target" {
+					view = candidate
+				}
+			}
+			for _, candidate := range c.layerOrder {
+				if candidate.namespace() == "sysc-test-bar" {
+					layer = candidate
+				}
+			}
+		})
+		if view == nil || layer == nil {
+			t.Fatalf("window %v and bar %v did not both map", view != nil, layer != nil)
+		}
+		// The bar spans the top 30 px; its popup is at (0..120, 30..110).
+		points := map[string][2]float64{"bar": {60, 15}, "popup": {60, 70}}
+		// expect polls frames until the bar's stacking and the pointer's
+		// target at each point agree with covered.
+		expect := func(stage string, covered bool) {
+			t.Helper()
+			var problem string
+			for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+				problem = ""
+				onCompositor(t, c, func() {
+					if layer.underFullscreen != covered {
+						problem = fmt.Sprintf("bar under the fullscreen window = %v", layer.underFullscreen)
+						return
+					}
+					for name, point := range points {
+						surface, _, _ := c.surfaceAt(point[0], point[1])
+						if got := c.viewForSurface(surface) == view; got != covered {
+							problem = fmt.Sprintf("pointer over the %s reaches the window = %v", name, got)
+							return
+						}
+					}
+				})
+				if problem == "" {
+					return
+				}
+			}
+			t.Errorf("%s: %s, want %v", stage, problem, covered)
+		}
+
+		expect("tiled window", false)
+		onCompositor(t, c, func() {
+			if !c.SetFullscreen(view.id, true) {
+				t.Error("SetFullscreen(true) failed")
+			}
+		})
+		expect("fullscreen", true)
+		onCompositor(t, c, func() {
+			if !c.OpenOverview() {
+				t.Error("OpenOverview() failed")
+			}
+		})
+		expect("overview over a fullscreen window", false)
+		onCompositor(t, c, func() {
+			if !c.CloseOverview() {
+				t.Error("CloseOverview() failed")
+			}
+		})
+		expect("overview closed", true)
+		onCompositor(t, c, func() {
+			if !c.SetFullscreen(view.id, false) {
+				t.Error("SetFullscreen(false) failed")
+			}
+		})
+		expect("fullscreen left", false)
+	})
 }
 
 // pollThenStop runs check on the compositor thread every 20 ms until it

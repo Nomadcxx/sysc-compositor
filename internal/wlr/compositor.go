@@ -219,6 +219,7 @@ type Compositor struct {
 	mapped                  map[unsafe.Pointer]bool
 	sceneTrees              map[unsafe.Pointer]*C.struct_wlr_scene_tree
 	layerTrees              [layerCount]*C.struct_wlr_scene_tree
+	topUnderFullscreen      *C.struct_wlr_scene_tree // see syncTopLayerStacking
 	overviewConfig          config.Overview
 	animationConfig         config.Animations
 	blurConfig              config.Blur

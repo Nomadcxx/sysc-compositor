@@ -1515,7 +1515,7 @@ func (c *Compositor) updateKeyboardFocus() {
 			mapped:   bool(layer.surface.surface.mapped), onDemandFocused: c.onDemandLayerFocus == layer,
 		}
 	}
-	focusedLayerIndex := chooseLayerKeyboardFocus(candidates, activeOutput, focusedView != nil)
+	focusedLayerIndex := chooseLayerKeyboardFocus(candidates, activeOutput, focusedView != nil, c.rendersAboveTopLayer(activeOutput))
 	var focusedLayer *layerSurface
 	if focusedLayerIndex >= 0 && focusedLayerIndex < len(c.layerOrder) {
 		focusedLayer = c.layerOrder[focusedLayerIndex]
