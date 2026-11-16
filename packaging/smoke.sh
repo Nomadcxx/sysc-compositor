@@ -17,7 +17,9 @@ case $got in
 	exit 1
 	;;
 esac
-sysc-compositor validate -c /usr/share/sysc-compositor/default-config.kdl
+# The default config sits beside the binary's prefix: /usr, or a Nix store path.
+bin=$(readlink -f "$(command -v sysc-compositor)")
+sysc-compositor validate -c "${bin%/bin/*}/share/sysc-compositor/default-config.kdl"
 
 XDG_RUNTIME_DIR=$(mktemp -d)
 chmod 0700 "$XDG_RUNTIME_DIR"

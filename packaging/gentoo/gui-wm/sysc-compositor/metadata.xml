@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE pkgmetadata SYSTEM "https://www.gentoo.org/dtd/metadata.dtd">
+<pkgmetadata>
+	<maintainer type="person">
+		<email>noovie@gmail.com</email>
+		<name>Nomadcxx</name>
+	</maintainer>
+	<upstream>
+		<remote-id type="github">Nomadcxx/sysc-compositor</remote-id>
+	</upstream>
+</pkgmetadata>
