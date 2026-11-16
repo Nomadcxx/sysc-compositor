@@ -553,6 +553,7 @@ func (c *Compositor) handleNewOutput(data unsafe.Pointer) {
 	// The layout follows the output's commit first (its listener came
 	// first); layer surfaces then follow the new box.
 	commit := AddListener(unsafe.Pointer(&output.events.commit), func(event unsafe.Pointer) {
+		c.keepCommitted(data, event)
 		if bool(C.sysc_commit_changed_enabled((*C.struct_wlr_output_event_commit)(event))) {
 			c.syncCaptureSources()
 		}
@@ -569,6 +570,7 @@ func (c *Compositor) handleNewOutput(data unsafe.Pointer) {
 		if _, adopted := c.sceneOutputs[data]; adopted {
 			c.retireOutput(data)
 		}
+		c.releaseCommitted(data)
 		delete(c.backendOutputs, data)
 		delete(c.vrrRequested, data)
 		c.placeOutputs()

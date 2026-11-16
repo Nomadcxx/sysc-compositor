@@ -239,7 +239,7 @@ type Compositor struct {
 	a11y                    a11yState
 	activeWorkspaces        map[string]activeWorkspace
 	closingNodes            map[uint64]unsafe.Pointer
-	nextAnimationID         uint64
+	committedBuffers        map[unsafe.Pointer]unsafe.Pointer
 	preferNoCSD             bool
 	overviewBackdrops       []overviewBackdrop
 	overviewProjections     []overviewProjection
@@ -973,6 +973,9 @@ func (c *Compositor) Destroy() {
 	c.finishAnimationShaders()
 	c.stopOutputProtocolEdits()
 	c.finishRendererBuffers()
+	for output := range c.committedBuffers {
+		c.releaseCommitted(output)
+	}
 	c.stopPipeWire()
 	c.finishColorPick([3]float64{}, ErrClosed)
 	c.finishWindowPick(0, ErrClosed)
