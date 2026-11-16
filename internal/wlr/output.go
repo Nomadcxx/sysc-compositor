@@ -531,6 +531,7 @@ func (c *Compositor) handleNewOutput(data unsafe.Pointer) {
 		if !adopted {
 			return
 		}
+		c.syncTopLayerStacking(data)
 		if c.repaintOutput(data, so) {
 			c.drawn++
 		}
