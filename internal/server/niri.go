@@ -25,8 +25,16 @@ func ipcSocketPath(runtimeDir, display string, pid int) (string, error) {
 	return filepath.Join(runtimeDir, fmt.Sprintf("sysc-compositor.%s.%d.sock", display, pid)), nil
 }
 
+// version is the release a packaged build carries, set by the Makefile with
+// -ldflags "-X …/internal/server.version=…". A tarball build has no VCS
+// stamp, so without it the build info says only "(devel)".
+var version string
+
 // Version is what the Version request answers: ours, and the wire it speaks.
 func Version() string {
+	if version != "" {
+		return "sysc-compositor " + version + " (niri-ipc 26.4.0)"
+	}
 	v := "(devel)"
 	if info, ok := debug.ReadBuildInfo(); ok {
 		if info.Main.Version != "" {

@@ -2,3 +2,5 @@
 *.test
 *.o
 internal/wlr/protocols/
+/root/
+/dist/

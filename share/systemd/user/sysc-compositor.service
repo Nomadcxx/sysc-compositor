@@ -15,4 +15,4 @@ Before=xdg-desktop-autostart.target
 [Service]
 Slice=session.slice
 Type=notify
-ExecStart=/usr/local/bin/sysc-compositor --session
+ExecStart=@BINDIR@/sysc-compositor --session
