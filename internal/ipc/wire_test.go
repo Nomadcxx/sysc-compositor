@@ -294,6 +294,7 @@ func TestEncodeRequestRoundTrips(t *testing.T) {
 func TestM9WireRequestsRoundTrip(t *testing.T) {
 	for _, line := range []string{
 		`{"Output":{"output":"eDP-1","action":"Off"}}`,
+		`{"Output":{"output":"eDP-1","action":{"Vrr":{"vrr":{"vrr":true,"on_demand":false}}}}}`,
 		`{"Action":{"SwitchLayout":{"layout":"Next"}}}`,
 		`{"Action":{"SwitchLayout":{"layout":{"Index":2}}}}`,
 		`{"Action":{"LoadConfigFile":{"path":null}}}`,
@@ -328,6 +329,9 @@ func TestDecodeOutputRequestRejectsMalformedAction(t *testing.T) {
 	for _, line := range []string{
 		`{"Output":{"output":"eDP-1","action":{"Mode":{}}}}`,
 		`{"Output":{"output":"eDP-1","action":{"Vrr":{"vrr":true}}}}`,
+		// niri-ipc nests VrrToSet one level down; clap's flatten is CLI-only.
+		`{"Output":{"output":"eDP-1","action":{"Vrr":{"vrr":true,"on_demand":false}}}}`,
+		`{"Output":{"output":"eDP-1","action":{"Vrr":{"vrr":{"vrr":true}}}}}`,
 		`{"Output":{"output":"eDP-1","action":{"Transform":"Sideways"}}}`,
 	} {
 		if _, err := DecodeRequest([]byte(line)); err != ErrParse {

@@ -564,6 +564,43 @@ func TestWindowTransitionOpacityClampsUnderdampedOvershoot(t *testing.T) {
 	}
 }
 
+// TestCloseFadeSurvivesWindowTeardown (sysc-2295): tearing a window down
+// cancels its own animations, and must not cancel a close fade whose owner
+// id happens to equal the window's, which strands the fading copy on screen.
+func TestCloseFadeSurvivesWindowTeardown(t *testing.T) {
+	c := newNestedWith(t, Options{Animations: laptopAnimations()})
+	checked := false
+	c.viewMapped = func(view *toplevelView) {
+		snapshot, count := sceneFXCloneView(unsafe.Pointer(c.windowAnimationTree), unsafe.Pointer(view.tree))
+		if snapshot == nil || count == 0 {
+			t.Error("could not clone the mapped view for a close fade")
+			c.Terminate()
+			return
+		}
+		owner := c.nextAnimationOwner()
+		c.closingNodes[owner] = snapshot
+		c.startCloseSnapshot(owner, snapshot)
+		// The window's unmap and destroy both do this.
+		c.cancelViewAnimations(view)
+		if !c.hasAnimation(closeSnapshotKey(owner)) {
+			t.Errorf("tearing down window %d cancelled close fade %d", view.id, owner)
+		}
+		time.AfterFunc(1200*time.Millisecond, func() {
+			_ = c.Post(func() {
+				if _, stranded := c.closingNodes[owner]; stranded {
+					t.Error("the close fade's copy outlived its fade")
+				}
+				checked = true
+				c.Terminate()
+			})
+		})
+	}
+	runClient(t, c, []string{"weston-terminal"}, nil, nil)
+	if !checked {
+		t.Fatal("nested close fade check did not complete")
+	}
+}
+
 func TestWindowResizeScalesSnapshotWhileLayoutTargetsCommit(t *testing.T) {
 	animations := laptopAnimations()
 	animations.WindowOpen.Off = true

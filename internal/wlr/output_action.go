@@ -28,8 +28,10 @@ func editOutputConfig(section config.OutputConfig, raw json.RawMessage) (config.
 		var fields struct {
 			Mode, Scale, Position json.RawMessage
 			Transform             string
-			Vrr                   bool
-			OnDemand              bool `json:"on_demand"`
+			Vrr                   struct {
+				Vrr      bool
+				OnDemand bool `json:"on_demand"`
+			}
 		}
 		_ = json.Unmarshal(body, &fields)
 		specific := func(raw json.RawMessage, target any) bool {
@@ -93,8 +95,8 @@ func editOutputConfig(section config.OutputConfig, raw json.RawMessage) (config.
 			}
 		case "Vrr":
 			section.VRR = nil
-			if fields.Vrr {
-				section.VRR = &config.VRR{OnDemand: fields.OnDemand}
+			if fields.Vrr.Vrr {
+				section.VRR = &config.VRR{OnDemand: fields.Vrr.OnDemand}
 			}
 		}
 	}

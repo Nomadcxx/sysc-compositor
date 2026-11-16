@@ -390,11 +390,17 @@ func validOutputAction(name string, body json.RawMessage) bool {
 		}
 		return body != nil && strict(body, &fields) == nil && validPositionToSet(fields.Position)
 	case "Vrr":
+		// OutputAction::Vrr { vrr: VrrToSet }: serde nests the settings under
+		// "vrr"; the flatten in niri-ipc applies to clap only.
+		var outer struct {
+			Vrr json.RawMessage `json:"vrr"`
+		}
 		var fields struct {
 			Vrr      *bool `json:"vrr"`
 			OnDemand *bool `json:"on_demand"`
 		}
-		return body != nil && strict(body, &fields) == nil && fields.Vrr != nil && fields.OnDemand != nil
+		return body != nil && strict(body, &outer) == nil && outer.Vrr != nil &&
+			strict(outer.Vrr, &fields) == nil && fields.Vrr != nil && fields.OnDemand != nil
 	default:
 		return false
 	}

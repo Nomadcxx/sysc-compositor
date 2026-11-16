@@ -239,7 +239,7 @@ type Compositor struct {
 	a11y                    a11yState
 	activeWorkspaces        map[string]activeWorkspace
 	closingNodes            map[uint64]unsafe.Pointer
-	nextAnimationID         uint64
+	committedBuffers        map[unsafe.Pointer]unsafe.Pointer
 	preferNoCSD             bool
 	overviewBackdrops       []overviewBackdrop
 	overviewProjections     []overviewProjection
@@ -268,6 +268,7 @@ type Compositor struct {
 	switchToggleListeners   map[unsafe.Pointer]*Listener
 	switchToggle            func(SwitchToggle)
 	lidClosed               bool // from the lid switch or login1; see SetLidClosed
+	outputConfigOnResume    bool // output config changed while the session was inactive
 	keyboardDevices         map[unsafe.Pointer]bool
 	suppressedKeys          map[uint32]bool
 	keyboardGroup           *C.struct_wlr_keyboard_group
@@ -742,6 +743,7 @@ func NewWith(opts Options) (*Compositor, error) {
 	if err := c.initializeDebug(); err != nil {
 		return nil, err
 	}
+	c.watchSessionResume()
 	c.watchRendererLoss()
 	c.watchRendererBuffers()
 	if !bool(C.wlr_backend_start(c.backend)) {
@@ -973,6 +975,9 @@ func (c *Compositor) Destroy() {
 	c.finishAnimationShaders()
 	c.stopOutputProtocolEdits()
 	c.finishRendererBuffers()
+	for output := range c.committedBuffers {
+		c.releaseCommitted(output)
+	}
 	c.stopPipeWire()
 	c.finishColorPick([3]float64{}, ErrClosed)
 	c.finishWindowPick(0, ErrClosed)
