@@ -364,9 +364,13 @@ func (c *Compositor) startCloseSnapshot(id uint64, node unsafe.Pointer) {
 	})
 }
 
+// nextAnimationOwner owns an animation that outlives its window, a close
+// fade. It shares the window id counter: a window's teardown cancels every
+// animation its id owns, and must never reach another window's fade
+// (sysc-2295).
 func (c *Compositor) nextAnimationOwner() uint64 {
-	c.nextAnimationID++
-	return c.nextAnimationID
+	c.nextViewID++
+	return c.nextViewID
 }
 
 func (c *Compositor) resizeKeys(view *toplevelView) (animationKey, animationKey) {

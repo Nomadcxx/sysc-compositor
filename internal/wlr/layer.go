@@ -93,6 +93,8 @@ type layerSurface struct {
 	listeners  []*Listener
 	// bobY is the baba-is-float offset the tree is drawn at below its place.
 	bobY int
+	// underFullscreen: a Top surface whose tree is in topUnderFullscreen.
+	underFullscreen bool
 }
 
 type LayerKind uint8
@@ -152,7 +154,10 @@ type layerFocusCandidate struct {
 	onDemandFocused bool
 }
 
-func chooseLayerKeyboardFocus(candidates []layerFocusCandidate, activeOutput string, hasWindow bool) int {
+// aboveTop is rendersAboveTopLayer for activeOutput: a fullscreen window there
+// takes the keyboard before anything below Overlay, as Niri's focus order puts
+// layout focus first when it renders above the top layer.
+func chooseLayerKeyboardFocus(candidates []layerFocusCandidate, activeOutput string, hasWindow, aboveTop bool) int {
 	find := func(layer int, mode LayerKeyboardMode, onDemand bool) int {
 		for i := len(candidates) - 1; i >= 0; i-- {
 			candidate := candidates[i]
@@ -164,6 +169,9 @@ func chooseLayerKeyboardFocus(candidates []layerFocusCandidate, activeOutput str
 		return -1
 	}
 	for _, layer := range []int{layerOverlay, layerTop} {
+		if layer == layerTop && aboveTop && hasWindow {
+			return -1
+		}
 		if index := find(layer, LayerKeyboardExclusiveMode, false); index >= 0 {
 			return index
 		}
@@ -188,14 +196,61 @@ func chooseLayerKeyboardFocus(candidates []layerFocusCandidate, activeOutput str
 }
 
 // createLayerTrees makes one scene tree per stacking layer under the scene
-// root. Creation order is drawing order.
+// root. Creation order is drawing order. The tree for Top surfaces under a
+// fullscreen window sits on the Bottom layer, below window decorations.
 func (c *Compositor) createLayerTrees() bool {
 	for i := range c.layerTrees {
 		if c.layerTrees[i] = C.sysc_tree_create(&c.scene.tree); c.layerTrees[i] == nil {
 			return false
 		}
 	}
+	if c.topUnderFullscreen = C.sysc_tree_create(&c.scene.tree); c.topUnderFullscreen == nil {
+		return false
+	}
+	C.wlr_scene_node_place_above(&c.topUnderFullscreen.node, &c.layerTrees[layerBottom].node)
 	return true
+}
+
+// rendersAboveTopLayer is Niri's render_above_top_layer for one output: its
+// active workspace shows a fullscreen window and the view is still, so the
+// window draws over the Top layer. A workspace switch or the overview puts the
+// Top layer back on top; windowed fullscreen never counts.
+func (c *Compositor) rendersAboveTopLayer(output string) bool {
+	if c.model == nil || c.overviewShown() || c.animations[workspaceSwitchKey(output)] != nil {
+		return false
+	}
+	if _, switching := c.model.WorkspaceRenderOffset(output); switching {
+		return false
+	}
+	for _, view := range c.views {
+		if view != nil && view.mapped && view.fullscreen && view.presentationVisible && view.outputName == output {
+			return true
+		}
+	}
+	return false
+}
+
+// syncTopLayerStacking moves an output's Top surfaces, and the pop-ups in
+// their trees, under its windows or back before the output draws. Pointer
+// hit-testing follows the scene; keyboard focus is recomputed.
+func (c *Compositor) syncTopLayerStacking(output unsafe.Pointer) {
+	under := c.rendersAboveTopLayer(outputName(output))
+	moved := false
+	for _, l := range c.layerOrder {
+		if l.output != output || l.layer != layerTop || l.underFullscreen == under {
+			continue
+		}
+		l.underFullscreen = under
+		parent := c.layerTrees[layerTop]
+		if under {
+			parent = c.topUnderFullscreen
+		}
+		C.sysc_reparent(l.tree, parent)
+		moved = true
+	}
+	if moved {
+		c.updateKeyboardFocus()
+	}
 }
 
 // layerSurfaceTree is the scene tree of a layer surface, or nil.
@@ -257,7 +312,8 @@ func (c *Compositor) handleNewLayerSurface(data unsafe.Pointer) {
 			return
 		}
 		if layer := sceneLayer(surface.current.layer); layer != l.layer {
-			l.layer = layer
+			// The next frame moves a Top surface under a fullscreen window.
+			l.layer, l.underFullscreen = layer, false
 			C.sysc_reparent(l.tree, c.layerTrees[layer])
 			// A rule may match on the layer, as Niri's recompute on commit.
 			l.rules = c.resolveLayerRules(l)
