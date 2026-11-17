@@ -2,7 +2,6 @@ package wlr
 
 import (
 	"encoding/json"
-	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -83,21 +82,26 @@ func TestOutputRequestUsesADisconnectedOutputsIdentity(t *testing.T) {
 	}
 }
 
-// TestOutputModelineAppliesOnHeadlessAndIsIgnoredNested: a modeline sets a
-// headless output's mode. A nested output is sized by its host window, so as
+// TestOutputModelineAppliesUnlessNested: a modeline sets the mode of a
+// headless or DRM output. A nested output is sized by its host window, so as
 // Niri's winit backend does, the request succeeds and changes nothing there;
 // wlroots' Wayland backend refuses every refresh rate anyway.
-func TestOutputModelineAppliesOnHeadlessAndIsIgnoredNested(t *testing.T) {
+func TestOutputModelineAppliesUnlessNested(t *testing.T) {
 	c := newNested(t)
 	headless := addConfigurableTestOutput(t, c)
+	names := []string{headless}
 	nested := map[string]OutputSnapshot{}
-	for _, output := range c.OutputSnapshot() {
-		if output.Name != headless {
-			nested[output.Name] = output
+	for pointer := range c.backendOutputs {
+		if name := outputName(pointer); name != headless {
+			names = append(names, name)
+			if outputIsNested(pointer) {
+				nested[name], _ = outputSnapshotNamed(c, name)
+			}
 		}
 	}
+	slices.Sort(names[1:])
 	modeline := json.RawMessage(`{"Modeline":{"clock":148.5,"hdisplay":1920,"hsync_start":2008,"hsync_end":2052,"htotal":2200,"vdisplay":1080,"vsync_start":1084,"vsync_end":1089,"vtotal":1125,"hsync_polarity":"PHSync","vsync_polarity":"PVSync"}}`)
-	for _, name := range append([]string{headless}, slices.Sorted(maps.Keys(nested))...) {
+	for _, name := range names {
 		if _, err := c.ConfigureOutput(ipc.OutputRequest{Name: name, Action: modeline}); err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}

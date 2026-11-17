@@ -343,7 +343,7 @@ func (c *Compositor) applyOutputConfig(pointer unsafe.Pointer, testOnly, strict 
 	// does, a configured mode or modeline leaves it alone. wlroots' Wayland
 	// backend refuses every refresh rate in any case.
 	var modeline *config.Modeline
-	if bool(C.wlr_backend_is_wl(output.backend)) {
+	if outputIsNested(pointer) {
 		target = nil
 	} else if section != nil {
 		modeline = section.Modeline
@@ -450,6 +450,11 @@ func (c *Compositor) applyOutputConfig(pointer unsafe.Pointer, testOnly, strict 
 		c.adoptOutput(pointer)
 	}
 	return nil
+}
+
+// outputIsNested reports whether a Wayland host window backs the output.
+func outputIsNested(pointer unsafe.Pointer) bool {
+	return bool(C.wlr_backend_is_wl((*C.struct_wlr_output)(pointer).backend))
 }
 
 // outputOff reports whether an output belongs off: its section says so, or
