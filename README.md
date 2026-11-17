@@ -3,6 +3,42 @@
 A Wayland compositor written in Go for the sysc desktop, using wlroots 0.20 and SceneFX.
 It supports the niri-ipc 26.4.0 wire format so existing shell clients can connect.
 
+## Install
+
+Every route installs the `sysc-compositor` binary, the `sysc-compositor-session` wrapper,
+the `sysc-compositor` login-manager session and its systemd user units. Pick the
+sysc-compositor session at your login manager.
+
+**From source.** With the dependencies under [Build](#build):
+
+```
+make build
+sudo make install PREFIX=/usr    # PREFIX defaults to /usr/local; DESTDIR is honoured
+```
+
+**Debian forky.** Each release carries a `.deb`, built and smoke-checked in `debian:forky`,
+beside a vendor tarball and `SHA256SUMS`:
+
+```
+sudo apt install ./sysc-compositor_<version>_amd64.deb
+```
+
+**Nix and NixOS.** `nix build github:Nomadcxx/sysc-compositor` builds the package. On NixOS,
+add the flake as an input, import its module and enable it:
+
+```nix
+imports = [ inputs.sysc-compositor.nixosModules.default ];
+programs.sysc-compositor.enable = true;
+```
+
+**Other distributions.** Recipes in this tree build against the release tarball:
+[`packaging/rpm`](packaging/rpm) (Fedora 44 and openSUSE Tumbleweed),
+[`packaging/obs/scenefx`](packaging/obs/scenefx) (SceneFX 0.5 for Tumbleweed),
+[`packaging/void`](packaging/void) and [`packaging/gentoo`](packaging/gentoo). The Arch
+recipes, `sysc-compositor` and `sysc-compositor-git`, live in
+[Nomadcxx/sysc](https://github.com/Nomadcxx/sysc) under `aur/`. Distribution repositories
+are listed here as each one is published.
+
 ## Commands
 
 ```
