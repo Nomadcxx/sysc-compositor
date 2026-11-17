@@ -898,13 +898,13 @@ func (c *Compositor) processCursorMotion(time C.uint32_t) {
 				C.wlr_xdg_toplevel_set_size(c.grabView.toplevel,
 					C.int(geometry.width), C.int(geometry.height))
 			} else {
-				c.applyWorkspaceModel()
+				c.layoutWorkspaceModel()
 			}
 		} else {
 			C.sysc_scene_tree_set_position(c.grabView.tree,
 				C.int(geometry.x), C.int(geometry.y))
 		}
-		c.notifyWindowStateChanged()
+		c.windowStateQueued = true
 		return
 	}
 	// Implicit grab: while any button is held, the pointer stays with the
@@ -1602,6 +1602,7 @@ func (c *Compositor) clearPointerGrab() {
 	if wasGrabbed {
 		c.restoreCursorImage()
 	}
+	c.flushWindowState()
 }
 
 func (c *Compositor) resizeEdgesAt(view *toplevelView) uint32 {

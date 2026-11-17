@@ -107,6 +107,16 @@ func cStringPointer(value *C.char) *string {
 	return &text
 }
 
+// flushWindowState publishes the window state a grab's motion queued. Niri
+// refreshes its IPC once per loop iteration rather than per input event; this
+// runs on each output frame and when the grab ends.
+func (c *Compositor) flushWindowState() {
+	if c.windowStateQueued {
+		c.windowStateQueued = false
+		c.notifyWindowStateChanged()
+	}
+}
+
 func (c *Compositor) notifyWindowStateChanged() {
 	c.syncCapturePrivacy()
 	c.syncCaptureSources()

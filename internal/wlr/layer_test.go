@@ -471,3 +471,44 @@ func TestClientContentIsDrawn(t *testing.T) {
 		t.Fatalf("no scene was drawn after the background mapped (%d drawn before, %d after)", before, after)
 	}
 }
+
+// TestLayerRedrawsDoNotRebuildState: a layer surface that only redraws (a
+// bar's clock) changes nothing the IPC reports, so its commits publish no
+// state; a commit that changes its layer-shell state still does (sysc-1470).
+func TestLayerRedrawsDoNotRebuildState(t *testing.T) {
+	c := newNested(t)
+	runTools(t, c, func(func(string, ...string) *exec.Cmd) {
+		var pointer *fakePointer
+		// The pointer exists before the bar starts, so the bar binds a wl_pointer.
+		onCompositor(t, c, func() { pointer = c.addFakePointer() })
+		defer onCompositor(t, c, func() { pointer.remove() })
+		bar, err := testclient.StartLayerPopupClient(c.SocketName())
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer bar.Close()
+		changed := 0
+		onCompositor(t, c, func() { c.stateChanged = func() { changed++ } })
+		for range 5 {
+			if err := bar.RedrawBar(); err != nil {
+				t.Error(err)
+				return
+			}
+		}
+		onCompositor(t, c, func() {
+			if changed != 0 {
+				t.Errorf("5 redraws published the state %d times, want none", changed)
+			}
+		})
+		if err := bar.SetBarExclusiveZone(30); err != nil {
+			t.Error(err)
+			return
+		}
+		onCompositor(t, c, func() {
+			if changed == 0 {
+				t.Error("a new exclusive zone published no state")
+			}
+		})
+	})
+}
