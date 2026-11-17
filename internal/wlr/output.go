@@ -565,6 +565,7 @@ func (c *Compositor) handleNewOutput(data unsafe.Pointer) {
 			return
 		}
 		c.syncTopLayerStacking(data)
+		c.flushWindowState()
 		var before C.uint32_t
 		var started time.Time
 		if perf.Enabled() {

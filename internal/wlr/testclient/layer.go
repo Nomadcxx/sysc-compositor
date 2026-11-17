@@ -336,6 +336,15 @@ static int sysc_layer_client_start(const char *display_name, struct sysc_layer_c
 	return wl_display_roundtrip(c->display) < 0 ? 13 : 0;
 }
 
+// Commits the bar again: its buffer only, or with an exclusive zone.
+static int sysc_layer_redraw_bar(struct sysc_layer_client *c, int zone, bool set_zone) {
+	if (set_zone) wl_proxy_marshal_flags(c->layer, 2, NULL, 4, 0, zone); // set_exclusive_zone
+	wl_surface_attach(c->bar, c->bar_buffer, 0, 0);
+	wl_surface_damage(c->bar, 0, 0, (int)c->layer_width, 30);
+	wl_surface_commit(c->bar);
+	return wl_display_roundtrip(c->display);
+}
+
 // Dispatches until the pointer is on the popup: 0, 1 on timeout, -1 on a
 // broken connection.
 static int sysc_layer_wait_popup_enter(struct sysc_layer_client *c, int timeout_ms) {
@@ -395,6 +404,23 @@ func (c *LayerPopupClient) WaitPopupEnter(timeout time.Duration) bool {
 // Sync reads every event the compositor has sent.
 func (c *LayerPopupClient) Sync() error {
 	if C.wl_display_roundtrip(c.state.display) < 0 {
+		return errors.New("layer popup client roundtrip failed")
+	}
+	return nil
+}
+
+// RedrawBar commits the bar's buffer again and changes none of its
+// layer-shell state, as a bar redrawing its clock does.
+func (c *LayerPopupClient) RedrawBar() error {
+	if C.sysc_layer_redraw_bar(c.state, 0, false) < 0 {
+		return errors.New("layer popup client roundtrip failed")
+	}
+	return nil
+}
+
+// SetBarExclusiveZone commits the bar with a new exclusive zone.
+func (c *LayerPopupClient) SetBarExclusiveZone(zone int) error {
+	if C.sysc_layer_redraw_bar(c.state, C.int(zone), true) < 0 {
 		return errors.New("layer popup client roundtrip failed")
 	}
 	return nil

@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 	"unsafe"
+
+	"github.com/Nomadcxx/sysc-compositor/internal/bind"
 )
 
 var (
@@ -355,5 +357,52 @@ func TestCompositorGrabClearsPointerFocus(t *testing.T) {
 	}
 	if after != surface {
 		t.Errorf("pointer focus after the grab ended = %p, want the window under the pointer %p", after, surface)
+	}
+}
+
+// TestGrabMotionPublishesStatePerFrame: an interactive resize publishes the
+// window state with the next output frame rather than on every motion event,
+// as Niri refreshes its IPC once per loop iteration; ending the grab publishes
+// what is still queued (sysc-1470).
+func TestGrabMotionPublishesStatePerFrame(t *testing.T) {
+	c := newNested(t)
+	during, framed, ended := -1, -1, -1
+	pointerScene(t, c, func(v *toplevelView, p *fakePointer) []func() {
+		changed := 0
+		var x, y float64
+		return []func(){
+			func() {
+				c.focusView(v)
+				c.executeBindAction(bind.Action{Name: bind.ActionToggleWindowFloating})
+			},
+			func() {
+				x, y = c.viewCenter(v)
+				p.moveTo(x, y)
+				if !c.startPointerGrab(v, grabResize, edgeRight|edgeBottom, btnLeft) {
+					t.Error("the resize grab did not start")
+				}
+				c.stateChanged = func() { changed++ }
+				for i := 1; i <= 10; i++ {
+					p.moveTo(x+float64(4*i), y+float64(4*i))
+				}
+				during = changed
+			},
+			func() {
+				framed = changed
+				p.moveTo(x+60, y+60)
+				c.clearPointerGrab()
+				ended = changed - framed
+				c.stateChanged = nil
+			},
+		}
+	})
+	if during != 0 {
+		t.Errorf("10 resize motions published the state %d times before a frame, want none", during)
+	}
+	if framed < 1 {
+		t.Errorf("the next frames published the state %d times, want the queued resize", framed)
+	}
+	if ended < 1 {
+		t.Error("ending the grab did not publish its last motion")
 	}
 }

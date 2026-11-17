@@ -326,6 +326,7 @@ type Compositor struct {
 	activeOutputName           string
 	stateChanged               func()
 	lastWindowState            []WindowInfo
+	windowStateQueued          bool // a grab moved a window since the last frame
 	foreign                    *foreignToplevelProtocol
 	recentWindows              config.RecentWindows
 	mruBindings                []bind.Binding

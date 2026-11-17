@@ -376,6 +376,16 @@ func (c *Compositor) applyWorkspaceModel() {
 	if c.model == nil {
 		return
 	}
+	c.layoutWorkspaceModel()
+	c.notifyStateChanged()
+}
+
+// layoutWorkspaceModel brings the scene to the model without publishing the
+// state, which an interactive resize leaves to the next frame.
+func (c *Compositor) layoutWorkspaceModel() {
+	if c.model == nil {
+		return
+	}
 	defer c.beginResizeBatch()()
 	// A window that maps with baba-is-float starts the clock that bobs it.
 	defer c.scheduleAnimationTick()
@@ -543,7 +553,6 @@ func (c *Compositor) applyWorkspaceModel() {
 	// Workspace activation can change while the mapped-window snapshots stay
 	// identical, especially when switching between empty workspaces.
 	c.syncOverviewScene()
-	c.notifyStateChanged()
 }
 
 func (c *Compositor) syncWorkspaceWindowSizeHints(view *toplevelView) bool {

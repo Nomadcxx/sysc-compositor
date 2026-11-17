@@ -319,13 +319,18 @@ func (c *Compositor) handleNewLayerSurface(data unsafe.Pointer) {
 			l.rules = c.resolveLayerRules(l)
 			c.syncRuleBackgroundEffects()
 		}
-		if surface.current.committed != 0 || bool(surface.initial_commit) {
+		// A commit that only draws (a bar's clock) changes nothing the IPC
+		// reports; client surface commits damage capture on their own.
+		stateChanged := surface.current.committed != 0 || bool(surface.initial_commit)
+		if stateChanged {
 			c.arrangeLayers(l.output)
 		}
 		c.applyLayerAppearance(l)
 		c.syncOverviewLayer(l)
 		c.updateKeyboardFocus()
-		c.notifyStateChanged()
+		if stateChanged {
+			c.notifyStateChanged()
+		}
 	})
 	// wlroots counts an exclusive zone only while the surface is mapped
 	// (types/scene/layer_shell_v1.c), and the commit that maps it usually
