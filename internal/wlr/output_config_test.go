@@ -2,6 +2,7 @@ package wlr
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 
@@ -81,21 +82,38 @@ func TestOutputRequestUsesADisconnectedOutputsIdentity(t *testing.T) {
 	}
 }
 
-func TestOutputModelineAppliesOnNativeAndHeadlessOutputs(t *testing.T) {
+// TestOutputModelineAppliesUnlessNested: a modeline sets the mode of a
+// headless or DRM output. A nested output is sized by its host window, so as
+// Niri's winit backend does, the request succeeds and changes nothing there;
+// wlroots' Wayland backend refuses every refresh rate anyway.
+func TestOutputModelineAppliesUnlessNested(t *testing.T) {
 	c := newNested(t)
 	headless := addConfigurableTestOutput(t, c)
 	names := []string{headless}
+	nested := map[string]OutputSnapshot{}
 	for pointer := range c.backendOutputs {
-		if outputName(pointer) != headless {
-			names = append(names, outputName(pointer))
+		if name := outputName(pointer); name != headless {
+			names = append(names, name)
+			if outputIsNested(pointer) {
+				nested[name], _ = outputSnapshotNamed(c, name)
+			}
 		}
 	}
+	slices.Sort(names[1:])
+	modeline := json.RawMessage(`{"Modeline":{"clock":148.5,"hdisplay":1920,"hsync_start":2008,"hsync_end":2052,"htotal":2200,"vdisplay":1080,"vsync_start":1084,"vsync_end":1089,"vtotal":1125,"hsync_polarity":"PHSync","vsync_polarity":"PVSync"}}`)
 	for _, name := range names {
-		_, err := c.ConfigureOutput(ipc.OutputRequest{Name: name, Action: json.RawMessage(`{"Modeline":{"clock":148.5,"hdisplay":1920,"hsync_start":2008,"hsync_end":2052,"htotal":2200,"vdisplay":1080,"vsync_start":1084,"vsync_end":1089,"vtotal":1125,"hsync_polarity":"PHSync","vsync_polarity":"PVSync"}}`)})
-		if err != nil {
-			t.Fatal(err)
+		if _, err := c.ConfigureOutput(ipc.OutputRequest{Name: name, Action: modeline}); err != nil {
+			t.Fatalf("%s: %v", name, err)
 		}
 		output, _ := outputSnapshotNamed(c, name)
+		if before, isNested := nested[name]; isNested {
+			// Its position follows the headless output's new width.
+			if output.Logical == nil || before.Logical == nil || output.Logical.Width != before.Logical.Width ||
+				output.Logical.Height != before.Logical.Height || output.Logical.Scale != before.Logical.Scale {
+				t.Fatalf("%s: the modeline changed a nested output: %+v, was %+v", name, output.Logical, before.Logical)
+			}
+			continue
+		}
 		if output.CurrentMode == nil || output.Modes[*output.CurrentMode].Width != 1920 || output.Modes[*output.CurrentMode].Height != 1080 || output.Modes[*output.CurrentMode].RefreshRate != 60000 {
 			t.Fatalf("%s modeline mode = %+v", name, output)
 		}
