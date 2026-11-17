@@ -96,6 +96,38 @@ static bool sysc_commit_changed_geometry(struct wlr_output_event_commit *event) 
 		WLR_OUTPUT_STATE_TRANSFORM)) != 0;
 }
 
+// wlroots sends "Unknown" for make and model in wl_output.geometry
+// (types/output/output.c); Niri sends the monitor's. These resend geometry
+// with the output's own, after wlroots' event and before the next done.
+static bool sysc_output_send_identity(struct wl_resource *resource) {
+	struct wlr_output *output = wlr_output_from_resource(resource);
+	if (output == NULL || (output->make == NULL && output->model == NULL)) return false;
+	wl_output_send_geometry(resource, 0, 0, output->phys_width, output->phys_height,
+		output->subpixel, output->make ? output->make : "Unknown",
+		output->model ? output->model : "Unknown", output->transform);
+	return true;
+}
+
+// wlroots has already sent done to a new binding, so it gets another.
+static void sysc_output_bound(void *data) {
+	struct wl_resource *resource = ((struct wlr_output_event_bind *)data)->resource;
+	if (sysc_output_send_identity(resource) &&
+			wl_resource_get_version(resource) >= WL_OUTPUT_DONE_SINCE_VERSION) {
+		wl_output_send_done(resource);
+	}
+}
+
+// A commit that resent geometry has scheduled the done these share.
+static void sysc_output_geometry_resent(void *data) {
+	struct wlr_output_event_commit *event = data;
+	if (!(event->state->committed & (WLR_OUTPUT_STATE_MODE | WLR_OUTPUT_STATE_TRANSFORM |
+			WLR_OUTPUT_STATE_SUBPIXEL))) return;
+	struct wl_resource *resource;
+	wl_resource_for_each(resource, &event->output->resources) {
+		sysc_output_send_identity(resource);
+	}
+}
+
 static bool sysc_commit_changed_enabled(struct wlr_output_event_commit *event) {
 	return (event->state->committed & WLR_OUTPUT_STATE_ENABLED) != 0;
 }
@@ -573,6 +605,7 @@ func (c *Compositor) handleNewOutput(data unsafe.Pointer) {
 	// The layout follows the output's commit first (its listener came
 	// first); layer surfaces then follow the new box.
 	commit := AddListener(unsafe.Pointer(&output.events.commit), func(event unsafe.Pointer) {
+		C.sysc_output_geometry_resent(event)
 		c.keepCommitted(data, event)
 		if bool(C.sysc_commit_changed_enabled((*C.struct_wlr_output_event_commit)(event))) {
 			c.syncCaptureSources()
@@ -582,7 +615,10 @@ func (c *Compositor) handleNewOutput(data unsafe.Pointer) {
 			c.outputGeometryChanged(data)
 		}
 	})
-	c.keep(request, commit)
+	bind := AddListener(unsafe.Pointer(&output.events.bind), func(event unsafe.Pointer) {
+		C.sysc_output_bound(event)
+	})
+	c.keep(request, commit, bind)
 
 	var destroy *Listener
 	destroy = AddListener(unsafe.Pointer(&output.events.destroy), func(unsafe.Pointer) {
@@ -606,6 +642,7 @@ func (c *Compositor) handleNewOutput(data unsafe.Pointer) {
 		}
 		c.drop(request)
 		c.drop(commit)
+		c.drop(bind)
 		c.drop(destroy)
 		c.updateInjectedInputGate()
 		c.refreshState()
