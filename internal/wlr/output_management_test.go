@@ -75,3 +75,51 @@ func TestOutputPowerProtocolKeepsTheOutputLayout(t *testing.T) {
 		}
 	}
 }
+
+// TestOutputGeometryCarriesMakeAndModel: wl_output.geometry names the monitor
+// as wlr-output-management and the Outputs IPC do, as Niri's does, both on
+// bind and when a transform change resends it. wlroots alone sends "Unknown".
+func TestOutputGeometryCarriesMakeAndModel(t *testing.T) {
+	c := newNested(t)
+	before := map[string]bool{}
+	for _, output := range c.OutputSnapshot() {
+		before[output.Name] = true
+	}
+	headless, err := addIdentifiedHeadlessTestOutput(c, 800, 600, "InfoVision", "0x057D")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(headless.destroy)
+	name := ""
+	for _, output := range c.OutputSnapshot() {
+		if !before[output.Name] {
+			name = output.Name
+		}
+	}
+	want := testclient.OutputIdentity{Make: "InfoVision", Model: "0x057D"}
+	runTools(t, c, func(func(string, ...string) *exec.Cmd) {
+		bound, after, err := testclient.OutputGeometries(c.SocketName(), func() {
+			done := make(chan error, 1)
+			if err := c.Post(func() {
+				_, err := c.ConfigureOutput(ipc.OutputRequest{Name: name, Action: json.RawMessage(`{"Transform":{"transform":"90"}}`)})
+				done <- err
+			}); err != nil {
+				t.Error(err)
+				return
+			}
+			if err := <-done; err != nil {
+				t.Error(err)
+			}
+		})
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		if bound[name] != want {
+			t.Errorf("%s geometry on bind = %+v, want %+v", name, bound[name], want)
+		}
+		if after[name] != want {
+			t.Errorf("%s geometry after a transform = %+v, want %+v", name, after[name], want)
+		}
+	})
+}

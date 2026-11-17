@@ -5,6 +5,7 @@ package wlr
 #cgo CFLAGS: -DWLR_USE_UNSTABLE
 
 #include <stdlib.h>
+#include <string.h>
 #include <wlr/backend/headless.h>
 #include <wlr/backend/session.h>
 
@@ -53,6 +54,13 @@ static bool sysc_test_gamma_commit(void *data, float rgb[3], bool *reset) {
 
 static bool sysc_test_gamma_current(struct wlr_output *output, float rgb[3]) {
 	return sysc_test_gamma_eval(output->WLR_PRIVATE.color_transform, rgb);
+}
+
+static void sysc_test_output_identity(struct wlr_output *output, const char *make, const char *model) {
+	free(output->make);
+	free(output->model);
+	output->make = strdup(make);
+	output->model = strdup(model);
 }
 
 static bool sysc_test_commit_tore(void *data) {
@@ -175,23 +183,45 @@ func pinTestOutputVRR(pointer unsafe.Pointer) {
 }
 
 func addHeadlessTestOutput(c *Compositor, width, height uint32) (*headlessTestBackend, error) {
-	return addNamedHeadlessTestOutput(c, width, height, "")
+	return addPreparedHeadlessTestOutput(c, width, height, nil)
 }
 
 // addNamedHeadlessTestOutput gives the output a connector name, such as a
 // laptop panel's, before the compositor hears of it: wlroots forbids renaming
 // an output already advertised to clients. An empty name keeps HEADLESS-n.
 func addNamedHeadlessTestOutput(c *Compositor, width, height uint32, name string) (*headlessTestBackend, error) {
+	if name == "" {
+		return addHeadlessTestOutput(c, width, height)
+	}
+	return addPreparedHeadlessTestOutput(c, width, height, func(output *C.struct_wlr_output) {
+		connector := C.CString(name)
+		C.wlr_output_set_name(output, connector)
+		C.free(unsafe.Pointer(connector))
+	})
+}
+
+// addIdentifiedHeadlessTestOutput gives the output a make and model, as a
+// DRM backend reads them from EDID; headless outputs have neither.
+func addIdentifiedHeadlessTestOutput(c *Compositor, width, height uint32, make, model string) (*headlessTestBackend, error) {
+	return addPreparedHeadlessTestOutput(c, width, height, func(output *C.struct_wlr_output) {
+		cMake, cModel := C.CString(make), C.CString(model)
+		C.sysc_test_output_identity(output, cMake, cModel)
+		C.free(unsafe.Pointer(cMake))
+		C.free(unsafe.Pointer(cModel))
+	})
+}
+
+// addPreparedHeadlessTestOutput runs prepare on the output before the
+// compositor hears of it.
+func addPreparedHeadlessTestOutput(c *Compositor, width, height uint32, prepare func(*C.struct_wlr_output)) (*headlessTestBackend, error) {
 	backend := C.wlr_headless_backend_create(c.loop)
 	if backend == nil {
 		return nil, errors.New("wlr_headless_backend_create failed")
 	}
 	var rename *Listener
-	if name != "" {
+	if prepare != nil {
 		rename = AddListener(unsafe.Pointer(&backend.events.new_output), func(data unsafe.Pointer) {
-			connector := C.CString(name)
-			C.wlr_output_set_name((*C.struct_wlr_output)(data), connector)
-			C.free(unsafe.Pointer(connector))
+			prepare((*C.struct_wlr_output)(data))
 		})
 		c.keep(rename)
 	}
