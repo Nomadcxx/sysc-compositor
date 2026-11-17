@@ -15,6 +15,7 @@ package wlr
 #include <wlr/types/wlr_output.h>
 #include <wlr/backend/drm.h>
 #include <wlr/backend/session.h>
+#include <wlr/backend/wayland.h>
 #include <wlr/backend.h>
 #include <wlr/util/transform.h>
 #include <wlr/types/wlr_output_layout.h>
@@ -338,6 +339,15 @@ func (c *Compositor) applyOutputConfig(pointer unsafe.Pointer, testOnly, strict 
 			adaptiveSync = 1
 		}
 	}
+	// A nested output is sized by its host window: as Niri's winit backend
+	// does, a configured mode or modeline leaves it alone. wlroots' Wayland
+	// backend refuses every refresh rate in any case.
+	var modeline *config.Modeline
+	if bool(C.wlr_backend_is_wl(output.backend)) {
+		target = nil
+	} else if section != nil {
+		modeline = section.Modeline
+	}
 	modes := outputModeChoices(pointer)
 	want := C.struct_sysc_output_config{mode_index: -1, transform: C.sysc_output_configured_transform(output, C.uint32_t(transform)), adaptive_sync: C.int(adaptiveSync)}
 	width, height := int(output.width), int(output.height)
@@ -354,34 +364,34 @@ func (c *Compositor) applyOutputConfig(pointer unsafe.Pointer, testOnly, strict 
 			width, height = modes[index].width, modes[index].height
 		}
 	}
-	if section != nil && section.Modeline != nil {
-		width, height = section.Modeline.HDisplay, section.Modeline.VDisplay
+	if modeline != nil {
+		width, height = modeline.HDisplay, modeline.VDisplay
 	}
 	want.scale = C.float(outputScale(scale, int(output.phys_width), int(output.phys_height), width, height))
-	var modeline C.drmModeModeInfo
-	if section != nil && section.Modeline != nil {
-		m := section.Modeline
-		modeline.clock = C.uint32_t(math.Round(m.Clock * 1000))
-		modeline.hdisplay, modeline.hsync_start, modeline.hsync_end, modeline.htotal = C.uint16_t(m.HDisplay), C.uint16_t(m.HSyncStart), C.uint16_t(m.HSyncEnd), C.uint16_t(m.HTotal)
-		modeline.vdisplay, modeline.vsync_start, modeline.vsync_end, modeline.vtotal = C.uint16_t(m.VDisplay), C.uint16_t(m.VSyncStart), C.uint16_t(m.VSyncEnd), C.uint16_t(m.VTotal)
-		C.sysc_modeline_name(&modeline)
+	if modeline != nil {
+		var drmMode C.drmModeModeInfo
+		m := modeline
+		drmMode.clock = C.uint32_t(math.Round(m.Clock * 1000))
+		drmMode.hdisplay, drmMode.hsync_start, drmMode.hsync_end, drmMode.htotal = C.uint16_t(m.HDisplay), C.uint16_t(m.HSyncStart), C.uint16_t(m.HSyncEnd), C.uint16_t(m.HTotal)
+		drmMode.vdisplay, drmMode.vsync_start, drmMode.vsync_end, drmMode.vtotal = C.uint16_t(m.VDisplay), C.uint16_t(m.VSyncStart), C.uint16_t(m.VSyncEnd), C.uint16_t(m.VTotal)
+		C.sysc_modeline_name(&drmMode)
 		if m.HSyncPositive {
-			modeline.flags |= C.DRM_MODE_FLAG_PHSYNC
+			drmMode.flags |= C.DRM_MODE_FLAG_PHSYNC
 		} else {
-			modeline.flags |= C.DRM_MODE_FLAG_NHSYNC
+			drmMode.flags |= C.DRM_MODE_FLAG_NHSYNC
 		}
 		if m.VSyncPositive {
-			modeline.flags |= C.DRM_MODE_FLAG_PVSYNC
+			drmMode.flags |= C.DRM_MODE_FLAG_PVSYNC
 		} else {
-			modeline.flags |= C.DRM_MODE_FLAG_NVSYNC
+			drmMode.flags |= C.DRM_MODE_FLAG_NVSYNC
 		}
 		if bool(C.wlr_output_is_drm(output)) {
-			want.modeline = (*C.drmModeModeInfo)(C.malloc(C.size_t(unsafe.Sizeof(modeline))))
+			want.modeline = (*C.drmModeModeInfo)(C.malloc(C.size_t(unsafe.Sizeof(drmMode))))
 			if want.modeline == nil {
 				return fmt.Errorf("allocating output modeline failed")
 			}
 			defer C.free(unsafe.Pointer(want.modeline))
-			*want.modeline = modeline
+			*want.modeline = drmMode
 		} else {
 			want.mode_index = -1
 			want.custom_width, want.custom_height = C.int32_t(m.HDisplay), C.int32_t(m.VDisplay)
