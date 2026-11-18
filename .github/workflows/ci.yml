@@ -25,7 +25,7 @@ jobs:
     container: archlinux:latest
     steps:
       - name: install build dependencies
-        run: pacman -Syu --noconfirm --needed git gcc pkgconf go wlroots0.20 scenefx wayland wayland-protocols libxkbcommon xkeyboard-config ttf-dejavu dbus libpipewire libinput
+        run: pacman -Syu --noconfirm --needed git make gcc pkgconf go wlroots0.20 scenefx wayland wayland-protocols libxkbcommon xkeyboard-config ttf-dejavu dbus libpipewire libinput
       - uses: actions/checkout@v4
       - name: trust the checkout
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
@@ -41,6 +41,18 @@ jobs:
         run: go vet -p 2 ./...
       - name: build
         run: go build ./cmd/sysc-compositor
+      # A tag is not the first place the install layout should be checked:
+      # the first v0.1.0 tag stopped in check-install.sh, and #123 fixed the
+      # check. Run it on pull requests as well.
+      - name: install layout
+        run: |
+          make build
+          for prefix in /usr /usr/local; do
+            root=$(mktemp -d)
+            make install PREFIX="$prefix" DESTDIR="$root" >/dev/null
+            packaging/check-install.sh "$root" "$prefix"
+            rm -rf "$root"
+          done
       - name: go.mod and go.sum unchanged
         run: git diff --exit-code -- go.mod go.sum
       - name: test packages without a compositor
