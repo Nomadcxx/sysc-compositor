@@ -365,3 +365,10 @@ in a fresh shell, so the rebuild it triggered dropped the vendor mode and flags 
 **Left for Task 8 and the owner:** tag `v0.1.0` and fill the checksums listed above. Then push
 the AUR recipes once `sysc-1705` tracks `aur/`, and set up COPR (`nomadcxx/sysc`), OBS
 (`home:nomadcxx:sysc`, SceneFX first) and the GURU submission.
+
+### 2026-11-19: `check-install.sh` runs in CI
+
+- Lane 1 now runs `make build`, then `make install` and `packaging/check-install.sh` under
+  `/usr` and `/usr/local`. The release workflow had been the only caller, so #121's README
+  prose tripped the check only at the tag; #123 then limited the text scan to installed
+  paths. A pull request that changes the layout or those text files now fails before merge.
