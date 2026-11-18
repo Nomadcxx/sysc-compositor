@@ -33,8 +33,9 @@ for f in $(comm -13 "$work/expected" "$work/actual"); do
 	fail=1
 done
 
-# Text files only: the binary holds neither string.
-for f in $(grep -v "^$prefix/bin/sysc-compositor\$" "$work/actual"); do
+# Text files only: the binary holds neither string. The README and licences
+# are prose that may name /usr/local, so only installed paths are checked.
+for f in $(grep -v -e "^$prefix/bin/sysc-compositor\$" -e "^$prefix/share/doc/" -e "^$prefix/share/licenses/" "$work/actual"); do
 	[ -f "$root$f" ] || continue
 	if grep -q '@BINDIR@' "$root$f"; then
 		echo "unsubstituted @BINDIR@: $f"
