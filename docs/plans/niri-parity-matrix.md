@@ -210,6 +210,7 @@ Acceptance file: `/home/nomadx/.config/niri/config.kdl` + `sysc-shell.kdl`. Pars
 | Command | Status | Milestone |
 |---|---|---|
 | `niri` / `sysc-compositor` no args / `--session` | [x] | M0 binary; M9 publishes session sockets with `--session`; the session script runs the notify service bound to `graphical-session.target` and clears activation state on shutdown |
+| Packaging | [~] | Tranche 3 — `make install` with `PREFIX` and `DESTDIR`; the release workflow builds the vendor tarball and a Debian forky `.deb` it smoke-checks; recipes for Arch (AUR, tracked in Nomadcxx/sysc `aur/`), Fedora 44, openSUSE Tumbleweed (with SceneFX 0.5), Void, Gentoo and Nix build and pass `packaging/smoke.sh` in each distribution's container ([execution record](2026-11-02-packaging.md#execution-record)); publishing to the AUR, COPR, OBS and GURU follows the v0.1.0 tag |
 | `-c` / `--config` | [x] | M2 (+ `$NIRI_CONFIG`, XDG, `/etc/niri`) |
 | `niri msg` / `sysc-compositor msg` | [~] | M2/M4 actions; M9 adds all 16 request forms, output actions, `SwitchLayout`, and `LoadConfigFile`; M15 part 4: `msg action` parses all 141 pinned actions and round-trips their fields (`TestEveryActionCLIProducesNiriWire`, `TestActionCLIRejectsMalformedArguments`) |
 | `niri validate` | [x] | M3 command and parser accept the laptop config; unapplied sections warn |

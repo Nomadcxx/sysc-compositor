@@ -239,7 +239,7 @@ OBS, xbps-src, Gentoo `go-module` eclass, Nix `buildGo126Module`.
 
 ### Task 8: First release
 
-- [ ] **Step 1: Record the matrix.** Add a "Packaging" row to `niri-parity-matrix.md`'s session
+- [x] **Step 1: Record the matrix.** Add a "Packaging" row to `niri-parity-matrix.md`'s session
   section, and an "Install" section to README with each route.
 - [ ] **Step 2: Tag `v0.1.0`,** an owner gate: tagging publishes. Watch `release.yml`, and confirm
   the release has the vendor tarball, the .deb and SHA256SUMS.
@@ -336,6 +336,17 @@ in a fresh shell, so the rebuild it triggered dropped the vendor mode and flags 
   `dev-util/glib-utils` first. That is a Gentoo-side gap, not the ebuild's. `smoke.sh` resolves
   the binary's symlinks, because merged-usr Gentoo finds it first as `/usr/sbin/sysc-compositor`.
   The `Manifest` is generated at tag time.
+
+### 2026-11-17: Task 8 Step 1, AUR recipes tracked
+
+- The Arch recipes are tracked in Nomadcxx/sysc `aur/` (sysc#94, `sysc-2316`, split from
+  `sysc-1705` for this release). In a fresh `archlinux:latest` (Go 1.27.4) both build, pass
+  `check.py`, install and report their versions. The stable recipe built from a `git archive`
+  of `d1cfdfe` named as the tag tarball. sysc-shell's running-apps launcher already spawns over
+  IPC (sysc-shell `1a5bdba7`), so `sysc-2311` is closed and its niri dependency can go.
+- Step 1: README has an Install section with the routes that work at the tag (source, the
+  release `.deb`, Nix and NixOS, the in-tree recipes); distribution repositories join it as
+  each one is published. The parity matrix's CLI table has a Packaging row.
 
 **Left for Task 8 and the owner:** tag `v0.1.0` and fill the checksums listed above. Then push
 the AUR recipes once `sysc-1705` tracks `aur/`, and set up COPR (`nomadcxx/sysc`), OBS
