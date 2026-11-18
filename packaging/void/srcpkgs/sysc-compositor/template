@@ -12,8 +12,8 @@ license="GPL-3.0-or-later"
 homepage="https://github.com/Nomadcxx/sysc-compositor"
 distfiles="https://github.com/Nomadcxx/sysc-compositor/archive/refs/tags/v${version}.tar.gz
  https://github.com/Nomadcxx/sysc-compositor/releases/download/v${version}/sysc-compositor-${version}-vendor.tar.xz"
-checksum="@SOURCE_SHA256@
- @VENDOR_SHA256@"
+checksum="de0abf038f625e024bce9498f27c8a9b2e8d52dbca3e98b1904af66d56c2f4c1
+ 9b4de1687d4a779b10e367741166116923596f4aa16e5ae16b923a38e800140e"
 skip_extraction="sysc-compositor-${version}-vendor.tar.xz"
 
 post_extract() {
