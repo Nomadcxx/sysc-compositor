@@ -6,7 +6,7 @@ A document that is not in this map is one the project will lose.
 Product contract: `plans/2026-10-02-sysc-compositor-design.md`. Workstreams and order:
 `plans/2026-10-02-orchestration.md`.
 
-Current continuation: [2026-11-14 handover](plans/2026-11-14-handover.md); the ghosting bug has its own
+Current continuation: [2026-11-18 handover](plans/2026-11-18-handover.md); the ghosting bug has its own
 [commission](plans/2026-11-14-ghosting-commission.md). The working rules are in the
 [2026-11-05 implementation plan](plans/2026-11-05-handover.md).
 Owner order: finish compositor development and acceptance before resuming benchmarking.
@@ -25,7 +25,8 @@ executed until the owner schedules the milestone they belong to.
 
 | Document | Kind | What it is |
 |---|---|---|
-| [plans/2026-11-14-handover.md](plans/2026-11-14-handover.md) | handover | Current continuation: state after parity and PR #107, what remains for a beta (blockers, desktop two-monitor bring-up, packaging, benchmarking, suite integration) and the recommended order. |
+| [plans/2026-11-18-handover.md](plans/2026-11-18-handover.md) | handover | Current continuation: PRs #107–#120 merged, the laptop's ghost-fix gate build and the running `sysc-2297` RSS soak, then ghosting, memory, the SceneFX blur decision (`sysc-2303`), desktop bring-up, packaging gates, benchmarking and tracker drift; recipes and traps, and the nested layer check script. |
+| [plans/2026-11-14-handover.md](plans/2026-11-14-handover.md) | handover | Superseded by the 2026-11-18 handover. Was: state after parity and PR #107, what remains for a beta (blockers, desktop two-monitor bring-up, packaging, benchmarking, suite integration) and the recommended order. |
 | [plans/2026-11-14-ghosting-commission.md](plans/2026-11-14-ghosting-commission.md) | commission | `sysc-2294`: the owner's stale-ghost report, configuration, what was ruled out, ranked leads, diagnostic tools and the deliverable. |
 | [plans/2026-11-14-ghosting-findings.md](plans/2026-11-14-ghosting-findings.md) | record | Ghosting work: `sysc-2295` fixed (close fades stranded by window teardown); committed-buffer readback finds no stale pixels in archThink's arrangement; SceneFX blur defect `sysc-2303`; next evidence from archThink. |
 | [plans/2026-11-13-handover.md](plans/2026-11-13-handover.md) | handover | Superseded continuation: recovered persistent parity worktree, slices 2280–2286 and their proof, final regression and review, VM SSH recovery. |
