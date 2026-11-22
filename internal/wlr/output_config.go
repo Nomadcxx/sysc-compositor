@@ -14,11 +14,19 @@ package wlr
 
 #include <wlr/types/wlr_output.h>
 #include <wlr/backend/drm.h>
+#include <wlr/backend/headless.h>
+#include <wlr/backend/interface.h>
+#include <wlr/render/allocator.h>
+#include <wlr/render/drm_syncobj.h>
+#include <wlr/render/swapchain.h>
+#include <wlr/render/pixman.h>
+#include <wlr/types/wlr_buffer.h>
 #include <wlr/backend/session.h>
 #include <wlr/backend/wayland.h>
 #include <wlr/backend.h>
 #include <wlr/util/transform.h>
 #include <wlr/types/wlr_output_layout.h>
+#include <wlr/types/wlr_output_swapchain_manager.h>
 #include <wlr/types/wlr_scene.h>
 
 // sysc_output_config is one output's whole configured state. mode_index picks
@@ -33,7 +41,17 @@ struct sysc_output_config {
 	const drmModeModeInfo *modeline;
 };
 
-// sysc_output_try_config tests the state, and commits it unless test_only.
+// A prepared state belongs to the group test. Testing it individually first
+// can reject a configuration that only works with the other outputs' changes.
+static bool sysc_output_apply_or_stage(struct wlr_output *output, const struct wlr_output_state *state,
+		bool test_only, struct wlr_output_state *prepared) {
+	if (prepared != NULL) {
+		return wlr_output_state_copy(prepared, state);
+	}
+	return wlr_output_test_state(output, state) && (test_only || wlr_output_commit_state(output, state));
+}
+
+// sysc_output_try_config stages or applies the desired configuration.
 static bool sysc_output_try_config(struct wlr_output *output,
 		const struct sysc_output_config *config, bool test_only, struct wlr_output_state *prepared) {
 	struct wlr_output_state state;
@@ -69,11 +87,7 @@ static bool sysc_output_try_config(struct wlr_output *output,
 	if (config->adaptive_sync >= 0 && output->adaptive_sync_supported) {
 		wlr_output_state_set_adaptive_sync_enabled(&state, config->adaptive_sync);
 	}
-	bool ok = wlr_output_test_state(output, &state);
-	if (ok && !test_only) {
-		ok = wlr_output_commit_state(output, &state);
-	}
-	if (ok && prepared != NULL) ok = wlr_output_state_copy(prepared,&state);
+	bool ok = sysc_output_apply_or_stage(output, &state, test_only, prepared);
 	wlr_output_state_finish(&state);
 	return ok;
 }
@@ -95,9 +109,7 @@ static bool sysc_output_disable(struct wlr_output *output, bool test_only, struc
 	struct wlr_output_state state;
 	wlr_output_state_init(&state);
 	wlr_output_state_set_enabled(&state, false);
-	bool ok = wlr_output_test_state(output, &state);
-	if (ok && !test_only) ok = wlr_output_commit_state(output, &state);
-	if (ok && prepared != NULL) ok = wlr_output_state_copy(prepared,&state);
+	bool ok = sysc_output_apply_or_stage(output, &state, test_only, prepared);
 	wlr_output_state_finish(&state);
 	return ok;
 }
@@ -124,19 +136,141 @@ static struct wlr_output_state *sysc_output_save(struct wlr_output *output) {
 	if (state == NULL) return NULL;
 	wlr_output_state_init(state);
 	wlr_output_state_set_enabled(state, output->enabled);
+	if (!output->enabled) return state;
 	if (output->current_mode != NULL) wlr_output_state_set_mode(state, output->current_mode);
 	else if (output->width > 0 && output->height > 0)
 		wlr_output_state_set_custom_mode(state, output->width, output->height, output->refresh);
 	wlr_output_state_set_scale(state, output->scale);
 	wlr_output_state_set_transform(state, output->transform);
-	wlr_output_state_set_adaptive_sync_enabled(state,
-		output->adaptive_sync_status == WLR_OUTPUT_ADAPTIVE_SYNC_ENABLED);
+	if (output->adaptive_sync_supported) {
+		wlr_output_state_set_adaptive_sync_enabled(state,
+			output->adaptive_sync_status == WLR_OUTPUT_ADAPTIVE_SYNC_ENABLED);
+	}
 	return state;
 }
 static void sysc_output_saved_free(struct wlr_output_state *state) {
 	wlr_output_state_finish(state);
 	free(state);
 }
+static bool sysc_output_needs_modeset_buffer(const struct wlr_backend_output_state *pending) {
+	const struct wlr_output *output = pending->output;
+	const struct wlr_output_state *state = &pending->base;
+	bool enabled = (state->committed & WLR_OUTPUT_STATE_ENABLED) ? state->enabled : output->enabled;
+	if (!enabled || (state->committed & WLR_OUTPUT_STATE_BUFFER)) return false;
+	if (!output->enabled) return true;
+	if (!(state->committed & WLR_OUTPUT_STATE_MODE)) return false;
+	if (state->mode_type == WLR_OUTPUT_STATE_MODE_FIXED) {
+		return state->mode != output->current_mode;
+	}
+	return state->custom_mode.width != output->width || state->custom_mode.height != output->height ||
+		state->custom_mode.refresh != output->refresh;
+}
+
+// Match wlroots' per-output modeset clear without reading client content from
+// a scene whose topology still reflects the old configuration.
+static bool sysc_output_attach_modeset_buffer(struct wlr_backend_output_state *pending,
+		struct wlr_swapchain *swapchain) {
+	struct wlr_output *output = pending->output;
+	struct wlr_buffer *buffer = wlr_swapchain_acquire(swapchain);
+	if (buffer == NULL) return false;
+
+	struct wlr_drm_syncobj_timeline *timeline = NULL;
+	bool ok = false;
+	int drm_fd = wlr_backend_get_drm_fd(output->backend);
+	if (drm_fd >= 0 && output->backend->features.timeline && output->renderer->features.timeline) {
+		timeline = wlr_drm_syncobj_timeline_create(drm_fd);
+		if (timeline == NULL) goto finish;
+	}
+
+	struct wlr_buffer_pass_options options = {.signal_timeline = timeline, .signal_point = 1};
+	struct wlr_render_pass *pass = wlr_renderer_begin_buffer_pass(output->renderer, buffer, &options);
+	if (pass == NULL) goto finish;
+	wlr_render_pass_add_rect(pass, &(struct wlr_render_rect_options){
+		.color = {0, 0, 0, 1},
+		.blend_mode = WLR_RENDER_BLEND_MODE_NONE,
+	});
+	if (!wlr_render_pass_submit(pass)) goto finish;
+
+	wlr_output_state_set_buffer(&pending->base, buffer);
+	if (timeline != NULL) {
+		wlr_output_state_set_wait_timeline(&pending->base, timeline, 1);
+	}
+	ok = true;
+
+finish:
+	wlr_drm_syncobj_timeline_unref(timeline);
+	wlr_buffer_unlock(buffer);
+	return ok;
+}
+
+static bool sysc_output_group_prepare(struct wlr_output_swapchain_manager *manager,
+		struct wlr_backend_output_state *states, size_t len, bool test_only) {
+	struct wlr_backend *backend = manager->backend;
+	if (len == 1) {
+		return wlr_output_test_state(states[0].output, &states[0].base);
+	}
+
+	// Backends without an atomic group implementation already fall back to
+	// per-output tests and commits, which supply modeset buffers themselves.
+	bool needs_buffer = false;
+	if (backend->impl->test != NULL && backend->impl->commit != NULL) {
+		for (size_t i = 0; i < len; i++) {
+			needs_buffer |= sysc_output_needs_modeset_buffer(&states[i]);
+		}
+	}
+	if (!needs_buffer) {
+		return wlr_backend_test(backend, states, len);
+	}
+	if (!wlr_output_swapchain_manager_prepare(manager, states, len)) return false;
+	if (test_only) return true;
+
+	for (size_t i = 0; i < len; i++) {
+		struct wlr_output *output = states[i].output;
+		struct wlr_swapchain *swapchain = wlr_output_swapchain_manager_get_swapchain(manager, output);
+		if (swapchain != NULL && (sysc_output_needs_modeset_buffer(&states[i]) || swapchain != output->swapchain)) {
+			if (!sysc_output_attach_modeset_buffer(&states[i], swapchain)) return false;
+		}
+	}
+	return wlr_backend_test(backend, states, len);
+}
+
+static bool sysc_output_group_commit(struct wlr_output_swapchain_manager *manager,
+		struct wlr_backend_output_state *states, size_t len) {
+	if (len == 1) {
+		return wlr_output_commit_state(states[0].output, &states[0].base);
+	}
+	if (!wlr_backend_commit(manager->backend, states, len)) return false;
+	wlr_output_swapchain_manager_apply(manager);
+	return true;
+}
+
+// Model the DRM backend's requirement for an enabled connector without a
+// current framebuffer. Use headless outputs and pixman to allocate real
+// buffers without a DRM device or a desktop session.
+static bool sysc_test_modeset_backend(struct wlr_backend *backend,
+		const struct wlr_backend_output_state *states, size_t len) {
+	for (size_t i = 0; i < len; i++) {
+		const struct wlr_output_state *state = &states[i].base;
+		const struct wlr_output *output = states[i].output;
+		if (state->enabled && (!output->enabled || state->custom_mode.width != output->width)) {
+			if (!(state->committed & WLR_OUTPUT_STATE_BUFFER) || state->buffer == NULL ||
+					state->buffer->width != state->custom_mode.width) {
+				return false;
+			}
+		}
+	}
+	return true;
+}
+static const struct wlr_backend_impl *sysc_test_require_modeset_buffer(struct wlr_backend *backend) {
+	static const struct wlr_backend_impl impl = {
+		.test = sysc_test_modeset_backend,
+		.commit = sysc_test_modeset_backend,
+	};
+	const struct wlr_backend_impl *original = backend->impl;
+	backend->impl = &impl;
+	return original;
+}
+
 */
 import "C"
 
@@ -286,20 +420,52 @@ func freeOutputStates(states map[unsafe.Pointer]*C.struct_wlr_output_state) {
 // constraints are checked together. Failed commits restore exact saved states
 // before any output is removed from the workspace model.
 func (c *Compositor) applyOutputStates(states map[unsafe.Pointer]*C.struct_wlr_output_state, testOnly bool) error {
-	groups := map[*C.struct_wlr_backend][]C.struct_wlr_backend_output_state{}
+	type outputGroup struct {
+		states     []C.struct_wlr_backend_output_state
+		swapchains C.struct_wlr_output_swapchain_manager
+	}
+	groups := map[*C.struct_wlr_backend]*outputGroup{}
 	for pointer, state := range states {
 		output := (*C.struct_wlr_output)(pointer)
-		groups[output.backend] = append(groups[output.backend], C.struct_wlr_backend_output_state{output: output, base: *state})
+		group := groups[output.backend]
+		if group == nil {
+			group = &outputGroup{}
+			C.wlr_output_swapchain_manager_init(&group.swapchains, output.backend)
+			groups[output.backend] = group
+			defer C.wlr_output_swapchain_manager_finish(&group.swapchains)
+			defer func() {
+				for i := range group.states {
+					C.wlr_output_state_finish(&group.states[i].base)
+				}
+			}()
+		}
+		group.states = append(group.states, C.struct_wlr_backend_output_state{output: output})
+		pending := &group.states[len(group.states)-1].base
+		C.wlr_output_state_init(pending)
+		if !bool(C.wlr_output_state_copy(pending, state)) {
+			return fmt.Errorf("copying output state failed")
+		}
 	}
-	for backend, group := range groups {
-		if !bool(C.wlr_backend_test(backend, &group[0], C.size_t(len(group)))) {
+	for _, group := range groups {
+		if !bool(C.sysc_output_group_prepare(&group.swapchains, &group.states[0], C.size_t(len(group.states)), C.bool(testOnly))) {
 			return fmt.Errorf("backend refused the output configuration")
 		}
 	}
 	if !testOnly {
-		for backend, group := range groups {
-			if !bool(C.wlr_backend_commit(backend, &group[0], C.size_t(len(group)))) {
+		for _, group := range groups {
+			if !bool(C.sysc_output_group_commit(&group.swapchains, &group.states[0], C.size_t(len(group.states)))) {
 				return fmt.Errorf("committing the output configuration failed")
+			}
+			// A replacement swapchain can carry a clear buffer even if the
+			// output geometry stayed fixed. Repaint the actual scene next.
+			for _, pending := range group.states {
+				if pending.base.committed&C.WLR_OUTPUT_STATE_BUFFER == 0 {
+					continue
+				}
+				if scene := c.sceneOutputs[unsafe.Pointer(pending.output)]; scene != nil {
+					C.wlr_damage_ring_add_whole(&scene.damage_ring)
+					C.wlr_output_schedule_frame(pending.output)
+				}
 			}
 		}
 	}
@@ -514,13 +680,16 @@ func (c *Compositor) prepareOutputConfigs(changed map[unsafe.Pointer]bool) (map[
 			return states, err
 		}
 	}
-	return states, c.applyOutputStates(states, true)
+	return states, nil
 }
 
 func (c *Compositor) testOutputConfigs(changed map[unsafe.Pointer]bool) error {
 	states, err := c.prepareOutputConfigs(changed)
-	freeOutputStates(states)
-	return err
+	defer freeOutputStates(states)
+	if err != nil {
+		return err
+	}
+	return c.applyOutputStates(states, true)
 }
 
 // placeOutputs puts every output in the layout where Niri's
@@ -587,4 +756,90 @@ func (c *Compositor) placementBefore(a, b unsafe.Pointer) bool {
 		return configured(a)
 	}
 	return outputIdentity(a).Compare(outputIdentity(b)) < 0
+}
+
+// exerciseFramebufferReenable tests strict output state application without
+// creating a compositor or connecting to a Wayland display.
+func exerciseFramebufferReenable(count int) error {
+	loop := C.wl_event_loop_create()
+	if loop == nil {
+		return errors.New("creating the event loop")
+	}
+	defer C.wl_event_loop_destroy(loop)
+	backend := C.wlr_headless_backend_create(loop)
+	if backend == nil {
+		return errors.New("creating the headless backend")
+	}
+	defer C.wlr_backend_destroy(backend)
+	renderer := C.wlr_pixman_renderer_create()
+	if renderer == nil {
+		return errors.New("creating the pixman renderer")
+	}
+	defer C.wlr_renderer_destroy(renderer)
+	allocator := C.wlr_allocator_autocreate(backend, renderer)
+	if allocator == nil {
+		return errors.New("creating the shared-memory allocator")
+	}
+	defer C.wlr_allocator_destroy(allocator)
+
+	states := make(map[unsafe.Pointer]*C.struct_wlr_output_state, count)
+	defer freeOutputStates(states)
+	for i := 0; i < count; i++ {
+		output := C.wlr_headless_add_output(backend, 64, 64)
+		if output == nil {
+			return errors.New("creating the headless output")
+		}
+		defer C.wlr_output_destroy(output)
+		if !bool(C.wlr_output_init_render(output, allocator, renderer)) {
+			return errors.New("initializing output rendering")
+		}
+		state := C.sysc_output_save(output)
+		if state == nil {
+			return errors.New("creating the output state")
+		}
+		C.wlr_output_state_set_enabled(state, true)
+		C.wlr_output_state_set_custom_mode(state, 64, 64, 0)
+		states[unsafe.Pointer(output)] = state
+	}
+	previous := C.sysc_test_require_modeset_buffer(backend)
+	defer func() { backend.impl = previous }()
+
+	c := Compositor{}
+	for range 2 {
+		if err := c.applyOutputStates(states, true); err != nil {
+			return fmt.Errorf("test re-enable: %w", err)
+		}
+		for pointer := range states {
+			if (*C.struct_wlr_output)(pointer).enabled {
+				return errors.New("testing re-enable changed the output")
+			}
+		}
+		if err := c.applyOutputStates(states, false); err != nil {
+			return fmt.Errorf("apply re-enable: %w", err)
+		}
+		for pointer := range states {
+			output := (*C.struct_wlr_output)(pointer)
+			if !output.enabled || output.swapchain == nil {
+				return errors.New("re-enable failed to apply the mode and swapchain")
+			}
+			if !bool(C.sysc_output_disable(output, false, nil)) {
+				return errors.New("disabling the re-enabled output")
+			}
+		}
+	}
+
+	if err := c.applyOutputStates(states, false); err != nil {
+		return fmt.Errorf("enable outputs before changing mode: %w", err)
+	}
+	for pointer, state := range states {
+		C.wlr_output_state_set_custom_mode(state, 128, 64, 0)
+		if err := c.applyOutputStates(states, false); err != nil {
+			return fmt.Errorf("change one enabled output's mode: %w", err)
+		}
+		if output := (*C.struct_wlr_output)(pointer); output.width != 128 || output.swapchain == nil || output.swapchain.width != 128 {
+			return errors.New("mode change did not replace the swapchain")
+		}
+		break
+	}
+	return nil
 }

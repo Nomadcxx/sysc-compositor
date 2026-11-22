@@ -2,6 +2,7 @@ package wlr
 
 import (
 	"encoding/json"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -10,6 +11,21 @@ import (
 	"github.com/Nomadcxx/sysc-compositor/internal/ipc"
 	"github.com/Nomadcxx/sysc-compositor/internal/wm"
 )
+
+func TestOutputModesetSuppliesAFramebuffer(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		count int
+	}{{"single output", 1}, {"two outputs", 2}} {
+		t.Run(test.name, func(t *testing.T) {
+			runtime.LockOSThread()
+			defer runtime.UnlockOSThread()
+			if err := exerciseFramebufferReenable(test.count); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
 
 func TestOutputRequestsAreTransientAndValidateBeforeApplying(t *testing.T) {
 	c := newNested(t)
