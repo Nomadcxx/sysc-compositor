@@ -2,6 +2,7 @@ package wlr
 
 import (
 	"math"
+	"runtime"
 	"testing"
 	"time"
 	"unsafe"
@@ -12,6 +13,14 @@ import (
 	"github.com/Nomadcxx/sysc-compositor/internal/wlr/testclient"
 	"github.com/Nomadcxx/sysc-compositor/internal/wm"
 )
+
+func TestSceneSnapshotRetainsBufferAcquirePoint(t *testing.T) {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	if !sceneFXSnapshotAcquirePointForTest() {
+		t.Fatal("snapshot did not retain the client buffer's acquire timeline and point")
+	}
+}
 
 func testSpringAnimation() config.Animation {
 	return config.Animation{Spring: &config.SpringConfig{

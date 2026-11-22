@@ -5,6 +5,8 @@ package wlr
 #cgo LDFLAGS: -lm
 #include <scenefx/render/fx_renderer/fx_renderer.h>
 #include <scenefx/types/wlr_scene.h>
+#include <wlr/interfaces/wlr_buffer.h>
+#include <wlr/render/drm_syncobj.h>
 #include <math.h>
 #include <time.h>
 #include <wlr/types/wlr_compositor.h>
@@ -154,10 +156,17 @@ static void sysc_clone_scene_buffer(struct wlr_scene_buffer *source,
 	if (source->buffer == NULL) {
 		return;
 	}
-	struct wlr_scene_buffer *copy = wlr_scene_buffer_create(context->tree, source->buffer);
+	struct wlr_scene_buffer *copy = wlr_scene_buffer_create(context->tree, NULL);
 	if (copy == NULL) {
 		return;
 	}
+	// The snapshot reads the same client buffer, so it must wait on the
+	// same acquire point even after the live node moves to another buffer.
+	struct wlr_scene_buffer_set_buffer_options options = {
+		.wait_timeline = source->WLR_PRIVATE.wait_timeline,
+		.wait_point = source->WLR_PRIVATE.wait_point,
+	};
+	wlr_scene_buffer_set_buffer_with_options(copy, source->buffer, &options);
 	wlr_scene_node_set_position(&copy->node, x - context->origin_x, y - context->origin_y);
 	wlr_scene_buffer_set_transform(copy, source->transform);
 	wlr_scene_buffer_set_opacity(copy, source->opacity);
@@ -195,6 +204,40 @@ static struct wlr_scene_tree *sysc_scene_clone_view(struct wlr_scene_tree *paren
 		return NULL;
 	}
 	return copy;
+}
+
+static void sysc_test_snapshot_buffer_destroy(struct wlr_buffer *buffer) {
+	(void)buffer;
+}
+
+static bool sysc_test_snapshot_acquire_point(void) {
+	static const struct wlr_buffer_impl impl = {
+		.destroy = sysc_test_snapshot_buffer_destroy,
+	};
+	// Keep one reference on the stack so this checks ownership without a DRM fd.
+	struct wlr_drm_syncobj_timeline timeline = {.WLR_PRIVATE.n_refs = 1};
+	struct wlr_buffer buffer;
+	wlr_buffer_init(&buffer, &impl, 10, 10);
+	struct wlr_scene *scene = wlr_scene_create();
+	struct wlr_scene_tree *source = wlr_scene_tree_create(&scene->tree);
+	struct wlr_scene_buffer *node = wlr_scene_buffer_create(source, NULL);
+	struct wlr_scene_buffer_set_buffer_options options = {
+		.wait_timeline = &timeline, .wait_point = 42,
+	};
+	wlr_scene_buffer_set_buffer_with_options(node, &buffer, &options);
+	int count = 0;
+	struct wlr_scene_tree *snapshot = sysc_scene_clone_view(&scene->tree, source, &count);
+	wlr_scene_node_destroy(&source->node);
+	bool ok = false;
+	if (snapshot != NULL && count == 1) {
+		struct wlr_scene_node *child = wl_container_of(snapshot->children.next, child, link);
+		struct wlr_scene_buffer *copy = wlr_scene_buffer_from_node(child);
+		ok = copy->WLR_PRIVATE.wait_timeline == &timeline &&
+			copy->WLR_PRIVATE.wait_point == 42 && timeline.WLR_PRIVATE.n_refs == 2;
+	}
+	wlr_scene_node_destroy(&scene->tree.node);
+	wlr_buffer_drop(&buffer);
+	return ok && timeline.WLR_PRIVATE.n_refs == 1;
 }
 
 struct sysc_scene_scale_context {
@@ -733,6 +776,8 @@ func sceneFXCloneView(parent, source unsafe.Pointer) (unsafe.Pointer, int) {
 		(*C.struct_wlr_scene_tree)(source), &count)
 	return unsafe.Pointer(tree), int(count)
 }
+
+func sceneFXSnapshotAcquirePointForTest() bool { return bool(C.sysc_test_snapshot_acquire_point()) }
 
 func sceneFXScaleTree(tree unsafe.Pointer, previousX, previousY, x, y float64) {
 	if tree == nil || previousX <= 0 || previousY <= 0 || x <= 0 || y <= 0 {
