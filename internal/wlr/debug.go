@@ -105,7 +105,9 @@ static bool sysc_debug_overlay_state(
 		struct wlr_scene_output *so, struct wlr_output_layer_state *layer) {
 	struct sysc_debug_leaf leaf = sysc_debug_candidate(so);
 	struct wlr_scene_buffer *buffer = leaf.buffer;
+	// Output layers cannot carry a per-buffer acquire fence.
 	if (!buffer || !buffer->buffer || buffer->opacity != 1 ||
+			buffer->WLR_PRIVATE.wait_timeline != NULL ||
 			buffer->transform != WL_OUTPUT_TRANSFORM_NORMAL ||
 			so->output->transform != WL_OUTPUT_TRANSFORM_NORMAL ||
 			buffer->corners.top_left || buffer->corners.top_right ||
