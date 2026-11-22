@@ -2,9 +2,11 @@ package wlr
 
 import (
 	"reflect"
+	"runtime"
 	"testing"
 	"time"
 
+	"github.com/Nomadcxx/sysc-compositor/internal/config"
 	"github.com/Nomadcxx/sysc-compositor/internal/wlr/testclient"
 )
 
@@ -50,6 +52,52 @@ func TestM10BackgroundEffectRegionIsClippedToSurface(t *testing.T) {
 	want := []rect{{0, 0, 10, 10}, {20, 10, 10, 10}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("clipped blur region = %v, want %v", got, want)
+	}
+}
+
+func TestBackgroundEffectReusesNodesAcrossBufferCommits(t *testing.T) {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	parent := newBackgroundEffectTestScene()
+	if parent == nil {
+		t.Fatal("creating scene")
+	}
+	defer sceneFXNodeDestroy(parent)
+	anchor := sceneFXCreateRect(parent, 60, 40, [4]float32{1, 1, 1, 1})
+	if anchor == nil {
+		t.Fatal("creating anchor")
+	}
+	c := &Compositor{listeners: map[*Listener]struct{}{}}
+	effect := &backgroundEffect{}
+	region := []rect{{0, 0, 20, 20}, {30, 0, 10, 10}}
+	c.syncBackgroundEffectNodes(effect, parent, anchor, 0, 0, region, nil)
+	if len(effect.blurNodes) != len(region) {
+		t.Fatalf("created %d blur nodes, want %d", len(effect.blurNodes), len(region))
+	}
+	first, second := effect.blurGone[effect.blurNodes[0]], effect.blurGone[effect.blurNodes[1]]
+	sameNodes := func() {
+		t.Helper()
+		if len(effect.blurNodes) != 2 || effect.blurGone[effect.blurNodes[0]] != first ||
+			effect.blurGone[effect.blurNodes[1]] != second {
+			t.Fatal("commit replaced the blur nodes")
+		}
+	}
+	c.syncBackgroundEffectNodes(effect, parent, anchor, 0, 0, region, nil)
+	sameNodes()
+
+	region[0].w = 14
+	corners := config.CornerRadius{4, 0, 0, 0}
+	c.syncBackgroundEffectNodes(effect, parent, anchor, 2, 3, region, &corners)
+	sameNodes()
+	if got, want := sceneFXBlurBox(effect.blurNodes[0]), (rect{2, 3, 14, 20}); got != want {
+		t.Fatalf("resized blur node = %+v, want %+v", got, want)
+	}
+	if got := sceneFXBlurTopLeftCorner(effect.blurNodes[0]); got != 4 {
+		t.Fatalf("resized blur corner = %d, want 4", got)
+	}
+	c.syncBackgroundEffectNodes(effect, parent, anchor, 2, 3, region, nil)
+	if got := sceneFXBlurTopLeftCorner(effect.blurNodes[0]); got != 0 {
+		t.Fatalf("removed blur corner = %d, want 0", got)
 	}
 }
 

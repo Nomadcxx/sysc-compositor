@@ -8,7 +8,7 @@ package wlr
 #include <stdint.h>
 #include <wayland-server-core.h>
 #include <wlr/types/wlr_compositor.h>
-#include <wlr/types/wlr_scene.h>
+#include <scenefx/types/wlr_scene.h>
 #include "ext-background-effect-v1-protocol.h"
 
 struct wl_global *sysc_bg_global_create(struct wl_display *, uintptr_t);
@@ -107,7 +107,7 @@ func (c *Compositor) backgroundEffectFor(surface *C.struct_wlr_surface) *backgro
 				effect.pending = nil
 				effect.pendingSet = false
 			}
-			c.syncBackgroundEffect(effect, true)
+			c.syncBackgroundEffect(effect)
 		})
 		effect.surfaceDestroy = AddListener(unsafe.Pointer(&surface.events.destroy), func(unsafe.Pointer) {
 			effect.surface = nil
@@ -122,7 +122,7 @@ func (c *Compositor) backgroundEffectFor(surface *C.struct_wlr_surface) *backgro
 		})
 		if effect.root != nil && effect.root != surface {
 			effect.rootCommit = AddListener(unsafe.Pointer(&effect.root.events.commit), func(unsafe.Pointer) {
-				c.syncBackgroundEffect(effect, false)
+				c.syncBackgroundEffect(effect)
 			})
 		}
 		c.keep(effect.commit, effect.surfaceDestroy, effect.rootCommit)
@@ -173,7 +173,7 @@ func (c *Compositor) syncRuleBackgroundEffects() {
 		blur := c.ruleBlur(effect.root)
 		if !sameBool(blur, effect.ruleBlur) {
 			effect.ruleBlur = blur
-			c.syncBackgroundEffect(effect, true)
+			c.syncBackgroundEffect(effect)
 		}
 	}
 }
@@ -209,18 +209,18 @@ func (e *backgroundEffect) resourceDestroyed(handle uintptr) {
 	cgo.Handle(handle).Delete()
 }
 
-// applyBlurConfig hands the blur section to SceneFX and redraws every
-// effect: `off` removes the frost nodes, and any other change rebuilds them.
+// applyBlurConfig hands the blur section to SceneFX, which damages the scene
+// when the render parameters change. Toggling `off` removes or restores the nodes.
 func (c *Compositor) applyBlurConfig() {
 	blur := c.blurConfig
 	sceneFXSetBlurData(unsafe.Pointer(c.scene), blur.Passes, int(math.Round(blur.Offset)),
 		blur.Noise, blur.Saturation)
 	for _, effect := range c.backgroundEffects {
-		c.syncBackgroundEffect(effect, true)
+		c.syncBackgroundEffect(effect)
 	}
 }
 
-func (c *Compositor) syncBackgroundEffect(effect *backgroundEffect, rebuild bool) {
+func (c *Compositor) syncBackgroundEffect(effect *backgroundEffect) {
 	// Niri's background-effect blur: false never blurs, true blurs the whole
 	// surface when the client asked for no region.
 	blur := c.ruleBlur(effect.root)
@@ -249,30 +249,51 @@ func (c *Compositor) syncBackgroundEffect(effect *backgroundEffect, rebuild bool
 		return
 	}
 	clipped := clipSurfaceRegion(region, int(effect.surface.current.width), int(effect.surface.current.height))
-	parentPointer := unsafe.Pointer(parent)
-	if rebuild || effect.blurParent != parentPointer || len(effect.blurNodes) != len(clipped) {
+	c.syncBackgroundEffectNodes(effect, unsafe.Pointer(parent), unsafe.Pointer(surfaceNode), int(x), int(y), clipped, corners)
+}
+
+func (c *Compositor) syncBackgroundEffectNodes(effect *backgroundEffect, parent, surfaceNode unsafe.Pointer,
+	x, y int, clipped []rect, corners *config.CornerRadius) {
+	if effect.blurParent != parent || len(effect.blurNodes) != len(clipped) {
 		c.clearBackgroundEffectNodes(effect)
 		for _, area := range clipped {
-			node := sceneFXCreateBlurNode(parentPointer, area.w, area.h)
+			node := sceneFXCreateBlurNode(parent, area.w, area.h)
 			if node == nil {
-				continue
-			}
-			sceneFXNodeSetPosition(node, int(x)+area.x, int(y)+area.y)
-			sceneFXPlaceBelow(node, unsafe.Pointer(surfaceNode))
-			if corners != nil {
-				sceneFXSetBlurCorners(node, sceneFXRadii(fitCornerRadii(*corners, float64(area.w), float64(area.h))))
+				break
 			}
 			effect.blurNodes = append(effect.blurNodes, node)
 			c.watchBlurNode(effect, node)
 		}
-		effect.blurParent = parentPointer
-		return
+		if len(effect.blurNodes) != 0 {
+			effect.blurParent = parent
+		}
 	}
-	for i, area := range clipped {
+
+	// Preserve the order below the surface. SceneFX's setters are no-ops
+	// for unchanged geometry and already adjacent siblings.
+	sibling := surfaceNode
+	for i := len(effect.blurNodes) - 1; i >= 0; i-- {
 		node := effect.blurNodes[i]
-		sceneFXNodeSetPosition(node, int(x)+area.x, int(y)+area.y)
-		sceneFXPlaceBelow(node, unsafe.Pointer(surfaceNode))
+		area := clipped[i]
+		blur := C.wlr_scene_blur_from_node((*C.struct_wlr_scene_node)(node))
+		C.wlr_scene_blur_set_size(blur, C.int(area.w), C.int(area.h))
+		sceneFXNodeSetPosition(node, x+area.x, y+area.y)
+		var radii [4]uint16
+		if corners != nil {
+			radii = sceneFXRadii(fitCornerRadii(*corners, float64(area.w), float64(area.h)))
+		}
+		sceneFXSetBlurCorners(node, radii)
+		sceneFXPlaceBelow(node, sibling)
+		sibling = node
 	}
+}
+
+func newBackgroundEffectTestScene() unsafe.Pointer {
+	scene := C.wlr_scene_create()
+	if scene == nil {
+		return nil
+	}
+	return unsafe.Pointer(&scene.tree.node)
 }
 
 func clipSurfaceRegion(region []rect, width, height int) []rect {
