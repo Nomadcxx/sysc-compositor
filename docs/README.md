@@ -25,6 +25,7 @@ executed until the owner schedules the milestone they belong to.
 
 | Document | Kind | What it is |
 |---|---|---|
+| [plans/2026-11-23-archpc-nvidia-handover.md](plans/2026-11-23-archpc-nvidia-handover.md) | handover | Native blur comparison, cached backdrop design, and archPC acceptance for the input lag. |
 | [plans/2026-11-23-archpc-nvidia-review.md](plans/2026-11-23-archpc-nvidia-review.md) | report | Native archPC profiles and source comparison with Niri 26.04, Hyprland, and Umbriel. Covers blur damage, frame pacing, snapshot fences, and Acer re-enable. |
 | [plans/2026-11-19-handover.md](plans/2026-11-19-handover.md) | handover | Current continuation: v0.1.0 released (`8fb0ee8`, the first tag's failed `deb` job and the tag move), AUR packages, `b36865f` armed on the laptop for `sysc-2293`, publishing left for COPR/OBS/GURU, nested-test and AUR recipes with their [assets](plans/assets/2026-11-19-handover/). |
 | [plans/2026-11-19-ci-install-gate-handover.md](plans/2026-11-19-ci-install-gate-handover.md) | handover | Session record beside the 2026-11-19 handover: run `packaging/check-install.sh` on every pull request (PR #126), the review with six negative cases, tracker dedup (`sysc-1644`), laptop scratch cleanup, and the time-gated next steps. |
