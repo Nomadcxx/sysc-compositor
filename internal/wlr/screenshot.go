@@ -43,10 +43,14 @@ static struct wlr_buffer *sysc_render_output(void *pointer, struct wlr_output *o
 	bool gamma_changed = scene_output->WLR_PRIVATE.gamma_lut_changed;
 	scene_output->WLR_PRIVATE.gamma_lut_changed = false;
 	struct wlr_buffer *buffer = NULL;
+	// The state is never sent to KMS. Render the scene so its output_sample
+	// listeners get a GPU completion fence that will actually materialize.
+	wlr_output_lock_attach_render(output, true);
 	if (wlr_scene_output_build_state(scene_output, &state, &options) &&
 			(state.committed & WLR_OUTPUT_STATE_BUFFER) && state.buffer != NULL) {
 		buffer = wlr_buffer_lock(state.buffer);
 	}
+	wlr_output_lock_attach_render(output, false);
 	scene_output->WLR_PRIVATE.gamma_lut_changed = gamma_changed;
 	wlr_output_state_finish(&state);
 	wlr_swapchain_destroy(swapchain);

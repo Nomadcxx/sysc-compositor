@@ -1,7 +1,7 @@
 package wlr
 
 /*
-#cgo pkg-config: wlroots-0.20 scenefx-0.5 glesv2
+#cgo pkg-config: wlroots-0.20 scenefx-0.5 glesv2 egl
 #cgo CFLAGS: -DWLR_USE_UNSTABLE
 #include <stdlib.h>
 #include <stdio.h>
@@ -11,6 +11,8 @@ package wlr
 #include <GLES2/gl2.h>
 #include <wlr/render/allocator.h>
 #include <wlr/render/drm_format_set.h>
+#include <wlr/render/drm_syncobj.h>
+#include <wlr/render/egl.h>
 #include <wlr/render/pass.h>
 #include <wlr/render/wlr_renderer.h>
 #include <wlr/render/wlr_texture.h>
@@ -18,6 +20,7 @@ package wlr
 #include <scenefx/render/fx_renderer/fx_renderer.h>
 #include <scenefx/types/wlr_scene.h>
 #include <wlr/types/wlr_compositor.h>
+#include <wlr/util/log.h>
 #include <wlr/util/transform.h>
 
 // SceneFX 0.5's installed render/pass.h references uninstalled private headers.
@@ -72,20 +75,31 @@ static struct sysc_float_clip sysc_animation_clip(
 			.corners = sysc_animation_radii(clip.corners, scale),
 	};
 }
-static void sysc_animation_flatten_node(struct wlr_scene_node *node, struct wlr_render_pass *pass,
-		struct wlr_renderer *renderer, int x, int y, double scale, bool root) {
+bool sysc_scene_buffer_add_release_point(struct wlr_scene_buffer *,
+		struct wlr_drm_syncobj_timeline *, uint64_t, struct wl_event_loop *);
+
+struct sysc_animation_capture {
+	struct wlr_renderer *renderer;
+	struct wlr_render_pass *pass;
+	struct wlr_drm_syncobj_timeline *timeline;
+	struct wl_event_loop *loop;
+	bool finish;
+};
+
+static void sysc_animation_flatten_node(struct wlr_scene_node *node,
+		struct sysc_animation_capture *capture, int x, int y, double scale, bool root) {
 	if (!root && !node->enabled) {
 		return;
 	}
 	x += node->x;
 	y += node->y;
-	struct fx_gles_render_pass *fx = fx_get_render_pass(pass);
+	struct fx_gles_render_pass *fx = fx_get_render_pass(capture->pass);
 	switch (node->type) {
 	case WLR_SCENE_NODE_TREE: {
 		struct wlr_scene_tree *tree = wlr_scene_tree_from_node(node);
 		struct wlr_scene_node *child;
 		wl_list_for_each(child, &tree->children, link) sysc_animation_flatten_node(
-				child, pass, renderer, x, y, scale, false);
+				child, capture, x, y, scale, false);
 		break;
 	}
 	case WLR_SCENE_NODE_BUFFER: {
@@ -95,7 +109,7 @@ static void sysc_animation_flatten_node(struct wlr_scene_node *node, struct wlr_
 		if (scene->buffer != NULL) {
 			struct wlr_client_buffer *client = wlr_client_buffer_get(scene->buffer);
 			texture = client ? client->texture
-					 : wlr_texture_from_buffer(renderer, scene->buffer);
+					 : wlr_texture_from_buffer(capture->renderer, scene->buffer);
 			imported = client == NULL;
 		}
 		if (texture == NULL) {
@@ -135,6 +149,10 @@ static void sysc_animation_flatten_node(struct wlr_scene_node *node, struct wlr_
 				.corners = sysc_animation_radii(radii, scale),
 		};
 		fx_render_pass_add_texture(fx, &options);
+		if (scene->WLR_PRIVATE.wait_timeline != NULL &&
+				!sysc_scene_buffer_add_release_point(scene, capture->timeline, 1, capture->loop)) {
+			capture->finish = true;
+		}
 		if (imported) {
 			wlr_texture_destroy(texture);
 		}
@@ -176,25 +194,8 @@ static void sysc_animation_flatten_node(struct wlr_scene_node *node, struct wlr_
 		break;
 	}
 }
-static bool sysc_animation_flatten(struct wlr_renderer *renderer, struct wlr_buffer *dst,
-		struct wlr_scene_node *node, int x, int y, double scale, bool local) {
-	struct wlr_render_pass *pass = wlr_renderer_begin_buffer_pass(renderer, dst, NULL);
-	if (pass == NULL) {
-		return false;
-	}
-	wlr_render_pass_add_rect(pass,
-			&(struct wlr_render_rect_options){.box = {0, 0, dst->width, dst->height},
-					.blend_mode = WLR_RENDER_BLEND_MODE_NONE});
-	if (local) {
-		x -= node->x;
-		y -= node->y;
-	}
-	sysc_animation_flatten_node(node, pass, renderer, x, y, scale, true);
-	return wlr_render_pass_submit(pass);
-}
-
 static void sysc_animation_bounds(struct wlr_scene_node *node, int x, int y, struct wlr_box *box,
-		bool *found, bool root) {
+		bool *found, bool *explicit_sync, bool root) {
 	if (!root && !node->enabled) {
 		return;
 	}
@@ -204,12 +205,13 @@ static void sysc_animation_bounds(struct wlr_scene_node *node, int x, int y, str
 		struct wlr_scene_tree *tree = wlr_scene_tree_from_node(node);
 		struct wlr_scene_node *child;
 		wl_list_for_each(child, &tree->children, link)
-				sysc_animation_bounds(child, x, y, box, found, false);
+				sysc_animation_bounds(child, x, y, box, found, explicit_sync, false);
 		return;
 	}
 	int w = 0, h = 0;
 	if (node->type == WLR_SCENE_NODE_BUFFER) {
 		struct wlr_scene_buffer *buffer = wlr_scene_buffer_from_node(node);
+		*explicit_sync |= buffer->WLR_PRIVATE.wait_timeline != NULL;
 		w = buffer->dst_width;
 		h = buffer->dst_height;
 		if (w == 0 || h == 0) {
@@ -244,7 +246,8 @@ static void sysc_animation_bounds(struct wlr_scene_node *node, int x, int y, str
 	box->width = (x1 > x + w ? x1 : x + w) - box->x;
 	box->height = (y1 > y + h ? y1 : y + h) - box->y;
 }
-static struct wlr_box sysc_animation_roots_bounds(struct wlr_scene_node **nodes, size_t count) {
+static struct wlr_box sysc_animation_roots_bounds(struct wlr_scene_node **nodes,
+		size_t count, bool *explicit_sync) {
 	struct wlr_box box = {0};
 	bool found = false;
 	for (size_t i = 0; i < count; i++) {
@@ -254,16 +257,56 @@ static struct wlr_box sysc_animation_roots_bounds(struct wlr_scene_node **nodes,
 			x += parent->x;
 			y += parent->y;
 		}
-		sysc_animation_bounds(nodes[i], x, y, &box, &found, true);
+		sysc_animation_bounds(nodes[i], x, y, &box, &found, explicit_sync, true);
 	}
 	return box;
 }
+struct sysc_egl_binding {
+	EGLDisplay display;
+	EGLContext context;
+	EGLSurface draw, read;
+};
+
+static struct sysc_egl_binding sysc_current_egl_binding(void) {
+	return (struct sysc_egl_binding){eglGetCurrentDisplay(), eglGetCurrentContext(),
+		eglGetCurrentSurface(EGL_DRAW), eglGetCurrentSurface(EGL_READ)};
+}
+
+static void sysc_animation_finish_failed_pass(struct sysc_egl_binding render,
+		struct wlr_drm_syncobj_timeline *timeline) {
+	// SceneFX restored the previous context after failing to export or
+	// import the pass fence. Retire the prospective point only after the
+	// draws in the render context have finished.
+	struct sysc_egl_binding previous = sysc_current_egl_binding();
+	if (!eglMakeCurrent(render.display, render.draw, render.read, render.context)) {
+		wlr_log(WLR_ERROR, "Could not finish failed animation pass, keeping release fences pending");
+		return;
+	}
+	glFinish();
+	wlr_drm_syncobj_timeline_signal(timeline, 1);
+	EGLDisplay restore_display = previous.display != EGL_NO_DISPLAY ? previous.display : render.display;
+	if (!eglMakeCurrent(restore_display, previous.draw, previous.read, previous.context)) {
+		wlr_log(WLR_ERROR, "Could not restore EGL after finishing failed animation pass");
+	}
+}
+
 static bool sysc_animation_flatten_roots(struct wlr_renderer *renderer, struct wlr_buffer *dst,
-		struct wlr_scene_node **nodes, size_t count, int ox, int oy, double scale) {
-	struct wlr_render_pass *pass = wlr_renderer_begin_buffer_pass(renderer, dst, NULL);
+		struct wlr_scene_node **nodes, size_t count, int ox, int oy, double scale,
+		struct wl_event_loop *loop, bool explicit_sync) {
+	struct wlr_drm_syncobj_timeline *timeline = NULL;
+	if (explicit_sync) {
+		int drm_fd = wlr_renderer_get_drm_fd(renderer);
+		if (drm_fd < 0 || (timeline = wlr_drm_syncobj_timeline_create(drm_fd)) == NULL) {
+			return false;
+		}
+	}
+	struct wlr_buffer_pass_options options = {.signal_timeline = timeline, .signal_point = 1};
+	struct wlr_render_pass *pass = wlr_renderer_begin_buffer_pass(renderer, dst, &options);
 	if (pass == NULL) {
+		wlr_drm_syncobj_timeline_unref(timeline);
 		return false;
 	}
+	struct sysc_animation_capture capture = {renderer, pass, timeline, loop, false};
 	wlr_render_pass_add_rect(pass,
 			&(struct wlr_render_rect_options){.box = {0, 0, dst->width, dst->height},
 					.blend_mode = WLR_RENDER_BLEND_MODE_NONE});
@@ -274,9 +317,22 @@ static bool sysc_animation_flatten_roots(struct wlr_renderer *renderer, struct w
 			x += parent->x;
 			y += parent->y;
 		}
-		sysc_animation_flatten_node(nodes[i], pass, renderer, x, y, scale, true);
+		sysc_animation_flatten_node(nodes[i], &capture, x, y, scale, true);
 	}
-	return wlr_render_pass_submit(pass);
+	if (capture.finish) {
+		wlr_log(WLR_ERROR, "Waiting for an animation draw after release fence registration failed");
+		glFinish();
+	}
+	struct sysc_egl_binding binding = {0};
+	if (timeline != NULL) {
+		binding = sysc_current_egl_binding();
+	}
+	bool ok = wlr_render_pass_submit(pass);
+	if (!ok && timeline != NULL) {
+		sysc_animation_finish_failed_pass(binding, timeline);
+	}
+	wlr_drm_syncobj_timeline_unref(timeline);
+	return ok;
 }
 
 static void sysc_animation_set_buffer(struct wlr_scene_buffer *node, struct wlr_buffer *buffer,
@@ -754,7 +810,8 @@ func (c *Compositor) flattenAnimationRoots(roots []*C.struct_wlr_scene_node, fal
 	if len(roots) == 0 {
 		return nil, image.Rectangle{}, errors.New("wlr: no animation source")
 	}
-	box := C.sysc_animation_roots_bounds(&roots[0], C.size_t(len(roots)))
+	var explicitSync C.bool
+	box := C.sysc_animation_roots_bounds(&roots[0], C.size_t(len(roots)), &explicitSync)
 	area := image.Rect(int(box.x), int(box.y), int(box.x+box.width), int(box.y+box.height)).Union(fallback)
 	width, height := max(1, int(math.Round(float64(area.Dx())*scale))), max(1, int(math.Round(float64(area.Dy())*scale)))
 	if _, err := captureAllocation(width, height, width*4); err != nil {
@@ -764,7 +821,7 @@ func (c *Compositor) flattenAnimationRoots(roots []*C.struct_wlr_scene_node, fal
 	if buffer == nil {
 		return nil, area, errors.New("wlr: animation source allocation failed")
 	}
-	if !bool(C.sysc_animation_flatten_roots(c.renderer, buffer, &roots[0], C.size_t(len(roots)), C.int(area.Min.X), C.int(area.Min.Y), C.double(scale))) {
+	if !bool(C.sysc_animation_flatten_roots(c.renderer, buffer, &roots[0], C.size_t(len(roots)), C.int(area.Min.X), C.int(area.Min.Y), C.double(scale), c.loop, explicitSync)) {
 		C.wlr_buffer_drop(buffer)
 		return nil, area, errors.New("wlr: animation source rendering failed")
 	}

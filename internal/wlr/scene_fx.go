@@ -1,16 +1,20 @@
 package wlr
 
 /*
-#cgo pkg-config: scenefx-0.5
+#cgo pkg-config: scenefx-0.5 glesv2
 #cgo LDFLAGS: -lm
 #include <scenefx/render/fx_renderer/fx_renderer.h>
 #include <scenefx/types/wlr_scene.h>
 #include <wlr/interfaces/wlr_buffer.h>
 #include <wlr/render/drm_syncobj.h>
+#include <dlfcn.h>
 #include <math.h>
+#include <stdlib.h>
 #include <time.h>
 #include <wlr/types/wlr_compositor.h>
+#include <wlr/types/wlr_linux_drm_syncobj_v1.h>
 #include <wlr/types/wlr_xdg_shell.h>
+#include <wlr/util/log.h>
 #include <wlr/util/transform.h>
 
 struct sysc_corner_data {
@@ -144,20 +148,125 @@ static int sysc_scene_shadow_clip_width(struct wlr_scene_node *node) {
 	return wlr_scene_shadow_from_node(node)->clipped_region.area.width;
 }
 
+struct sysc_snapshot_release {
+	struct wlr_addon addon;
+	struct wl_listener output_sample;
+	struct wlr_buffer *buffer;
+	struct wlr_linux_drm_syncobj_surface_v1_state commit;
+};
+
+static void sysc_snapshot_release_destroy(struct wlr_addon *addon) {
+	struct sysc_snapshot_release *release = wl_container_of(addon, release, addon);
+	wl_list_remove(&release->output_sample.link);
+	wlr_addon_finish(addon);
+	wlr_buffer_unlock(release->buffer);
+	free(release);
+}
+
+static const struct wlr_addon_interface sysc_snapshot_release_impl = {
+	.name = "sysc_snapshot_release",
+	.destroy = sysc_snapshot_release_destroy,
+};
+
+static struct wlr_linux_drm_syncobj_surface_v1_state *sysc_scene_buffer_sample_commit(
+		struct wlr_scene_buffer *buffer) {
+	struct wlr_addon *addon = wlr_addon_find(&buffer->node.addons, NULL,
+		&sysc_snapshot_release_impl);
+	if (addon != NULL) {
+		struct sysc_snapshot_release *release = wl_container_of(addon, release, addon);
+		return &release->commit;
+	}
+	struct wlr_scene_surface *scene_surface = wlr_scene_surface_try_from_buffer(buffer);
+	if (scene_surface == NULL || scene_surface->surface->buffer == NULL ||
+			&scene_surface->surface->buffer->base != buffer->buffer) {
+		return NULL;
+	}
+	struct wlr_linux_drm_syncobj_surface_v1_state *commit =
+		wlr_linux_drm_syncobj_v1_get_surface_state(scene_surface->surface);
+	if (commit == NULL || commit->acquire_timeline != buffer->WLR_PRIVATE.wait_timeline ||
+			commit->acquire_point != buffer->WLR_PRIVATE.wait_point) {
+		return NULL;
+	}
+	return commit;
+}
+
+// Animation shaders render outside the scene output pass. Use the same
+// release bookkeeping with their own render completion point.
+bool sysc_scene_buffer_add_release_point(struct wlr_scene_buffer *buffer,
+		struct wlr_drm_syncobj_timeline *timeline, uint64_t point, struct wl_event_loop *loop) {
+	struct wlr_linux_drm_syncobj_surface_v1_state *commit = sysc_scene_buffer_sample_commit(buffer);
+	if (commit == NULL || commit->WLR_PRIVATE.release_merger == NULL) {
+		return false;
+	}
+	return timeline != NULL && wlr_linux_drm_syncobj_v1_state_add_release_point(
+		commit, timeline, point, loop);
+}
+
+static void sysc_snapshot_output_sample(struct wl_listener *listener, void *data) {
+	struct sysc_snapshot_release *release = wl_container_of(listener, release, output_sample);
+	const struct wlr_scene_output_sample_event *event = data;
+	// Follow SceneFX surface sampling: wlroots waits for prospective scene
+	// points to materialize, including when a later frame has to replace one.
+	if (event->release_timeline != NULL && wlr_linux_drm_syncobj_v1_state_add_release_point(
+			&release->commit, event->release_timeline, event->release_point,
+			event->output->output->event_loop)) {
+		return;
+	}
+	if (!event->direct_scanout) {
+		// The draw already reached GL. Complete it before an untracked release.
+		wlr_log(WLR_ERROR, "Waiting for a snapshot draw after release fence registration failed");
+		glFinish();
+	}
+	// Direct scanout retains the DMA-BUF itself in the output state/backend.
+}
+
+static bool sysc_snapshot_retain_commit(struct wlr_scene_buffer *copy,
+		struct wlr_linux_drm_syncobj_surface_v1_state *commit) {
+	struct sysc_snapshot_release *release = calloc(1, sizeof(*release));
+	if (release == NULL) {
+		return false;
+	}
+	struct wlr_client_buffer *client = wlr_client_buffer_get(copy->buffer);
+	struct wlr_buffer *buffer = client != NULL && client->source != NULL ? client->source : copy->buffer;
+	release->buffer = wlr_buffer_lock(buffer);
+	// Keep the original commit's merger until this buffer is released.
+	// The live surface state can already refer to a different commit by
+	// the next draw. Copy only the borrowed, now-retained merger pointer.
+	if (!wlr_linux_drm_syncobj_v1_state_signal_release_with_buffer(commit, buffer)) {
+		wlr_buffer_unlock(buffer);
+		free(release);
+		return false;
+	}
+	release->commit.WLR_PRIVATE.release_merger = commit->WLR_PRIVATE.release_merger;
+	wlr_addon_init(&release->addon, &copy->node.addons, NULL, &sysc_snapshot_release_impl);
+	release->output_sample.notify = sysc_snapshot_output_sample;
+	wl_signal_add(&copy->events.output_sample, &release->output_sample);
+	return true;
+}
+
 struct sysc_scene_clone_context {
 	struct wlr_scene_tree *tree;
 	int origin_x, origin_y;
 	int count;
+	bool failed;
 };
 
 static void sysc_clone_scene_buffer(struct wlr_scene_buffer *source,
 		int x, int y, void *data) {
 	struct sysc_scene_clone_context *context = data;
-	if (source->buffer == NULL) {
+	if (context->failed || source->buffer == NULL) {
+		return;
+	}
+	struct wlr_linux_drm_syncobj_surface_v1_state *commit = sysc_scene_buffer_sample_commit(source);
+	bool track_release = commit != NULL && commit->WLR_PRIVATE.release_merger != NULL;
+	if (source->WLR_PRIVATE.wait_timeline != NULL && !track_release &&
+			wlr_client_buffer_get(source->buffer) != NULL) {
+		context->failed = true;
 		return;
 	}
 	struct wlr_scene_buffer *copy = wlr_scene_buffer_create(context->tree, NULL);
 	if (copy == NULL) {
+		context->failed = true;
 		return;
 	}
 	// The snapshot reads the same client buffer, so it must wait on the
@@ -167,6 +276,10 @@ static void sysc_clone_scene_buffer(struct wlr_scene_buffer *source,
 		.wait_point = source->WLR_PRIVATE.wait_point,
 	};
 	wlr_scene_buffer_set_buffer_with_options(copy, source->buffer, &options);
+	if (track_release && !sysc_snapshot_retain_commit(copy, commit)) {
+		context->failed = true;
+		return;
+	}
 	wlr_scene_node_set_position(&copy->node, x - context->origin_x, y - context->origin_y);
 	wlr_scene_buffer_set_transform(copy, source->transform);
 	wlr_scene_buffer_set_opacity(copy, source->opacity);
@@ -198,8 +311,8 @@ static struct wlr_scene_tree *sysc_scene_clone_view(struct wlr_scene_tree *paren
 		.tree = copy, .origin_x = origin_x, .origin_y = origin_y,
 	};
 	wlr_scene_node_for_each_buffer(&source->node, sysc_clone_scene_buffer, &context);
-	*count = context.count;
-	if (context.count == 0) {
+	*count = context.failed ? 0 : context.count;
+	if (*count == 0) {
 		wlr_scene_node_destroy(&copy->node);
 		return NULL;
 	}
@@ -235,6 +348,42 @@ static bool sysc_test_snapshot_acquire_point(void) {
 		ok = copy->WLR_PRIVATE.wait_timeline == &timeline &&
 			copy->WLR_PRIVATE.wait_point == 42 && timeline.WLR_PRIVATE.n_refs == 2;
 	}
+	wlr_scene_node_destroy(&scene->tree.node);
+	wlr_buffer_drop(&buffer);
+	return ok && timeline.WLR_PRIVATE.n_refs == 1;
+}
+
+static int sysc_test_snapshot_release_point(void) {
+	// Create the same merger as a client commit without requiring a DRM device.
+	// These constructors are internal to wlroots and used here only for the test.
+	struct wlr_drm_syncobj_merger *(*create)(struct wlr_drm_syncobj_timeline *, uint64_t) =
+		dlsym(RTLD_DEFAULT, "wlr_drm_syncobj_merger_create");
+	void (*unref)(struct wlr_drm_syncobj_merger *) =
+		dlsym(RTLD_DEFAULT, "wlr_drm_syncobj_merger_unref");
+	if (create == NULL || unref == NULL) {
+		return -1;
+	}
+	static const struct wlr_buffer_impl impl = {
+		.destroy = sysc_test_snapshot_buffer_destroy,
+	};
+	struct wlr_drm_syncobj_timeline timeline = {.drm_fd = -1, .WLR_PRIVATE.n_refs = 1};
+	struct wlr_linux_drm_syncobj_surface_v1_state commit = {
+		.WLR_PRIVATE.release_merger = create(&timeline, 42),
+	};
+	if (commit.WLR_PRIVATE.release_merger == NULL) {
+		return 0;
+	}
+	struct wlr_buffer buffer;
+	wlr_buffer_init(&buffer, &impl, 10, 10);
+	struct wlr_scene *scene = wlr_scene_create();
+	struct wlr_scene_buffer *copy = wlr_scene_buffer_create(&scene->tree, &buffer);
+	bool ok = sysc_snapshot_retain_commit(copy, &commit);
+	unref(commit.WLR_PRIVATE.release_merger);
+	struct wlr_linux_drm_syncobj_surface_v1_state *sample_commit =
+		sysc_scene_buffer_sample_commit(copy);
+	ok = ok && sample_commit != NULL &&
+		sample_commit->WLR_PRIVATE.release_merger == commit.WLR_PRIVATE.release_merger &&
+		timeline.WLR_PRIVATE.n_refs == 2;
 	wlr_scene_node_destroy(&scene->tree.node);
 	wlr_buffer_drop(&buffer);
 	return ok && timeline.WLR_PRIVATE.n_refs == 1;
@@ -776,6 +925,8 @@ func sceneFXCloneView(parent, source unsafe.Pointer) (unsafe.Pointer, int) {
 		(*C.struct_wlr_scene_tree)(source), &count)
 	return unsafe.Pointer(tree), int(count)
 }
+
+func sceneFXSnapshotReleasePointForTest() int { return int(C.sysc_test_snapshot_release_point()) }
 
 func sceneFXSnapshotAcquirePointForTest() bool { return bool(C.sysc_test_snapshot_acquire_point()) }
 

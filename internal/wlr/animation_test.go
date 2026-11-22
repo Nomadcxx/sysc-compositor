@@ -22,6 +22,17 @@ func TestSceneSnapshotRetainsBufferAcquirePoint(t *testing.T) {
 	}
 }
 
+func TestSceneSnapshotRetainsOriginalCommitUntilDestroy(t *testing.T) {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	switch sceneFXSnapshotReleasePointForTest() {
+	case -1:
+		t.Skip("wlroots hides the test's internal release merger constructor")
+	case 0:
+		t.Fatal("the original release point lost its owner while the snapshot could still sample the buffer")
+	}
+}
+
 func testSpringAnimation() config.Animation {
 	return config.Animation{Spring: &config.SpringConfig{
 		DampingRatio: 1, Stiffness: 120, Epsilon: 0.0001,
