@@ -25,6 +25,7 @@ executed until the owner schedules the milestone they belong to.
 
 | Document | Kind | What it is |
 |---|---|---|
+| [plans/2026-11-23-archpc-cache-audit.md](plans/2026-11-23-archpc-cache-audit.md) | handover | Audit fixes to the cached blur candidate, RTX 4060 cost measurements, research sweep, and the staged native comparison. |
 | [plans/2026-11-23-archpc-backdrop-cache-handover.md](plans/2026-11-23-archpc-backdrop-cache-handover.md) | handover | Cached blur candidate, RTX 4060 render proof, and the independent audit and native comparison. |
 | [plans/2026-11-23-archpc-nvidia-handover.md](plans/2026-11-23-archpc-nvidia-handover.md) | handover | Native blur comparison, cached backdrop design, and archPC acceptance for the input lag. |
 | [plans/2026-11-23-archpc-nvidia-review.md](plans/2026-11-23-archpc-nvidia-review.md) | report | Native archPC profiles and source comparison with Niri 26.04, Hyprland, and Umbriel. Covers blur damage, frame pacing, snapshot fences, and Acer re-enable. |
