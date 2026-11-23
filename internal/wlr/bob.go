@@ -61,8 +61,8 @@ func (c *Compositor) syncBobbing(now time.Time) {
 				bob = bobOffset(now, bounds.Height)
 			}
 		}
-		if bob != layer.bobY && layer.layer == layerBackground {
-			c.invalidateBackdropBlur(layer.output)
+		if bob != layer.bobY {
+			c.backdropLayerChanged(layer)
 		}
 		layer.setLayerBob(bob)
 	}

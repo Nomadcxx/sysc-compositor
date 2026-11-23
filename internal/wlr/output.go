@@ -93,7 +93,7 @@ static bool sysc_apply_requested_state(struct wlr_output_event_request_state *ev
 // covers in the layout.
 static bool sysc_commit_changed_geometry(struct wlr_output_event_commit *event) {
 	return (event->state->committed & (WLR_OUTPUT_STATE_MODE | WLR_OUTPUT_STATE_SCALE |
-		WLR_OUTPUT_STATE_TRANSFORM | WLR_OUTPUT_STATE_RENDER_FORMAT)) != 0;
+		WLR_OUTPUT_STATE_TRANSFORM)) != 0;
 }
 
 // wlroots sends "Unknown" for make and model in wl_output.geometry

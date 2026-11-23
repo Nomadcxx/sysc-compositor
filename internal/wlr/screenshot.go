@@ -265,7 +265,7 @@ func (c *Compositor) renderOutputForTarget(pointer unsafe.Pointer, target config
 	if buffer == nil {
 		return nil, fmt.Errorf("wlr: rendering output %q for a screenshot failed", C.GoString(output.name))
 	}
-	if cache != nil && cache.dirty {
+	if cache != nil && cache.node.dirty {
 		C.wlr_buffer_unlock(buffer)
 		return nil, errors.New("wlr: capture backdrop did not rebuild")
 	}

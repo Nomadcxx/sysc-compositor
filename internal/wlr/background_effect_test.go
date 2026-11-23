@@ -199,25 +199,56 @@ func TestBackdropBlurReusesCacheUntilItsOutputChanges(t *testing.T) {
 
 	a := c.syncBackdropBlur(left, leftBox)
 	b := c.syncBackdropBlur(right, rightBox)
-	if a == nil || b == nil || a == b || !a.dirty || !b.dirty {
-		t.Fatal("each output needs a separate, initially dirty cache")
+	if a == nil || b == nil || a == b || !a.stale || !b.stale {
+		t.Fatal("each output needs a separate cache that starts stale")
 	}
-	// SceneFX clears dirty after building the backdrop.
-	a.dirty, b.dirty = false, false
-	sceneFXSetNodeEnabled(unsafe.Pointer(a), false)
-	sceneFXSetNodeEnabled(unsafe.Pointer(b), false)
-	if c.syncBackdropBlur(left, leftBox) != a || a.dirty {
+	if a.node.node.enabled || b.node.node.enabled {
+		t.Fatal("an enabled cache lifts occlusion before any repaint needs it")
+	}
+	// prepareBackdropBlur clears stale when it starts a rebuild.
+	a.stale, b.stale = false, false
+	if c.syncBackdropBlur(left, leftBox) != a || a.stale {
 		t.Fatal("a frame with the same backdrop reused neither its pixels nor its node")
 	}
 	c.invalidateBackdropBlur(right)
-	if a.dirty || a.node.enabled || !b.dirty || !b.node.enabled {
-		t.Fatal("backdrop damage should arm only the affected cache")
+	if a.stale || !b.stale {
+		t.Fatal("backdrop damage should mark only the affected cache")
 	}
-	if c.syncBackdropBlur(left, leftBox.Add(image.Pt(1, 0))) != a || !a.dirty {
+	if b.node.node.enabled || b.node.dirty {
+		t.Fatal("invalidation touched the scene, which damages an output with no consumer")
+	}
+	if c.syncBackdropBlur(left, leftBox.Add(image.Pt(1, 0))) != a || !a.stale {
 		t.Fatal("moving an output should invalidate its existing cache")
 	}
 	c.dropBackdropBlur(right)
 	if c.blurBackdrops[right] != nil {
 		t.Fatal("retiring an output kept its cache node")
+	}
+}
+
+// A background layer's popup or shadow can draw on a neighbouring output, so
+// the bounds that pick which caches to rebuild cover every enabled node.
+func TestBackdropTreeBoundsCoverShadowsAndSkipDisabledNodes(t *testing.T) {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	scene := newBackgroundEffectTestScene()
+	if scene == nil {
+		t.Fatal("creating scene")
+	}
+	defer sceneFXNodeDestroy(scene)
+	surface := sceneFXCreateRect(scene, 20, 20, [4]float32{0, 0, 0, 1})
+	sceneFXNodeSetPosition(surface, 70, 10)
+	shadow := sceneFXCreateShadow(scene, 30, 30, 0, 5, [4]float32{0, 0, 0, 1})
+	sceneFXNodeSetPosition(shadow, 65, 5)
+	if got, want := backdropTreeBounds(scene), image.Rect(65, 5, 95, 35); got != want {
+		t.Fatalf("bounds = %v, want %v with the shadow", got, want)
+	}
+	sceneFXSetNodeEnabled(shadow, false)
+	if got, want := backdropTreeBounds(scene), image.Rect(70, 10, 90, 30); got != want {
+		t.Fatalf("bounds = %v, want %v without the disabled shadow", got, want)
+	}
+	sceneFXTreeSetEnabled(scene, false)
+	if got := backdropTreeBounds(scene); !got.Empty() {
+		t.Fatalf("a disabled tree draws nothing, got %v", got)
 	}
 }

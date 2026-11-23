@@ -440,12 +440,13 @@ func (c *Compositor) repaintOutput(pointer unsafe.Pointer, scene *C.struct_wlr_s
 	if restore != nil {
 		defer restore()
 	}
-	rebuilding := cache != nil && bool(cache.dirty)
+	rebuilding := cache != nil && bool(cache.node.dirty)
 	if rebuilding {
 		defer func() {
 			if !ok {
-				c.invalidateBackdropBlur(pointer)
-			} else if !cache.dirty {
+				// The render may have failed after SceneFX cleared dirty.
+				cache.stale = true
+			} else if !cache.node.dirty {
 				perf.RecordBlurCacheRebuild()
 			}
 		}()

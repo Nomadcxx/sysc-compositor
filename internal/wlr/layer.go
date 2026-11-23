@@ -47,6 +47,7 @@ static void sysc_tree_coords_layer(struct wlr_scene_tree *tree, int *x, int *y) 
 import "C"
 
 import (
+	"image"
 	"math"
 	"slices"
 	"time"
@@ -95,6 +96,8 @@ type layerSurface struct {
 	bobY int
 	// underFullscreen: a Top surface whose tree is in topUnderFullscreen.
 	underFullscreen bool
+	// backdropBox is where the tree last drew into the blur backdrop.
+	backdropBox image.Rectangle
 }
 
 type LayerKind uint8
@@ -312,9 +315,7 @@ func (c *Compositor) handleNewLayerSurface(data unsafe.Pointer) {
 			return
 		}
 		if layer := sceneLayer(surface.current.layer); layer != l.layer {
-			if layer == layerBackground || l.layer == layerBackground {
-				c.invalidateBackdropBlur(l.output)
-			}
+			c.backdropLayerChanged(l)
 			// The next frame moves a Top surface under a fullscreen window.
 			l.layer, l.underFullscreen = layer, false
 			C.sysc_reparent(l.tree, c.layerTrees[layer])
@@ -363,6 +364,7 @@ func (c *Compositor) handleNewLayerSurface(data unsafe.Pointer) {
 			c.drop(listener)
 		}
 		l.listeners = nil
+		c.backdropLayerDestroyed(l)
 		delete(c.layerSurfaces, key)
 		// A mapped surface is unmapped, and re-arranged without, before
 		// this; an unmapped one never counted.
@@ -405,9 +407,7 @@ func (c *Compositor) reapplyLayerRules() {
 	for _, layer := range c.layerOrder {
 		layer.rules = c.resolveLayerRules(layer)
 		c.applyLayerAppearance(layer)
-		if layer.layer == layerBackground {
-			c.invalidateBackdropBlur(layer.output)
-		}
+		c.backdropLayerChanged(layer)
 	}
 	c.syncRuleBackgroundEffects()
 	c.syncBobbing(time.Now())
@@ -508,8 +508,8 @@ func (c *Compositor) arrangeLayers(output unsafe.Pointer) {
 				if l.bobY != 0 {
 					C.wlr_scene_node_set_position(&l.tree.node, l.tree.node.x, l.tree.node.y+C.int(l.bobY))
 				}
-				if layer == layerBackground && (x != l.tree.node.x || y != l.tree.node.y) {
-					c.invalidateBackdropBlur(output)
+				if x != l.tree.node.x || y != l.tree.node.y {
+					c.backdropLayerChanged(l)
 				}
 			}
 		}

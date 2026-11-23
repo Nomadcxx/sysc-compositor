@@ -145,7 +145,6 @@ func (c *Compositor) handleNewPopup(data unsafe.Pointer) {
 	c.popups[popup] = struct{}{}
 	var commit, appearance, reposition, damage, destroy *Listener
 	damage = AddListener(unsafe.Pointer(&popup.base.surface.events.commit), func(unsafe.Pointer) {
-		c.backdropSurfaceChanged(popup.base.surface)
 		c.damageCaptureSources()
 	})
 	commit = AddListener(unsafe.Pointer(&popup.base.surface.events.commit), func(unsafe.Pointer) {
