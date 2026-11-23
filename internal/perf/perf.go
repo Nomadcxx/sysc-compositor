@@ -24,6 +24,7 @@ type Server struct {
 	done                                              chan struct{}
 	snapshots, snapshotNS, outputFrames, sceneCommits atomic.Uint64
 	sceneWorkNS, presented, discarded, zeroCopy       atomic.Uint64
+	blurCacheRebuilds                                 atomic.Uint64
 }
 
 // Start enables diagnostics at path, or returns nil when path is empty.
@@ -100,6 +101,13 @@ func OutputFrame(committed bool, elapsed time.Duration) {
 	}
 }
 
+// RecordBlurCacheRebuild counts backdrops refreshed during native repaint.
+func RecordBlurCacheRebuild() {
+	if s := active.Load(); s != nil {
+		s.blurCacheRebuilds.Add(1)
+	}
+}
+
 // OutputPresent counts wlroots completion events. Zero-copy is the native
 // presentation flag, not a guess based on a fullscreen application's state.
 func OutputPresent(presented bool, flags uint32) {
@@ -146,5 +154,5 @@ func (s *Server) metrics(w http.ResponseWriter, _ *http.Request) {
 		}
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"snapshots": s.snapshots.Load(), "snapshot_ns": s.snapshotNS.Load(), "output_frames": s.outputFrames.Load(), "scene_commits": s.sceneCommits.Load(), "scene_work_ns": s.sceneWorkNS.Load(), "presented": s.presented.Load(), "discarded": s.discarded.Load(), "zero_copy_presents": s.zeroCopy.Load(), "runtime": values})
+	_ = json.NewEncoder(w).Encode(map[string]any{"snapshots": s.snapshots.Load(), "snapshot_ns": s.snapshotNS.Load(), "output_frames": s.outputFrames.Load(), "scene_commits": s.sceneCommits.Load(), "scene_work_ns": s.sceneWorkNS.Load(), "blur_cache_rebuilds": s.blurCacheRebuilds.Load(), "presented": s.presented.Load(), "discarded": s.discarded.Load(), "zero_copy_presents": s.zeroCopy.Load(), "runtime": values})
 }

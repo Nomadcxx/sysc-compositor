@@ -148,15 +148,13 @@ func (c *Compositor) recoverRenderer() error {
 				}
 			}
 		}
-		if node._type == C.WLR_SCENE_NODE_OPTIMIZED_BLUR {
-			C.wlr_scene_optimized_blur_mark_dirty(C.wlr_scene_optimized_blur_from_node(node))
-		}
 	})
 	if unavailable {
 		return fmt.Errorf("a client buffer has no recoverable contents")
 	}
 
-	for _, sceneOutput := range c.sceneOutputs {
+	for pointer, sceneOutput := range c.sceneOutputs {
+		c.invalidateBackdropBlur(pointer)
 		C.sysc_renderer_damage_output(sceneOutput)
 	}
 	c.damageCaptureSources()

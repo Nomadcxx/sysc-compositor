@@ -40,8 +40,13 @@ func (c *Compositor) syncBackgroundColors() {
 			c.backgroundNodes[output] = node
 		}
 		box := c.outputLayoutBox(output)
-		sceneFXRectUpdateFill(node, box.Min.X, box.Min.Y, box.Dx(), box.Dy(), [4]uint16{}, premultipliedColor(color))
-		sceneFXSetNodeEnabled(node, color.A > 0 && !box.Empty())
+		rgba := premultipliedColor(color)
+		enabled := color.A > 0 && !box.Empty()
+		if sceneFXBackgroundChanged(node, box.Min.X, box.Min.Y, box.Dx(), box.Dy(), rgba, enabled) {
+			sceneFXRectUpdateFill(node, box.Min.X, box.Min.Y, box.Dx(), box.Dy(), [4]uint16{}, rgba)
+			sceneFXSetNodeEnabled(node, enabled)
+			c.invalidateBackdropBlur(output)
+		}
 	}
 }
 

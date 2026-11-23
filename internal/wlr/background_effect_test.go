@@ -1,10 +1,12 @@
 package wlr
 
 import (
+	"image"
 	"reflect"
 	"runtime"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/Nomadcxx/sysc-compositor/internal/config"
 	"github.com/Nomadcxx/sysc-compositor/internal/wlr/testclient"
@@ -70,7 +72,7 @@ func TestBackgroundEffectReusesNodesAcrossBufferCommits(t *testing.T) {
 	c := &Compositor{listeners: map[*Listener]struct{}{}}
 	effect := &backgroundEffect{}
 	region := []rect{{0, 0, 20, 20}, {30, 0, 10, 10}}
-	c.syncBackgroundEffectNodes(effect, parent, anchor, 0, 0, region, nil)
+	c.syncBackgroundEffectNodes(effect, parent, anchor, 0, 0, region, nil, true)
 	if len(effect.blurNodes) != len(region) {
 		t.Fatalf("created %d blur nodes, want %d", len(effect.blurNodes), len(region))
 	}
@@ -82,12 +84,12 @@ func TestBackgroundEffectReusesNodesAcrossBufferCommits(t *testing.T) {
 			t.Fatal("commit replaced the blur nodes")
 		}
 	}
-	c.syncBackgroundEffectNodes(effect, parent, anchor, 0, 0, region, nil)
+	c.syncBackgroundEffectNodes(effect, parent, anchor, 0, 0, region, nil, true)
 	sameNodes()
 
 	region[0].w = 14
 	corners := config.CornerRadius{4, 0, 0, 0}
-	c.syncBackgroundEffectNodes(effect, parent, anchor, 2, 3, region, &corners)
+	c.syncBackgroundEffectNodes(effect, parent, anchor, 2, 3, region, &corners, true)
 	sameNodes()
 	if got, want := sceneFXBlurBox(effect.blurNodes[0]), (rect{2, 3, 14, 20}); got != want {
 		t.Fatalf("resized blur node = %+v, want %+v", got, want)
@@ -95,7 +97,7 @@ func TestBackgroundEffectReusesNodesAcrossBufferCommits(t *testing.T) {
 	if got := sceneFXBlurTopLeftCorner(effect.blurNodes[0]); got != 4 {
 		t.Fatalf("resized blur corner = %d, want 4", got)
 	}
-	c.syncBackgroundEffectNodes(effect, parent, anchor, 2, 3, region, nil)
+	c.syncBackgroundEffectNodes(effect, parent, anchor, 2, 3, region, nil, true)
 	if got := sceneFXBlurTopLeftCorner(effect.blurNodes[0]); got != 0 {
 		t.Fatalf("removed blur corner = %d, want 0", got)
 	}
@@ -181,4 +183,41 @@ func TestBackgroundEffectDrawsFrostUnderTheRegion(t *testing.T) {
 		t.Fatal(err)
 	}
 	<-done
+}
+
+func TestBackdropBlurReusesCacheUntilItsOutputChanges(t *testing.T) {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	scene := newBackgroundEffectTestScene()
+	if scene == nil {
+		t.Fatal("creating scene")
+	}
+	defer sceneFXNodeDestroy(scene)
+	c := newBackdropBlurTestCompositor(scene)
+	left, right := unsafe.Pointer(new(byte)), unsafe.Pointer(new(byte))
+	leftBox, rightBox := image.Rect(0, 0, 80, 60), image.Rect(80, 0, 160, 60)
+
+	a := c.syncBackdropBlur(left, leftBox)
+	b := c.syncBackdropBlur(right, rightBox)
+	if a == nil || b == nil || a == b || !a.dirty || !b.dirty {
+		t.Fatal("each output needs a separate, initially dirty cache")
+	}
+	// SceneFX clears dirty after building the backdrop.
+	a.dirty, b.dirty = false, false
+	sceneFXSetNodeEnabled(unsafe.Pointer(a), false)
+	sceneFXSetNodeEnabled(unsafe.Pointer(b), false)
+	if c.syncBackdropBlur(left, leftBox) != a || a.dirty {
+		t.Fatal("a frame with the same backdrop reused neither its pixels nor its node")
+	}
+	c.invalidateBackdropBlur(right)
+	if a.dirty || a.node.enabled || !b.dirty || !b.node.enabled {
+		t.Fatal("backdrop damage should arm only the affected cache")
+	}
+	if c.syncBackdropBlur(left, leftBox.Add(image.Pt(1, 0))) != a || !a.dirty {
+		t.Fatal("moving an output should invalidate its existing cache")
+	}
+	c.dropBackdropBlur(right)
+	if c.blurBackdrops[right] != nil {
+		t.Fatal("retiring an output kept its cache node")
+	}
 }

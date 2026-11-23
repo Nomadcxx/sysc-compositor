@@ -277,6 +277,7 @@ import (
 	"unsafe"
 
 	"github.com/Nomadcxx/sysc-compositor/internal/config"
+	"github.com/Nomadcxx/sysc-compositor/internal/perf"
 )
 
 type debugOutput struct {
@@ -421,19 +422,12 @@ func (c *Compositor) applyDebugSettings() {
 	}
 	c.debugFullDamage()
 }
-func (c *Compositor) repaintOutput(pointer unsafe.Pointer, scene *C.struct_wlr_scene_output) bool {
+func (c *Compositor) repaintOutput(pointer unsafe.Pointer, scene *C.struct_wlr_scene_output) (ok bool) {
 	defer C.sysc_debug_frame_done(scene)
 	defer c.workspaceOutput(outputName(pointer))()
 	state := c.debugRuntime.outputs[pointer]
-	if state == nil {
-		return bool(C.wlr_scene_output_commit(scene, nil))
-	}
-	output := (*C.struct_wlr_output)(pointer)
-	if c.debugConfig.SkipCursorOnlyUpdatesDuringVRR && output.adaptive_sync_status == C.WLR_OUTPUT_ADAPTIVE_SYNC_ENABLED && state.content == c.debugRuntime.content {
-		return true
-	}
 	var restore func()
-	if target := c.debugConfig.PreviewRender; target != nil {
+	if target := c.debugConfig.PreviewRender; state != nil && target != nil {
 		var err error
 		restore, err = c.beginCapturePrivacy(*target)
 		if err != nil {
@@ -442,7 +436,28 @@ func (c *Compositor) repaintOutput(pointer unsafe.Pointer, scene *C.struct_wlr_s
 		}
 		defer restore()
 	}
-	ok := bool(C.sysc_debug_repaint(scene, state.overlay, C.bool(c.debugConfig.EnableOverlayPlanes), C.bool(c.debugRuntime.tint), C.bool(c.debugRuntime.opaque), C.bool(c.debugConfig.WaitForFrameCompletionBeforeQueueing), C.bool(c.debugConfig.RestrictPrimaryScanoutToMatchingFormat)))
+	cache, restore := c.prepareBackdropBlur(pointer, unsafe.Pointer(scene))
+	if restore != nil {
+		defer restore()
+	}
+	rebuilding := cache != nil && bool(cache.dirty)
+	if rebuilding {
+		defer func() {
+			if !ok {
+				c.invalidateBackdropBlur(pointer)
+			} else if !cache.dirty {
+				perf.RecordBlurCacheRebuild()
+			}
+		}()
+	}
+	if state == nil {
+		return bool(C.wlr_scene_output_commit(scene, nil))
+	}
+	output := (*C.struct_wlr_output)(pointer)
+	if !rebuilding && c.debugConfig.SkipCursorOnlyUpdatesDuringVRR && output.adaptive_sync_status == C.WLR_OUTPUT_ADAPTIVE_SYNC_ENABLED && state.content == c.debugRuntime.content {
+		return true
+	}
+	ok = bool(C.sysc_debug_repaint(scene, state.overlay, C.bool(c.debugConfig.EnableOverlayPlanes), C.bool(c.debugRuntime.tint), C.bool(c.debugRuntime.opaque), C.bool(c.debugConfig.WaitForFrameCompletionBeforeQueueing), C.bool(c.debugConfig.RestrictPrimaryScanoutToMatchingFormat)))
 	if ok {
 		state.content = c.debugRuntime.content
 	}

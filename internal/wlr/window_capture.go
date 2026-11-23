@@ -141,11 +141,28 @@ func (c *Compositor) initCaptureProtocol(manager *C.struct_wlr_ext_image_copy_ca
 	c.keep(p.sessionNew, AddListener(unsafe.Pointer(&c.comp.events.new_surface), func(data unsafe.Pointer) {
 		surface := (*C.struct_wlr_surface)(data)
 		var listeners []*Listener
-		damage := func(unsafe.Pointer) { c.queueCaptureSurfaceDamage() }
+		damage := func(unsafe.Pointer) {
+			c.backdropSurfaceChanged(surface)
+			c.queueCaptureSurfaceDamage()
+		}
 		listeners = []*Listener{
-			AddListener(unsafe.Pointer(&surface.events.commit), damage),
+			AddListener(unsafe.Pointer(&surface.events.commit), func(unsafe.Pointer) {
+				const visual = C.WLR_SURFACE_STATE_BUFFER | C.WLR_SURFACE_STATE_SURFACE_DAMAGE |
+					C.WLR_SURFACE_STATE_BUFFER_DAMAGE | C.WLR_SURFACE_STATE_OPAQUE_REGION |
+					C.WLR_SURFACE_STATE_TRANSFORM | C.WLR_SURFACE_STATE_SCALE |
+					C.WLR_SURFACE_STATE_VIEWPORT | C.WLR_SURFACE_STATE_OFFSET
+				// Subsurface geometry and stacking latch on their parent's
+				// commit even when that commit has no surface state flags.
+				if surface.current.committed&visual != 0 ||
+					C.wl_list_empty(&surface.current.subsurfaces_below) == 0 ||
+					C.wl_list_empty(&surface.current.subsurfaces_above) == 0 {
+					c.backdropSurfaceChanged(surface)
+				}
+				c.queueCaptureSurfaceDamage()
+			}),
 			AddListener(unsafe.Pointer(&surface.events.unmap), damage),
 			AddListener(unsafe.Pointer(&surface.events.destroy), func(unsafe.Pointer) {
+				c.backdropSurfaceChanged(surface)
 				for _, listener := range listeners {
 					c.drop(listener)
 				}

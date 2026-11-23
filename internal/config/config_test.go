@@ -714,17 +714,22 @@ layer-rule {
     geometry-corner-radius 8
     shadow { on; softness 10; }
     block-out-from "screencast"
-    background-effect { blur true; }
+    background-effect { blur true; xray true; }
 }
 layer-rule {
     match namespace="^panel$"
     opacity 0.75
     shadow { spread 2; }
+    background-effect { xray false; }
     background-effect { blur false; }
 }
 window-rule {
     match app-id="a"
-    background-effect { blur true; }
+    background-effect { blur true; xray true; }
+}
+window-rule {
+    match app-id="a"
+    background-effect { xray false; }
 }
 `))
 	if err != nil {
@@ -738,7 +743,8 @@ window-rule {
 		panel.GeometryCornerRadius == nil || *panel.GeometryCornerRadius != (CornerRadius{8, 8, 8, 8}) ||
 		!panel.Shadow.On || panel.Shadow.Softness == nil || *panel.Shadow.Softness != 10 ||
 		panel.Shadow.Spread == nil || *panel.Shadow.Spread != 2 ||
-		panel.BackgroundEffect.Blur == nil || *panel.BackgroundEffect.Blur {
+		panel.BackgroundEffect.Blur == nil || *panel.BackgroundEffect.Blur ||
+		panel.BackgroundEffect.Xray == nil || *panel.BackgroundEffect.Xray {
 		t.Errorf("panel layer rules = %+v, want the later rule over the earlier, field by field", panel)
 	}
 	if !panel.BlocksCapture(CaptureCast) || panel.BlocksCapture(CaptureScreen) || panel.BlocksCapture(CaptureDisplay) {
@@ -747,18 +753,19 @@ window-rule {
 	if other := cfg.ResolveLayerRules("other", LayerState{}); other.Opacity != nil || other.Shadow.On || other.BlockOutFrom != nil {
 		t.Errorf("unmatched layer got rules = %+v", other)
 	}
-	if blur := cfg.ResolveWindowRules("a", "", UnmappedWindowState(false)).BackgroundEffect.Blur; blur == nil || !*blur {
-		t.Errorf("window-rule background-effect blur = %v, want true", blur)
+	window := cfg.ResolveWindowRules("a", "", UnmappedWindowState(false)).BackgroundEffect
+	if window.Blur == nil || !*window.Blur || window.Xray == nil || *window.Xray {
+		t.Errorf("window background effect = %+v, want blur true and xray false", window)
 	}
 
 	unsupported, err := Parse("effects.kdl", []byte(`
-layer-rule { background-effect { xray false; noise 0.1; }; }
+layer-rule { background-effect { noise 0.1; }; }
 window-rule { background-effect { saturation 2; }; }
 `))
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"layer-rule.background-effect.xray", "layer-rule.background-effect.noise",
+	for _, want := range []string{"layer-rule.background-effect.noise",
 		"window-rule.background-effect.saturation"} {
 		if !slices.Contains(unsupported.Warnings, want) {
 			t.Errorf("warnings = %v, want %q", unsupported.Warnings, want)
@@ -768,6 +775,7 @@ window-rule { background-effect { saturation 2; }; }
 		`layer-rule { opacity "x"; }`:                        "opacity",
 		`layer-rule { block-out-from "everything"; }`:        "screen-capture or screencast",
 		`window-rule { background-effect { blur 1; }; }`:     "boolean",
+		`layer-rule { background-effect { xray "yes"; }; }`:  "boolean",
 		`layer-rule { background-effect { glow true; }; }`:   "unexpected node",
 		`window-rule { background-effect { noise 2000; }; }`: "noise",
 	} {
@@ -1982,12 +1990,13 @@ window-rule {
     popups {
         opacity 0.5
         geometry-corner-radius 6
+        background-effect { xray true; }
     }
 }
 window-rule {
     match app-id="^menu$"
     popups {
-        background-effect { blur true; }
+        background-effect { blur true; xray false; }
     }
 }
 layer-rule {
@@ -2010,6 +2019,9 @@ layer-rule {
 	}
 	if popups.BackgroundEffect.Blur == nil || !*popups.BackgroundEffect.Blur {
 		t.Errorf("popup blur = %v, want true", popups.BackgroundEffect.Blur)
+	}
+	if popups.BackgroundEffect.Xray == nil || *popups.BackgroundEffect.Xray {
+		t.Errorf("popup xray = %v, want false from the later rule", popups.BackgroundEffect.Xray)
 	}
 	if got := cfg.ResolveLayerRules("bar", LayerState{}).Popups.Opacity; got == nil || *got != 0.25 {
 		t.Errorf("layer popup opacity = %v, want 0.25", got)

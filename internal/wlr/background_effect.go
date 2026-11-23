@@ -49,6 +49,8 @@ type backgroundEffect struct {
 	blurParent unsafe.Pointer
 	// ruleBlur is the rule blur last drawn, to redraw when a rule changes it.
 	ruleBlur       *bool
+	ruleXray       *bool
+	cachedBlur     bool
 	commit         *Listener
 	rootCommit     *Listener
 	surfaceDestroy *Listener
@@ -130,21 +132,20 @@ func (c *Compositor) backgroundEffectFor(surface *C.struct_wlr_surface) *backgro
 	return effect
 }
 
-// ruleBlur is the background-effect blur a window or layer rule sets for the
-// surface tree under root: nil follows the protocol region.
-func (c *Compositor) ruleBlur(root *C.struct_wlr_surface) *bool {
+// backgroundEffectRule resolves the rule that applies to this surface tree.
+func (c *Compositor) backgroundEffectRule(root *C.struct_wlr_surface) config.BackgroundEffectRule {
 	if isXDGPopup(root) {
-		return c.popupsRuleFor(root).BackgroundEffect.Blur
+		return c.popupsRuleFor(root).BackgroundEffect
 	}
 	for _, view := range c.views {
 		if view.toplevel != nil && view.toplevel.base.surface == root {
-			return view.appearance.BackgroundEffect.Blur
+			return view.appearance.BackgroundEffect
 		}
 	}
 	if layer := c.layerSurfaces[unsafe.Pointer(root)]; layer != nil {
-		return layer.rules.BackgroundEffect.Blur
+		return layer.rules.BackgroundEffect
 	}
-	return nil
+	return config.BackgroundEffectRule{}
 }
 
 // syncRuleBackgroundEffects gives every mapped window and layer surface whose
@@ -170,9 +171,9 @@ func (c *Compositor) syncRuleBackgroundEffects() {
 		}
 	}
 	for _, effect := range c.backgroundEffects {
-		blur := c.ruleBlur(effect.root)
-		if !sameBool(blur, effect.ruleBlur) {
-			effect.ruleBlur = blur
+		rule := c.backgroundEffectRule(effect.root)
+		if !sameBool(rule.Blur, effect.ruleBlur) || !sameBool(rule.Xray, effect.ruleXray) {
+			effect.ruleBlur, effect.ruleXray = rule.Blur, rule.Xray
 			c.syncBackgroundEffect(effect)
 		}
 	}
@@ -215,6 +216,13 @@ func (c *Compositor) applyBlurConfig() {
 	blur := c.blurConfig
 	sceneFXSetBlurData(unsafe.Pointer(c.scene), blur.Passes, int(math.Round(blur.Offset)),
 		blur.Noise, blur.Saturation)
+	for output := range c.blurBackdrops {
+		if blur.Off {
+			c.dropBackdropBlur(output)
+		} else {
+			c.invalidateBackdropBlur(output)
+		}
+	}
 	for _, effect := range c.backgroundEffects {
 		c.syncBackgroundEffect(effect)
 	}
@@ -223,7 +231,8 @@ func (c *Compositor) applyBlurConfig() {
 func (c *Compositor) syncBackgroundEffect(effect *backgroundEffect) {
 	// Niri's background-effect blur: false never blurs, true blurs the whole
 	// surface when the client asked for no region.
-	blur := c.ruleBlur(effect.root)
+	rule := c.backgroundEffectRule(effect.root)
+	blur := rule.Blur
 	if effect.surface == nil || c.blurConfig.Off || blur != nil && !*blur {
 		c.clearBackgroundEffectNodes(effect)
 		return
@@ -249,11 +258,11 @@ func (c *Compositor) syncBackgroundEffect(effect *backgroundEffect) {
 		return
 	}
 	clipped := clipSurfaceRegion(region, int(effect.surface.current.width), int(effect.surface.current.height))
-	c.syncBackgroundEffectNodes(effect, unsafe.Pointer(parent), unsafe.Pointer(surfaceNode), int(x), int(y), clipped, corners)
+	c.syncBackgroundEffectNodes(effect, unsafe.Pointer(parent), unsafe.Pointer(surfaceNode), int(x), int(y), clipped, corners, c.effectUsesBackdrop(effect, parent, rule.Xray))
 }
 
 func (c *Compositor) syncBackgroundEffectNodes(effect *backgroundEffect, parent, surfaceNode unsafe.Pointer,
-	x, y int, clipped []rect, corners *config.CornerRadius) {
+	x, y int, clipped []rect, corners *config.CornerRadius, cached bool) {
 	if effect.blurParent != parent || len(effect.blurNodes) != len(clipped) {
 		c.clearBackgroundEffectNodes(effect)
 		for _, area := range clipped {
@@ -269,6 +278,7 @@ func (c *Compositor) syncBackgroundEffectNodes(effect *backgroundEffect, parent,
 		}
 	}
 
+	effect.cachedBlur = cached
 	// Preserve the order below the surface. SceneFX's setters are no-ops
 	// for unchanged geometry and already adjacent siblings.
 	sibling := surfaceNode
@@ -277,6 +287,7 @@ func (c *Compositor) syncBackgroundEffectNodes(effect *backgroundEffect, parent,
 		area := clipped[i]
 		blur := C.wlr_scene_blur_from_node((*C.struct_wlr_scene_node)(node))
 		C.wlr_scene_blur_set_size(blur, C.int(area.w), C.int(area.h))
+		C.wlr_scene_blur_set_should_only_blur_bottom_layer(blur, C.bool(cached))
 		sceneFXNodeSetPosition(node, x+area.x, y+area.y)
 		var radii [4]uint16
 		if corners != nil {
@@ -344,6 +355,9 @@ func (c *Compositor) clearBackgroundEffectNodes(effect *backgroundEffect) {
 }
 
 func (c *Compositor) destroyBackgroundEffects() {
+	for output := range c.blurBackdrops {
+		c.dropBackdropBlur(output)
+	}
 	for key, effect := range c.backgroundEffects {
 		c.clearBackgroundEffectNodes(effect)
 		c.drop(effect.commit)

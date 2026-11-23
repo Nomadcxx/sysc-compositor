@@ -721,11 +721,13 @@ func (c *Compositor) createAppearanceTrees() bool {
 	c.windowFocusTree = C.wlr_scene_tree_create(&c.scene.tree)
 	c.tabIndicatorTree = C.wlr_scene_tree_create(&c.scene.tree)
 	c.backgroundTree = C.wlr_scene_tree_create(&c.scene.tree)
+	c.blurBackdropTree = C.wlr_scene_tree_create(&c.scene.tree)
 	if c.windowShadowTree == nil || c.windowAnimationTree == nil || c.windowBorderTree == nil ||
-		c.windowFocusTree == nil || c.tabIndicatorTree == nil || c.backgroundTree == nil {
+		c.windowFocusTree == nil || c.tabIndicatorTree == nil || c.backgroundTree == nil || c.blurBackdropTree == nil {
 		return false
 	}
 	C.wlr_scene_node_place_below(&c.backgroundTree.node, &c.layerTrees[layerBackground].node)
+	C.wlr_scene_node_place_above(&c.blurBackdropTree.node, &c.layerTrees[layerBackground].node)
 	C.wlr_scene_node_place_below(&c.windowShadowTree.node, &c.layerTrees[layerWindows].node)
 	C.wlr_scene_node_place_below(&c.windowAnimationTree.node, &c.layerTrees[layerWindows].node)
 	C.wlr_scene_node_place_below(&c.windowBorderTree.node, &c.layerTrees[layerWindows].node)
@@ -801,6 +803,15 @@ func sceneFXNodeLowerToBottom(node unsafe.Pointer) {
 	if node != nil {
 		C.wlr_scene_node_lower_to_bottom((*C.struct_wlr_scene_node)(node))
 	}
+}
+
+// sceneFXBackgroundChanged compares the pixels and geometry of an output fill.
+func sceneFXBackgroundChanged(node unsafe.Pointer, x, y, width, height int, color [4]float32, enabled bool) bool {
+	n := (*C.struct_wlr_scene_node)(node)
+	r := C.wlr_scene_rect_from_node(n)
+	return n.enabled != C.bool(enabled) || n.x != C.int(x) || n.y != C.int(y) ||
+		r.width != C.int(width) || r.height != C.int(height) ||
+		r.color != [4]C.float{C.float(color[0]), C.float(color[1]), C.float(color[2]), C.float(color[3])}
 }
 
 // sceneFXRectUpdateFill draws the whole rectangle, with no cut-out.

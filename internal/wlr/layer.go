@@ -312,6 +312,9 @@ func (c *Compositor) handleNewLayerSurface(data unsafe.Pointer) {
 			return
 		}
 		if layer := sceneLayer(surface.current.layer); layer != l.layer {
+			if layer == layerBackground || l.layer == layerBackground {
+				c.invalidateBackdropBlur(l.output)
+			}
 			// The next frame moves a Top surface under a fullscreen window.
 			l.layer, l.underFullscreen = layer, false
 			C.sysc_reparent(l.tree, c.layerTrees[layer])
@@ -402,6 +405,9 @@ func (c *Compositor) reapplyLayerRules() {
 	for _, layer := range c.layerOrder {
 		layer.rules = c.resolveLayerRules(layer)
 		c.applyLayerAppearance(layer)
+		if layer.layer == layerBackground {
+			c.invalidateBackdropBlur(layer.output)
+		}
 	}
 	c.syncRuleBackgroundEffects()
 	c.syncBobbing(time.Now())
@@ -496,10 +502,14 @@ func (c *Compositor) arrangeLayers(output unsafe.Pointer) {
 					(l.surface.current.exclusive_zone > 0) != exclusive {
 					continue
 				}
+				x, y := l.tree.node.x, l.tree.node.y
 				C.sysc_layer_configure(l.scene, &full, &usable)
 				// The configure put the tree back in its place.
 				if l.bobY != 0 {
 					C.wlr_scene_node_set_position(&l.tree.node, l.tree.node.x, l.tree.node.y+C.int(l.bobY))
+				}
+				if layer == layerBackground && (x != l.tree.node.x || y != l.tree.node.y) {
+					c.invalidateBackdropBlur(output)
 				}
 			}
 		}

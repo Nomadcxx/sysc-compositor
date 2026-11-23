@@ -200,7 +200,7 @@ func (c *Compositor) beginCapturePrivacy(target config.CaptureTarget) (func(), e
 	}
 	var masks []captureMask
 	var blurMasks []captureBlurMask
-	var blurs []*C.struct_wlr_scene_optimized_blur
+	backdropMasked := false
 	restore := func() {
 		restoreTransition()
 		for _, mask := range masks {
@@ -211,8 +211,10 @@ func (c *Compositor) beginCapturePrivacy(target config.CaptureTarget) (func(), e
 			C.wlr_scene_blur_set_transparency_mask_source(mask.blur, mask.source)
 		}
 		// A physical frame must not reuse optimized blur cached for capture.
-		for _, blur := range blurs {
-			C.wlr_scene_optimized_blur_mark_dirty(blur)
+		if backdropMasked {
+			for output := range c.blurBackdrops {
+				c.invalidateBackdropBlur(output)
+			}
 		}
 		if shotTree != nil {
 			sceneFXTreeSetEnabled(shotTree, true)
@@ -223,11 +225,6 @@ func (c *Compositor) beginCapturePrivacy(target config.CaptureTarget) (func(), e
 	}
 	var maskErr error
 	walkCaptureScene(&c.scene.tree.node, func(node *C.struct_wlr_scene_node) {
-		if node._type == C.WLR_SCENE_NODE_OPTIMIZED_BLUR {
-			blur := C.wlr_scene_optimized_blur_from_node(node)
-			blurs = append(blurs, blur)
-			C.wlr_scene_optimized_blur_mark_dirty(blur)
-		}
 		if node._type == C.WLR_SCENE_NODE_BLUR {
 			blur := C.wlr_scene_blur_from_node(node)
 			source := C.wlr_scene_blur_get_transparency_mask_source(blur)
@@ -246,10 +243,16 @@ func (c *Compositor) beginCapturePrivacy(target config.CaptureTarget) (func(), e
 			return
 		}
 		masks = append(masks, captureMask{node, mask, enabled})
+		backdropMasked = backdropMasked || c.blurBackdropContains(node)
 	})
 	if maskErr != nil {
 		restore()
 		return nil, maskErr
+	}
+	if backdropMasked {
+		for output := range c.blurBackdrops {
+			c.invalidateBackdropBlur(output)
+		}
 	}
 	// ponytail: synchronous O(scene nodes) masking on the compositor thread;
 	// persistent filtered scenes are the upgrade if measured cost warrants it.

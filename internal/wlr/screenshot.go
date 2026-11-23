@@ -257,9 +257,17 @@ func (c *Compositor) renderOutputForTarget(pointer unsafe.Pointer, target config
 		return nil, err
 	}
 	defer restore()
+	cache, restoreBlur := c.prepareBackdropBlur(pointer, unsafe.Pointer(so))
+	if restoreBlur != nil {
+		defer restoreBlur()
+	}
 	buffer := C.sysc_render_output(unsafe.Pointer(so), output)
 	if buffer == nil {
 		return nil, fmt.Errorf("wlr: rendering output %q for a screenshot failed", C.GoString(output.name))
+	}
+	if cache != nil && cache.dirty {
+		C.wlr_buffer_unlock(buffer)
+		return nil, errors.New("wlr: capture backdrop did not rebuild")
 	}
 	return buffer, nil
 }

@@ -93,7 +93,7 @@ static bool sysc_apply_requested_state(struct wlr_output_event_request_state *ev
 // covers in the layout.
 static bool sysc_commit_changed_geometry(struct wlr_output_event_commit *event) {
 	return (event->state->committed & (WLR_OUTPUT_STATE_MODE | WLR_OUTPUT_STATE_SCALE |
-		WLR_OUTPUT_STATE_TRANSFORM)) != 0;
+		WLR_OUTPUT_STATE_TRANSFORM | WLR_OUTPUT_STATE_RENDER_FORMAT)) != 0;
 }
 
 // wlroots sends "Unknown" for make and model in wl_output.geometry
@@ -609,6 +609,7 @@ func (c *Compositor) handleNewOutput(data unsafe.Pointer) {
 		C.sysc_output_geometry_resent(event)
 		c.keepCommitted(data, event)
 		if bool(C.sysc_commit_changed_enabled((*C.struct_wlr_output_event_commit)(event))) {
+			c.invalidateBackdropBlur(data)
 			c.syncCaptureSources()
 		}
 		if _, adopted := c.sceneOutputs[data]; adopted &&
@@ -684,6 +685,7 @@ func (c *Compositor) adoptOutput(pointer unsafe.Pointer) {
 
 // outputGeometryChanged lets what lives on an output follow a new box.
 func (c *Compositor) outputGeometryChanged(pointer unsafe.Pointer) {
+	c.invalidateBackdropBlur(pointer)
 	c.screenTransitionGeometryChanged(pointer)
 	if c.shotUI != nil {
 		if frame := c.shotUI.frames[pointer]; frame != nil {
@@ -704,6 +706,7 @@ func (c *Compositor) outputGeometryChanged(pointer unsafe.Pointer) {
 // retireOutput forgets an output's scene output and what lives on it, as an
 // unplug does. The caller destroys or releases the scene output.
 func (c *Compositor) retireOutput(pointer unsafe.Pointer) {
+	c.dropBackdropBlur(pointer)
 	c.finishScreenTransition(pointer)
 	if c.shotUI != nil && c.shotUI.frames[pointer] != nil {
 		c.closeScreenshotUI()

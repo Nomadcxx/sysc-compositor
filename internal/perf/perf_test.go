@@ -33,6 +33,7 @@ func TestBenchmarkDiagnostics(t *testing.T) {
 	RecordSnapshot(time.Now().Add(-time.Millisecond))
 	OutputFrame(true, time.Millisecond)
 	OutputFrame(false, time.Millisecond)
+	RecordBlurCacheRebuild()
 	OutputPresent(true, 0x9)
 	OutputPresent(false, 0)
 	client := &http.Client{Timeout: 3 * time.Second, Transport: &http.Transport{
@@ -44,15 +45,16 @@ func TestBenchmarkDiagnostics(t *testing.T) {
 		t.Fatal(err)
 	}
 	var got struct {
-		Snapshots    uint64         `json:"snapshots"`
-		SnapshotNS   uint64         `json:"snapshot_ns"`
-		OutputFrames uint64         `json:"output_frames"`
-		SceneCommits uint64         `json:"scene_commits"`
-		SceneWorkNS  uint64         `json:"scene_work_ns"`
-		Presented    uint64         `json:"presented"`
-		Discarded    uint64         `json:"discarded"`
-		ZeroCopy     uint64         `json:"zero_copy_presents"`
-		Runtime      map[string]any `json:"runtime"`
+		Snapshots         uint64         `json:"snapshots"`
+		SnapshotNS        uint64         `json:"snapshot_ns"`
+		OutputFrames      uint64         `json:"output_frames"`
+		SceneCommits      uint64         `json:"scene_commits"`
+		SceneWorkNS       uint64         `json:"scene_work_ns"`
+		BlurCacheRebuilds uint64         `json:"blur_cache_rebuilds"`
+		Presented         uint64         `json:"presented"`
+		Discarded         uint64         `json:"discarded"`
+		ZeroCopy          uint64         `json:"zero_copy_presents"`
+		Runtime           map[string]any `json:"runtime"`
 	}
 	if err := json.NewDecoder(response.Body).Decode(&got); err != nil {
 		t.Fatal(err)
@@ -61,7 +63,7 @@ func TestBenchmarkDiagnostics(t *testing.T) {
 	if got.Snapshots != 1 || got.SnapshotNS < 1e6 || got.OutputFrames != 2 || got.SceneCommits != 1 || len(got.Runtime) == 0 {
 		t.Fatalf("metrics: %+v", got)
 	}
-	if got.SceneWorkNS != 2e6 || got.Presented != 1 || got.Discarded != 1 || got.ZeroCopy != 1 {
+	if got.SceneWorkNS != 2e6 || got.BlurCacheRebuilds != 1 || got.Presented != 1 || got.Discarded != 1 || got.ZeroCopy != 1 {
 		t.Fatalf("presentation counters: %+v", got)
 	}
 	response, err = client.Get("http://localhost/debug/pprof/goroutine?debug=1")

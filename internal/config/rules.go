@@ -249,7 +249,7 @@ type PopupsRule struct {
 func (r PopupsRule) merge(part PopupsRule) PopupsRule {
 	applyRuleValue(&r.Opacity, part.Opacity)
 	applyRuleValue(&r.GeometryCornerRadius, part.GeometryCornerRadius)
-	r.BackgroundEffect.Blur = cmp.Or(part.BackgroundEffect.Blur, r.BackgroundEffect.Blur)
+	r.BackgroundEffect = r.BackgroundEffect.merge(part.BackgroundEffect)
 	return r
 }
 
@@ -258,11 +258,17 @@ func (r LayerRuleResult) BlocksCapture(target CaptureTarget) bool {
 	return blocksCapture(r.BlockOutFrom, target)
 }
 
-// BackgroundEffectRule is Niri's background-effect part. Only blur applies:
-// nil follows the surface's ext-background-effect region, true blurs the
-// whole surface and false never blurs.
+// BackgroundEffectRule is Niri's background-effect part.
 type BackgroundEffectRule struct {
+	// Blur follows the surface's ext-background-effect region when nil.
+	// True also blurs the whole surface when no region was requested.
 	Blur *bool
+	// Xray selects the backdrop. Nil leaves the surface's default in effect.
+	Xray *bool
+}
+
+func (r BackgroundEffectRule) merge(part BackgroundEffectRule) BackgroundEffectRule {
+	return BackgroundEffectRule{Blur: cmp.Or(part.Blur, r.Blur), Xray: cmp.Or(part.Xray, r.Xray)}
 }
 
 // LayerMatch is one match or exclude line of a layer rule. Its properties are
@@ -323,7 +329,7 @@ func ResolveWindowRules(rules []WindowRule, appID, title string, state WindowSta
 		applyRuleValue(&result.ScrollFactor, rule.ScrollFactor)
 		applyRuleValue(&result.VariableRefreshRate, rule.VariableRefreshRate)
 		result.Decorations = result.Decorations.merge(rule.Decorations)
-		result.BackgroundEffect.Blur = cmp.Or(rule.BackgroundEffect.Blur, result.BackgroundEffect.Blur)
+		result.BackgroundEffect = result.BackgroundEffect.merge(rule.BackgroundEffect)
 		applyRuleValue(&result.DrawBorderWithBackground, rule.DrawBorderWithBackground)
 		applyRuleValue(&result.TiledState, rule.TiledState)
 		applyRuleValue(&result.BabaIsFloat, rule.BabaIsFloat)
@@ -440,7 +446,7 @@ func ResolveLayerRules(rules []LayerRule, namespace string, state LayerState) La
 		applyRuleValue(&result.BlockOutFrom, rule.BlockOutFrom)
 		applyRuleValue(&result.GeometryCornerRadius, rule.GeometryCornerRadius)
 		result.Shadow = result.Shadow.merge(rule.Shadow)
-		result.BackgroundEffect.Blur = cmp.Or(rule.BackgroundEffect.Blur, result.BackgroundEffect.Blur)
+		result.BackgroundEffect = result.BackgroundEffect.merge(rule.BackgroundEffect)
 		result.Popups = result.Popups.merge(rule.Popups)
 	}
 	return result
@@ -770,7 +776,7 @@ func (c *Config) windowRule(node *document.Node) error {
 			var part BackgroundEffectRule
 			part, err = c.backgroundEffectRule(child, "window-rule.background-effect")
 			if err == nil {
-				rule.BackgroundEffect.Blur = cmp.Or(part.Blur, rule.BackgroundEffect.Blur)
+				rule.BackgroundEffect = rule.BackgroundEffect.merge(part)
 			}
 		case "popups":
 			var part PopupsRule
@@ -958,7 +964,7 @@ func (c *Config) layerRule(node *document.Node) error {
 			if err != nil {
 				return fmt.Errorf("background-effect: %w", err)
 			}
-			rule.BackgroundEffect.Blur = cmp.Or(part.Blur, rule.BackgroundEffect.Blur)
+			rule.BackgroundEffect = rule.BackgroundEffect.merge(part)
 		case "popups":
 			part, err := c.popupsRule(child, "layer-rule.popups")
 			if err != nil {
@@ -1154,7 +1160,7 @@ func (c *Config) popupsRule(node *document.Node, prefix string) (PopupsRule, err
 		case "background-effect":
 			var part BackgroundEffectRule
 			part, err = c.backgroundEffectRule(child, prefix+".background-effect")
-			rule.BackgroundEffect.Blur = cmp.Or(part.Blur, rule.BackgroundEffect.Blur)
+			rule.BackgroundEffect = rule.BackgroundEffect.merge(part)
 		default:
 			err = fmt.Errorf("unexpected key")
 		}
@@ -1165,9 +1171,8 @@ func (c *Config) popupsRule(node *document.Node, prefix string) (PopupsRule, err
 	return rule, nil
 }
 
-// backgroundEffectRule parses Niri's background-effect part. xray, noise and
-// saturation are checked and warn: SceneFX's blur takes noise and
-// saturation for the whole scene, and xray needs an optimized blur pass.
+// backgroundEffectRule parses Niri's background-effect part. Per-surface
+// noise and saturation warn because SceneFX sets them for the whole scene.
 func (c *Config) backgroundEffectRule(node *document.Node, prefix string) (BackgroundEffectRule, error) {
 	var rule BackgroundEffectRule
 	if len(node.Arguments) != 0 || len(node.Properties) != 0 {
@@ -1183,7 +1188,7 @@ func (c *Config) backgroundEffectRule(node *document.Node, prefix string) (Backg
 			if name == "blur" {
 				rule.Blur = &value
 			} else {
-				c.addWarning(prefix + ".xray")
+				rule.Xray = &value
 			}
 		case "noise", "saturation":
 			if _, err := boundedNumber(child, 0, 1000); err != nil {
