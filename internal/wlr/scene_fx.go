@@ -728,9 +728,12 @@ func (c *Compositor) createAppearanceTrees() bool {
 	}
 	C.wlr_scene_node_place_below(&c.backgroundTree.node, &c.layerTrees[layerBackground].node)
 	C.wlr_scene_node_place_above(&c.blurBackdropTree.node, &c.layerTrees[layerBackground].node)
+	// Bottom to top: shadows, borders, then animation snapshots, which stand
+	// in for hidden windows. A client-decorated window's border fills its
+	// whole tile and would cover a snapshot drawn under it.
 	C.wlr_scene_node_place_below(&c.windowShadowTree.node, &c.layerTrees[layerWindows].node)
-	C.wlr_scene_node_place_below(&c.windowAnimationTree.node, &c.layerTrees[layerWindows].node)
 	C.wlr_scene_node_place_below(&c.windowBorderTree.node, &c.layerTrees[layerWindows].node)
+	C.wlr_scene_node_place_below(&c.windowAnimationTree.node, &c.layerTrees[layerWindows].node)
 	C.wlr_scene_node_place_below(&c.windowFocusTree.node, &c.layerTrees[layerTop].node)
 	C.wlr_scene_node_place_below(&c.tabIndicatorTree.node, &c.layerTrees[layerTop].node)
 	return true

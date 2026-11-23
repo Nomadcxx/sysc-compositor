@@ -43,6 +43,14 @@ static void sysc_layer_configure(struct wlr_scene_layer_surface_v1 *scene,
 static void sysc_tree_coords_layer(struct wlr_scene_tree *tree, int *x, int *y) {
 	wlr_scene_node_coords(&tree->node, x, y);
 }
+
+// sysc_tree_below: lower draws first among the children of one parent.
+static bool sysc_tree_below(struct wlr_scene_tree *lower, struct wlr_scene_tree *upper) {
+	for (struct wl_list *link = lower->node.link.next; link != &lower->node.parent->children; link = link->next) {
+		if (link == &upper->node.link) return true;
+	}
+	return false;
+}
 */
 import "C"
 
@@ -201,6 +209,27 @@ func chooseLayerKeyboardFocus(candidates []layerFocusCandidate, activeOutput str
 // createLayerTrees makes one scene tree per stacking layer under the scene
 // root. Creation order is drawing order. The tree for Top surfaces under a
 // fullscreen window sits on the Bottom layer, below window decorations.
+// newStackingTestCompositor builds only the scene's stacking trees.
+func newStackingTestCompositor() (*Compositor, func()) {
+	c := &Compositor{scene: C.wlr_scene_create()}
+	if c.scene == nil || !c.createLayerTrees() || !c.createAppearanceTrees() {
+		return nil, func() {}
+	}
+	return c, func() { C.wlr_scene_node_destroy(&c.scene.tree.node) }
+}
+
+// windowTreesStackedForTest reports whether shadows, borders, animation
+// snapshots and windows draw in that order, bottom first.
+func (c *Compositor) windowTreesStackedForTest() bool {
+	trees := []*C.struct_wlr_scene_tree{c.windowShadowTree, c.windowBorderTree, c.windowAnimationTree, c.layerTrees[layerWindows]}
+	for i := 1; i < len(trees); i++ {
+		if !bool(C.sysc_tree_below(trees[i-1], trees[i])) {
+			return false
+		}
+	}
+	return true
+}
+
 func (c *Compositor) createLayerTrees() bool {
 	for i := range c.layerTrees {
 		if c.layerTrees[i] = C.sysc_tree_create(&c.scene.tree); c.layerTrees[i] == nil {
