@@ -71,8 +71,8 @@ released the context. The before-profile is in
 
 ## Tools and traps
 
-- perf 7.3.5 is unpacked without installing under the session scratchpad
-  (`perfpkg/`). `perf_event_paranoid=2` allows flat `cpu-clock:u` profiles
+- perf 7.3.5 is unpacked without installing; run it through
+  `~/.local/state/sysc-compositor-archpc-20261123/tools/perf`. `perf_event_paranoid=2` allows flat `cpu-clock:u` profiles
   of the running thread, but no call graphs and no `cycles`. Use the cstacks
   build for stacks.
 - `csym.py`, kept in each kit, resolves cgosymbolizer's library-only frames
