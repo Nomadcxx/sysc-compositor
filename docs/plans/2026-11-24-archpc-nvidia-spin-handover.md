@@ -2,8 +2,10 @@
 
 Start at `4cdb824` on `fix/archpc-backdrop-blur`, in the worktree
 `~/sysc-compositor-archpc`. The branch is local and has not been pushed.
-The plain `4cdb824` build is armed for archPC's next sign-in. The spin check
-and the benchmark below are done; continue with the remaining work.
+`4cdb824-fxtex` is armed for archPC's next sign-in: the `4cdb824-cstacks`
+binary with the patched SceneFX from item E loaded through `LD_LIBRARY_PATH`.
+The spin check, the benchmark and the item E patch below are done. On the
+next sign-in, profile and bench it against the numbers here.
 [Cache audit](2026-11-23-archpc-cache-audit.md)
 
 ## Results on 4cdb824 (2026-11-24)
@@ -101,13 +103,58 @@ released the context. The before-profile is in
    cstacks `rollback.sh`, then `4cdb824/arm.sh`. Never commit the
    cgosymbolizer import.
 
+## Item E: SceneFX effect-buffer import
+
+Every blur pass imports an offscreen effect buffer with
+`fx_texture_from_buffer`. The GL texture is already cached on the
+`fx_framebuffer`, but each import respecifies it with
+`glEGLImageTargetTexture2DOES`, about four NVIDIA ioctls per call. Cached
+blur pays this once per consumer, and live blur pays it on every pass.
+
+Mango uses the stock SceneFX 0.5 with the same cached blur API and has no
+EGL or NVIDIA handling of its own, so it carries both costs this branch
+measured. Upstream SceneFX main has not touched texture import or the EGL
+context since 0.5. Umbriel's vendored fork, umbrielfx, already fixes this:
+buffers the renderer allocates render into their own texture, and only
+renderbuffer-backed views are reimported
+([umbrielfx framebuffer](https://github.com/noctalia-dev/umbriel/blob/a909081/umbrielfx/render/fx_renderer/fx_framebuffer.c#L27)).
+
+The patch follows umbrielfx. It is `5399deb` on branch
+`keep-offscreen-texture` in `~/.local/state/sysc-compositor-archpc-20261123/scenefx`,
+based on the `0.5` tag, and is not pushed anywhere. Buffers from
+`fx_framebuffer_get_or_create_custom` are marked renderer-owned; their FBO
+attaches the texture with `glFramebufferTexture2D`, and imports skip the
+respecification. Client and swapchain buffers keep the renderbuffer path.
+The stencil attachment is unchanged. An earlier version kept the
+renderbuffer and skipped only the respecification. It gave identical
+pixels on 620.73, but it relied on EGLImage sibling coherence, which
+umbrielfx avoids.
+
+Proof: `texprobe/` (the cost probe plus a pinned EGL context and a
+read-back hash) runs headless on the render node with no window. The
+unpatched library is built from the same tag in `scenefx-base/`.
+
+| Per frame, headless 2560×1440 | base 0.5 | patched |
+| --- | ---: | ---: |
+| cached, 12 consumers, full damage | 1.01–1.13 ms (0.68–0.74 kernel) | 0.10 ms (0.01 kernel) |
+| live, 12 consumers, full damage | 9.4 ms (5.8 kernel) | 2.2 ms (0.9 kernel) |
+| live, 6 consumers, typing damage | 0.94 ms | 0.30 ms |
+| cached and off, 6 consumers, typing damage | 0.02 ms | 0.02 ms |
+
+`texprobe {live|cached} 6 40 check` changes the backdrop every frame and
+hashes every frame read back. The hashes match the unpatched library for
+live and cached blur; blur off hashes differently, so the hash covers the
+blur.
+
+Still open for item E: the native profile and bench on `4cdb824-fxtex`,
+one nested run of `4cdb824-fxtex/nested/nbench.sh 20` to compare with the
+nested table above, and where the SceneFX patch lives. This tree takes no
+C, so the compositor can only pick it up through a SceneFX build that
+carries it.
+
 ## Remaining work
 
-- **E. SceneFX texture lifetime.** Each cached blur draw still imports the
-  optimized buffer with about 4 ioctls, roughly 0.7 ms per frame for twelve
-  draws offscreen. Keep the `wlr_texture` in `fx_offscreen_buffers` until
-  the buffer is reallocated. This is an upstream SceneFX patch, since this
-  tree takes no C.
+- **E. SceneFX texture lifetime (patched 2026-11-24, see below).**
 - **Resize animation cost (measured 2026-11-24, not worth a fix).** The snapshot path clones and rescales the
   window on every frame. Measure resize with the animation on and off after
   `4cdb824`.
