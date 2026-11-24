@@ -1,7 +1,8 @@
 # archPC NVIDIA spin handover
 
-Start at `4cdb824` on `fix/archpc-backdrop-blur`, in the worktree
-`~/sysc-compositor-archpc`. The branch is local and has not been pushed.
+`fix/archpc-backdrop-blur` is merged into main, on 2026-11-24, after the
+named and nested tests listed under remaining work passed. The worktree
+`~/sysc-compositor-archpc` still holds the branch.
 `4cdb824-fxtex` is armed for archPC's next sign-in: the `4cdb824-cstacks`
 binary with the patched SceneFX from item E loaded through `LD_LIBRARY_PATH`.
 The spin check, the benchmark and the item E patch below are done. On the
@@ -165,10 +166,14 @@ carries it.
   buffer per render target.
 - **F. sysc-shell.** The bar makes about 18,700 write syscalls a second to
   its plugin pipes and uses 15% of a core. File this in the sysc-shell repo.
-- **Nested tests not yet run** for `e6c2d88` and `4cdb824`:
-  `TestRendererLossRestoresLatestSHMCommit` and
-  `TestRendererLossRecreatesAndRepaintsExistingBuffers`. Auto mode blocks
-  them until the owner OKs that specific run.
+- **Tests before the merge (2026-11-24, owner OK for each nested run).**
+  Nested: `TestRendererLossRestoresLatestSHMCommit`,
+  `TestRendererLossRecreatesAndRepaintsExistingBuffers` and
+  `TestBackgroundEffectDrawsFrostUnderTheRegion` passed. Every other test
+  the branch adds passed without nesting, and so did `go vet` and `gofmt`
+  on the touched packages. Run them with
+  `CGO_CFLAGS_ALLOW=-fno-strict-overflow`. The commission checks above are
+  still owed natively.
 - **Tickets.** `sysc-2417` (performance), `sysc-2416` (Acer re-enable),
   `sysc-2303` (SceneFX culling).
 
