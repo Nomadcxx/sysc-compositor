@@ -182,7 +182,7 @@ type Compositor struct {
 	backgroundTree      *C.struct_wlr_scene_tree
 	blurBackdropTree    *C.struct_wlr_scene_tree
 	blurBackdrops       map[unsafe.Pointer]*backdropBlur
-	blurBackdropLayers  map[*layerSurface]struct{} // measured at the next repaint
+	blurBackdropLayers  map[*layerSurface]struct{}        // measured at the next repaint
 	backgroundNodes     map[unsafe.Pointer]unsafe.Pointer // background-color fill per wlr_output
 	windowFocusTree     *C.struct_wlr_scene_tree
 	overviewTree        *C.struct_wlr_scene_tree

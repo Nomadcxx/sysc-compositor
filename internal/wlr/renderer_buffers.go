@@ -16,13 +16,20 @@ type rendererBuffer struct {
 }
 
 type rendererSurface struct {
-	pending                  map[uint32]*C.struct_wlr_buffer
+	pending map[uint32]*C.struct_wlr_buffer
+	// backup holds the surface's newest submitted SHM contents. Each commit
+	// patches in only its damage, as wlroots does for the client texture.
+	backup                   *C.struct_wlr_buffer
 	commit, applied, destroy *Listener
 }
 
 // Preserve submitted SHM contents, including cached subsurface commits, before
 // wlroots uploads them and releases the client's buffer. Its client-buffer
 // cache may reuse a texture without updating its weak source pointer.
+//
+// Every holder of a pixel buffer takes a lock and releases it with unlock. A
+// cached commit shares the surface's backup, so recovery may restore pixels a
+// queued commit already sent, which is no older than what that commit shows.
 func (c *Compositor) watchRendererBuffers() {
 	c.rendererBuffers = map[*C.struct_wlr_client_buffer]*rendererBuffer{}
 	c.rendererSurfaces = map[*C.struct_wlr_surface]*rendererSurface{}
@@ -34,9 +41,22 @@ func (c *Compositor) watchRendererBuffers() {
 			if surface.pending.committed&C.WLR_SURFACE_STATE_BUFFER == 0 || surface.pending.buffer == nil {
 				return
 			}
-			pixels := copyBufferPixels(surface.pending.buffer)
+			if watch.backup == nil || !patchBufferPixels(watch.backup, unsafe.Pointer(surface)) {
+				if watch.backup != nil {
+					C.wlr_buffer_unlock(watch.backup)
+					watch.backup = nil
+				}
+				if copied := copyBufferPixels(surface.pending.buffer); copied != nil {
+					watch.backup = C.wlr_buffer_lock(copied)
+					C.wlr_buffer_drop(copied)
+				}
+			}
+			var pixels *C.struct_wlr_buffer
+			if watch.backup != nil {
+				pixels = C.wlr_buffer_lock(watch.backup)
+			}
 			if old := watch.pending[uint32(surface.pending.seq)]; old != nil {
-				C.wlr_buffer_drop(old)
+				C.wlr_buffer_unlock(old)
 			}
 			watch.pending[uint32(surface.pending.seq)] = pixels
 		})
@@ -50,7 +70,7 @@ func (c *Compositor) watchRendererBuffers() {
 			client := surface.buffer
 			if pixels == nil {
 				if backup := c.rendererBuffers[client]; backup != nil {
-					C.wlr_buffer_drop(backup.pixels)
+					C.wlr_buffer_unlock(backup.pixels)
 					c.drop(backup.destroy)
 					delete(c.rendererBuffers, client)
 				}
@@ -58,18 +78,18 @@ func (c *Compositor) watchRendererBuffers() {
 			}
 			if client == nil {
 				if pixels != nil {
-					C.wlr_buffer_drop(pixels)
+					C.wlr_buffer_unlock(pixels)
 				}
 				return
 			}
 			if backup := c.rendererBuffers[client]; backup != nil {
-				C.wlr_buffer_drop(backup.pixels)
+				C.wlr_buffer_unlock(backup.pixels)
 				backup.pixels = pixels
 				return
 			}
 			backup := &rendererBuffer{pixels: pixels}
 			backup.destroy = AddListener(unsafe.Pointer(&client.base.events.destroy), func(unsafe.Pointer) {
-				C.wlr_buffer_drop(backup.pixels)
+				C.wlr_buffer_unlock(backup.pixels)
 				delete(c.rendererBuffers, client)
 				c.drop(backup.destroy)
 			})
@@ -77,11 +97,7 @@ func (c *Compositor) watchRendererBuffers() {
 			c.keep(backup.destroy)
 		})
 		watch.destroy = AddListener(unsafe.Pointer(&surface.events.destroy), func(unsafe.Pointer) {
-			for _, pixels := range watch.pending {
-				if pixels != nil {
-					C.wlr_buffer_drop(pixels)
-				}
-			}
+			watch.release()
 			delete(c.rendererSurfaces, surface)
 			c.drop(watch.commit)
 			c.drop(watch.applied)
@@ -93,19 +109,27 @@ func (c *Compositor) watchRendererBuffers() {
 
 func (c *Compositor) finishRendererBuffers() {
 	for _, backup := range c.rendererBuffers {
-		C.wlr_buffer_drop(backup.pixels)
+		C.wlr_buffer_unlock(backup.pixels)
 		c.drop(backup.destroy)
 	}
 	for _, watch := range c.rendererSurfaces {
-		for _, pixels := range watch.pending {
-			if pixels != nil {
-				C.wlr_buffer_drop(pixels)
-			}
-		}
+		watch.release()
 		c.drop(watch.commit)
 		c.drop(watch.applied)
 		c.drop(watch.destroy)
 	}
 	c.rendererBuffers = nil
 	c.rendererSurfaces = nil
+}
+
+func (watch *rendererSurface) release() {
+	for _, pixels := range watch.pending {
+		if pixels != nil {
+			C.wlr_buffer_unlock(pixels)
+		}
+	}
+	if watch.backup != nil {
+		C.wlr_buffer_unlock(watch.backup)
+		watch.backup = nil
+	}
 }
