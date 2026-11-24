@@ -147,11 +147,37 @@ hashes every frame read back. The hashes match the unpatched library for
 live and cached blur; blur off hashes differently, so the hash covers the
 blur.
 
-Still open for item E: the native profile and bench on `4cdb824-fxtex`,
-one nested run of `4cdb824-fxtex/nested/nbench.sh 20` to compare with the
-nested table above, and where the SceneFX patch lives. This tree takes no
-C, so the compositor can only pick it up through a SceneFX build that
-carries it.
+Nested, `4cdb824-fxtex/nested/nbench.sh 20`, same sequence as the nested
+table above:
+
+| Phase | stock SceneFX | patched |
+| --- | --- | --- |
+| animation on | 14.3% CPU, 1.01 ms scene work per commit | 11.2%, 0.23 ms |
+| animation off | 11.1%, 1.06 ms | 8.2%, 0.22 ms |
+| blur off | 10.6%, 0.21 ms | 10.8%, 0.21 ms |
+
+With the patch, cached blur costs about what blur off does.
+
+Where it lives (owner's choice: fork, package and upstream PR):
+
+- Fork [Nomadcxx/scenefx](https://github.com/Nomadcxx/scenefx). Its `main`
+  is upstream main plus the patch (`e5ed765`), which gives the same read-back
+  hashes as upstream main and the same speedups. Tag `0.5-sysc1` is 0.5 plus
+  the patch (`5399deb`) and keeps 0.5's soname; upstream main versions the
+  library.
+- Upstream: [wlrfx/scenefx#237](https://github.com/wlrfx/scenefx/pull/237).
+- AUR `scenefx-sysc` builds `0.5-sysc1`. It provides `scenefx=0.5` and
+  `libscenefx-0.5.so` and conflicts with `scenefx`. It was built, its meson
+  tests run, `check.py` passed and it was installed in a clean
+  `archlinux:latest` container. The recipe is in `~/sysc/aur/scenefx-sysc`,
+  and `check.py` there now knows this one library package.
+
+Still open for item E: the native profile and bench on `4cdb824-fxtex`.
+After that, switch `sysc-compositor` and `sysc-compositor-git` on the AUR
+from `scenefx` to `scenefx-sysc` with a pkgrel bump, and drop the package
+once a SceneFX release carries #237. Unrelated to this work, `check.py` also
+trips on a stale `sysc-terminal` 0.1.0 archive and on `syscgo`'s missing
+`.INSTALL`.
 
 ## Remaining work
 
