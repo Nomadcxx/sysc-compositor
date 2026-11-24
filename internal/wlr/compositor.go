@@ -615,6 +615,7 @@ func NewWith(opts Options) (*Compositor, error) {
 		return nil, errors.New("wlr_allocator_autocreate failed")
 	}
 	c.configureAnimationShaders()
+	c.pinRendererContext()
 
 	C.wlr_subcompositor_create(c.display)
 	C.wlr_data_device_manager_create(c.display)

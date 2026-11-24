@@ -1,8 +1,9 @@
 package wlr
 
 /*
-#cgo pkg-config: wlroots-0.20 wayland-server
+#cgo pkg-config: wlroots-0.20 wayland-server egl
 #cgo CFLAGS: -DWLR_USE_UNSTABLE
+#include <EGL/egl.h>
 #include <wlr/render/allocator.h>
 #include <wlr/render/wlr_renderer.h>
 #include <wlr/render/wlr_texture.h>
@@ -18,6 +19,25 @@ static bool sysc_renderer_check_dmabuf(struct wlr_dmabuf_attributes *attributes,
 	wlr_texture_destroy(texture);
 	return true;
 }
+// sysc_renderer_pin_context leaves the renderer's EGL context current on the
+// compositor thread. SceneFX restores the previous binding after every pass
+// and texture import; with nothing bound, that releases the context each time,
+// and NVIDIA's driver spins in eglMakeCurrent on every release. A pass on a
+// scratch buffer exposes the context SceneFX keeps private.
+static bool sysc_renderer_pin_context(struct wlr_renderer *renderer, struct wlr_buffer *scratch) {
+	struct wlr_render_pass *pass = wlr_renderer_begin_buffer_pass(renderer, scratch, NULL);
+	if (pass == NULL) {
+		return false;
+	}
+	EGLDisplay display = eglGetCurrentDisplay();
+	EGLContext context = eglGetCurrentContext();
+	if (!wlr_render_pass_submit(pass) || context == EGL_NO_CONTEXT) {
+		return false;
+	}
+	return eglMakeCurrent(display, EGL_NO_SURFACE, EGL_NO_SURFACE, context) &&
+		eglGetCurrentContext() == context;
+}
+
 static void sysc_renderer_rebind_dmabuf(struct wlr_scene *scene, struct wlr_renderer *renderer) {
 	if (scene->linux_dmabuf_v1 != NULL)
 		wlr_linux_dmabuf_v1_set_check_dmabuf_callback(scene->linux_dmabuf_v1,sysc_renderer_check_dmabuf,renderer);
@@ -67,6 +87,18 @@ func (c *Compositor) watchRendererLoss() {
 		}
 	})
 	c.keep(c.rendererLost)
+}
+
+// pinRendererContext keeps the renderer's context bound between frames, as
+// Smithay and KWin do, so SceneFX's per-pass restore is a no-op rather than a
+// release. Without it the compositor still draws, only more slowly on NVIDIA.
+func (c *Compositor) pinRendererContext() {
+	if c.animationShaders == nil || c.animationShaders.scratch == nil {
+		return
+	}
+	if !bool(C.sysc_renderer_pin_context(c.renderer, c.animationShaders.scratch)) {
+		fmt.Fprintln(os.Stderr, "sysc-compositor: could not keep the EGL context current")
+	}
 }
 
 // recoverRenderer follows Mango's do_renderer_recreate. wlroots and the scene
@@ -122,7 +154,9 @@ func (c *Compositor) recoverRenderer() error {
 	}
 	c.watchRendererLoss()
 	C.wlr_allocator_destroy(oldAllocator)
+	// Destroying the old EGL context releases this thread's binding.
 	C.wlr_renderer_destroy(oldRenderer)
+	c.pinRendererContext()
 	C.sysc_renderer_rebind_dmabuf(c.scene, renderer)
 	if failed != "" {
 		return fmt.Errorf("reinitializing output %s failed", failed)
