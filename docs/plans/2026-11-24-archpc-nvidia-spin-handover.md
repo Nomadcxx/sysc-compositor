@@ -2,10 +2,39 @@
 
 Start at `4cdb824` on `fix/archpc-backdrop-blur`, in the worktree
 `~/sysc-compositor-archpc`. The branch is local and has not been pushed.
-`4cdb824-cstacks` is armed for archPC's next sign-in. It is `4cdb824` plus a
-C-stack profiler. First check whether keeping the EGL context bound removed
-the NVIDIA driver spin. Then run the native benchmark with the owner at the
-keyboard. [Cache audit](2026-11-23-archpc-cache-audit.md)
+The plain `4cdb824` build is armed for archPC's next sign-in. The spin check
+and the benchmark below are done; continue with the remaining work.
+[Cache audit](2026-11-23-archpc-cache-audit.md)
+
+## Results on 4cdb824 (2026-11-24)
+
+The spin is gone. Idle, 15 s, `4cdb824-cstacks/profiles/idle.txt` against
+`e6c2d88-cstacks/profiles/idle.txt`:
+
+| | `e6c2d88` | `4cdb824` |
+| --- | --- | --- |
+| Main thread, idle | 25.3% of a core | 10.3% |
+| `[vdso]` (`clock_gettime` spin) | 37% | 0 |
+| `wlr_egl_restore_context` | 26% | gone |
+| NVIDIA `ioctl` leaf | 91 samples | 107 samples (70%) |
+
+About a third of what is left enters the driver from `fx_texture_from_buffer`,
+which is item E. Another third enters from `sysc_debug_repaint` with the frames
+in between lost, likely the same imports and syncs.
+
+Benchmark, 20 s each with cursor motion, Ghostty typing and a resize:
+
+| Mode | Main thread (user + kernel) | Commits/s | Scene work | libinput |
+| --- | --- | --- | --- | --- |
+| cached | 17.1% (6.1 + 11.1) | 110 | 3.6 s | one 27 ms debounce |
+| live | 78.2% (25.2 + 53.0) | 78 | 16.6 s | 22–59 ms lag, mouse and keys |
+| off | 6.0% (5.0 + 1.1) | 120 | 0.7 s | none |
+
+Before the fix, cached blur took 34.5% of a core while idle; under load it now
+takes 17.1%. Most of what cached blur still costs over blur off is kernel time
+(11.1% against 1.1%), which fits the per-draw texture import of item E. The
+mouse's libinput reports hit their hourly rate limit during the live run, so
+the off run could only show keyboard lag reports.
 
 ## Branch so far
 
@@ -27,7 +56,7 @@ binding after each pass and texture import. With nothing bound, each restore
 released the context. The before-profile is in
 `~/.local/state/sysc-compositor-archpc-20261123/e6c2d88-cstacks/profiles/idle.txt`.
 
-## First steps in the new session
+## First steps (done 2026-11-24)
 
 1. Confirm that `4cdb824-cstacks` is running, by checking `readlink /proc/$(systemctl --user show -p MainPID --value sysc-compositor.service)/exe`.
 2. Run `~/.local/state/sysc-compositor-archpc-20261123/4cdb824-cstacks/cprofile.sh idle 15`
