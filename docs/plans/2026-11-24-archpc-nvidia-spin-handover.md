@@ -172,7 +172,32 @@ Where it lives (owner's choice: fork, package and upstream PR):
   `archlinux:latest` container. The recipe is in `~/sysc/aur/scenefx-sysc`,
   and `check.py` there now knows this one library package.
 
-Still open for item E: the native profile and bench on `4cdb824-fxtex`.
+Native on `4cdb824-fxtex` (signed in 23:16; the process mapped the kit's
+patched library), gSlapper paused with SIGSTOP so the backdrop holds still,
+as in the earlier runs. Each 20 s window had cursor motion, Ghostty typing
+and a resize, and started 7 s after the prompt. The first two cached
+attempts ran without the full workload and are discarded.
+
+| | stock SceneFX (`4cdb824`) | patched (`4cdb824-fxtex`) |
+| --- | --- | --- |
+| idle | 10.3% of a core | 2.8%, 55 commits/s, 0 rebuilds |
+| cached | 17.1% at 110 commits/s, 1.56 ms per commit | 12.5% at 164 commits/s, 0.76 ms per commit |
+| live | 78.2% at 78 commits/s, lag 22–59 ms | 28.1% at 91 commits/s, no lag reports |
+| off | 6.0% at 120 commits/s | 4.0% at 71 commits/s |
+
+libinput still reported lag outside the sampling windows: 30 and 33 ms in
+the first 40 s after sign-in, and 23–43 ms around the `load-config-file`
+switches between runs. The owner reports that it feels faster and lags
+less, but is still short of Niri.
+
+The wallpaper is now an MP4 that gSlapper plays at 30 fps on each output.
+That makes the cached blur rebuild on every video frame (48 rebuilds/s), and
+idle rises to 11–12% of a core. Each gSlapper process takes about 96% of a
+core: GStreamer decodes H.264 in software with openh264. `nvcodec` fails
+with "Unable to initialize CUDA library" although `libcuda` and `libnvcuvid`
+are installed, and `libgstlibav.so` is blacklisted; an unowned
+`libgstlibav.so.bak-avcodec62` sits next to it. Each output decodes the
+same file separately.
 After that, switch `sysc-compositor` and `sysc-compositor-git` on the AUR
 from `scenefx` to `scenefx-sysc` with a pkgrel bump, and drop the package
 once a SceneFX release carries #237. Unrelated to this work, `check.py` also
