@@ -25,6 +25,7 @@ executed until the owner schedules the milestone they belong to.
 
 | Document | Kind | What it is |
 |---|---|---|
+| [plans/2026-11-24-archpc-nvidia-spin-handover.md](plans/2026-11-24-archpc-nvidia-spin-handover.md) | handover | EGL context pinning for the NVIDIA driver spin, damage-only SHM backup, resize snapshot stacking, and the native checks still owed. |
 | [plans/2026-11-23-archpc-cache-audit.md](plans/2026-11-23-archpc-cache-audit.md) | handover | Audit fixes to the cached blur candidate, RTX 4060 cost measurements, research sweep, and the staged native comparison. |
 | [plans/2026-11-23-archpc-backdrop-cache-handover.md](plans/2026-11-23-archpc-backdrop-cache-handover.md) | handover | Cached blur candidate, RTX 4060 render proof, and the independent audit and native comparison. |
 | [plans/2026-11-23-archpc-nvidia-handover.md](plans/2026-11-23-archpc-nvidia-handover.md) | handover | Native blur comparison, cached backdrop design, and archPC acceptance for the input lag. |
