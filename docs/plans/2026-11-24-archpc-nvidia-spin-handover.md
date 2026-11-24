@@ -36,6 +36,33 @@ takes 17.1%. Most of what cached blur still costs over blur off is kernel time
 mouse's libinput reports hit their hourly rate limit during the live run, so
 the off run could only show keyboard lag reports.
 
+### Resize animation
+
+Native, 20 s of Super-right-drag only, cached blur:
+
+| Resize animation | Main thread (user + kernel) | Commits/s | CPU per commit |
+| --- | --- | --- | --- |
+| on | 23.8% (9.4 + 14.3) | 165 | 1.44 ms |
+| off | 20.4% (7.4 + 13.1) | 115 | 1.77 ms |
+
+Nested, `4cdb824-cstacks/nested/nbench.sh 20`: one nested instance with three
+translucent foot windows using xray blur over swaybg. Each 20 s phase sends
+the same IPC sequence, `set-column-width` ±10% every 0.1 s with focus moving
+between columns. This makes the runs repeatable; use it to A/B item E. It
+opens one window on the desktop, so get the owner's OK for each run.
+
+| Phase | Main thread (user + kernel) | Commits/s | Scene work per commit |
+| --- | --- | --- | --- |
+| animation on | 14.3% (7.7 + 6.7) | 100 | 1.01 ms |
+| animation off | 11.1% (5.5 + 5.6) | 58 | 1.06 ms |
+| blur off, animation on | 10.6% (7.0 + 3.6) | 103 | 0.21 ms |
+
+The resize animation is not the cost. A frame costs the same with or without
+it; the animation only adds frames, about 3 points of a core in both the
+native and the nested runs. Snapshot cloning is not worth a fix. Blur is the
+cost: with three cached consumers, scene work per commit is five times that
+with blur off. That is item E.
+
 ## Branch so far
 
 | Commit | Fix | Proof |
@@ -81,7 +108,7 @@ released the context. The before-profile is in
   draws offscreen. Keep the `wlr_texture` in `fx_offscreen_buffers` until
   the buffer is reallocated. This is an upstream SceneFX patch, since this
   tree takes no C.
-- **Resize animation cost.** The snapshot path clones and rescales the
+- **Resize animation cost (measured 2026-11-24, not worth a fix).** The snapshot path clones and rescales the
   window on every frame. Measure resize with the animation on and off after
   `4cdb824`.
 - **Commission checks.** Test a background popup across DP-1 and DP-3, a
