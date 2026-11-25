@@ -1807,7 +1807,8 @@ func (c *Compositor) handleNewToplevel(data unsafe.Pointer) {
 		geometryChanged := geometry != view.lastGeometry
 		view.lastGeometry = geometry
 		fullscreen := bool(toplevel.current.fullscreen)
-		if fullscreen != view.lastFullscreen {
+		fullscreenChanged := fullscreen != view.lastFullscreen
+		if fullscreenChanged {
 			view.lastFullscreen = fullscreen
 			if !fullscreen && c.model != nil {
 				c.applyWorkspaceModel()
@@ -1859,7 +1860,11 @@ func (c *Compositor) handleNewToplevel(data unsafe.Pointer) {
 		c.applyViewAppearance(view)
 		c.rememberCaptureNodes(view)
 		c.damageCaptureSources(view)
-		c.notifyWindowStateChanged()
+		// A plain buffer commit leaves the published window state alone; the
+		// title, app-id, focus and layout have listeners of their own.
+		if newlyMapped || geometryChanged || fullscreenChanged {
+			c.notifyWindowStateChanged()
+		}
 		c.syncOverviewScene()
 		c.syncSwitcher()
 		if newlyMapped {
