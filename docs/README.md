@@ -25,6 +25,7 @@ executed until the owner schedules the milestone they belong to.
 
 | Document | Kind | What it is |
 |---|---|---|
+| [plans/2026-11-25-archpc-session-handover.md](plans/2026-11-25-archpc-session-handover.md) | handover | archPC continuation: the armed main kit with SceneFX #208, native benchmarks and profile, and the next steps in order (input-delay metric, native Niri run, profile fixes, then a version bump and AUR packages). |
 | [plans/2026-11-25-archpc-nvidia-parity-handover.md](plans/2026-11-25-archpc-nvidia-parity-handover.md) | handover | NVIDIA parity goal, state after the SceneFX and corner fixes, the nested parity suite, the remaining work queue, and the SceneFX Vulkan (#192, #204) investigation. |
 | [plans/2026-11-24-archpc-nvidia-spin-handover.md](plans/2026-11-24-archpc-nvidia-spin-handover.md) | handover | EGL context pinning for the NVIDIA driver spin, damage-only SHM backup, resize snapshot stacking, benchmarks, the SceneFX effect-buffer import patch, and the native checks still owed. |
 | [plans/2026-11-23-archpc-cache-audit.md](plans/2026-11-23-archpc-cache-audit.md) | handover | Audit fixes to the cached blur candidate, RTX 4060 cost measurements, research sweep, and the staged native comparison. |
