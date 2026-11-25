@@ -273,11 +273,7 @@ func (c *Compositor) syncTopLayerStacking(output unsafe.Pointer) {
 			continue
 		}
 		l.underFullscreen = under
-		parent := c.layerTrees[layerTop]
-		if under {
-			parent = c.topUnderFullscreen
-		}
-		C.sysc_reparent(l.tree, parent)
+		c.syncLayerParent(l)
 		moved = true
 	}
 	if moved {
@@ -347,11 +343,12 @@ func (c *Compositor) handleNewLayerSurface(data unsafe.Pointer) {
 			c.backdropLayerChanged(l)
 			// The next frame moves a Top surface under a fullscreen window.
 			l.layer, l.underFullscreen = layer, false
-			C.sysc_reparent(l.tree, c.layerTrees[layer])
 			// A rule may match on the layer, as Niri's recompute on commit.
 			l.rules = c.resolveLayerRules(l)
 			c.syncRuleBackgroundEffects()
 		}
+		// The layer or the exclusive zone decides the backdrop.
+		c.syncLayerParent(l)
 		// A commit that only draws (a bar's clock) changes nothing the IPC
 		// reports; client surface commits damage capture on their own.
 		stateChanged := surface.current.committed != 0 || bool(surface.initial_commit)
@@ -435,6 +432,7 @@ var layerNames = map[int]config.LayerName{
 func (c *Compositor) reapplyLayerRules() {
 	for _, layer := range c.layerOrder {
 		layer.rules = c.resolveLayerRules(layer)
+		c.syncLayerParent(layer)
 		c.applyLayerAppearance(layer)
 		c.backdropLayerChanged(layer)
 	}
@@ -449,6 +447,26 @@ func (l *layerSurface) namespace() string { return C.GoString(l.surface.namespac
 func (l *layerSurface) withinBackdrop() bool {
 	return l.rules.PlaceWithinBackdrop && l.layer == layerBackground &&
 		l.surface.current.exclusive_zone < 0
+}
+
+// layerParent is the tree a layer surface draws in: the backdrop for
+// place-within-backdrop, under the workspace background colour as in Niri's
+// render_inner, and under a still fullscreen window for a Top surface.
+func (c *Compositor) layerParent(l *layerSurface) *C.struct_wlr_scene_tree {
+	switch {
+	case l.withinBackdrop() && c.backdropLayerTree != nil:
+		return c.backdropLayerTree
+	case l.layer == layerTop && l.underFullscreen:
+		return c.topUnderFullscreen
+	}
+	return c.layerTrees[l.layer]
+}
+
+func (c *Compositor) syncLayerParent(l *layerSurface) {
+	if parent := c.layerParent(l); l.tree.node.parent != parent {
+		c.backdropLayerChanged(l)
+		C.sysc_reparent(l.tree, parent)
+	}
 }
 
 // mappedSize is the surface's size, and whether it is mapped.

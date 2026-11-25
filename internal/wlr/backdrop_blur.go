@@ -188,11 +188,15 @@ func (c *Compositor) dropBackdropBlur(output unsafe.Pointer) {
 }
 
 func (c *Compositor) blurBackdropContains(node *C.struct_wlr_scene_node) bool {
-	tree := c.layerTrees[layerBackground]
-	return tree != nil && bool(C.sysc_below_tree(node, tree))
+	for _, tree := range []*C.struct_wlr_scene_tree{c.layerTrees[layerBackground], c.backdropLayerTree} {
+		if tree != nil && bool(C.sysc_below_tree(node, tree)) {
+			return true
+		}
+	}
+	return false
 }
 
-// The background tree is below the cache it feeds. Effects within it
+// The background and backdrop trees are below the cache they feed. Effects within it
 // must sample the current scene rather than the result they help produce.
 func (c *Compositor) effectUsesBackdrop(effect *backgroundEffect, parent *C.struct_wlr_scene_tree, xray *bool) bool {
 	if !c.backdropBlurOn() || c.blurBackdropContains(&parent.node) {
