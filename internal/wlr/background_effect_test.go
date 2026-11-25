@@ -57,6 +57,25 @@ func TestM10BackgroundEffectRegionIsClippedToSurface(t *testing.T) {
 	}
 }
 
+// TestWindowBackgroundEffectTakesRoundedGeometry: a window's blur is cut to
+// its geometry and rounded where it meets the geometry's corners, with
+// Niri's extra pixel of radius; square corners stay square.
+func TestWindowBackgroundEffectTakesRoundedGeometry(t *testing.T) {
+	geometry := rect{10, 5, 100, 80}
+	radii := config.CornerRadius{20, 20, 0, 20}
+	gotRects, gotRadii := roundedToGeometry([]rect{
+		{0, 0, 130, 100}, // a whole CSD surface, shadow margins included
+		{10, 45, 30, 50}, // the bottom-left corner only
+		{50, 20, 20, 20}, // inside, touching no corner
+		{0, 0, 5, 5},     // outside the geometry
+	}, geometry, radii)
+	wantRects := []rect{{10, 5, 100, 80}, {10, 45, 30, 40}, {50, 20, 20, 20}}
+	wantRadii := []config.CornerRadius{{21, 21, 0, 21}, {0, 0, 0, 21}, {}}
+	if !reflect.DeepEqual(gotRects, wantRects) || !reflect.DeepEqual(gotRadii, wantRadii) {
+		t.Fatalf("rounded blur = %v %v, want %v %v", gotRects, gotRadii, wantRects, wantRadii)
+	}
+}
+
 func TestBackgroundEffectReusesNodesAcrossBufferCommits(t *testing.T) {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
@@ -72,7 +91,8 @@ func TestBackgroundEffectReusesNodesAcrossBufferCommits(t *testing.T) {
 	c := &Compositor{listeners: map[*Listener]struct{}{}}
 	effect := &backgroundEffect{}
 	region := []rect{{0, 0, 20, 20}, {30, 0, 10, 10}}
-	c.syncBackgroundEffectNodes(effect, parent, anchor, 0, 0, region, nil, true)
+	square := make([]config.CornerRadius, len(region))
+	c.syncBackgroundEffectNodes(effect, parent, anchor, 0, 0, region, square, true)
 	if len(effect.blurNodes) != len(region) {
 		t.Fatalf("created %d blur nodes, want %d", len(effect.blurNodes), len(region))
 	}
@@ -84,12 +104,12 @@ func TestBackgroundEffectReusesNodesAcrossBufferCommits(t *testing.T) {
 			t.Fatal("commit replaced the blur nodes")
 		}
 	}
-	c.syncBackgroundEffectNodes(effect, parent, anchor, 0, 0, region, nil, true)
+	c.syncBackgroundEffectNodes(effect, parent, anchor, 0, 0, region, square, true)
 	sameNodes()
 
 	region[0].w = 14
-	corners := config.CornerRadius{4, 0, 0, 0}
-	c.syncBackgroundEffectNodes(effect, parent, anchor, 2, 3, region, &corners, true)
+	corners := []config.CornerRadius{{4, 0, 0, 0}, {}}
+	c.syncBackgroundEffectNodes(effect, parent, anchor, 2, 3, region, corners, true)
 	sameNodes()
 	if got, want := sceneFXBlurBox(effect.blurNodes[0]), (rect{2, 3, 14, 20}); got != want {
 		t.Fatalf("resized blur node = %+v, want %+v", got, want)
@@ -97,7 +117,7 @@ func TestBackgroundEffectReusesNodesAcrossBufferCommits(t *testing.T) {
 	if got := sceneFXBlurTopLeftCorner(effect.blurNodes[0]); got != 4 {
 		t.Fatalf("resized blur corner = %d, want 4", got)
 	}
-	c.syncBackgroundEffectNodes(effect, parent, anchor, 2, 3, region, nil, true)
+	c.syncBackgroundEffectNodes(effect, parent, anchor, 2, 3, region, square, true)
 	if got := sceneFXBlurTopLeftCorner(effect.blurNodes[0]); got != 0 {
 		t.Fatalf("removed blur corner = %d, want 0", got)
 	}

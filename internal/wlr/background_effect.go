@@ -258,11 +258,63 @@ func (c *Compositor) syncBackgroundEffect(effect *backgroundEffect) {
 		return
 	}
 	clipped := clipSurfaceRegion(region, int(effect.surface.current.width), int(effect.surface.current.height))
-	c.syncBackgroundEffectNodes(effect, unsafe.Pointer(parent), unsafe.Pointer(surfaceNode), int(x), int(y), clipped, corners, c.effectUsesBackdrop(effect, parent, rule.Xray))
+	radii := make([]config.CornerRadius, len(clipped))
+	if corners != nil {
+		for i, area := range clipped {
+			radii[i] = fitCornerRadii(*corners, float64(area.w), float64(area.h))
+		}
+	}
+	// A window's blur follows Niri's render_params_for_tile: forced by a rule
+	// it fills the window geometry; asked for by the client it is cut to that
+	// geometry under clip-to-geometry. Either way it takes the window's corners.
+	forced := blur != nil && *blur && len(effect.committed) == 0
+	if view := c.viewForSurface(effect.root); view != nil && effect.surface == effect.root && (forced || view.clipToGeometry) {
+		clipped, radii = roundedToGeometry(clipped, view.geometry(), view.cornerRadii)
+	}
+	c.syncBackgroundEffectNodes(effect, unsafe.Pointer(parent), unsafe.Pointer(surfaceNode), int(x), int(y), clipped, radii, c.effectUsesBackdrop(effect, parent, rule.Xray))
+}
+
+// roundedToGeometry cuts blur rectangles to a window's geometry and rounds
+// the corners each shares with it. Like Niri, it adds a pixel to non-zero
+// radii so the blur cannot bleed past the window's antialiased corner.
+func roundedToGeometry(rects []rect, geometry rect, radii config.CornerRadius) ([]rect, []config.CornerRadius) {
+	for i := range radii {
+		if radii[i] > 0 {
+			radii[i]++
+		}
+	}
+	radii = fitCornerRadii(radii, float64(geometry.w), float64(geometry.h))
+	right, bottom := geometry.x+geometry.w, geometry.y+geometry.h
+	var cut []rect
+	var cutRadii []config.CornerRadius
+	for _, area := range rects {
+		left, top := max(area.x, geometry.x), max(area.y, geometry.y)
+		r, b := min(area.x+area.w, right), min(area.y+area.h, bottom)
+		if r <= left || b <= top {
+			continue
+		}
+		area = rect{left, top, r - left, b - top}
+		var corners config.CornerRadius
+		if left == geometry.x && top == geometry.y {
+			corners[0] = radii[0]
+		}
+		if r == right && top == geometry.y {
+			corners[1] = radii[1]
+		}
+		if r == right && b == bottom {
+			corners[2] = radii[2]
+		}
+		if left == geometry.x && b == bottom {
+			corners[3] = radii[3]
+		}
+		cut = append(cut, area)
+		cutRadii = append(cutRadii, fitCornerRadii(corners, float64(area.w), float64(area.h)))
+	}
+	return cut, cutRadii
 }
 
 func (c *Compositor) syncBackgroundEffectNodes(effect *backgroundEffect, parent, surfaceNode unsafe.Pointer,
-	x, y int, clipped []rect, corners *config.CornerRadius, cached bool) {
+	x, y int, clipped []rect, radii []config.CornerRadius, cached bool) {
 	if effect.blurParent != parent || len(effect.blurNodes) != len(clipped) {
 		c.clearBackgroundEffectNodes(effect)
 		for _, area := range clipped {
@@ -289,11 +341,7 @@ func (c *Compositor) syncBackgroundEffectNodes(effect *backgroundEffect, parent,
 		C.wlr_scene_blur_set_size(blur, C.int(area.w), C.int(area.h))
 		C.wlr_scene_blur_set_should_only_blur_bottom_layer(blur, C.bool(cached))
 		sceneFXNodeSetPosition(node, x+area.x, y+area.y)
-		var radii [4]uint16
-		if corners != nil {
-			radii = sceneFXRadii(fitCornerRadii(*corners, float64(area.w), float64(area.h)))
-		}
-		sceneFXSetBlurCorners(node, radii)
+		sceneFXSetBlurCorners(node, sceneFXRadii(radii[i]))
 		sceneFXPlaceBelow(node, sibling)
 		sibling = node
 	}

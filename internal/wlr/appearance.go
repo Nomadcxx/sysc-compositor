@@ -177,6 +177,12 @@ func (c *Compositor) applyViewAppearance(view *toplevelView) {
 	if view.clipToGeometry {
 		c.clearPopupClips(view)
 	}
+	// The window's blur takes its geometry and corners, which change here.
+	for _, effect := range c.backgroundEffects {
+		if unsafe.Pointer(effect.root) == view.surfacePointer() {
+			c.syncBackgroundEffect(effect)
+		}
+	}
 	c.syncViewOpacity(view)
 
 	decorations := view.decorations
