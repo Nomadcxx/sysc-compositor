@@ -2,9 +2,11 @@ package wlr
 
 import (
 	"regexp"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/Nomadcxx/sysc-compositor/internal/config"
 	"github.com/Nomadcxx/sysc-compositor/internal/wlr/testclient"
 )
 
@@ -113,5 +115,39 @@ func TestHiddenWorkspaceKeepsFrameCallbacks(t *testing.T) {
 	}()
 	if err := c.Run(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestOverviewKeepsFrameCallbacks: a client that draws only on frame
+// callbacks keeps its pace in the overview. The overview's copy covers the
+// window, so the scene gives it no output; without the overview's own answers
+// it fell back to the once-a-second timer, where Niri renders it live.
+func TestOverviewKeepsFrameCallbacks(t *testing.T) {
+	c := newNestedWith(t, Options{Animations: config.Animations{Off: true}})
+	var open atomic.Bool
+	c.viewMapped = func(*toplevelView) {
+		c.OpenOverview()
+		open.Store(c.model.OverviewProgress() > 0 && len(c.overviewProjections) > 0)
+	}
+	const want = 30
+	frames := map[string]bool{}
+	done := 0
+	runClient(t, c, []string{"weston-simple-shm"}, []string{"WAYLAND_DEBUG=client"}, func(line string) bool {
+		if m := reFrameRequest.FindStringSubmatch(line); m != nil {
+			frames[m[1]] = true
+		}
+		if m := reCallbackDone.FindStringSubmatch(line); m != nil && frames[m[1]] {
+			delete(frames, m[1])
+			if open.Load() {
+				done++
+			}
+		}
+		return done >= want
+	})
+	if !open.Load() {
+		t.Fatal("the overview never opened with the window projected")
+	}
+	if done < want {
+		t.Fatalf("weston-simple-shm got %d frame callbacks in the overview before the run ended, want %d", done, want)
 	}
 }
