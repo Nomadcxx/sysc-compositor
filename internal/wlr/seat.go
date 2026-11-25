@@ -305,6 +305,8 @@ func (c *Compositor) InjectPointerButton(name string, button uint32, pressed boo
 		if surface, _, _ := c.surfaceAt(s.x, s.y); surface != nil {
 			C.sysc_injected_keyboard_enter(s.seat, surface, s.keyboard)
 			c.touch(c.viewForSurface(surface))
+			// The window order changed; the next output frame publishes it.
+			c.windowStateQueued = true
 		}
 	}
 	C.wlr_seat_pointer_notify_button(s.seat, nowMsec(), C.uint32_t(button), state)
