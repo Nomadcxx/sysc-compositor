@@ -892,7 +892,7 @@ func (c *Compositor) processCursorMotion(time C.uint32_t) {
 			if started {
 				c.tiledMove.started = true
 				geometry := c.pointerGrab.geometry(float64(c.cursor.x), float64(c.cursor.y))
-				C.sysc_scene_tree_set_position(c.grabView.tree, C.int(geometry.x), C.int(geometry.y))
+				c.placeView(c.grabView, geometry.x, geometry.y)
 			}
 			c.syncInsertHint()
 			return
@@ -902,16 +902,15 @@ func (c *Compositor) processCursorMotion(time C.uint32_t) {
 			if c.model == nil || !c.model.ResizeWindow(c.grabView.id,
 				geometry.x, geometry.y, geometry.width, geometry.height,
 				c.pointerGrab.resizeOptions()) {
-				C.sysc_scene_tree_set_position(c.grabView.tree,
-					C.int(geometry.x), C.int(geometry.y))
+				c.placeView(c.grabView, geometry.x, geometry.y)
 				C.wlr_xdg_toplevel_set_size(c.grabView.toplevel,
 					C.int(geometry.width), C.int(geometry.height))
 			} else {
 				c.layoutWorkspaceModel()
 			}
 		} else {
-			C.sysc_scene_tree_set_position(c.grabView.tree,
-				C.int(geometry.x), C.int(geometry.y))
+			// The decorations sit in their own trees and move with the window.
+			c.placeView(c.grabView, geometry.x, geometry.y)
 		}
 		c.windowStateQueued = true
 		return

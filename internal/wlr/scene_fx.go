@@ -524,6 +524,11 @@ static void sysc_clip_scene_buffer(struct wlr_scene_buffer *buffer, int x, int y
 		left == clip->x && bottom == clip_bottom ? clip->radii.bottom_left : 0));
 }
 
+static void sysc_scene_node_position(struct wlr_scene_node *node, int *x, int *y) {
+	*x = node->x;
+	*y = node->y;
+}
+
 static void sysc_scene_clip_tree(struct wlr_scene_tree *tree, int x, int y, int width, int height,
 		int tl, int tr, int br, int bl) {
 	struct sysc_scene_clip clip = {
@@ -936,6 +941,13 @@ func sceneFXSetSubsurfaceClip(node unsafe.Pointer, enabled bool, x, y, width, he
 
 func sceneFXNodeSetPosition(node unsafe.Pointer, x, y int) {
 	C.wlr_scene_node_set_position((*C.struct_wlr_scene_node)(node), C.int(x), C.int(y))
+}
+
+// sceneFXNodePosition is node's offset from its parent tree.
+func sceneFXNodePosition(node unsafe.Pointer) (int, int) {
+	var x, y C.int
+	C.sysc_scene_node_position((*C.struct_wlr_scene_node)(node), &x, &y)
+	return int(x), int(y)
 }
 
 func sceneFXCloneView(parent, source unsafe.Pointer) (unsafe.Pointer, int) {
