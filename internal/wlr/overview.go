@@ -12,15 +12,38 @@ package wlr
 #include <wlr/types/wlr_buffer.h>
 #include <wlr/types/wlr_compositor.h>
 #include <wlr/types/wlr_scene.h>
+#include <wlr/util/box.h>
+#include <wlr/util/transform.h>
 
 struct sysc_overview_project_context {
 	struct wlr_scene_tree *tree;
 	int source_x, source_y;
 	int target_x, target_y;
 	double zoom;
-	int count;
+	// clip crops every copy to a box in layout coordinates, as
+	// sysc_scene_clip_tree does with square corners.
+	bool clip;
+	int clip_x, clip_y, clip_width, clip_height;
+	// reuse is the next copy already in tree, in stacking order. The walk
+	// visits the source's buffers in the order it created them.
+	struct wlr_scene_node *reuse;
+	int count, created;
 	uintptr_t first_buffer, last_buffer;
 };
+
+// sysc_overview_next_copy returns the copy after node in tree, or the first
+// one when node is NULL. Copies are the tree's only buffers.
+static struct wlr_scene_node *sysc_overview_next_copy(struct wlr_scene_tree *tree,
+		struct wlr_scene_node *node) {
+	struct wl_list *link = node == NULL ? tree->children.next : node->link.next;
+	for (; link != &tree->children; link = link->next) {
+		struct wlr_scene_node *next = wl_container_of(link, next, link);
+		if (next->type == WLR_SCENE_NODE_BUFFER) {
+			return next;
+		}
+	}
+	return NULL;
+}
 
 static void sysc_overview_project_buffer(struct wlr_scene_buffer *source,
 		int x, int y, void *data) {
@@ -32,19 +55,25 @@ static void sysc_overview_project_buffer(struct wlr_scene_buffer *source,
 		context->first_buffer = (uintptr_t)source->buffer;
 	}
 	context->last_buffer = (uintptr_t)source->buffer;
-	struct wlr_scene_buffer *copy = wlr_scene_buffer_create(context->tree, source->buffer);
-	if (copy == NULL) {
-		return;
+	struct wlr_scene_buffer *copy;
+	if (context->reuse != NULL) {
+		copy = wlr_scene_buffer_from_node(context->reuse);
+		context->reuse = sysc_overview_next_copy(context->tree, context->reuse);
+		// Setting the same buffer again would drop its texture and damage it.
+		if (copy->buffer != source->buffer) {
+			wlr_scene_buffer_set_buffer(copy, source->buffer);
+		}
+	} else {
+		copy = wlr_scene_buffer_create(context->tree, source->buffer);
+		if (copy == NULL) {
+			return;
+		}
+		context->created++;
 	}
 	int target_x = context->target_x + (int)lround((x - context->source_x) * context->zoom);
 	int target_y = context->target_y + (int)lround((y - context->source_y) * context->zoom);
-	wlr_scene_node_set_position(&copy->node, target_x, target_y);
-	wlr_scene_buffer_set_transform(copy, source->transform);
-	wlr_scene_buffer_set_opacity(copy, source->opacity);
-	wlr_scene_buffer_set_filter_mode(copy, source->filter_mode);
-	if (source->src_box.width > 0 && source->src_box.height > 0) {
-		wlr_scene_buffer_set_source_box(copy, &source->src_box);
-	}
+	struct wlr_fbox src = source->src_box;
+	bool has_src = src.width > 0 && src.height > 0;
 	int width = source->dst_width > 0 ? source->dst_width : source->buffer->width;
 	int height = source->dst_height > 0 ? source->dst_height : source->buffer->height;
 	if (source->dst_width == 0 && source->dst_height == 0 &&
@@ -56,10 +85,54 @@ static void sysc_overview_project_buffer(struct wlr_scene_buffer *source,
 		width = height;
 		height = swap;
 	}
-	if (width > 0 && height > 0) {
+	bool sized = width > 0 && height > 0;
+	if (sized) {
 		width = (int)lround(width * context->zoom);
 		height = (int)lround(height * context->zoom);
-		wlr_scene_buffer_set_dest_size(copy, width > 0 ? width : 1, height > 0 ? height : 1);
+		width = width > 0 ? width : 1;
+		height = height > 0 ? height : 1;
+	}
+	bool enabled = true;
+	if (context->clip && sized) {
+		int left = target_x > context->clip_x ? target_x : context->clip_x;
+		int top = target_y > context->clip_y ? target_y : context->clip_y;
+		int clip_right = context->clip_x + context->clip_width;
+		int clip_bottom = context->clip_y + context->clip_height;
+		int right = target_x + width < clip_right ? target_x + width : clip_right;
+		int bottom = target_y + height < clip_bottom ? target_y + height : clip_bottom;
+		if (right <= left || bottom <= top) {
+			enabled = false;
+		} else if (left != target_x || top != target_y ||
+				right != target_x + width || bottom != target_y + height) {
+			if (!has_src) {
+				src = (struct wlr_fbox){ .width = source->buffer->width, .height = source->buffer->height };
+				has_src = true;
+			}
+			struct wlr_fbox uv = {
+				.x = (double)(left - target_x) / width, .y = (double)(top - target_y) / height,
+				.width = (double)(right - left) / width, .height = (double)(bottom - top) / height,
+			};
+			wlr_fbox_transform(&uv, &uv, wlr_output_transform_invert(source->transform), 1, 1);
+			src = (struct wlr_fbox){
+				.x = src.x + uv.x * src.width, .y = src.y + uv.y * src.height,
+				.width = uv.width * src.width, .height = uv.height * src.height,
+			};
+			target_x = left;
+			target_y = top;
+			width = right - left;
+			height = bottom - top;
+		}
+	}
+	// Each setter returns early when nothing changed, so a copy that is
+	// reused unchanged takes no damage.
+	wlr_scene_node_set_enabled(&copy->node, enabled);
+	wlr_scene_node_set_position(&copy->node, target_x, target_y);
+	wlr_scene_buffer_set_transform(copy, source->transform);
+	wlr_scene_buffer_set_opacity(copy, source->opacity);
+	wlr_scene_buffer_set_filter_mode(copy, source->filter_mode);
+	wlr_scene_buffer_set_source_box(copy, has_src ? &src : NULL);
+	if (sized) {
+		wlr_scene_buffer_set_dest_size(copy, width, height);
 	}
 	context->count++;
 }
@@ -93,15 +166,30 @@ static void sysc_overview_send_frame_done(struct wlr_scene_tree **sources, size_
 	}
 }
 
+// sysc_overview_project_buffers brings tree's copies of source's buffers up
+// to date. It reuses the copies tree already holds, in order, and creates or
+// destroys only the difference, so a commit that changes buffers alone
+// swaps them in place. It returns the number of copies; *created counts the
+// new ones.
 static int sysc_overview_project_buffers(struct wlr_scene_tree *tree,
 		struct wlr_scene_tree *source, int source_x, int source_y,
-		int target_x, int target_y, double zoom, uintptr_t *first_buffer,
-		uintptr_t *last_buffer) {
+		int target_x, int target_y, double zoom, bool clip,
+		int clip_x, int clip_y, int clip_width, int clip_height,
+		int *created, uintptr_t *first_buffer, uintptr_t *last_buffer) {
 	struct sysc_overview_project_context context = {
 		.tree = tree, .source_x = source_x, .source_y = source_y,
 		.target_x = target_x, .target_y = target_y, .zoom = zoom,
+		.clip = clip, .clip_x = clip_x, .clip_y = clip_y,
+		.clip_width = clip_width, .clip_height = clip_height,
 	};
+	context.reuse = sysc_overview_next_copy(tree, NULL);
 	wlr_scene_node_for_each_buffer(&source->node, sysc_overview_project_buffer, &context);
+	while (context.reuse != NULL) {
+		struct wlr_scene_node *stale = context.reuse;
+		context.reuse = sysc_overview_next_copy(tree, stale);
+		wlr_scene_node_destroy(stale);
+	}
+	*created = context.created;
 	*first_buffer = context.first_buffer;
 	*last_buffer = context.last_buffer;
 	return context.count;
@@ -207,6 +295,56 @@ type overviewProjection struct {
 	// layer is the background or bottom layer surface this copy projects;
 	// nil for a window.
 	layer *layerSurface
+	// view is the window this copy projects; nil for a layer surface.
+	view *toplevelView
+	// place maps the source onto the overview; a commit reprojects with it.
+	place overviewPlacement
+}
+
+// overviewPlacement maps a source's layout origin (sourceX, sourceY) to
+// (targetX, targetY), scaled by zoom, cropped to clip unless it is empty.
+type overviewPlacement struct {
+	sourceX, sourceY, targetX, targetY int
+	zoom                               float64
+	clip                               rect
+}
+
+// project brings tree's copies of source's buffers up to date, reusing the
+// copies it holds. It returns the number of copies and of new ones.
+func (p overviewPlacement) project(tree, source *C.struct_wlr_scene_tree) (count, created int, first, last uintptr) {
+	var sourceFirst, sourceLast C.uintptr_t
+	var made C.int
+	count = int(C.sysc_overview_project_buffers(tree, source, C.int(p.sourceX), C.int(p.sourceY),
+		C.int(p.targetX), C.int(p.targetY), C.double(p.zoom), C.bool(p.clip.w > 0 && p.clip.h > 0),
+		C.int(p.clip.x), C.int(p.clip.y), C.int(p.clip.w), C.int(p.clip.h),
+		&made, &sourceFirst, &sourceLast))
+	return count, int(made), uintptr(sourceFirst), uintptr(sourceLast)
+}
+
+// refreshOverviewSource reprojects the copies of source, a window or layer
+// surface tree, after a commit that changed its buffers but not the layout.
+// It reports false when a full rebuild is needed instead.
+func (c *Compositor) refreshOverviewSource(source *C.struct_wlr_scene_tree) bool {
+	refreshed := false
+	for i := range c.overviewProjections {
+		projection := &c.overviewProjections[i]
+		if projection.source != source {
+			continue
+		}
+		count, created, first, last := projection.place.project(projection.tree, source)
+		if count == 0 {
+			return false
+		}
+		projection.BufferCount, projection.SourceFirst, projection.SourceLast = count, first, last
+		if created > 0 && projection.view != nil {
+			c.rememberCaptureTree(unsafe.Pointer(projection.tree), projection.view.captureIdentity)
+		}
+		refreshed = true
+	}
+	if refreshed && bool(c.overviewTree.node.enabled) {
+		c.damageCaptureSources()
+	}
+	return true
 }
 
 // sendOverviewFrameDone answers, after output repaints, the frame callbacks
@@ -485,12 +623,10 @@ func (c *Compositor) syncOverviewScene() {
 				if tree == nil {
 					continue
 				}
-				var sourceFirst, sourceLast C.uintptr_t
 				c.rememberCaptureNodes(view)
-				count := int(C.sysc_overview_project_buffers(tree, view.tree,
-					C.int(current.frame.Output.X), C.int(current.frame.Output.Y),
-					C.int(workspace.Bounds.X), C.int(workspace.Bounds.Y), C.double(current.frame.Zoom),
-					&sourceFirst, &sourceLast))
+				place := overviewPlacement{sourceX: current.frame.Output.X, sourceY: current.frame.Output.Y,
+					targetX: workspace.Bounds.X, targetY: workspace.Bounds.Y, zoom: current.frame.Zoom}
+				count, _, first, last := place.project(tree, view.tree)
 				if count == 0 {
 					C.wlr_scene_node_destroy(&tree.node)
 					continue
@@ -499,7 +635,8 @@ func (c *Compositor) syncOverviewScene() {
 				c.overviewProjections = append(c.overviewProjections, overviewProjection{
 					Output: current.name, WorkspaceID: workspace.ID,
 					WindowID: window.ID, Bounds: window.Bounds, BufferCount: count,
-					SourceFirst: uintptr(sourceFirst), SourceLast: uintptr(sourceLast), tree: tree, source: view.tree,
+					SourceFirst: first, SourceLast: last, tree: tree, source: view.tree,
+					view: view, place: place,
 				})
 			}
 		}
@@ -513,32 +650,30 @@ func (c *Compositor) projectOverviewLayer(layer *layerSurface, output string, wo
 	if layer.tree == nil || !bool(layer.surface.surface.mapped) {
 		return
 	}
-	tree := C.wlr_scene_tree_create(c.overviewTree)
-	if tree == nil {
-		return
-	}
-	var sourceFirst, sourceLast C.uintptr_t
-	count := int(C.sysc_overview_project_buffers(tree, layer.tree, C.int(sourceX), C.int(sourceY),
-		C.int(bounds.X), C.int(bounds.Y), C.double(zoom), &sourceFirst, &sourceLast))
-	if count == 0 {
-		C.wlr_scene_node_destroy(&tree.node)
-		return
-	}
+	place := overviewPlacement{sourceX: sourceX, sourceY: sourceY, targetX: bounds.X, targetY: bounds.Y, zoom: zoom}
 	if workspace != 0 {
 		if outputBounds, ok := c.outputLayoutBounds(output); ok {
 			left, top := max(bounds.X, outputBounds.X), max(bounds.Y, outputBounds.Y)
 			right := min(bounds.X+bounds.Width, outputBounds.X+outputBounds.Width)
 			bottom := min(bounds.Y+bounds.Height, outputBounds.Y+outputBounds.Height)
 			if right <= left || bottom <= top {
-				C.wlr_scene_node_destroy(&tree.node)
 				return
 			}
-			sceneFXClipTree(unsafe.Pointer(tree), rect{left, top, right - left, bottom - top}, [4]uint16{})
+			place.clip = rect{left, top, right - left, bottom - top}
 		}
+	}
+	tree := C.wlr_scene_tree_create(c.overviewTree)
+	if tree == nil {
+		return
+	}
+	count, _, first, last := place.project(tree, layer.tree)
+	if count == 0 {
+		C.wlr_scene_node_destroy(&tree.node)
+		return
 	}
 	c.overviewProjections = append(c.overviewProjections, overviewProjection{
 		Output: output, WorkspaceID: workspace, Bounds: bounds, BufferCount: count,
-		SourceFirst: uintptr(sourceFirst), SourceLast: uintptr(sourceLast), tree: tree, source: layer.tree, layer: layer,
+		SourceFirst: first, SourceLast: last, tree: tree, source: layer.tree, layer: layer, place: place,
 	})
 }
 
@@ -667,7 +802,9 @@ func (c *Compositor) syncOverviewSurfaceListeners(view *toplevelView) {
 			listeners.commit = AddListener(unsafe.Pointer(&surface.events.commit), func(unsafe.Pointer) {
 				c.rememberCaptureNodes(view)
 				c.damageCaptureSources(view)
-				c.syncOverviewScene()
+				if !c.refreshOverviewSource(view.tree) {
+					c.syncOverviewScene()
+				}
 				c.syncSwitcher()
 			})
 			listeners.unmap = AddListener(unsafe.Pointer(&surface.events.unmap), func(unsafe.Pointer) {

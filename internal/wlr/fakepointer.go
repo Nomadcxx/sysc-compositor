@@ -15,6 +15,43 @@ package wlr
 #include <wlr/types/wlr_pointer.h>
 #include <wlr/types/wlr_subcompositor.h>
 
+static struct wlr_scene_node *sysc_test_scene_child(struct wlr_scene_tree *tree,
+		struct wlr_scene_node *after) {
+	struct wl_list *link = after == NULL ? tree->children.next : after->link.next;
+	return link == &tree->children ? NULL : wl_container_of(link, after, link);
+}
+
+struct sysc_test_buffer_state {
+	uintptr_t buffer;
+	bool buffer_node, enabled;
+	int x, y, width, height;
+	double src_x, src_y, src_width, src_height;
+};
+
+// The scene buffer's fields are read here: Go code in this file must not
+// name them, or cgo sees two layouts of struct wlr_scene_buffer.
+static struct sysc_test_buffer_state sysc_test_buffer_state(struct wlr_scene_node *node) {
+	struct sysc_test_buffer_state state = {
+		.buffer_node = node->type == WLR_SCENE_NODE_BUFFER,
+		.enabled = node->enabled, .x = node->x, .y = node->y,
+	};
+	if (state.buffer_node) {
+		struct wlr_scene_buffer *buffer = wlr_scene_buffer_from_node(node);
+		state.buffer = (uintptr_t)buffer->buffer;
+		state.width = buffer->dst_width;
+		state.height = buffer->dst_height;
+		state.src_x = buffer->src_box.x;
+		state.src_y = buffer->src_box.y;
+		state.src_width = buffer->src_box.width;
+		state.src_height = buffer->src_box.height;
+	}
+	return state;
+}
+
+static void sysc_test_scene_buffer_replace(void *node, struct wlr_buffer *buffer) {
+	wlr_scene_buffer_set_buffer(node, buffer);
+}
+
 static bool sysc_scene_node_before(struct wlr_scene_node *first,
 		struct wlr_scene_node *second) {
 	if (first == NULL || second == NULL || first->parent == NULL ||
@@ -311,7 +348,10 @@ static int sysc_surface_subsurface_count(struct wlr_surface *surface) {
 */
 import "C"
 
-import "unsafe"
+import (
+	"image"
+	"unsafe"
+)
 
 // requestCursorShapeForTest exercises the request handler without a backend,
 // Wayland connection or desktop window. The temporary seat owns no resources.
@@ -568,4 +608,50 @@ func (p *projectionProbe) free() {
 // userPointerFocus is the surface the user seat's pointer is on, for tests.
 func (c *Compositor) userPointerFocus() unsafe.Pointer {
 	return unsafe.Pointer(c.seat.pointer_state.focused_surface)
+}
+
+// sceneBufferState is what one scene buffer draws, for nested tests.
+type sceneBufferState struct {
+	Node                uintptr
+	Buffer              uintptr
+	Enabled             bool
+	X, Y, Width, Height int
+	Source              [4]float64
+}
+
+// sceneBufferStates reads the buffers directly under tree, bottom first.
+func sceneBufferStates(tree *C.struct_wlr_scene_tree) []sceneBufferState {
+	var states []sceneBufferState
+	for node := C.sysc_test_scene_child(tree, nil); node != nil; node = C.sysc_test_scene_child(tree, node) {
+		state := C.sysc_test_buffer_state(node)
+		if !state.buffer_node {
+			continue
+		}
+		states = append(states, sceneBufferState{
+			Node: uintptr(unsafe.Pointer(node)), Buffer: uintptr(state.buffer),
+			Enabled: bool(state.enabled), X: int(state.x), Y: int(state.y),
+			Width: int(state.width), Height: int(state.height),
+			Source: [4]float64{float64(state.src_x), float64(state.src_y), float64(state.src_width), float64(state.src_height)},
+		})
+	}
+	return states
+}
+
+func sceneTreeCreate(parent *C.struct_wlr_scene_tree) *C.struct_wlr_scene_tree {
+	return C.wlr_scene_tree_create(parent)
+}
+
+func sceneTreeDestroy(tree *C.struct_wlr_scene_tree) {
+	C.wlr_scene_node_destroy(&tree.node)
+}
+
+// sceneImageReplace gives node a new buffer of img, as a client commit does.
+func sceneImageReplace(node unsafe.Pointer, img *image.RGBA) bool {
+	buffer := imageBuffer(img)
+	if buffer == nil {
+		return false
+	}
+	C.sysc_test_scene_buffer_replace(node, buffer)
+	C.wlr_buffer_drop(buffer)
+	return true
 }

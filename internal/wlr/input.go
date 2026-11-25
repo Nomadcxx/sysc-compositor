@@ -1870,7 +1870,10 @@ func (c *Compositor) handleNewToplevel(data unsafe.Pointer) {
 		if newlyMapped || geometryChanged || fullscreenChanged {
 			c.notifyWindowStateChanged()
 		}
-		c.syncOverviewScene()
+		// A commit that only draws swaps the overview copies' buffers.
+		if newlyMapped || geometryChanged || fullscreenChanged || !c.refreshOverviewSource(view.tree) {
+			c.syncOverviewScene()
+		}
 		c.syncSwitcher()
 		if newlyMapped {
 			c.debugWindowMapped(view)
