@@ -47,12 +47,18 @@ static void sysc_restore_client_image(struct wlr_cursor *cursor,
 	wlr_cursor_set_surface(cursor, surface, hotspot_x, hotspot_y);
 }
 
-static struct wlr_surface *sysc_scene_surface_at(struct wlr_scene *scene,
+// Niri's backdrop surfaces ignore all input.
+static struct wlr_surface *sysc_scene_surface_at(struct wlr_scene *scene, struct wlr_scene_tree *backdrop,
 		double x, double y, double *sx, double *sy, struct wlr_scene_node **hit) {
 	struct wlr_scene_node *node = wlr_scene_node_at(&scene->tree.node, x, y, sx, sy);
 	*hit = node;
 	if (node == NULL || node->type != WLR_SCENE_NODE_BUFFER) {
 		return NULL;
+	}
+	for (struct wlr_scene_tree *parent = node->parent; parent != NULL; parent = parent->node.parent) {
+		if (parent == backdrop) {
+			return NULL;
+		}
 	}
 	struct wlr_scene_surface *scene_surface =
 		wlr_scene_surface_try_from_buffer(wlr_scene_buffer_from_node(node));
@@ -1269,7 +1275,7 @@ func (c *Compositor) pointerOnLayerSurface() bool {
 func (c *Compositor) surfaceAt(x, y float64) (*C.struct_wlr_surface, C.double, C.double) {
 	var sx, sy C.double
 	var hit *C.struct_wlr_scene_node
-	surface := C.sysc_scene_surface_at(c.scene, C.double(x), C.double(y), &sx, &sy, &hit)
+	surface := C.sysc_scene_surface_at(c.scene, c.backdropLayerTree, C.double(x), C.double(y), &sx, &sy, &hit)
 	if c.model == nil || c.model.OverviewProgress() > 0 || hit == nil {
 		return surface, sx, sy
 	}

@@ -180,6 +180,7 @@ type Compositor struct {
 	tabIndicatorNodes   []unsafe.Pointer
 	tabIndicatorHits    []tabIndicatorHit
 	backgroundTree      *C.struct_wlr_scene_tree
+	backdropLayerTree   *C.struct_wlr_scene_tree // place-within-backdrop surfaces, under backgroundTree
 	blurBackdropTree    *C.struct_wlr_scene_tree
 	blurBackdrops       map[unsafe.Pointer]*backdropBlur
 	blurBackdropLayers  map[*layerSurface]struct{}        // measured at the next repaint

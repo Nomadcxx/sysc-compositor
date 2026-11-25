@@ -721,12 +721,17 @@ func (c *Compositor) createAppearanceTrees() bool {
 	c.windowFocusTree = C.wlr_scene_tree_create(&c.scene.tree)
 	c.tabIndicatorTree = C.wlr_scene_tree_create(&c.scene.tree)
 	c.backgroundTree = C.wlr_scene_tree_create(&c.scene.tree)
+	c.backdropLayerTree = C.wlr_scene_tree_create(&c.scene.tree)
 	c.blurBackdropTree = C.wlr_scene_tree_create(&c.scene.tree)
 	if c.windowShadowTree == nil || c.windowAnimationTree == nil || c.windowBorderTree == nil ||
-		c.windowFocusTree == nil || c.tabIndicatorTree == nil || c.backgroundTree == nil || c.blurBackdropTree == nil {
+		c.windowFocusTree == nil || c.tabIndicatorTree == nil || c.backgroundTree == nil ||
+		c.backdropLayerTree == nil || c.blurBackdropTree == nil {
 		return false
 	}
+	// Niri's backdrop draws under the workspace background colour, which an
+	// opaque colour hides outside the overview.
 	C.wlr_scene_node_place_below(&c.backgroundTree.node, &c.layerTrees[layerBackground].node)
+	C.wlr_scene_node_place_below(&c.backdropLayerTree.node, &c.backgroundTree.node)
 	C.wlr_scene_node_place_above(&c.blurBackdropTree.node, &c.layerTrees[layerBackground].node)
 	// Bottom to top: shadows, borders, then animation snapshots, which stand
 	// in for hidden windows. A client-decorated window's border fills its
