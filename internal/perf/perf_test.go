@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 func TestBenchmarkDiagnostics(t *testing.T) {
@@ -36,6 +38,15 @@ func TestBenchmarkDiagnostics(t *testing.T) {
 	RecordBlurCacheRebuild()
 	OutputPresent(true, 0x9)
 	OutputPresent(false, 0)
+	var now unix.Timespec
+	if err := unix.ClockGettime(unix.CLOCK_MONOTONIC, &now); err != nil {
+		t.Fatal(err)
+	}
+	nowMS := uint32(now.Nano() / int64(time.Millisecond))
+	RecordInputDelay(InputMotion, nowMS-5)
+	RecordInputDelay(InputMotion, nowMS-30)
+	RecordInputDelay(InputMotion, nowMS+1000)
+	RecordInputDelay(InputKey, nowMS-120_000)
 	client := &http.Client{Timeout: 3 * time.Second, Transport: &http.Transport{
 		DialContext: func(_ context.Context, _, _ string) (net.Conn, error) { return net.Dial("unix", path) },
 	}}
@@ -55,6 +66,14 @@ func TestBenchmarkDiagnostics(t *testing.T) {
 		Discarded         uint64         `json:"discarded"`
 		ZeroCopy          uint64         `json:"zero_copy_presents"`
 		Runtime           map[string]any `json:"runtime"`
+		InputDelay        map[string]struct {
+			Count  uint64   `json:"count"`
+			SumMS  uint64   `json:"sum_ms"`
+			MaxMS  uint64   `json:"max_ms"`
+			Slow   uint64   `json:"over_20ms"`
+			Bounds []uint64 `json:"bounds_ms"`
+			Counts []uint64 `json:"counts"`
+		} `json:"input_delay"`
 	}
 	if err := json.NewDecoder(response.Body).Decode(&got); err != nil {
 		t.Fatal(err)
@@ -65,6 +84,13 @@ func TestBenchmarkDiagnostics(t *testing.T) {
 	}
 	if got.SceneWorkNS != 2e6 || got.BlurCacheRebuilds != 1 || got.Presented != 1 || got.Discarded != 1 || got.ZeroCopy != 1 {
 		t.Fatalf("presentation counters: %+v", got)
+	}
+	motion, key := got.InputDelay["motion"], got.InputDelay["key"]
+	if motion.Count != 2 || motion.MaxMS < 30 || motion.MaxMS > 40 || motion.Slow != 1 || len(motion.Counts) != len(motion.Bounds)+1 {
+		t.Fatalf("motion delay: %+v", motion)
+	}
+	if motion.Counts[3] != 1 || motion.Counts[6] != 1 || key.Count != 0 || len(got.InputDelay) != 4 {
+		t.Fatalf("delay buckets: %+v", got.InputDelay)
 	}
 	response, err = client.Get("http://localhost/debug/pprof/goroutine?debug=1")
 	if err != nil {
