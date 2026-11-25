@@ -7,6 +7,7 @@ import (
 	"unsafe"
 
 	"github.com/Nomadcxx/sysc-compositor/internal/bind"
+	"github.com/Nomadcxx/sysc-compositor/internal/config"
 )
 
 var (
@@ -368,7 +369,15 @@ func TestCompositorGrabClearsPointerFocus(t *testing.T) {
 // only the window left them behind until its next commit: a block of ring
 // colour trailing the window.
 func TestMoveGrabCarriesTheDecorationsWithTheWindow(t *testing.T) {
-	c := newNested(t)
+	defaults := config.Default()
+	c := newNestedWith(t, Options{Layout: &LayoutOptions{
+		Gaps: defaults.Layout.Gaps, ColumnWidthProportion: defaults.Layout.ColumnWidthProportion,
+		InsertHint: defaults.Layout.InsertHint,
+		FocusRing: config.FocusRing{Width: 4,
+			ActiveColor: config.Color{R: 1, G: 0.96, B: 0.6, A: 1}, InactiveColor: config.Color{A: 1}},
+		Border: config.FocusRing{Off: true},
+		Shadow: config.Shadow{On: true, Softness: 8, Spread: 3, Color: config.Color{A: 0.5}},
+	}})
 	checked := 0
 	pointerScene(t, c, func(v *toplevelView, p *fakePointer) []func() {
 		return []func(){
@@ -388,6 +397,12 @@ func TestMoveGrabCarriesTheDecorationsWithTheWindow(t *testing.T) {
 				windowX, windowY := v.treePosition()
 				ringX, ringY := sceneFXNodePosition(v.focusRingNode)
 				shadowX, shadowY := sceneFXNodePosition(v.shadowNode)
+				// The ring's background fill, when the window draws its own
+				// decorations, is the block that trailed the window.
+				var fillX, fillY int
+				if v.borderNode != nil {
+					fillX, fillY = sceneFXNodePosition(v.borderNode)
+				}
 				for i := 1; i <= 5; i++ {
 					p.moveTo(x+float64(7*i), y+float64(5*i))
 					wx, wy := v.treePosition()
@@ -400,6 +415,11 @@ func TestMoveGrabCarriesTheDecorationsWithTheWindow(t *testing.T) {
 					}
 					if sx, sy := sceneFXNodePosition(v.shadowNode); sx-shadowX != dx || sy-shadowY != dy {
 						t.Errorf("motion %d: the shadow moved by (%d,%d), the window by (%d,%d)", i, sx-shadowX, sy-shadowY, dx, dy)
+					}
+					if v.borderNode != nil {
+						if fx, fy := sceneFXNodePosition(v.borderNode); fx-fillX != dx || fy-fillY != dy {
+							t.Errorf("motion %d: the ring's fill moved by (%d,%d), the window by (%d,%d)", i, fx-fillX, fy-fillY, dx, dy)
+						}
 					}
 					checked++
 				}
