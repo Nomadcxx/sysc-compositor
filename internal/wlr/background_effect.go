@@ -268,7 +268,9 @@ func (c *Compositor) syncBackgroundEffect(effect *backgroundEffect) {
 	// it fills the window geometry; asked for by the client it is cut to that
 	// geometry under clip-to-geometry. Either way it takes the window's corners.
 	forced := blur != nil && *blur && len(effect.committed) == 0
-	if view := c.viewForSurface(effect.root); view != nil && effect.surface == effect.root && (forced || view.clipToGeometry) {
+	// A popup resolves to its window too; it keeps its own geometry and corners.
+	if view := c.viewForSurface(effect.root); view != nil && effect.surface == effect.root &&
+		view.surfacePointer() == unsafe.Pointer(effect.root) && (forced || view.clipToGeometry) {
 		clipped, radii = roundedToGeometry(clipped, view.geometry(), view.cornerRadii)
 	}
 	c.syncBackgroundEffectNodes(effect, unsafe.Pointer(parent), unsafe.Pointer(surfaceNode), int(x), int(y), clipped, radii, c.effectUsesBackdrop(effect, parent, rule.Xray))
