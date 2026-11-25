@@ -59,38 +59,72 @@ Measured so far (detail in the spin handover):
 
 ## Progress on 2026-11-25
 
-- CI on main has been red since `5dc96e8`.
-  `TestPopupsRuleDrawsPopupsWithTheirOwnOpacityAndBlur` broke because
-  `viewForSurface` walks a popup up to its toplevel, so a popup's blur took
-  the window's geometry and corners. Fixed in PR #128
-  (`fix/popup-blur-geometry`). It is green on CI, nested tests included, and
-  waits for a merge. The armed `corners/` kit has the bug, but the owner's
-  config has no `popups` rule, so the kit stays as it is.
+- **CI** on main was red from `5dc96e8`: a popup's blur took its window's
+  geometry and corners, because `viewForSurface` walks a popup up to its
+  toplevel. PR #128 fixed it and is merged (`ee63678`).
 - The `corners/` kit is armed but not yet running: the session predates
   it. First step 1 below still applies after the next sign-in.
-- **Blur tint (item 2)** is not a tint difference. `suite.kdl` sets no
-  `background-color`, so Niri fills each workspace with its opaque default
-  (0.25 grey). That hides the `place-within-backdrop` wallpaper, and Niri's
-  xray skips the backdrop wherever an opaque workspace covers it
-  (`src/render_helpers/xray.rs`), so its frost is blurred flat grey. sysc
-  puts `backgroundTree` below the background layer, so the backdrop
-  wallpaper draws over the workspace colour in the normal view, in the gaps
-  and in the frost. SceneFX's blur effects already run at brightness and
-  contrast 1. The only other difference is the saturation luminance
-  weights (SceneFX 0.3086/0.6094/0.0820 against Niri's Rec. 709), which is
-  minor.
-  Matching Niri means drawing backdrop layers under the workspace colour in
-  the normal view. That would turn the owner's desktop black: their sysc
-  config sets no `background-color` (sysc's default is opaque black), while
-  their Niri config sets `"transparent"`. So the change needs the owner's
-  call and a config change with it. Either way, add
-  `background-color "transparent"` to `suite.kdl`, as in the owner's Niri
-  setup, so the suite compares like with like.
-- The suite's scenes differ in another way: in sysc, simple-egl floats at
-  column size (about 400×1340, over foot3), while in Niri it floats at its
-  own 250×250. The probe renders roughly nine times the pixels in sysc. Fix
-  that, or account for it, before reading item 1's overview gap of 124
-  against 157 fps.
+- **Blur tint (item 2)** was not a tint difference. With no
+  `background-color` in `suite.kdl`, Niri fills each workspace with its
+  opaque default. That hides the `place-within-backdrop` wallpaper, so
+  Niri's xray frost blurred flat grey. sysc drew backdrop layers over the
+  workspace colour. PR #129 draws them under it, in their own tree, with no
+  pointer input, as Niri's `render_inner` does. The owner agreed, and their
+  sysc config now sets `background-color "transparent"` (backup:
+  `config.kdl.before-transparent-bg` in the kit root), as their Niri config
+  does. The suite config sets it too. SceneFX's blur effects already run at
+  brightness and contrast 1, so the frost now matches in the screenshots.
+- **Open-floating size.** A window that a rule opens floating took its
+  tiled placement, so the suite's simple-egl probe opened at about
+  400×1340 in sysc and 250×250 in Niri. PR #130 floats such a window at its
+  own size, centred, as Niri does.
+- **Overview pacing (item 1).** `parity2/nested/probe.sh` holds the
+  overview open with `WAYLAND_DEBUG` on simple-egl. sysc gave it **1 fps**:
+  the overview's copies cover the originals, the scene gives those no
+  output, and they fell back to the once-a-second timer. Every frame-paced
+  window in sysc's overview froze. The suite's 124 fps was an average over
+  open, close and animation. PR #131 answers the frame callbacks of every
+  source tree projected onto an output after it repaints; its test fails
+  without the fix (4 callbacks in 5 s) and passes with it. That covers the
+  workspace switch too, whose 90 fps against Niri's 102 is likely the same
+  cause. Still to do: one probe or suite run with `parity3/` (main plus
+  #129–#131) to confirm, which needs the owner's OK.
+- Suite with `parity2/` (main plus #129 and #130, fixed `suite.kdl`),
+  main-thread CPU and simple-egl fps:
+
+  | Scenario | sysc | Niri |
+  | --- | --- | --- |
+  | idle | 9.4%, 160 | 19.1%, 154 |
+  | resize | 12.3%, 159 | 20.5%, 133 |
+  | scroll | 10.2%, 160 | 18.7%, 158 |
+  | workspace | 8.2%, 90 | 12.8%, 102 |
+  | openclose | 13.7%, 157 | 19.6%, 146 |
+  | overview | 14.5%, 120 | 20.5%, 158 |
+  | resize, blur off | 12.5%, 159 | 20.6%, 155 |
+  | video idle | 13.9%, 159 | 22.9%, 155 |
+  | video resize | 17.1%, 155 | 23.9%, 155 |
+
+- **Looks still differ** in two ways in `idle-end.png`:
+  - Floating decorations draw under tiled windows. `windowShadowTree`
+    and `windowBorderTree` hold every window's shadow, border and
+    background below the whole windows layer. A floating window's shadow
+    and its focus-ring background (Niri's `draw-border-with-background`
+    for a client-decorated window such as simple-egl) are therefore hidden
+    under the tiled window behind it. Niri draws each tile's decorations
+    with the tile. Fixing this means stacking each floating window's
+    decorations with it.
+  - Niri shows Ghostty in the third column where sysc shows the third
+    foot, from the same open order. Not yet explained.
+- **CI flake on main:** `internal/wlr` sometimes dies with SIGSEGV at
+  PC 0 inside `fx_renderer_create`. It happens when
+  `TestFractionalScaleFollowsOutput` builds its compositor, right after the
+  renderer-loss tests. Other runs log `EGLImageTargetRenderbufferStorageOES`
+  `GL_INVALID_VALUE`, "Failed to create FBO" and "could not keep the EGL
+  context current" there instead. Seen on main's run for `ee63678` (also on
+  re-run) and once on #131, which passed on re-run. It is the same vkms EGL
+  instability as the `fb9caea` flake. `wlr_egl_destroy` unbinds the context
+  before destroying it, so the `4cdb824` pin is not leaking a binding.
+  Still open.
 - **sysc-shell (item 6)** is `sysc-2418` in the sysc-shell beads. The
   writes do not stop at unlock: unlocked, sysc-shell still made 18,703
   write syscalls a second at 17% of a core. That is recorded on the ticket.
@@ -208,6 +242,8 @@ Everything lives under `~/.local/state/sysc-compositor-archpc-20261123/`;
 | --- | --- |
 | `corners/` | Armed build. `arm.sh`, `rollback.sh` and `bench.sh MODE SECONDS` (modes: `cached`, `live`, `off`, `cached-noresize`). |
 | `corners/nested/suite.sh sysc\|niri 15` | Nested parity suite. Results and screenshots go to `nested/results/<time>-<compositor>/`. |
+| `parity2/`, `parity3/` | Unarmed builds with the patched SceneFX: main plus #129 and #130, and plus #131 too. `nested/suite.sh` with the transparent-background `suite.kdl`, and `nested/probe.sh sysc\|niri SECONDS` (overview held closed, open, closed; simple-egl under `WAYLAND_DEBUG`). |
+| `vulkan/` | wlroots-vkfx and SceneFX #204 builds; see the Vulkan assessment. |
 | `4cdb824-fxtex/` | Previous kit, with `cprofile.sh NAME SECONDS` (C-stack profiles through the `cstacks` binary) and `nested/compare.sh`. |
 | `texprobe/` | Headless SceneFX probe on the render node (no window). `texprobe {live\|cached\|off} CONSUMERS FRAMES [check]`; `check` hashes read-back frames. |
 | `scenefx/`, `scenefx-base/`, `scenefx-main-base/` | Fork clone (`keep-offscreen-texture`, `keep-offscreen-texture-main`) and unpatched builds for A/B. |
