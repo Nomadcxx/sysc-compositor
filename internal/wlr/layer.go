@@ -356,7 +356,7 @@ func (c *Compositor) handleNewLayerSurface(data unsafe.Pointer) {
 			c.arrangeLayers(l.output)
 		}
 		c.applyLayerAppearance(l)
-		c.syncOverviewLayer(l)
+		c.syncOverviewLayer(l, !stateChanged)
 		c.updateKeyboardFocus()
 		if stateChanged {
 			c.notifyStateChanged()
@@ -381,7 +381,7 @@ func (c *Compositor) handleNewLayerSurface(data unsafe.Pointer) {
 			c.onDemandLayerFocus = nil
 		}
 		c.arrangeLayers(l.output)
-		c.syncOverviewLayer(l)
+		c.syncOverviewLayer(l, false)
 		c.updateKeyboardFocus()
 		c.notifyStateChanged()
 	})
@@ -398,7 +398,7 @@ func (c *Compositor) handleNewLayerSurface(data unsafe.Pointer) {
 		if c.onDemandLayerFocus == l {
 			c.onDemandLayerFocus = nil
 		}
-		c.syncOverviewLayer(l)
+		c.syncOverviewLayer(l, false)
 		c.updateKeyboardFocus()
 		c.notifyStateChanged()
 	})
@@ -406,9 +406,14 @@ func (c *Compositor) handleNewLayerSurface(data unsafe.Pointer) {
 
 // syncOverviewLayer refreshes the overview's copies of a background or
 // bottom layer surface, including copies left by a move to another layer.
-func (c *Compositor) syncOverviewLayer(l *layerSurface) {
+// syncOverviewLayer brings the overview copies of l up to date. drawOnly
+// says the commit changed l's buffers but none of its layer state.
+func (c *Compositor) syncOverviewLayer(l *layerSurface, drawOnly bool) {
 	projected := slices.ContainsFunc(c.overviewProjections,
 		func(projection overviewProjection) bool { return projection.layer == l })
+	if projected && drawOnly && c.refreshOverviewSource(l.tree) {
+		return
+	}
 	if projected || l.layer == layerBackground || l.layer == layerBottom {
 		c.syncOverviewScene()
 	}
