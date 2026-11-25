@@ -192,3 +192,34 @@ Over 90% of main-thread time is in C calls. Where it goes:
     and take a native run to compare with `20261125-135339`.
   - SHM backup and gSlapper hardware decode wait for the owner's decisions
     (renderer-loss trade-off; system packages).
+
+## Progress, 2026-11-26 (early)
+
+- The owner allowed the seven nested tests listed in #136 and #137. All
+  passed on `kit/profile-fixes`. `profile-fixes/` is now **armed** for the
+  next sign-in, rebuilt as `0.1.0-56-g614d91a` with #139 in it.
+- **#139 fixes the yellow block that trails a dragged window.** A drag moved
+  only the window's tree, so the focus ring, border and shadow stayed put
+  until the next commit. With `border { off; }`, a client-decorated window
+  gets the ring as a fill behind it (`draw-border-with-background`), and
+  that fill was left exposed. Motion now goes through `placeView`. Adds
+  `TestMoveGrabCarriesTheDecorationsWithTheWindow`, not yet run locally. The
+  owner's Niri ring is `#ffffff` and sysc's is `#fff59b`, because
+  sysc-shell writes a different colour into each compositor's
+  `sysc-shell.kdl`.
+- **CI crash in `fx_renderer_create` (SIGSEGV, PC=0 or a deref near null).**
+  #137 hit it on 3 of 3 runs; main hits it on about half. Probe #138
+  (closed):
+  - #137 without its new test passed once.
+  - Freeing the scene, allocator and renderer in `Destroy` (local branch
+    `fix/test-compositor-renderer-leak`, **do not merge**) made it crash
+    0.6 s in, at the first renderer created after one was destroyed.
+
+  So the trigger is creating a SceneFX renderer in a process where one has
+  been destroyed: the renderer-loss tests are the first to do that. It is
+  not a resource leak. #137's extra test only moves where the crash lands.
+  Next: get the C stack. Run the test binary under gdb in the CI container
+  with SIGURG and SIGPIPE ignored, or symbolise PC offset `0x989da2` against
+  the container's Mesa and SceneFX libraries. Suspects: global state in
+  SceneFX's renderer or shaders that its destroy leaves behind, or Mesa's
+  EGL display cache.
