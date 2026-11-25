@@ -160,3 +160,35 @@ Over 90% of main-thread time is in C calls. Where it goes:
   because a forking Ghostty can outlive its pid.
 - `/tmp` is cleared at boot; everything lives under
   `~/.local/state/sysc-compositor-archpc-20261123/`.
+
+## Progress, 2026-11-25 (night)
+
+- **Step 1 is done in #135.** `/metrics` has an `input_delay` histogram for
+  each kind (motion, button, axis, key) from libinput devices: count, sum,
+  maximum, the count over 20 ms, and buckets up to 250 ms. The kit
+  `main-inputdelay/` (main + #135 + the highp SceneFX) is **armed** for the
+  next sign-in. Its `native.sh` prints the delay for each scenario as
+  `input motion N mean M ms >20 ms K worst <=B ms`. The worst value is a
+  bucket, because `max_ms` counts since sign-in.
+- **Step 2 is scripted.** `native.sh` in `main-inputdelay/` and
+  `profile-fixes/` reads the compositor and its pid from `$NIRI_SOCKET`. It
+  works under Niri with `niri.kdl` and `niri-off.kdl`, which add the same
+  bench rules to `~/.config/niri/config.kdl`; both configs pass
+  `niri validate`. Under Niri there are no frame metrics, delay histogram or
+  pprof, and it warns if `niri.service` is not active, since libinput's lag
+  reports would then miss the journal. Still to do: the owner signs into Niri
+  (niri-session) and runs `.../profile-fixes/native/native.sh` once.
+- **Step 3 is partly done:**
+  - #136: a commit publishes window state only when the window mapped or
+    its geometry or fullscreen state changed. The publish was 5.6% of
+    main-thread samples at idle.
+  - #137 (stacked on #136): overview copies update in place when a surface
+    draws. Structural changes still rebuild. Adds
+    `TestOverviewPlacementCropsLikeSceneClipAndReusesCopies`.
+  - The kit `profile-fixes/` holds main + #135 + #136 + #137
+    (`0.1.0-54-g5cbbbb0`, local branch `kit/profile-fixes`). It is **not
+    armed**. Run the nested tests that #136 and #137 list first (owner's OK
+    per run), then `sh main-inputdelay/rollback.sh && sh profile-fixes/arm.sh`
+    and take a native run to compare with `20261125-135339`.
+  - SHM backup and gSlapper hardware decode wait for the owner's decisions
+    (renderer-loss trade-off; system packages).
