@@ -57,6 +57,47 @@ Measured so far (detail in the spin handover):
   output, at about 96% of a core each, and every video frame rebuilds the
   cached blur (48 rebuilds/s).
 
+## Progress on 2026-11-25
+
+- CI on main has been red since `5dc96e8`.
+  `TestPopupsRuleDrawsPopupsWithTheirOwnOpacityAndBlur` broke because
+  `viewForSurface` walks a popup up to its toplevel, so a popup's blur took
+  the window's geometry and corners. Fixed in PR #128
+  (`fix/popup-blur-geometry`). It is green on CI, nested tests included, and
+  waits for a merge. The armed `corners/` kit has the bug, but the owner's
+  config has no `popups` rule, so the kit stays as it is.
+- The `corners/` kit is armed but not yet running: the session predates
+  it. First step 1 below still applies after the next sign-in.
+- **Blur tint (item 2)** is not a tint difference. `suite.kdl` sets no
+  `background-color`, so Niri fills each workspace with its opaque default
+  (0.25 grey). That hides the `place-within-backdrop` wallpaper, and Niri's
+  xray skips the backdrop wherever an opaque workspace covers it
+  (`src/render_helpers/xray.rs`), so its frost is blurred flat grey. sysc
+  puts `backgroundTree` below the background layer, so the backdrop
+  wallpaper draws over the workspace colour in the normal view, in the gaps
+  and in the frost. SceneFX's blur effects already run at brightness and
+  contrast 1. The only other difference is the saturation luminance
+  weights (SceneFX 0.3086/0.6094/0.0820 against Niri's Rec. 709), which is
+  minor.
+  Matching Niri means drawing backdrop layers under the workspace colour in
+  the normal view. That would turn the owner's desktop black: their sysc
+  config sets no `background-color` (sysc's default is opaque black), while
+  their Niri config sets `"transparent"`. So the change needs the owner's
+  call and a config change with it. Either way, add
+  `background-color "transparent"` to `suite.kdl`, as in the owner's Niri
+  setup, so the suite compares like with like.
+- The suite's scenes differ in another way: in sysc, simple-egl floats at
+  column size (about 400×1340, over foot3), while in Niri it floats at its
+  own 250×250. The probe renders roughly nine times the pixels in sysc. Fix
+  that, or account for it, before reading item 1's overview gap of 124
+  against 157 fps.
+- **sysc-shell (item 6)** is `sysc-2418` in the sysc-shell beads. The
+  writes do not stop at unlock: unlocked, sysc-shell still made 18,703
+  write syscalls a second at 17% of a core. That is recorded on the ticket.
+- **SceneFX Vulkan:** see the
+  [assessment](2026-11-25-scenefx-vulkan-assessment.md). Recommendation:
+  track, do not adopt.
+
 ## First steps
 
 1. The `corners/` kit is armed for the next sign-in: main at `5dc96e8` with
