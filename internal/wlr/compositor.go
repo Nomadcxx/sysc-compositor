@@ -1072,6 +1072,7 @@ func (c *Compositor) Destroy() {
 	}
 	c.finishCaptureProtocol()
 	c.destroyBackend()
+	c.destroyRenderer()
 	if c.session != nil {
 		C.wlr_session_destroy(c.session)
 		c.session = nil
@@ -1091,6 +1092,26 @@ func (c *Compositor) destroyBackend() {
 	if c.backend != nil {
 		C.wlr_backend_destroy(c.backend)
 		c.backend = nil
+	}
+}
+
+// destroyRenderer frees the scene, then the allocator and renderer it draws
+// with, once the backend has taken the outputs and their textures. A session
+// ends with its process, but a test binary builds hundreds of compositors,
+// and each kept a GPU context and DRM descriptor alive until the renderer of
+// a later one failed to start.
+func (c *Compositor) destroyRenderer() {
+	if c.scene != nil {
+		C.wlr_scene_node_destroy(&c.scene.tree.node)
+		c.scene = nil
+	}
+	if c.alloc != nil {
+		C.wlr_allocator_destroy(c.alloc)
+		c.alloc = nil
+	}
+	if c.renderer != nil {
+		C.wlr_renderer_destroy(c.renderer)
+		c.renderer = nil
 	}
 }
 
