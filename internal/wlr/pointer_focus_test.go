@@ -364,6 +364,54 @@ func TestCompositorGrabClearsPointerFocus(t *testing.T) {
 // window state with the next output frame rather than on every motion event,
 // as Niri refreshes its IPC once per loop iteration; ending the grab publishes
 // what is still queued (sysc-1470).
+// The focus ring, border and shadow live in their own trees. A drag that moved
+// only the window left them behind until its next commit: a block of ring
+// colour trailing the window.
+func TestMoveGrabCarriesTheDecorationsWithTheWindow(t *testing.T) {
+	c := newNested(t)
+	checked := 0
+	pointerScene(t, c, func(v *toplevelView, p *fakePointer) []func() {
+		return []func(){
+			func() {
+				c.focusView(v)
+				c.executeBindAction(bind.Action{Name: bind.ActionToggleWindowFloating})
+			},
+			func() {
+				if v.focusRingNode == nil || v.shadowNode == nil {
+					t.Fatal("the window has no focus ring or shadow to follow it")
+				}
+				x, y := c.viewCenter(v)
+				p.moveTo(x, y)
+				if !c.startPointerGrab(v, grabMove, 0, btnLeft) {
+					t.Fatal("the move grab did not start")
+				}
+				windowX, windowY := v.treePosition()
+				ringX, ringY := sceneFXNodePosition(v.focusRingNode)
+				shadowX, shadowY := sceneFXNodePosition(v.shadowNode)
+				for i := 1; i <= 5; i++ {
+					p.moveTo(x+float64(7*i), y+float64(5*i))
+					wx, wy := v.treePosition()
+					dx, dy := wx-windowX, wy-windowY
+					if dx == 0 && dy == 0 {
+						t.Fatalf("motion %d did not move the window", i)
+					}
+					if rx, ry := sceneFXNodePosition(v.focusRingNode); rx-ringX != dx || ry-ringY != dy {
+						t.Errorf("motion %d: the ring moved by (%d,%d), the window by (%d,%d)", i, rx-ringX, ry-ringY, dx, dy)
+					}
+					if sx, sy := sceneFXNodePosition(v.shadowNode); sx-shadowX != dx || sy-shadowY != dy {
+						t.Errorf("motion %d: the shadow moved by (%d,%d), the window by (%d,%d)", i, sx-shadowX, sy-shadowY, dx, dy)
+					}
+					checked++
+				}
+				c.clearPointerGrab()
+			},
+		}
+	})
+	if checked != 5 {
+		t.Fatalf("checked %d motions, want 5", checked)
+	}
+}
+
 func TestGrabMotionPublishesStatePerFrame(t *testing.T) {
 	c := newNested(t)
 	during, framed, ended := -1, -1, -1
