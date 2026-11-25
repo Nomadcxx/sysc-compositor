@@ -8,6 +8,7 @@ package wlr
 #include <math.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <time.h>
 #include <wlr/types/wlr_buffer.h>
 #include <wlr/types/wlr_compositor.h>
 #include <wlr/types/wlr_scene.h>
@@ -61,6 +62,35 @@ static void sysc_overview_project_buffer(struct wlr_scene_buffer *source,
 		wlr_scene_buffer_set_dest_size(copy, width > 0 ? width : 1, height > 0 ? height : 1);
 	}
 	context->count++;
+}
+
+// sysc_overview_frame_done answers the frame callbacks of every surface in a
+// projected source tree. It walks disabled subtrees too: the windows of an
+// inactive workspace sit in a disabled tree.
+static void sysc_overview_frame_done(struct wlr_scene_node *node, const struct timespec *now) {
+	if (node->type == WLR_SCENE_NODE_TREE) {
+		struct wlr_scene_node *child;
+		wl_list_for_each(child, &wlr_scene_tree_from_node(node)->children, link) {
+			sysc_overview_frame_done(child, now);
+		}
+		return;
+	}
+	if (node->type != WLR_SCENE_NODE_BUFFER) {
+		return;
+	}
+	struct wlr_scene_surface *scene_surface =
+		wlr_scene_surface_try_from_buffer(wlr_scene_buffer_from_node(node));
+	if (scene_surface != NULL && scene_surface->surface->mapped) {
+		wlr_surface_send_frame_done(scene_surface->surface, now);
+	}
+}
+
+static void sysc_overview_send_frame_done(struct wlr_scene_tree **sources, size_t count) {
+	struct timespec now;
+	clock_gettime(CLOCK_MONOTONIC, &now);
+	for (size_t i = 0; i < count; i++) {
+		sysc_overview_frame_done(&sources[i]->node, &now);
+	}
 }
 
 static int sysc_overview_project_buffers(struct wlr_scene_tree *tree,
@@ -172,9 +202,29 @@ type overviewProjection struct {
 	SourceFirst uintptr
 	SourceLast  uintptr
 	tree        *C.struct_wlr_scene_tree
+	// source is the window or layer surface tree the copy was taken from.
+	source *C.struct_wlr_scene_tree
 	// layer is the background or bottom layer surface this copy projects;
 	// nil for a window.
 	layer *layerSurface
+}
+
+// sendOverviewFrameDone answers, after output repaints, the frame callbacks
+// of the windows and layer surfaces the overview or a workspace switch
+// projects onto it. The copies cover their originals, so the scene gives
+// those no output and they would fall back to the once-a-second timer; Niri
+// renders them live.
+func (c *Compositor) sendOverviewFrameDone(output string) {
+	var sources []*C.struct_wlr_scene_tree
+	for _, projection := range c.overviewProjections {
+		if projection.Output == output && projection.source != nil && !slices.Contains(sources, projection.source) {
+			sources = append(sources, projection.source)
+		}
+	}
+	if len(sources) == 0 {
+		return
+	}
+	C.sysc_overview_send_frame_done(&sources[0], C.size_t(len(sources)))
 }
 
 type overviewSurfaceListeners struct {
@@ -449,7 +499,7 @@ func (c *Compositor) syncOverviewScene() {
 				c.overviewProjections = append(c.overviewProjections, overviewProjection{
 					Output: current.name, WorkspaceID: workspace.ID,
 					WindowID: window.ID, Bounds: window.Bounds, BufferCount: count,
-					SourceFirst: uintptr(sourceFirst), SourceLast: uintptr(sourceLast), tree: tree,
+					SourceFirst: uintptr(sourceFirst), SourceLast: uintptr(sourceLast), tree: tree, source: view.tree,
 				})
 			}
 		}
@@ -488,7 +538,7 @@ func (c *Compositor) projectOverviewLayer(layer *layerSurface, output string, wo
 	}
 	c.overviewProjections = append(c.overviewProjections, overviewProjection{
 		Output: output, WorkspaceID: workspace, Bounds: bounds, BufferCount: count,
-		SourceFirst: uintptr(sourceFirst), SourceLast: uintptr(sourceLast), tree: tree, layer: layer,
+		SourceFirst: uintptr(sourceFirst), SourceLast: uintptr(sourceLast), tree: tree, source: layer.tree, layer: layer,
 	})
 }
 
