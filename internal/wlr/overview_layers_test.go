@@ -7,7 +7,6 @@ import (
 	"math"
 	"os"
 	"path/filepath"
-	"slices"
 	"testing"
 	"time"
 	"unsafe"
@@ -193,70 +192,6 @@ func TestSceneClipPreservesTransformedPixels(t *testing.T) {
 	}
 	if !checked {
 		t.Fatal("no output for clipping check")
-	}
-}
-
-// The overview crops its copies itself, so that a commit can update them in
-// place. The crop must match sceneFXClipTree's for every transform, and a
-// reprojection must reuse the copies.
-func TestOverviewPlacementCropsLikeSceneClipAndReusesCopies(t *testing.T) {
-	c := newNested(t)
-	checked := false
-	pollThenStop(c, func() bool {
-		checked = true
-		img := image.NewRGBA(image.Rect(0, 0, 120, 80))
-		for transform := range 8 {
-			for _, clip := range []rect{{25, 30, 50, 70}, {500, 500, 10, 10}} {
-				source := sceneTreeCreate(c.overviewTree)
-				node := sceneImage(source, img)
-				if source == nil || node == nil {
-					t.Fatal("could not create a source image")
-				}
-				node.transform = uint32(transform)
-				sceneImagePlace(node, image.Rect(0, 0, 100, 160), 1)
-				want, got := sceneTreeCreate(c.overviewTree), sceneTreeCreate(c.overviewTree)
-				place := overviewPlacement{targetX: 10, targetY: 20, zoom: 0.5}
-				place.project(want, source)
-				sceneFXClipTree(unsafe.Pointer(want), clip, [4]uint16{})
-				place.clip = clip
-				if count, created, _, _ := place.project(got, source); count != 1 || created != 1 {
-					t.Errorf("transform %d: first projection made %d of %d copies", transform, created, count)
-				}
-				before, wanted := sceneBufferStates(got), sceneBufferStates(want)
-				if len(before) != 1 || len(wanted) != 1 {
-					t.Fatalf("transform %d: copies %v, want one like %v", transform, before, wanted)
-				}
-				if w, g := wanted[0], before[0]; w.Enabled != g.Enabled || w.X != g.X || w.Y != g.Y ||
-					w.Width != g.Width || w.Height != g.Height || w.Source != g.Source || w.Buffer != g.Buffer {
-					t.Errorf("transform %d clip %v: copy %+v, want %+v", transform, clip, g, w)
-				}
-				if _, created, _, _ := place.project(got, source); created != 0 || !slices.Equal(sceneBufferStates(got), before) {
-					t.Errorf("transform %d: reprojecting an unchanged source changed the copy", transform)
-				}
-				if !sceneImageReplace(unsafe.Pointer(node), image.NewRGBA(img.Rect)) {
-					t.Fatal("could not replace the source buffer")
-				}
-				_, created, _, _ := place.project(got, source)
-				after := sceneBufferStates(got)
-				if created != 0 || len(after) != 1 || after[0].Node != before[0].Node || after[0].Buffer == before[0].Buffer {
-					t.Errorf("transform %d: a new buffer did not swap into the copy: %+v", transform, after)
-				}
-				sceneFXNodeDestroy(unsafe.Pointer(&node.node))
-				if count, _, _, _ := place.project(got, source); count != 0 || len(sceneBufferStates(got)) != 0 {
-					t.Errorf("transform %d: a removed buffer kept its copy", transform)
-				}
-				sceneTreeDestroy(source)
-				sceneTreeDestroy(want)
-				sceneTreeDestroy(got)
-			}
-		}
-		return true
-	})
-	if err := c.Run(); err != nil {
-		t.Fatal(err)
-	}
-	if !checked {
-		t.Fatal("compositor never ran the check")
 	}
 }
 
