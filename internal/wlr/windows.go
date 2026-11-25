@@ -166,8 +166,12 @@ func (c *Compositor) mapWindowWithRules(view *toplevelView, clientFullscreen boo
 		}
 		c.model.MapWindow(view.id, output)
 	}
+	// Niri's new floating window keeps the size it chose (new_window_size)
+	// and opens centred in the working area (add_tile_at).
+	openedFloating := false
 	if result.OpenFloating != nil && *result.OpenFloating {
-		c.model.SetWindowFloating(view.id, true, layout.Bounds{})
+		geometry := view.geometry()
+		openedFloating = c.model.SetWindowFloating(view.id, true, layout.Bounds{Width: geometry.w, Height: geometry.h})
 	}
 	if clientFullscreen {
 		c.model.SetFullscreen(view.id, true)
@@ -203,6 +207,9 @@ func (c *Compositor) mapWindowWithRules(view *toplevelView, clientFullscreen boo
 			c.model.ResizeWindow(view.id, window.Tile.X, window.Tile.Y, width, height, resize)
 			break
 		}
+	}
+	if openedFloating && result.DefaultFloatingPosition == nil {
+		c.model.CenterWindowFor(view.id)
 	}
 	// The maximized rules come after the default sizes, so that a maximized
 	// column keeps the whole working width.

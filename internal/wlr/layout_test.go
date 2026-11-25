@@ -244,6 +244,38 @@ func TestWindowRuleFullscreenRestoresOpenFloatingWindow(t *testing.T) {
 	runClient(t, c, []string{"weston-terminal"}, nil, nil)
 }
 
+// TestOpenFloatingWindowKeepsItsSizeAndOpensCentred: a window a rule opens
+// floating keeps the size it chose and opens centred in the working area, as
+// Niri's new_window_size and add_tile_at; it does not take its column's size.
+func TestOpenFloatingWindowKeepsItsSizeAndOpensCentred(t *testing.T) {
+	c := newNested(t)
+	c.viewMapped = func(view *toplevelView) {
+		defer c.Terminate()
+		openFloating := true
+		c.windowRules = []config.WindowRule{{OpenFloating: &openFloating}}
+		geometry := view.geometry()
+		c.model.RemoveWindow(view.id)
+		c.mapWindowWithRules(view, false)
+		window, ok := findWindowSnapshot(c.WorkspaceSnapshot().Windows, view.id)
+		if !ok || !window.Tile.Floating {
+			t.Errorf("window = %+v, %t, want floating", window, ok)
+			return
+		}
+		if window.Tile.Width != geometry.w || window.Tile.Height != geometry.h {
+			t.Errorf("floating size = %dx%d, want the window's own %dx%d",
+				window.Tile.Width, window.Tile.Height, geometry.w, geometry.h)
+		}
+		area := c.workspaceBounds(window.Output)
+		x := area.X + max(0, (area.Width-geometry.w)/2)
+		y := area.Y + max(0, (area.Height-geometry.h)/2)
+		if window.Tile.X != x || window.Tile.Y != y {
+			t.Errorf("floating position = (%d,%d), want centred at (%d,%d) in %+v",
+				window.Tile.X, window.Tile.Y, x, y, area)
+		}
+	}
+	runClient(t, c, []string{"weston-terminal"}, nil, nil)
+}
+
 func findWindowSnapshot(windows []wm.WindowSnapshot, id uint64) (wm.WindowSnapshot, bool) {
 	for _, window := range windows {
 		if window.ID == id {
