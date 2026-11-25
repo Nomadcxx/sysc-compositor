@@ -62,8 +62,8 @@ Measured so far (detail in the spin handover):
 - **CI** on main was red from `5dc96e8`: a popup's blur took its window's
   geometry and corners, because `viewForSurface` walks a popup up to its
   toplevel. PR #128 fixed it and is merged (`ee63678`).
-- The `corners/` kit is armed but not yet running: the session predates
-  it. First step 1 below still applies after the next sign-in.
+- `corners/` is rolled back. `main-f3abf75-highp/` (all of the above plus
+  SceneFX #208) is armed for the next sign-in.
 - **Blur tint (item 2)** was not a tint difference. With no
   `background-color` in `suite.kdl`, Niri fills each workspace with its
   opaque default. That hides the `place-within-backdrop` wallpaper, so
@@ -131,6 +131,32 @@ Measured so far (detail in the spin handover):
 - **SceneFX Vulkan:** see the
   [assessment](2026-11-25-scenefx-vulkan-assessment.md). Recommendation:
   track, do not adopt.
+
+## SceneFX open PRs (reviewed 2026-11-25)
+
+Of the 21 open PRs on [wlrfx/scenefx](https://github.com/wlrfx/scenefx/pulls):
+
+- **#208 (adopt for archPC):** GLSL ES 3.20 shaders, so NVIDIA gets `highp`.
+  A probe on the RTX 4060 (620.73.04) shows `#version 100` shaders do not
+  get `GL_FRAGMENT_PRECISION_HIGH`, and its `mediump` is real fp16 (10-bit
+  mantissa). `corner_alpha` works in absolute `gl_FragCoord`, so any corner
+  past x≈1024 loses its antialiasing steps, and past 2048 it is quantised to
+  2 px. A headless 3440×1440 render of the same radius-20 rect at x=101 and
+  x=3201 gives 12 and 21 distinct corner shades with SceneFX 0.5. With #208
+  it gives 12 and 12, the same corner. Mesa runs `mediump` at full
+  precision, which is why the laptop looks right. #208 applies cleanly on
+  `0.5-sysc1`: fork branch `nvidia-highp-0.5` (`79555b7`). texprobe cost
+  is unchanged (cached 14.84 against 14.86 ms/frame). `blur1`/`blur2`
+  stay `mediump` under #208.
+  It supersedes #177, which forces `highp` behind a build option.
+- **#234 (minor):** box shadows square their alpha, but only on a
+  transparent target. In sysc that means captures, not the outputs.
+- **#178, #218 and #216:** shader rewrites. #178 has open rendering bugs,
+  and #218 depends on #216 (rounding power, which Niri lacks). Track only.
+- **#179, #190, #192 and #204:** the renderer overhaul and Vulkan; see the
+  [Vulkan assessment](2026-11-25-scenefx-vulkan-assessment.md).
+- The rest (#102, #112, #125, #133, #135, #153, #155, #160, #188, #212,
+  #213) are stale, cosmetic or not used by sysc.
 
 ## First steps
 
@@ -242,6 +268,7 @@ Everything lives under `~/.local/state/sysc-compositor-archpc-20261123/`;
 | --- | --- |
 | `corners/` | Armed build. `arm.sh`, `rollback.sh` and `bench.sh MODE SECONDS` (modes: `cached`, `live`, `off`, `cached-noresize`). |
 | `corners/nested/suite.sh sysc\|niri 15` | Nested parity suite. Results and screenshots go to `nested/results/<time>-<compositor>/`. |
+| `main-f3abf75/`, `main-f3abf75-highp/` | Main `f3abf75` with the patched SceneFX, and the same with #208 on top. `-highp` was **armed** on 2026-11-25. Switch with `sh main-f3abf75-highp/rollback.sh && sh main-f3abf75/arm.sh`. Each has `bench.sh`. |
 | `parity2/`, `parity3/` | Unarmed builds with the patched SceneFX: main plus #129 and #130, and plus #131 too. `nested/suite.sh` with the transparent-background `suite.kdl`, and `nested/probe.sh sysc\|niri SECONDS` (overview held closed, open, closed; simple-egl under `WAYLAND_DEBUG`). |
 | `vulkan/` | wlroots-vkfx and SceneFX #204 builds; see the Vulkan assessment. |
 | `4cdb824-fxtex/` | Previous kit, with `cprofile.sh NAME SECONDS` (C-stack profiles through the `cstacks` binary) and `nested/compare.sh`. |
