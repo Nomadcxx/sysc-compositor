@@ -14,6 +14,8 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 var active atomic.Pointer[Server]
@@ -25,6 +27,32 @@ type Server struct {
 	snapshots, snapshotNS, outputFrames, sceneCommits atomic.Uint64
 	sceneWorkNS, presented, discarded, zeroCopy       atomic.Uint64
 	blurCacheRebuilds                                 atomic.Uint64
+	inputDelay                                        [inputKinds]inputDelay
+}
+
+// InputKind names the libinput events whose delivery delay is recorded.
+type InputKind int
+
+const (
+	InputMotion InputKind = iota
+	InputButton
+	InputAxis
+	InputKey
+	inputKinds
+)
+
+var inputKindNames = [inputKinds]string{"motion", "button", "axis", "key"}
+
+// inputDelayBoundsMS are the inclusive upper bounds of the delay buckets; a
+// last bucket counts everything above them. Timestamps have 1 ms resolution.
+var inputDelayBoundsMS = [...]uint64{1, 2, 4, 8, 16, 20, 33, 50, 100, 250}
+
+// inputSlowMS is the delay counted as a lag, like libinput's lag reports.
+const inputSlowMS = 20
+
+type inputDelay struct {
+	count, sumMS, maxMS, slow atomic.Uint64
+	buckets                   [len(inputDelayBoundsMS) + 1]atomic.Uint64
 }
 
 // Start enables diagnostics at path, or returns nil when path is empty.
@@ -108,6 +136,53 @@ func RecordBlurCacheRebuild() {
 	}
 }
 
+// RecordInputDelay records how long after eventMsec, a libinput timestamp on
+// CLOCK_MONOTONIC, the compositor handled the event. A timestamp ahead of the
+// clock or from long ago comes from another clock and is dropped.
+func RecordInputDelay(kind InputKind, eventMsec uint32) {
+	s := active.Load()
+	if s == nil {
+		return
+	}
+	var now unix.Timespec
+	if unix.ClockGettime(unix.CLOCK_MONOTONIC, &now) != nil {
+		return
+	}
+	// The timestamp wraps with the clock's milliseconds, so compare modulo 2^32.
+	delay := int32(uint32(now.Nano()/int64(time.Millisecond)) - eventMsec)
+	if delay < 0 || delay > int32(time.Minute/time.Millisecond) {
+		return
+	}
+	s.inputDelay[kind].record(uint64(delay))
+}
+
+func (d *inputDelay) record(ms uint64) {
+	d.count.Add(1)
+	d.sumMS.Add(ms)
+	for prev := d.maxMS.Load(); ms > prev && !d.maxMS.CompareAndSwap(prev, ms); prev = d.maxMS.Load() {
+	}
+	if ms > inputSlowMS {
+		d.slow.Add(1)
+	}
+	bucket := len(inputDelayBoundsMS)
+	for i, bound := range inputDelayBoundsMS {
+		if ms <= bound {
+			bucket = i
+			break
+		}
+	}
+	d.buckets[bucket].Add(1)
+}
+
+func (d *inputDelay) snapshot() map[string]any {
+	counts := make([]uint64, len(d.buckets))
+	for i := range d.buckets {
+		counts[i] = d.buckets[i].Load()
+	}
+	return map[string]any{"count": d.count.Load(), "sum_ms": d.sumMS.Load(), "max_ms": d.maxMS.Load(),
+		"over_20ms": d.slow.Load(), "bounds_ms": inputDelayBoundsMS, "counts": counts}
+}
+
 // OutputPresent counts wlroots completion events. Zero-copy is the native
 // presentation flag, not a guess based on a fullscreen application's state.
 func OutputPresent(presented bool, flags uint32) {
@@ -153,6 +228,10 @@ func (s *Server) metrics(w http.ResponseWriter, _ *http.Request) {
 			values[sample.Name] = map[string]any{"buckets": bounds, "counts": h.Counts}
 		}
 	}
+	delays := make(map[string]any, inputKinds)
+	for kind, name := range inputKindNames {
+		delays[name] = s.inputDelay[kind].snapshot()
+	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"snapshots": s.snapshots.Load(), "snapshot_ns": s.snapshotNS.Load(), "output_frames": s.outputFrames.Load(), "scene_commits": s.sceneCommits.Load(), "scene_work_ns": s.sceneWorkNS.Load(), "blur_cache_rebuilds": s.blurCacheRebuilds.Load(), "presented": s.presented.Load(), "discarded": s.discarded.Load(), "zero_copy_presents": s.zeroCopy.Load(), "runtime": values})
+	_ = json.NewEncoder(w).Encode(map[string]any{"input_delay": delays, "snapshots": s.snapshots.Load(), "snapshot_ns": s.snapshotNS.Load(), "output_frames": s.outputFrames.Load(), "scene_commits": s.sceneCommits.Load(), "scene_work_ns": s.sceneWorkNS.Load(), "blur_cache_rebuilds": s.blurCacheRebuilds.Load(), "presented": s.presented.Load(), "discarded": s.discarded.Load(), "zero_copy_presents": s.zeroCopy.Load(), "runtime": values})
 }

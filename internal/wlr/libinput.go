@@ -13,6 +13,7 @@ import (
 	"unsafe"
 
 	"github.com/Nomadcxx/sysc-compositor/internal/config"
+	"github.com/Nomadcxx/sysc-compositor/internal/perf"
 )
 
 // All methods in this file run on the locked compositor thread, on device
@@ -26,6 +27,14 @@ func pointerLibinput(device unsafe.Pointer) *C.struct_libinput_device {
 		return nil
 	}
 	return C.wlr_libinput_get_device_handle(input)
+}
+
+// recordPointerDelay times an event from a libinput pointer for benchmarks.
+// Virtual pointers stamp events with their clients' clocks.
+func recordPointerDelay(kind perf.InputKind, pointer unsafe.Pointer, timeMsec C.uint32_t) {
+	if perf.Enabled() && pointerLibinput(pointer) != nil {
+		perf.RecordInputDelay(kind, uint32(timeMsec))
+	}
 }
 
 func (c *Compositor) setPointerConfig(p config.Pointers) {

@@ -201,6 +201,7 @@ import (
 	"github.com/Nomadcxx/sysc-compositor/internal/a11y"
 	"github.com/Nomadcxx/sysc-compositor/internal/bind"
 	"github.com/Nomadcxx/sysc-compositor/internal/layout"
+	"github.com/Nomadcxx/sysc-compositor/internal/perf"
 )
 
 // Keyboard is the user seat's keymap and repeat: niri's input.keyboard.
@@ -500,6 +501,8 @@ func (c *Compositor) SetKeyboardMonitor(monitor func(a11y.Key, time.Duration) a1
 
 // handleKeyboardKey delivers a key from any keyboard to the user seat's focus.
 func (c *Compositor) handleKeyboardKey(data unsafe.Pointer) {
+	// The group holds backend keyboards only; virtual ones arrive apart.
+	perf.RecordInputDelay(perf.InputKey, uint32((*C.struct_wlr_keyboard_key_event)(data).time_msec))
 	c.handleKeyboardKeyFrom(c.keyboard, c.suppressedKeys, data)
 }
 

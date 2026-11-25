@@ -128,6 +128,7 @@ import (
 
 	"github.com/Nomadcxx/sysc-compositor/internal/config"
 	"github.com/Nomadcxx/sysc-compositor/internal/layout"
+	"github.com/Nomadcxx/sysc-compositor/internal/perf"
 	"github.com/Nomadcxx/sysc-compositor/internal/wm"
 )
 
@@ -832,6 +833,7 @@ func (c *Compositor) destroyDndScrollState(state *dndEdgeScrollState) {
 
 func (c *Compositor) handleCursorMotion(data unsafe.Pointer) {
 	event := (*C.struct_wlr_pointer_motion_event)(data)
+	recordPointerDelay(perf.InputMotion, unsafe.Pointer(event.pointer), event.time_msec)
 	if !c.pointerInputAllowed(event.pointer, true) {
 		return
 	}
@@ -842,6 +844,7 @@ func (c *Compositor) handleCursorMotion(data unsafe.Pointer) {
 
 func (c *Compositor) handleCursorMotionAbsolute(data unsafe.Pointer) {
 	event := (*C.struct_wlr_pointer_motion_absolute_event)(data)
+	recordPointerDelay(perf.InputMotion, unsafe.Pointer(event.pointer), event.time_msec)
 	if !c.pointerInputAllowed(event.pointer, true) {
 		return
 	}
@@ -1018,6 +1021,7 @@ func (c *Compositor) restoreCursorImage() {
 
 func (c *Compositor) handleCursorButton(data unsafe.Pointer) {
 	event := (*C.struct_wlr_pointer_button_event)(data)
+	recordPointerDelay(perf.InputButton, unsafe.Pointer(event.pointer), event.time_msec)
 	if !c.pointerInputAllowed(event.pointer, event.state == C.WL_POINTER_BUTTON_STATE_PRESSED) {
 		return
 	}
@@ -1171,6 +1175,7 @@ func (c *Compositor) deliverPointerButton(source unsafe.Pointer, timeMsec C.uint
 
 func (c *Compositor) handleCursorAxis(data unsafe.Pointer) {
 	event := (*C.struct_wlr_pointer_axis_event)(data)
+	recordPointerDelay(perf.InputAxis, unsafe.Pointer(event.pointer), event.time_msec)
 	if !c.pointerInputAllowed(event.pointer, true) {
 		return
 	}
