@@ -3,8 +3,8 @@
 `fix/archpc-backdrop-blur` is merged into main, on 2026-11-24, after the
 named and nested tests listed under remaining work passed. The worktree
 `~/sysc-compositor-archpc` still holds the branch.
-`4cdb824-fxtex` is armed for archPC's next sign-in: the `4cdb824-cstacks`
-binary with the patched SceneFX from item E loaded through `LD_LIBRARY_PATH`.
+`corners/` is armed for archPC's next sign-in: main at `5dc96e8` with the
+patched SceneFX from item E loaded through `LD_LIBRARY_PATH`.
 The spin check, the benchmark and the item E patch below are done. On the
 next sign-in, profile and bench it against the numbers here.
 [Cache audit](2026-11-23-archpc-cache-audit.md)
@@ -203,6 +203,51 @@ from `scenefx` to `scenefx-sysc` with a pkgrel bump, and drop the package
 once a SceneFX release carries #237. Unrelated to this work, `check.py` also
 trips on a stale `sysc-terminal` 0.1.0 archive and on `syscgo`'s missing
 `.INSTALL`.
+
+## Nested NVIDIA parity suite (2026-11-25)
+
+The owner reports parity on the laptop, which has no NVIDIA GPU, but not on
+archPC. `~/.local/state/sysc-compositor-archpc-20261123/corners/nested/suite.sh sysc|niri 15`
+runs one nested compositor on the RTX 4060 with `suite.kdl`, which sysc and
+Niri read unchanged. The scene has the archPC appearance (gaps, focus ring,
+shadows, radius 20 with clip-to-geometry), three translucent foot windows
+(SHM) and a Ghostty window (GL, NVIDIA dmabuf) with xray blur, and a floating
+`weston-simple-egl` whose fps counts missed frames. The same `niri msg`
+actions drive nine 15 s scenarios. The suite screenshots only the nested
+output. Each run opens one window on the desktop, so get the owner's OK for
+each run.
+
+Parity means three things here: the same screenshots, the same simple-egl
+fps, and compositor CPU no higher than Niri's. Results with sysc on
+`5dc96e8` plus the patched SceneFX:
+
+| Scenario | sysc main thread | Niri main thread | sysc simple-egl | Niri simple-egl |
+| --- | ---: | ---: | ---: | ---: |
+| idle | 9.7% | 17.5% | 160 fps | 158 fps |
+| resize | 13.6% | 18.7% | 159 | 140 |
+| scroll | 11.3% | 16.4% | 161 | 158 |
+| workspace switch | 8.7% | 11.9% | 101 | 88 |
+| open and close | 13.7% | 17.3% | 159 | 144 |
+| overview | 16.2% | 17.8% | **124** | 157 |
+| resize, blur off | 12.8% | 17.7% | 159 | 157 |
+| video wallpaper, idle | 14.1% | 19.5% | 159 | 159 |
+| video wallpaper, resize | 17.5% | 19.4% | 160 | 154 |
+
+simple-egl is hidden for half of the workspace scenario, which explains its
+lower fps there. Nested, sysc now costs less than Niri and keeps up in every
+scenario except overview, where the probe loses about 20% of its frames.
+That is the next nested lead. Nested runs leave out libinput, KMS commits
+and sysc-shell, so the native scripts still have to measure those.
+
+The first run found the owner's "corners that are not really rounded": a
+window's blur took corner radii only for popups, so a square of frost
+showed past every rounded corner of a translucent window. `5dc96e8` follows
+Niri's `render_params_for_tile`, and the corner screenshots now match Niri.
+Niri's frost is darker than sysc's in the same scene; compare the blur
+defaults (noise, saturation, brightness) next.
+
+`corners/` is armed for the next sign-in: `5dc96e8` with the patched SceneFX
+and the bench socket.
 
 ## Remaining work
 
