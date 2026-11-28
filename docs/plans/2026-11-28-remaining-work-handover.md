@@ -10,6 +10,28 @@ has the hardware checklist.
 On 2026-11-28 the owner reported a few days of exclusive use with
 sysc-compositor running flawlessly.
 
+## Progress (2026-11-28, later)
+
+Main is at `10d47ad` (`0.1.0-75-g10d47ad`). The State section below predates
+this.
+
+- **Merged after review:** #140 (this handover), #141 (item 1, the
+  floating-decoration fix), #142 (item 5's practical fix) and #143 (item 2,
+  overview reprojection on each animation tick).
+- **archPC:** the kit `main-10d47ad/` is armed for the next sysc sign-in. It
+  replaced `profile-fixes/`, which was rolled back, and it has the same
+  layout: patched SceneFX with #208 and `native/native.sh`.
+- **Laptop:** `90-testbench.conf` now points at
+  `~/.local/state/sysc-compositor-testbench/10d47ad/`, which is main. The
+  previous drop-in is saved next to it. The live session was still on
+  `b36865f`.
+- **Still open:**
+  - item 1.5, the visual check on the laptop after its next sign-in;
+  - item 2's native overview run on archPC (fps and input-delay targets);
+  - items 3 and 4, which need the owner at archPC;
+  - item 5's root cause. The renderer-only probe was not found on archPC.
+  - Items 6 to 8 are unchanged.
+
 ## State
 
 - **Main** has everything from the 2026-11-25/26 sessions, and no PRs are open:
