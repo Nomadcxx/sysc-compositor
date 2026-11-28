@@ -461,7 +461,11 @@ func (c *Compositor) layoutWorkspaceModel() {
 		}
 		view.fullscreen = window.Fullscreen
 		c.syncNativeMaximized(view, window.Tile.Maximized && !window.Fullscreen)
-		view.maximized, view.floating = window.Tile.Maximized, window.Tile.Floating
+		view.maximized = window.Tile.Maximized
+		if view.floating != window.Tile.Floating {
+			view.floating = window.Tile.Floating
+			c.syncViewStacking(view)
+		}
 		view.urgent = window.IsUrgent
 		view.workspaceID = window.WorkspaceID
 		c.resolveViewDecorations(view, workspaceNames[window.WorkspaceID])

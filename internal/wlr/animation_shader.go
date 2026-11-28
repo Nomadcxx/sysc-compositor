@@ -893,6 +893,9 @@ func (c *Compositor) makeAnimationEffect(key animationKey, kind string, view *to
 	}
 	sceneImageIgnoreInput(effect.node)
 	c.animationShaders.effects[key] = effect
+	if view != nil && view.floating {
+		c.syncViewStacking(view)
+	}
 	c.rememberCaptureTree(unsafe.Pointer(&effect.node.node), identity)
 	return effect
 }
@@ -1030,6 +1033,7 @@ func (c *Compositor) beginCloseShader(key animationKey, node unsafe.Pointer) boo
 		C.wlr_buffer_drop(source)
 		return false
 	}
+	C.wlr_scene_node_reparent(&effect.node.node, root.parent)
 	if err = c.renderAnimationEffect(effect, 0); err != nil {
 		c.finishAnimationShaderEffect(key)
 		return false

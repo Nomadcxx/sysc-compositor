@@ -458,7 +458,7 @@ func (c *Compositor) captureCloseSnapshot(view *toplevelView) {
 		return
 	}
 	c.rememberCaptureNodes(view)
-	snapshot, count := sceneFXCloneView(unsafe.Pointer(c.windowAnimationTree), unsafe.Pointer(view.tree))
+	snapshot, count := sceneFXCloneView(unsafe.Pointer(c.windowAnimationLayer(view)), unsafe.Pointer(view.tree))
 	if count == 0 || snapshot == nil {
 		return
 	}

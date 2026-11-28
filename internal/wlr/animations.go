@@ -411,10 +411,13 @@ func (c *Compositor) animateViewSize(view *toplevelView, width, height int, kind
 		}
 		var count int
 		c.rememberCaptureNodes(view)
-		view.resizeSnapshot, count = sceneFXCloneView(unsafe.Pointer(c.windowAnimationTree), unsafe.Pointer(view.tree))
+		view.resizeSnapshot, count = sceneFXCloneView(unsafe.Pointer(c.windowAnimationLayer(view)), unsafe.Pointer(view.tree))
 		if count == 0 || view.resizeSnapshot == nil {
 			view.resizeSnapshot = nil
 			return
+		}
+		if view.floating {
+			c.syncViewStacking(view)
 		}
 		c.rememberCaptureTree(view.resizeSnapshot, view.captureIdentity)
 		x, y := view.treePosition()
