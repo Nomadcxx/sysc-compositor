@@ -440,6 +440,14 @@ func (c *Compositor) CloseOverview() bool {
 	return true
 }
 
+// overviewNodeKey names a workspace's background colour or shadow in the
+// overview.
+type overviewNodeKey struct {
+	output    string
+	workspace uint64
+	shadow    bool
+}
+
 func (c *Compositor) clearOverviewScene() {
 	for _, projection := range c.overviewProjections {
 		C.wlr_scene_node_destroy(&projection.tree.node)
@@ -447,7 +455,7 @@ func (c *Compositor) clearOverviewScene() {
 	for _, backdrop := range c.overviewBackdrops {
 		C.wlr_scene_node_destroy(&backdrop.node.node)
 	}
-	for node := range c.overviewWorkspaceNodes {
+	for _, node := range c.overviewWorkspaceNodes {
 		sceneFXNodeDestroy(node)
 	}
 	c.overviewWorkspaceNodes = nil
@@ -537,7 +545,7 @@ func (c *Compositor) syncOverviewScene() {
 	}
 	C.wlr_scene_node_set_enabled(&c.overviewTree.node, C.bool(len(frames) > 0))
 	if len(frames) > 0 {
-		c.overviewWorkspaceNodes = make(map[unsafe.Pointer]string)
+		c.overviewWorkspaceNodes = make(map[overviewNodeKey]unsafe.Pointer)
 	}
 	// Normalize shadow dimensions to a 1080-pixel output before zooming.
 	if progress > 0 && c.overviewConfig.WorkspaceShadow.On {
@@ -566,7 +574,7 @@ func (c *Compositor) syncOverviewScene() {
 				if node != nil {
 					sceneFXNodeSetPosition(node, bounds.X-inset+x, bounds.Y-inset+y)
 					sceneFXShadowClip(node, inset-x, inset-y, bounds.Width, bounds.Height, [4]uint16{})
-					c.overviewWorkspaceNodes[node] = current.name
+					c.overviewWorkspaceNodes[overviewNodeKey{output: current.name, workspace: workspace.ID, shadow: true}] = node
 				}
 			}
 		}
@@ -595,7 +603,7 @@ func (c *Compositor) syncOverviewScene() {
 				if node != nil {
 					sceneFXRectIgnoreInput(node)
 					sceneFXNodeSetPosition(node, left, top)
-					c.overviewWorkspaceNodes[node] = current.name
+					c.overviewWorkspaceNodes[overviewNodeKey{output: current.name, workspace: workspace.ID}] = node
 				}
 			}
 			// Background and bottom layers move and zoom with each workspace,

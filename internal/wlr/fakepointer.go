@@ -21,6 +21,22 @@ static struct wlr_scene_node *sysc_test_scene_child(struct wlr_scene_tree *tree,
 	return link == &tree->children ? NULL : wl_container_of(link, after, link);
 }
 
+// sysc_test_mark tags node, and a tree's direct children, by pointing their
+// data at themselves, or reports whether they all still carry that tag. A
+// node created later starts untagged even if it reuses freed memory.
+static bool sysc_test_mark(struct wlr_scene_node *node, bool set) {
+	bool marked = set || node->data == node;
+	node->data = set ? node : node->data;
+	if (node->type == WLR_SCENE_NODE_TREE) {
+		struct wlr_scene_node *child;
+		wl_list_for_each(child, &wlr_scene_tree_from_node(node)->children, link) {
+			marked = marked && (set || child->data == child);
+			child->data = set ? child : child->data;
+		}
+	}
+	return marked;
+}
+
 struct sysc_test_buffer_state {
 	uintptr_t buffer;
 	bool buffer_node, enabled;
@@ -385,6 +401,10 @@ func sceneNodeBefore(first, second *C.struct_wlr_scene_node) bool {
 	return bool(C.sysc_scene_node_before(first, second))
 }
 
+func sceneFXNodeBefore(first, second unsafe.Pointer) bool {
+	return sceneNodeBefore((*C.struct_wlr_scene_node)(first), (*C.struct_wlr_scene_node)(second))
+}
+
 func sceneRectColor(rect *C.struct_wlr_scene_rect) [4]float32 {
 	return [4]float32{
 		float32(rect.color[0]), float32(rect.color[1]),
@@ -617,6 +637,18 @@ type sceneBufferState struct {
 	Enabled             bool
 	X, Y, Width, Height int
 	Source              [4]float64
+}
+
+// markSceneNodeForTest tags node and a tree's direct children, so a test can
+// tell them from nodes created later.
+func markSceneNodeForTest(node unsafe.Pointer) {
+	C.sysc_test_mark((*C.struct_wlr_scene_node)(node), true)
+}
+
+// sceneNodeMarkedForTest reports whether node and a tree's direct children
+// all still carry markSceneNodeForTest's tag.
+func sceneNodeMarkedForTest(node unsafe.Pointer) bool {
+	return bool(C.sysc_test_mark((*C.struct_wlr_scene_node)(node), false))
 }
 
 // sceneBufferStates reads the buffers directly under tree, bottom first.

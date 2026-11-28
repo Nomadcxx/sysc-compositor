@@ -248,7 +248,7 @@ type Compositor struct {
 	preferNoCSD             bool
 	overviewBackdrops       []overviewBackdrop
 	overviewProjections     []overviewProjection
-	overviewWorkspaceNodes  map[unsafe.Pointer]string
+	overviewWorkspaceNodes  map[overviewNodeKey]unsafe.Pointer
 	hotCorners              config.HotCorners
 	hotCornerTracker        wm.HotCornerTracker
 	dndEdgeConfig           config.DNDEdgeViewScroll

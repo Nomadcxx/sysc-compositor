@@ -22,8 +22,8 @@ func (c *Compositor) workspaceOutput(output string) func() {
 			sceneFXSetNodeEnabled(node, false)
 		}
 	}
-	for node, owner := range c.overviewWorkspaceNodes {
-		if owner != output {
+	for key, node := range c.overviewWorkspaceNodes {
+		if key.output != output {
 			hide(node)
 		}
 	}
