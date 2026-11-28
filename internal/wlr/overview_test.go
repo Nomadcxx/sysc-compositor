@@ -1,6 +1,7 @@
 package wlr
 
 import (
+	"maps"
 	"math"
 	"os"
 	"path/filepath"
@@ -189,6 +190,77 @@ func TestOverviewGestureUsesCurrentZoomForProjection(t *testing.T) {
 	runClient(t, c, []string{"weston-terminal"}, nil, nil)
 	if !done {
 		t.Fatal("overview gesture projection check did not complete")
+	}
+}
+
+// An overview animation tick moves and zooms the scene it already has: the
+// window's copies, the backdrop and the workspace shadows are reused, not
+// destroyed and created again, and stay in drawing order.
+func TestOverviewAnimationReprojectsWithoutRebuilding(t *testing.T) {
+	cfg, err := config.Parse("overview.kdl", []byte(`overview { zoom 0.5; workspace-shadow { softness 10; spread 4; color "#000000"; }; }`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := newNestedWith(t, Options{Overview: cfg.Overview, Animations: config.Animations{Off: true}})
+	done := false
+	c.viewMapped = func(view *toplevelView) {
+		defer c.Terminate()
+		if !c.OpenOverview() {
+			t.Error("could not open overview")
+			return
+		}
+		before, ok := overviewProjectionForWindow(c, view.id)
+		copies := sceneBufferStates(before.tree)
+		if !ok || len(copies) == 0 || len(c.overviewBackdrops) != 1 || len(c.overviewWorkspaceNodes) == 0 {
+			t.Errorf("open overview: projection %v with %d copies, %d backdrops, %d workspace nodes",
+				ok, len(copies), len(c.overviewBackdrops), len(c.overviewWorkspaceNodes))
+			return
+		}
+		backdrop := unsafe.Pointer(&c.overviewBackdrops[0].node.node)
+		workspaceNodes := maps.Clone(c.overviewWorkspaceNodes)
+		// Tag what exists now: a node destroyed and created again comes back
+		// untagged even at the same address.
+		markSceneNodeForTest(unsafe.Pointer(&before.tree.node))
+		markSceneNodeForTest(backdrop)
+		for _, node := range workspaceNodes {
+			markSceneNodeForTest(node)
+		}
+		// Put the window's copies under everything, as a tree created after
+		// the backdrop would be if the order were left as found.
+		sceneFXNodeLowerToBottom(unsafe.Pointer(&before.tree.node))
+
+		c.model.SetOverviewAnimationProgress(0.5)
+		c.syncOverviewScene()
+		after, ok := overviewProjectionForWindow(c, view.id)
+		moved := sceneBufferStates(after.tree)
+		if !ok || len(moved) != len(copies) || !sceneNodeMarkedForTest(unsafe.Pointer(&after.tree.node)) {
+			t.Error("the animation tick rebuilt the window's copies")
+		} else if moved[0].Width == copies[0].Width {
+			t.Errorf("copy width stayed %d at progress 0.5", moved[0].Width)
+		}
+		if len(c.overviewBackdrops) != 1 || !sceneNodeMarkedForTest(unsafe.Pointer(&c.overviewBackdrops[0].node.node)) {
+			t.Error("the animation tick rebuilt the backdrop")
+		}
+		if !maps.Equal(c.overviewWorkspaceNodes, workspaceNodes) {
+			t.Error("the animation tick changed the set of workspace shadows")
+		}
+		for _, node := range c.overviewWorkspaceNodes {
+			if !sceneNodeMarkedForTest(node) {
+				t.Error("the animation tick rebuilt a workspace shadow")
+			}
+		}
+		// Shadows draw under every workspace. A later workspace's background
+		// fill draws above this one's windows, so it is left out here.
+		for key, node := range workspaceNodes {
+			if key.shadow && (!sceneFXNodeBefore(backdrop, node) || !sceneFXNodeBefore(node, unsafe.Pointer(&after.tree.node))) {
+				t.Error("want the backdrop, workspace shadows, then window copies, bottom first")
+			}
+		}
+		done = true
+	}
+	runClient(t, c, []string{"weston-terminal"}, nil, nil)
+	if !done {
+		t.Fatal("overview animation check did not complete")
 	}
 }
 

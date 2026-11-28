@@ -440,19 +440,95 @@ func (c *Compositor) CloseOverview() bool {
 	return true
 }
 
-func (c *Compositor) clearOverviewScene() {
+// overviewNodeKey names a workspace's background colour or shadow in the
+// overview.
+type overviewNodeKey struct {
+	output    string
+	workspace uint64
+	shadow    bool
+}
+
+// overviewProjectionKey names a projection: the same source on the same
+// workspace is the same projection from one rebuild to the next.
+type overviewProjectionKey struct {
+	source    *C.struct_wlr_scene_tree
+	output    string
+	workspace uint64
+}
+
+func (p overviewProjection) key() overviewProjectionKey {
+	return overviewProjectionKey{source: p.source, output: p.Output, workspace: p.WorkspaceID}
+}
+
+// overviewRebuild hands the previous overview scene to syncOverviewScene.
+// Each node the new scene still needs is taken from it and updated in place,
+// so an animation tick that only moves and zooms the scene creates nothing
+// and its copies keep their textures. finish destroys what is left.
+type overviewRebuild struct {
+	projections map[overviewProjectionKey]overviewProjection
+	backdrops   map[string]*C.struct_wlr_scene_rect
+	nodes       map[overviewNodeKey]unsafe.Pointer
+	// order lists the overview tree's children in drawing order, bottom first.
+	order []*C.struct_wlr_scene_node
+}
+
+func (c *Compositor) takeOverviewScene() *overviewRebuild {
+	r := &overviewRebuild{
+		projections: make(map[overviewProjectionKey]overviewProjection, len(c.overviewProjections)),
+		backdrops:   make(map[string]*C.struct_wlr_scene_rect, len(c.overviewBackdrops)),
+		nodes:       c.overviewWorkspaceNodes,
+	}
 	for _, projection := range c.overviewProjections {
-		C.wlr_scene_node_destroy(&projection.tree.node)
+		r.projections[projection.key()] = projection
 	}
 	for _, backdrop := range c.overviewBackdrops {
-		C.wlr_scene_node_destroy(&backdrop.node.node)
+		r.backdrops[backdrop.output] = backdrop.node
 	}
-	for node := range c.overviewWorkspaceNodes {
+	c.overviewProjections, c.overviewBackdrops, c.overviewWorkspaceNodes = nil, nil, nil
+	return r
+}
+
+// finish destroys the nodes the new scene did not take and stacks the rest
+// in drawing order. A node already in place is not moved.
+func (r *overviewRebuild) finish() {
+	for _, projection := range r.projections {
+		C.wlr_scene_node_destroy(&projection.tree.node)
+	}
+	for _, node := range r.backdrops {
+		C.wlr_scene_node_destroy(&node.node)
+	}
+	for _, node := range r.nodes {
 		sceneFXNodeDestroy(node)
 	}
-	c.overviewWorkspaceNodes = nil
-	c.overviewProjections = nil
-	c.overviewBackdrops = nil
+	for i, node := range r.order {
+		if i == 0 {
+			C.wlr_scene_node_lower_to_bottom(node)
+		} else {
+			C.wlr_scene_node_place_above(node, r.order[i-1])
+		}
+	}
+}
+
+// addOverviewProjection projects p.source into the overview with p.place,
+// reusing the previous scene's projection of the same source if it had one.
+func (c *Compositor) addOverviewProjection(r *overviewRebuild, p overviewProjection) {
+	if previous, ok := r.projections[p.key()]; ok {
+		delete(r.projections, p.key())
+		p.tree = previous.tree
+	} else if p.tree = C.wlr_scene_tree_create(c.overviewTree); p.tree == nil {
+		return
+	}
+	count, _, first, last := p.place.project(p.tree, p.source)
+	if count == 0 {
+		C.wlr_scene_node_destroy(&p.tree.node)
+		return
+	}
+	if p.view != nil {
+		c.rememberCaptureTree(unsafe.Pointer(p.tree), p.view.captureIdentity)
+	}
+	p.BufferCount, p.SourceFirst, p.SourceLast = count, first, last
+	c.overviewProjections = append(c.overviewProjections, p)
+	r.order = append(r.order, &p.tree.node)
 }
 
 func (c *Compositor) syncOverviewScene() {
@@ -462,7 +538,8 @@ func (c *Compositor) syncOverviewScene() {
 	if bool(c.overviewTree.node.enabled) || c.model.OverviewProgress() > 0 {
 		defer c.damageCaptureSources()
 	}
-	c.clearOverviewScene()
+	r := c.takeOverviewScene()
+	defer r.finish()
 	progress := c.model.OverviewProgress()
 	if progress > 0 {
 		C.wlr_scene_node_place_below(&c.overviewTree.node, &c.layerTrees[layerTop].node)
@@ -519,25 +596,32 @@ func (c *Compositor) syncOverviewScene() {
 		rgba[1] = C.float(color.G * color.A * opacity)
 		rgba[2] = C.float(color.B * color.A * opacity)
 		rgba[3] = C.float(color.A * opacity)
-		node := C.wlr_scene_rect_create(c.overviewTree,
-			C.int(bounds.Width), C.int(bounds.Height), &rgba[0])
+		node := r.backdrops[name]
+		delete(r.backdrops, name)
 		if node == nil {
-			continue
+			node = C.wlr_scene_rect_create(c.overviewTree, C.int(bounds.Width), C.int(bounds.Height), &rgba[0])
+			if node == nil {
+				continue
+			}
+		} else {
+			C.wlr_scene_rect_set_size(node, C.int(bounds.Width), C.int(bounds.Height))
+			C.wlr_scene_rect_set_color(node, &rgba[0])
 		}
 		C.wlr_scene_node_set_position(&node.node, C.int(bounds.X), C.int(bounds.Y))
+		r.order = append(r.order, &node.node)
 		c.overviewBackdrops = append(c.overviewBackdrops, overviewBackdrop{
 			output: name, Bounds: bounds, Color: color, node: node,
 		})
 		// Niri draws place-within-backdrop surfaces unzoomed over the backdrop.
 		for _, layer := range c.layerOrder {
 			if layer.outputName == name && layer.withinBackdrop() {
-				c.projectOverviewLayer(layer, name, 0, layout.Bounds{}, 0, 0, 1)
+				c.projectOverviewLayer(r, layer, name, 0, layout.Bounds{}, 0, 0, 1)
 			}
 		}
 	}
 	C.wlr_scene_node_set_enabled(&c.overviewTree.node, C.bool(len(frames) > 0))
 	if len(frames) > 0 {
-		c.overviewWorkspaceNodes = make(map[unsafe.Pointer]string)
+		c.overviewWorkspaceNodes = make(map[overviewNodeKey]unsafe.Pointer)
 	}
 	// Normalize shadow dimensions to a 1080-pixel output before zooming.
 	if progress > 0 && c.overviewConfig.WorkspaceShadow.On {
@@ -562,11 +646,17 @@ func (c *Compositor) syncOverviewScene() {
 				if width <= 0 || height <= 0 {
 					continue
 				}
-				node := sceneFXCreateShadow(unsafe.Pointer(c.overviewTree), width, height, style.radius, style.blurSigma, style.color)
+				key := overviewNodeKey{output: current.name, workspace: workspace.ID, shadow: true}
+				node := r.nodes[key]
+				delete(r.nodes, key)
+				if node == nil {
+					node = sceneFXCreateShadow(unsafe.Pointer(c.overviewTree), width, height, style.radius, style.blurSigma, style.color)
+				}
 				if node != nil {
-					sceneFXNodeSetPosition(node, bounds.X-inset+x, bounds.Y-inset+y)
+					sceneFXShadowUpdate(node, bounds.X-inset+x, bounds.Y-inset+y, width, height, style.radius, style.blurSigma, style.color)
 					sceneFXShadowClip(node, inset-x, inset-y, bounds.Width, bounds.Height, [4]uint16{})
-					c.overviewWorkspaceNodes[node] = current.name
+					c.overviewWorkspaceNodes[key] = node
+					r.order = append(r.order, (*C.struct_wlr_scene_node)(node))
 				}
 			}
 		}
@@ -591,11 +681,17 @@ func (c *Compositor) syncOverviewScene() {
 			}
 			color := c.workspaceBackgroundColor(current.name, workspaceNames[workspace.ID])
 			if color.A > 0 {
-				node := sceneFXCreateRect(unsafe.Pointer(c.overviewTree), right-left, bottom-top, premultipliedColor(color))
-				if node != nil {
+				key := overviewNodeKey{output: current.name, workspace: workspace.ID}
+				node := r.nodes[key]
+				delete(r.nodes, key)
+				if node == nil {
+					node = sceneFXCreateRect(unsafe.Pointer(c.overviewTree), right-left, bottom-top, premultipliedColor(color))
 					sceneFXRectIgnoreInput(node)
-					sceneFXNodeSetPosition(node, left, top)
-					c.overviewWorkspaceNodes[node] = current.name
+				}
+				if node != nil {
+					sceneFXRectUpdateFill(node, left, top, right-left, bottom-top, [4]uint16{}, premultipliedColor(color))
+					c.overviewWorkspaceNodes[key] = node
+					r.order = append(r.order, (*C.struct_wlr_scene_node)(node))
 				}
 			}
 			// Background and bottom layers move and zoom with each workspace,
@@ -603,7 +699,7 @@ func (c *Compositor) syncOverviewScene() {
 			for _, kind := range []int{layerBackground, layerBottom} {
 				for _, layer := range c.layerOrder {
 					if layer.outputName == current.name && layer.layer == kind && !layer.withinBackdrop() {
-						c.projectOverviewLayer(layer, current.name, workspace.ID, workspace.Bounds,
+						c.projectOverviewLayer(r, layer, current.name, workspace.ID, workspace.Bounds,
 							current.frame.Output.X, current.frame.Output.Y, current.frame.Zoom)
 					}
 				}
@@ -619,24 +715,12 @@ func (c *Compositor) syncOverviewScene() {
 				if view == nil {
 					continue
 				}
-				tree := C.wlr_scene_tree_create(c.overviewTree)
-				if tree == nil {
-					continue
-				}
 				c.rememberCaptureNodes(view)
-				place := overviewPlacement{sourceX: current.frame.Output.X, sourceY: current.frame.Output.Y,
-					targetX: workspace.Bounds.X, targetY: workspace.Bounds.Y, zoom: current.frame.Zoom}
-				count, _, first, last := place.project(tree, view.tree)
-				if count == 0 {
-					C.wlr_scene_node_destroy(&tree.node)
-					continue
-				}
-				c.rememberCaptureTree(unsafe.Pointer(tree), view.captureIdentity)
-				c.overviewProjections = append(c.overviewProjections, overviewProjection{
+				c.addOverviewProjection(r, overviewProjection{
 					Output: current.name, WorkspaceID: workspace.ID,
-					WindowID: window.ID, Bounds: window.Bounds, BufferCount: count,
-					SourceFirst: first, SourceLast: last, tree: tree, source: view.tree,
-					view: view, place: place,
+					WindowID: window.ID, Bounds: window.Bounds, source: view.tree, view: view,
+					place: overviewPlacement{sourceX: current.frame.Output.X, sourceY: current.frame.Output.Y,
+						targetX: workspace.Bounds.X, targetY: workspace.Bounds.Y, zoom: current.frame.Zoom},
 				})
 			}
 		}
@@ -645,7 +729,7 @@ func (c *Compositor) syncOverviewScene() {
 
 // projectOverviewLayer copies layer's mapped buffers into the overview,
 // mapping the output origin (sourceX, sourceY) to the origin of bounds.
-func (c *Compositor) projectOverviewLayer(layer *layerSurface, output string, workspace uint64,
+func (c *Compositor) projectOverviewLayer(r *overviewRebuild, layer *layerSurface, output string, workspace uint64,
 	bounds layout.Bounds, sourceX, sourceY int, zoom float64) {
 	if layer.tree == nil || !bool(layer.surface.surface.mapped) {
 		return
@@ -662,18 +746,8 @@ func (c *Compositor) projectOverviewLayer(layer *layerSurface, output string, wo
 			place.clip = rect{left, top, right - left, bottom - top}
 		}
 	}
-	tree := C.wlr_scene_tree_create(c.overviewTree)
-	if tree == nil {
-		return
-	}
-	count, _, first, last := place.project(tree, layer.tree)
-	if count == 0 {
-		C.wlr_scene_node_destroy(&tree.node)
-		return
-	}
-	c.overviewProjections = append(c.overviewProjections, overviewProjection{
-		Output: output, WorkspaceID: workspace, Bounds: bounds, BufferCount: count,
-		SourceFirst: first, SourceLast: last, tree: tree, source: layer.tree, layer: layer, place: place,
+	c.addOverviewProjection(r, overviewProjection{
+		Output: output, WorkspaceID: workspace, Bounds: bounds, source: layer.tree, layer: layer, place: place,
 	})
 }
 
