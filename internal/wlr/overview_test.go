@@ -249,8 +249,10 @@ func TestOverviewAnimationReprojectsWithoutRebuilding(t *testing.T) {
 				t.Error("the animation tick rebuilt a workspace shadow")
 			}
 		}
-		for _, node := range workspaceNodes {
-			if !sceneFXNodeBefore(backdrop, node) || !sceneFXNodeBefore(node, unsafe.Pointer(&after.tree.node)) {
+		// Shadows draw under every workspace. A later workspace's background
+		// fill draws above this one's windows, so it is left out here.
+		for key, node := range workspaceNodes {
+			if key.shadow && (!sceneFXNodeBefore(backdrop, node) || !sceneFXNodeBefore(node, unsafe.Pointer(&after.tree.node))) {
 				t.Error("want the backdrop, workspace shadows, then window copies, bottom first")
 			}
 		}
