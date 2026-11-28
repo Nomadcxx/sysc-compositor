@@ -385,6 +385,10 @@ func sceneNodeBefore(first, second *C.struct_wlr_scene_node) bool {
 	return bool(C.sysc_scene_node_before(first, second))
 }
 
+func sceneFXNodeBefore(first, second unsafe.Pointer) bool {
+	return sceneNodeBefore((*C.struct_wlr_scene_node)(first), (*C.struct_wlr_scene_node)(second))
+}
+
 func sceneRectColor(rect *C.struct_wlr_scene_rect) [4]float32 {
 	return [4]float32{
 		float32(rect.color[0]), float32(rect.color[1]),

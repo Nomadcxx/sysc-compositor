@@ -738,7 +738,7 @@ func (c *Compositor) createAppearanceTrees() bool {
 	C.wlr_scene_node_place_below(&c.backgroundTree.node, &c.layerTrees[layerBackground].node)
 	C.wlr_scene_node_place_below(&c.backdropLayerTree.node, &c.backgroundTree.node)
 	C.wlr_scene_node_place_above(&c.blurBackdropTree.node, &c.layerTrees[layerBackground].node)
-	// Bottom to top: shadows, borders, then animation snapshots, which stand
+	// For tiled windows: shadows, borders, then animation snapshots, which stand
 	// in for hidden windows. A client-decorated window's border fills its
 	// whole tile and would cover a snapshot drawn under it.
 	C.wlr_scene_node_place_below(&c.windowShadowTree.node, &c.layerTrees[layerWindows].node)
@@ -747,6 +747,50 @@ func (c *Compositor) createAppearanceTrees() bool {
 	C.wlr_scene_node_place_below(&c.windowFocusTree.node, &c.layerTrees[layerTop].node)
 	C.wlr_scene_node_place_below(&c.tabIndicatorTree.node, &c.layerTrees[layerTop].node)
 	return true
+}
+
+func (c *Compositor) windowAnimationLayer(view *toplevelView) *C.struct_wlr_scene_tree {
+	if view.floating {
+		return c.layerTrees[layerFloatingWindows]
+	}
+	return c.windowAnimationTree
+}
+
+// Keep each floating window's underlays immediately beneath its content.
+// Both window layers are at (0, 0), so reparenting preserves layout coordinates.
+func (c *Compositor) syncViewStacking(view *toplevelView) {
+	parent := c.layerTrees[layerWindows]
+	if view.floating {
+		parent = c.layerTrees[layerFloatingWindows]
+	}
+	next := &view.tree.node
+	C.wlr_scene_node_reparent(next, parent)
+	under := func(pointer unsafe.Pointer, tiledLayer *C.struct_wlr_scene_tree) {
+		if pointer == nil {
+			return
+		}
+		node := (*C.struct_wlr_scene_node)(pointer)
+		if view.floating {
+			C.wlr_scene_node_reparent(node, parent)
+			C.wlr_scene_node_place_below(node, next)
+			next = node
+		} else {
+			C.wlr_scene_node_reparent(node, tiledLayer)
+		}
+	}
+	if c.animationShaders != nil {
+		for _, property := range []string{"open-opacity", "resize-shader"} {
+			if effect := c.animationShaders.effects[animationKey{owner: view.id, property: property}]; effect != nil {
+				under(unsafe.Pointer(&effect.node.node), c.windowAnimationTree)
+			}
+		}
+	}
+	under(view.resizeSnapshot, c.windowAnimationTree)
+	under(view.borderNode, c.windowBorderTree)
+	under(view.shadowNode, c.windowShadowTree)
+	if view.closeSnapshot != nil {
+		C.wlr_scene_node_reparent((*C.struct_wlr_scene_node)(view.closeSnapshot), c.windowAnimationLayer(view))
+	}
 }
 
 func (c *Compositor) usesSceneFXRenderer() bool {

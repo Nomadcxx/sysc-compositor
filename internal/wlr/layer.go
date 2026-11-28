@@ -70,6 +70,7 @@ const (
 	layerBackground = iota
 	layerBottom
 	layerWindows
+	layerFloatingWindows
 	layerTop
 	layerOverlay
 	layerCount
@@ -216,6 +217,13 @@ func newStackingTestCompositor() (*Compositor, func()) {
 		return nil, func() {}
 	}
 	return c, func() { C.wlr_scene_node_destroy(&c.scene.tree.node) }
+}
+
+func (c *Compositor) newStackingTestView() *toplevelView {
+	return &toplevelView{
+		tree:           C.sysc_tree_create(c.layerTrees[layerWindows]),
+		resizeSnapshot: unsafe.Pointer(C.sysc_tree_create(c.windowAnimationTree)),
+	}
 }
 
 // windowTreesStackedForTest reports whether shadows, borders, animation

@@ -228,7 +228,7 @@ type toplevelView struct {
 	shadowNode      unsafe.Pointer
 	focusRingNode   unsafe.Pointer
 	// borderNode draws the border, or the focus ring's background when the
-	// border is off. It sits below the windows, the focus ring above them.
+	// border is off. It draws under the window content and the focus ring.
 	borderNode              unsafe.Pointer
 	decorations             viewDecorations
 	urgent                  bool
@@ -1756,7 +1756,7 @@ func (c *Compositor) handleNewToplevel(data unsafe.Pointer) {
 			c.cancelTiledWindowMove()
 		}
 		if view.closeSnapshot == nil && view.presentationVisible {
-			if snapshot, count := sceneFXCloneView(unsafe.Pointer(c.windowAnimationTree), unsafe.Pointer(view.tree)); count > 0 {
+			if snapshot, count := sceneFXCloneView(unsafe.Pointer(c.windowAnimationLayer(view)), unsafe.Pointer(view.tree)); count > 0 {
 				c.rememberCaptureTree(snapshot, view.captureIdentity)
 				view.closeSnapshot = snapshot
 			}

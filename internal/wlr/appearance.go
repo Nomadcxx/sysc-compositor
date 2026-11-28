@@ -184,12 +184,18 @@ func (c *Compositor) applyViewAppearance(view *toplevelView) {
 		}
 	}
 	c.syncViewOpacity(view)
+	c.createViewDecorations(view, geometry)
+	c.syncViewDecorations(view)
+}
 
+func (c *Compositor) createViewDecorations(view *toplevelView, geometry rect) {
 	decorations := view.decorations
+	stackingChanged := false
 	if decorations.shadow.On && view.shadowNode == nil {
 		color := premultipliedColor(decorations.shadow.Color)
 		view.shadowNode = sceneFXCreateShadow(unsafe.Pointer(c.windowShadowTree),
 			max(1, geometry.w), max(1, geometry.h), 0, decorations.shadow.Softness, color)
+		stackingChanged = view.shadowNode != nil
 	}
 	ringOn := !decorations.ring.Off && decorations.ring.Width > 0
 	if ringOn && view.focusRingNode == nil {
@@ -199,8 +205,11 @@ func (c *Compositor) applyViewAppearance(view *toplevelView) {
 	if (borderOn || ringOn && decorations.withBackground) && view.borderNode == nil {
 		view.borderNode = sceneFXCreateRect(unsafe.Pointer(c.windowBorderTree), 1, 1, [4]float32{})
 		sceneFXRectIgnoreInput(view.borderNode)
+		stackingChanged = stackingChanged || view.borderNode != nil
 	}
-	c.syncViewDecorations(view)
+	if view.floating && stackingChanged {
+		c.syncViewStacking(view)
+	}
 }
 
 func (c *Compositor) syncViewDecorations(view *toplevelView) {
