@@ -39,13 +39,20 @@ go generate ./internal/wlr
 
 quarantine=$(awk '!/^#/ && NF {print $1}' .github/ci/quarantine.txt | sort -u)
 skips=$(awk '!/^#/ && NF {print $1}' .github/ci/skips.txt | sort -u)
+# Creating a SceneFX renderer in a process that already destroyed one crashes
+# inside fx_renderer_create or fails its first draw (a Mesa/SceneFX bug,
+# reproduced without the compositor). These tests replace the renderer, so
+# they run in a process of their own after the rest.
+replaces_renderer='^TestRendererLoss'
 status=0
 for pkg in ./internal/wlr ./internal/server; do
 	log=$(mktemp)
 	passed=1
-	# A session has a session bus; GTK clients such as waybar exit silently
-	# without one, and the container has none.
-	dbus-run-session -- go test -count=1 -v -timeout 15m "$pkg" 2>&1 | tee "$log" || passed=0
+	for filter in "-skip=$replaces_renderer" "-run=$replaces_renderer"; do
+		# A session has a session bus; GTK clients such as waybar exit silently
+		# without one, and the container has none.
+		dbus-run-session -- go test -count=1 -v -timeout 15m "$filter" "$pkg" 2>&1 | tee -a "$log" || passed=0
+	done
 	# Top-level tests that failed, or skipped without being listed in
 	# skips.txt. An unlisted skip means the lane checked less than it claims,
 	# so it counts like a failure.
